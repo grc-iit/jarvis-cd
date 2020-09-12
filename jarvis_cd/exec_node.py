@@ -5,7 +5,8 @@ from jarvis_cd.node import *
 
 class ExecNode(Node):
 
-    def __init__(self, cmd):
+    def __init__(self, cmd, print_output=False):
+        super().__init__(print_output)
         self.cmd=cmd
 
     def _exec_cmd(command):
@@ -54,8 +55,12 @@ class ExecNode(Node):
         return lines, stderr
 
     def Run(self):
+        output = []
         if type(self.cmd) == list:
-            return self._exec_cmds(self.cmd)
+            output = self._exec_cmds(self.cmd)
         else:
-            return self._exec_cmd(self.cmd)
+            output = self._exec_cmd(self.cmd)
+        if self.print_output:
+            print(output)
+        return output
 

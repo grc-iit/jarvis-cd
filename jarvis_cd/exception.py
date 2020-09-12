@@ -31,6 +31,7 @@ class ErrorCode:
     NOT_IMPLEMENTED = {"id": 1, "msg": "{} is not implemented"}
     #Specific error code
     CONFIG_REQUIRED = {"id": 1000, "msg": "Config is required. Check sample {}"}
+    INVALID_SECTION = {"id": 1001, "msg": "Section {} is not recognized. Check sample {}"}
+    INVALID_KEY = {"id": 1002, "msg": "Key {} is not recognized. Check sample {}"}
 
     #Orange FS error code
-    PATH_SECTION_REQUIRED = {"id": 2000, "msg": "PATH section is required. Check sample {}"}
