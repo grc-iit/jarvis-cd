@@ -11,14 +11,17 @@ from jarvis_cd.sleep_node import SleepNode
 from jarvis_cd.ssh_node import SSHNode
 
 
-class OrangeFS(Graph):
-    _default_config = "repos/orange_fs/default.ini"
+class Orangefs(Graph):
+    _default_config = "repos/orangefs/default.ini"
     def __init__(self, config_file = None):
         super().__init__(config_file,self._default_config)
         self.server_data_hosts = self._convert_hostfile_tolist(self.config['SERVER']['SERVER_DATA_HOST_FILE'])
         self.server_meta_hosts = self._convert_hostfile_tolist(self.config['SERVER']['SERVER_META_HOST_FILE'])
         self.client_hosts = self._convert_hostfile_tolist(self.config['CLIENT']['CLIENT_HOST_FILE'])
         self.pvfs_genconfig = os.path.join(self.config["COMMON"]["ORANGEFS_INSTALL_DIR"],"bin","pvfs2-genconfig")
+
+    def _DefineStop(self):
+        return []
 
     def _DefineStart(self):
         nodes = []

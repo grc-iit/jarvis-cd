@@ -12,11 +12,12 @@ class Graph(ABC):
         self.nodes = None
         self.config = configparser.ConfigParser()
         self.temp_dir = "/tmp/jarvis-cd/orangefs"
-        shutil.rmtree(self.temp_dir)
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
         if not os.path.exists(self.temp_dir):
             os.makedirs(self.temp_dir)
         if default_config:
-            self.project_src = "{}".format(pathlib.Path(os.getcwd()).parent.parent.absolute())
+            self.project_src = "{}".format(pathlib.Path(os.getcwd()).absolute())
             self.config.read(os.path.join(self.project_src, default_config))
             for section in self.config.sections():
                 for key in self.config[section]:
