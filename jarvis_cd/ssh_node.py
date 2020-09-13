@@ -37,12 +37,13 @@ class SSHNode(Node):
         return nice_output
 
     def Run(self):
-        output = []
+        outputs = []
         for i,cmd in enumerate(self.cmds):
-            output.append(self._exec_ssh(cmd))
-        if self.print_output:
-            print(output)
-        return output
+            output=self._exec_ssh(cmd)
+            if self.print_output:
+                self.Print(output)
+            outputs.append(output)
+        return outputs
 
 
 

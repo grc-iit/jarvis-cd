@@ -11,4 +11,3 @@ if __name__ == '__main__':
     instance = class_()
     operation = getattr(class_, str(arguments.args.operation).capitalize())
     result = operation(instance)
-    print(result)

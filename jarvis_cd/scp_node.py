@@ -24,12 +24,18 @@ class SCPNode(Node):
         client = ParallelSSHClient(self.hosts)
         output = client.copy_file(self.source, self.destination,True)
         joinall(output, raise_error=True)
-        return output
+        nice_output = dict()
+        for host in output:
+            nice_output[host] = {
+                'stdout': [],
+                'stderr': []
+            }
+        return nice_output
 
     def Run(self):
         output = self._exec_scp()
         if self.print_output:
-            print(output)
+            self.Print(output)
         return output
 
 

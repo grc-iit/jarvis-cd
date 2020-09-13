@@ -52,7 +52,7 @@ class ExecNode(Node):
         lines = []
         for line in lines_b:
             lines.append(line.decode("utf-8"))
-        return lines, stderr
+        return { 'localhost':{'stdout':lines, 'stderr':stderr}}
 
     def Run(self):
         output = []
@@ -61,6 +61,6 @@ class ExecNode(Node):
         else:
             output = self._exec_cmd(self.cmd)
         if self.print_output:
-            print(output)
+            self.Print(output)
         return output
 

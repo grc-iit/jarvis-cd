@@ -10,8 +10,13 @@ class SleepNode(Node):
 
     def Run(self):
         time.sleep(self.timer)
-        output = "Sleep for {} seconds".format(self.timer)
+        output = {
+            'localhost': {
+                'stdout': ["Sleep for {} seconds".format(self.timer)],
+                'stderr': []
+            }
+        }
         if self.print_output:
-            print(output)
+            self.Print(output)
         return output
 
