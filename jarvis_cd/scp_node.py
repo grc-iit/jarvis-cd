@@ -9,8 +9,8 @@ from jarvis_cd.node import Node
 sys.stderr = sys.__stderr__
 
 class SCPNode(Node):
-    def __init__(self, hosts, source, destination, username = getpass.getuser(), sudo=False, print_output=False):
-        super().__init__(print_output)
+    def __init__(self, name, hosts, source, destination, username = getpass.getuser(), sudo=False, print_output=False):
+        super().__init__(name, print_output)
         if type(hosts) == list:
             self.hosts=hosts
         else:
@@ -37,6 +37,9 @@ class SCPNode(Node):
         if self.print_output:
             self.Print(output)
         return output
+
+    def __str__(self):
+        return "SCPNode {}".format(self.name)
 
 
 

@@ -4,9 +4,9 @@ from jarvis_cd.enumerations import Color
 
 
 class Node(ABC):
-    def __init__(self, print_output=False):
+    def __init__(self, name, print_output=False):
         self.print_output = print_output
-        pass
+        self.name = name
 
     def Print(self, output):
         for host in output:
@@ -18,3 +18,6 @@ class Node(ABC):
     @abstractmethod
     def Run(self):
         pass
+
+    def __str__(self):
+        return self.name

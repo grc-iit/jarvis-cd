@@ -8,8 +8,8 @@ from jarvis_cd.node import Node
 sys.stderr = sys.__stderr__
 
 class SSHNode(Node):
-    def __init__(self, hosts, cmd, username = getpass.getuser(), sudo=False, print_output=False):
-        super().__init__(print_output)
+    def __init__(self, name, hosts, cmd, username = getpass.getuser(), sudo=False, print_output=False):
+        super().__init__(name, print_output)
         if type(hosts) == list:
             self.hosts=hosts
         else:
@@ -44,6 +44,9 @@ class SSHNode(Node):
                 self.Print(output)
             outputs.append(output)
         return outputs
+
+    def __str__(self):
+        return "SSHNode {}".format(self.name)
 
 
 

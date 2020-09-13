@@ -32,10 +32,10 @@ class Orangefs(Graph):
                 "sudo rmmod pvfs2",
                 "sudo kill-pvfs2-client"
             ]
-            node = SSHNode(client, cmds)
+            node = SSHNode("stop client",client, cmds)
             nodes.append(node)
-        nodes.append(SSHNode(self.server_data_hosts,"killall -9 pvfs2-server"))
-        nodes.append(SSHNode(self.client_hosts,"pgrep -la pvfs2-server",print_output=True))
+        nodes.append(SSHNode("stop server",self.server_data_hosts,"killall -9 pvfs2-server"))
+        nodes.append(SSHNode("check server", self.client_hosts,"pgrep -la pvfs2-server",print_output=True))
         return nodes
 
     def _DefineStart(self):
@@ -63,7 +63,7 @@ class Orangefs(Graph):
                                                             meta_dir=os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],"meta"),
                                                             log_file=os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],"orangefs.log"),
                                                             conf_file=pfs_conf)
-        pfs_genconfig_node = ExecNode(pvfs_gen_cmd)
+        pfs_genconfig_node = ExecNode("generate pfs conf",pvfs_gen_cmd)
         nodes.append(pfs_genconfig_node)
 
         # set pvfstab on clients
@@ -77,27 +77,27 @@ class Orangefs(Graph):
                 mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR'],
                 client_pvfs2tab=self.config['CLIENT']['CLIENT_PVFS2TAB_FILE']
             )
-            node = SSHNode(client,cmd)
+            node = SSHNode("set pvfstab for client {}".format(metadata_server),client,cmd)
             nodes.append(node)
 
         # start pfs servers
         pvfs2_server = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'],"sbin","pvfs2-server")
         pvfs2_ping = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'],"bin","pvfs2-ping")
         ## create tmp dir
-        tmp_dir_node = SSHNode(self.client_hosts,"mkdir -p {}".format(self.temp_dir))
+        tmp_dir_node = SSHNode("make tmp dir in clients",self.client_hosts,"mkdir -p {}".format(self.temp_dir))
         nodes.append(tmp_dir_node)
         ## copy pfs conf
-        copy_node = SCPNode(self.client_hosts,pfs_conf,pfs_conf)
+        copy_node = SCPNode("cp conf file",self.server_data_hosts,pfs_conf,pfs_conf)
         nodes.append(copy_node)
         server_start_cmds =[
             "rm -rf {}".format(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR']),
             "{pfs_server} {pfs_conf} -f".format(pfs_server=pvfs2_server, pfs_conf=pfs_conf),
             "{pfs_server} {pfs_conf}".format(pfs_server=pvfs2_server, pfs_conf=pfs_conf)
         ]
-        server_start_node = SSHNode(self.client_hosts,server_start_cmds)
+        server_start_node = SSHNode("start servers",self.server_data_hosts,server_start_cmds)
         nodes.append(server_start_node)
         nodes.append(SleepNode(5,print_output=True))
-        nodes.append(EchoNode("Verifying OrangeFS servers ..."))
+        nodes.append(EchoNode("verify server printing","Verifying OrangeFS servers ..."))
 
         verify_server_cmd = "export LD_LIBRARY_PATH={pvfs2_lib}; export PVFS2TAB_FILE={client_pvfs2tab}; " \
                             "{pvfs2_ping} -m {mount_point} | grep 'appears to be correctly configured'".format(
@@ -106,7 +106,7 @@ class Orangefs(Graph):
             pvfs2_ping=pvfs2_ping,
             mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']
         )
-        nodes.append(SSHNode(self.client_hosts,verify_server_cmd,print_output=True))
+        nodes.append(SSHNode("verify server",self.client_hosts,verify_server_cmd,print_output=True))
         # start pfs client
         kernel_ko = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'], "lib/modules/3.10.0-862.el7.x86_64/kernel/fs/pvfs2/pvfs2.ko")
         pvfs2_client = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'], "sbin","pvfs2-client")
@@ -124,10 +124,8 @@ class Orangefs(Graph):
                     ip=metadata_server_ip,
                     mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR'])
             ]
-            node = SSHNode(client,start_client_cmds)
+            node = SSHNode("mount pvfs2 client {}".format(metadata_server),client,start_client_cmds)
             nodes.append(node)
-
-
         return nodes
 
 

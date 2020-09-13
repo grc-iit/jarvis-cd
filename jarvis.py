@@ -1,5 +1,6 @@
 from jarvis_cd.argument_parser import ArgumentParser
 import sys
+import logging
 
 if __name__ == '__main__':
     arguments = ArgumentParser.get_instance()
