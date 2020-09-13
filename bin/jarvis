@@ -1,0 +1,4 @@
+#!/bin/bash
+SCRIPT_DIR=`pwd`
+REPO_DIR="$(dirname "$SCRIPT_DIR")"
+python ${REPO_DIR}/jarvis.py "$@"
