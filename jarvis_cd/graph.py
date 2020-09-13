@@ -63,9 +63,9 @@ class Graph(ABC):
             self.nodes = [nodes]
         output = []
         if len(self.nodes) > 0:
-            output = [] * len(self.nodes)
+            output = []
             for i, node in enumerate(self.nodes):
-                output[i] = node.Run()
+                output.append(node.Run())
         return output
 
     def Start(self):
