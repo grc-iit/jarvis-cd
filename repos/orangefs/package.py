@@ -50,6 +50,7 @@ class Orangefs(Graph):
             nodes.append(node)
         nodes.append(SSHNode("stop server",self.server_data_hosts,"killall -9 pvfs2-server"))
         nodes.append(SSHNode("check server", self.client_hosts,"pgrep -la pvfs2-server",print_output=True))
+        nodes.append(SSHNode("clean server data",self.server_data_hosts, "rm -rf {}".format(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'])))
         return nodes
 
     def _DefineStart(self):
