@@ -57,6 +57,14 @@ class Graph(ABC):
     def _DefineStop(self):
         return []
 
+    @abstractmethod
+    def _DefineStatus(self):
+        return []
+
+    def Restart(self):
+        self.Stop()
+        self.Start()
+
     def Stop(self):
         nodes = self._DefineStop()
         if type(nodes) == list:
@@ -82,6 +90,21 @@ class Graph(ABC):
             outputs = []
             for i, node in enumerate(self.nodes):
                 logging.info("Executing node {} index {}".format(str(node),i))
+                output = node.Run()
+                outputs.append(output)
+        return outputs
+
+    def Status(self):
+        nodes = self._DefineStatus()
+        if type(nodes) == list:
+            self.nodes = nodes
+        else:
+            self.nodes = [nodes]
+        outputs = []
+        if len(self.nodes) > 0:
+            outputs = []
+            for i, node in enumerate(self.nodes):
+                logging.info("Executing node {} index {}".format(str(node), i))
                 output = node.Run()
                 outputs.append(output)
         return outputs

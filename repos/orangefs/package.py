@@ -20,6 +20,20 @@ class Orangefs(Graph):
         self.client_hosts = self._convert_hostfile_tolist(self.config['CLIENT']['CLIENT_HOST_FILE'])
         self.pvfs_genconfig = os.path.join(self.config["COMMON"]["ORANGEFS_INSTALL_DIR"],"bin","pvfs2-genconfig")
 
+    def _DefineStatus(self):
+        nodes = []
+        nodes.append(SSHNode("check clients", self.server_data_hosts, "mount | grep pvfs"))
+        pvfs2_ping = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'], "bin", "pvfs2-ping")
+        verify_server_cmd = "export LD_LIBRARY_PATH={pvfs2_lib}; export PVFS2TAB_FILE={client_pvfs2tab}; " \
+                            "{pvfs2_ping} -m {mount_point} | grep 'appears to be correctly configured'".format(
+            pvfs2_lib=os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'], "lib"),
+            client_pvfs2tab=self.config['CLIENT']['CLIENT_PVFS2TAB_FILE'],
+            pvfs2_ping=pvfs2_ping,
+            mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']
+        )
+        nodes.append(SSHNode("check server", self.client_hosts, verify_server_cmd, print_output=True))
+        return nodes
+
     def _DefineStop(self):
         nodes = []
         for i, client in enumerate(self.client_hosts):
