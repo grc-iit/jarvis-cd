@@ -58,12 +58,30 @@ class Graph(ABC):
         return []
 
     @abstractmethod
+    def _DefineClean(self):
+        return []
+
+    @abstractmethod
     def _DefineStatus(self):
         return []
 
     def Restart(self):
         self.Stop()
         self.Start()
+
+    def Clean(self):
+        nodes = self._DefineClean()
+        if type(nodes) == list:
+            self.nodes = nodes
+        else:
+            self.nodes = [nodes]
+        output = []
+        if len(self.nodes) > 0:
+            output = []
+            for i, node in enumerate(self.nodes):
+                logging.info("Executing node {} index {}".format(str(node), i))
+                output.append(node.Run())
+        return output
 
     def Stop(self):
         nodes = self._DefineStop()

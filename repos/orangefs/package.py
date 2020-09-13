@@ -20,6 +20,12 @@ class Orangefs(Graph):
         self.client_hosts = self._convert_hostfile_tolist(self.config['CLIENT']['CLIENT_HOST_FILE'])
         self.pvfs_genconfig = os.path.join(self.config["COMMON"]["ORANGEFS_INSTALL_DIR"],"bin","pvfs2-genconfig")
 
+    def _DefineClean(self):
+        nodes = []
+        nodes.append(SSHNode("clean client data", self.client_hosts[0],
+                             "rm -rf {}/*".format(self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR'])))
+        return nodes
+
     def _DefineStatus(self):
         nodes = []
         nodes.append(SSHNode("check clients", self.server_data_hosts, "mount | grep pvfs"))
