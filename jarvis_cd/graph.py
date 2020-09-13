@@ -37,9 +37,14 @@ class Graph(ABC):
         list_of_lists = []
         for line in a_file:
             stripped_line = line.strip()
-            line_list = stripped_line.split()
-            list_of_lists.append(line_list)
+            line_list = stripped_line.split(sep=":")
+            if len(line_list) == 2:
+                for i in range(int(line_list[1])):
+                    list_of_lists.append(line_list[0])
+            else:
+                list_of_lists.append(line_list[0])
         a_file.close()
+
         return list_of_lists
 
     @abstractmethod
@@ -69,12 +74,13 @@ class Graph(ABC):
             self.nodes = nodes
         else:
             self.nodes = [nodes]
-        output = []
+        outputs = []
         if len(self.nodes) > 0:
-            output = []*len(self.nodes)
+            outputs = []
             for i, node in enumerate(self.nodes):
-                output[i] = node.Run()
-        return output
+                output = node.Run()
+                outputs.append(output)
+        return outputs
 
 
 

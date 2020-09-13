@@ -21,22 +21,37 @@ class Orangefs(Graph):
         self.pvfs_genconfig = os.path.join(self.config["COMMON"]["ORANGEFS_INSTALL_DIR"],"bin","pvfs2-genconfig")
 
     def _DefineStop(self):
-        return []
+        nodes = []
+        for i, client in enumerate(self.client_hosts):
+            cmds = [
+                "sudo umount -l {mount_point}".format(mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']),
+                "sudo umount -f {mount_point}".format(mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']),
+                "sudo umount {mount_point}".format(mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']),
+                "sudo killall -9 pvfs2-client",
+                "sudo killall -9 pvfs2-client-core",
+                "sudo rmmod pvfs2",
+                "sudo kill-pvfs2-client"
+            ]
+            node = SSHNode(client, cmds)
+            nodes.append(node)
+        nodes.append(SSHNode(self.server_data_hosts,"killall -9 pvfs2-server"))
+        nodes.append(SSHNode(self.client_hosts,"pgrep -la pvfs2-server",print_output=True))
+        return nodes
 
     def _DefineStart(self):
         nodes = []
         pfs_conf = os.path.join(self.temp_dir,"pfs_{}.conf".format(len(self.server_data_hosts)))
         # generate PFS Gen config
-        pvfs_gen_cmd = "{binary} --quiet" \
-                    "--protocol {protocol}" \
-                    "--tcpport {port}" \
-                    "--dist-name {dist_name}" \
-                    "--dist-params strip_size:{strip_size}"\
-                    "--ioservers {data_servers}"\
-                    "--metaservers {meta_servers}"\
-                    "--storage {data_dir}"\
-                    "--metadata {meta_dir}"\
-                    "--logfile {log_file}"\
+        pvfs_gen_cmd = "{binary} --quiet " \
+                    "--protocol {protocol} " \
+                    "--tcpport {port} " \
+                    "--dist-name {dist_name} " \
+                    "--dist-params strip_size:{strip_size} "\
+                    "--ioservers {data_servers} "\
+                    "--metaservers {meta_servers} "\
+                    "--storage {data_dir} "\
+                    "--metadata {meta_dir} "\
+                    "--logfile {log_file} "\
                     "{conf_file}".format(  binary=self.pvfs_genconfig,
                                                             protocol=self.config['SERVER']['PVFS2_PROTOCOL'],
                                                             port=self.config['SERVER']['PVFS2_PORT'],
@@ -66,7 +81,7 @@ class Orangefs(Graph):
             nodes.append(node)
 
         # start pfs servers
-        pvfs2_server = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'],"bin","pvfs2-server")
+        pvfs2_server = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'],"sbin","pvfs2-server")
         pvfs2_ping = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'],"bin","pvfs2-ping")
         ## create tmp dir
         tmp_dir_node = SSHNode(self.client_hosts,"mkdir -p {}".format(self.temp_dir))
@@ -75,6 +90,7 @@ class Orangefs(Graph):
         copy_node = SCPNode(self.client_hosts,pfs_conf,pfs_conf)
         nodes.append(copy_node)
         server_start_cmds =[
+            "rm -rf {}".format(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR']),
             "{pfs_server} {pfs_conf} -f".format(pfs_server=pvfs2_server, pfs_conf=pfs_conf),
             "{pfs_server} {pfs_conf}".format(pfs_server=pvfs2_server, pfs_conf=pfs_conf)
         ]
@@ -83,16 +99,33 @@ class Orangefs(Graph):
         nodes.append(SleepNode(5,print_output=True))
         nodes.append(EchoNode("Verifying OrangeFS servers ..."))
 
-        verify_server_cmd = "export LD_LIBRARY_PATH={pvfs2_lib}; export PVFS2TAB_FILE={client_pvfs2tab}; {pvfs2_ping}" \
-                            " -m {mount_point} | grep 'appears to be correctly configured'".format(
+        verify_server_cmd = "export LD_LIBRARY_PATH={pvfs2_lib}; export PVFS2TAB_FILE={client_pvfs2tab}; " \
+                            "{pvfs2_ping} -m {mount_point} | grep 'appears to be correctly configured'".format(
             pvfs2_lib=os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'],"lib"),
             client_pvfs2tab=self.config['CLIENT']['CLIENT_PVFS2TAB_FILE'],
             pvfs2_ping=pvfs2_ping,
             mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']
         )
-        nodes.append(SSHNode(self.client_hosts,verify_server_cmd))
-
+        nodes.append(SSHNode(self.client_hosts,verify_server_cmd,print_output=True))
         # start pfs client
+        kernel_ko = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'], "lib/modules/3.10.0-862.el7.x86_64/kernel/fs/pvfs2/pvfs2.ko")
+        pvfs2_client = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'], "sbin","pvfs2-client")
+        pvfs2_client_core = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'], "sbin", "pvfs2-client-core")
+        for i,client in enumerate(self.client_hosts):
+            metadata_server = self.server_meta_hosts[i % len(self.server_meta_hosts)]
+            metadata_server_ip = socket.gethostbyname(metadata_server)
+            start_client_cmds = [
+                "mkdir -p {}".format(self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']),
+                "sudo insmod {}".format(kernel_ko),
+                "sudo {} -p {}".format(pvfs2_client, pvfs2_client_core),
+                "sudo mount -t pvfs2 {protocol}://{ip}:{port}/orangefs {mount_point}".format(
+                    protocol=self.config['SERVER']['PVFS2_PROTOCOL'],
+                    port=self.config['SERVER']['PVFS2_PORT'],
+                    ip=metadata_server_ip,
+                    mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR'])
+            ]
+            node = SSHNode(client,start_client_cmds)
+            nodes.append(node)
 
 
         return nodes

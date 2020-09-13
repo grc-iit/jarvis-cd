@@ -32,9 +32,9 @@ class ArgumentParser(object):
         else:
             ArgumentParser.__instance = self
         self.parser = argparse.ArgumentParser(description='DLIO Benchmark')
-        self.parser.add_argument("target", metavar='S', type=str,
+        self.parser.add_argument("target", metavar='target', type=str,
                                  help="Target to choose.")
-        self.parser.add_argument("operation", metavar='O', default=OperationType.DEPLOY, type=OperationType, choices=list(OperationType),
+        self.parser.add_argument("operation", metavar='operation', default=OperationType.START, type=OperationType, choices=list(OperationType),
                                  help="Operation for target")
         self.args = self.parser.parse_args()
         self._validate()

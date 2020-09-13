@@ -20,16 +20,14 @@ class SCPNode(Node):
         self.sudo=sudo
         self.username=username
 
-    def _exec_ssh(self):
+    def _exec_scp(self):
         client = ParallelSSHClient(self.hosts)
-        output = client.scp_send(self.source, self.destination)
+        output = client.copy_file(self.source, self.destination,True)
         joinall(output, raise_error=True)
         return output
 
     def Run(self):
-        output = []*len(self.cmds)
-        for i,cmd in enumerate(self.cmds):
-            output[i] = self._exec_ssh(cmd)
+        output = self._exec_scp()
         if self.print_output:
             print(output)
         return output

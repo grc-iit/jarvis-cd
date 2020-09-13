@@ -24,12 +24,22 @@ class SSHNode(Node):
     def _exec_ssh(self, cmd):
         client = ParallelSSHClient(self.hosts)
         output = client.run_command(cmd, sudo=self.sudo)
-        return output
+        nice_output = dict()
+        for host in output:
+            nice_output[host]={
+                'stdout':[],
+                'stderr':[]
+            }
+            for line in output[host]['stdout']:
+                nice_output[host]['stdout'].append(line)
+            for line in output[host]['stderr']:
+                nice_output[host]['stderr'].append(line)
+        return nice_output
 
     def Run(self):
-        output = []*len(self.cmds)
+        output = []
         for i,cmd in enumerate(self.cmds):
-            output[i] = self._exec_ssh(cmd)
+            output.append(self._exec_ssh(cmd))
         if self.print_output:
             print(output)
         return output

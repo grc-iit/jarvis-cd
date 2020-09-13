@@ -1,5 +1,8 @@
 from enum import Enum
 
 class OperationType(Enum):
-    DEPLOY = 'deploy'
-    UNDEPLOY = 'undeploy'
+    START = 'start'
+    STOP = 'stop'
+
+    def __str__(self):
+        return self.value

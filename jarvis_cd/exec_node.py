@@ -1,5 +1,5 @@
 import subprocess
-from shlex import shlex
+import shlex
 
 from jarvis_cd.node import *
 
@@ -9,7 +9,7 @@ class ExecNode(Node):
         super().__init__(print_output)
         self.cmd=cmd
 
-    def _exec_cmd(command):
+    def _exec_cmd(self,command):
         """
         Executes a command on Shell and returns stdout and stderr from the command.
         :param command: the string of the command to be executed
@@ -27,7 +27,7 @@ class ExecNode(Node):
             lines.append(line.decode("utf-8"))
         return lines, stderr
 
-    def _exec_cmds(commands):
+    def _exec_cmds(self,commands):
         """
         Executes a command on Shell and returns stdout and stderr from the command.
         :param commands: the string of the command to be executed

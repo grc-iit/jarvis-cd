@@ -9,6 +9,6 @@ if __name__ == '__main__':
     target_ = getattr(target_, "package")
     class_ =  getattr(target_, arguments.args.target.capitalize())
     instance = class_()
-    operation = getattr(class_, arguments.args.operation.capitalize())
-    result = operation()
+    operation = getattr(class_, str(arguments.args.operation).capitalize())
+    result = operation(instance)
     print(result)
