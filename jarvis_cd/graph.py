@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 import pathlib
 import os
 import shutil
+import logging
 
 from jarvis_cd.exception import Error, ErrorCode
 
@@ -32,6 +33,7 @@ class Graph(ABC):
                         if key not in self.config[section]:
                             raise Error(ErrorCode.INVALID_KEY).format(key, default_config)
                         self.config[section][key] = os.path.expandvars(user_config[section][key])
+
     def _convert_hostfile_tolist(self, filename):
         a_file = open(filename, "r")
         list_of_lists = []
@@ -65,6 +67,7 @@ class Graph(ABC):
         if len(self.nodes) > 0:
             output = []
             for i, node in enumerate(self.nodes):
+                logging.info("Executing node {} index {}".format(str(node),i))
                 output.append(node.Run())
         return output
 
@@ -78,6 +81,7 @@ class Graph(ABC):
         if len(self.nodes) > 0:
             outputs = []
             for i, node in enumerate(self.nodes):
+                logging.info("Executing node {} index {}".format(str(node),i))
                 output = node.Run()
                 outputs.append(output)
         return outputs

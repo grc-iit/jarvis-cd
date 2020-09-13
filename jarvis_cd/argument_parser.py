@@ -1,6 +1,6 @@
 import argparse
 
-from jarvis_cd.enumerations import OperationType
+from jarvis_cd.enumerations import OperationType, LogLevel
 
 
 def str2bool(v):
@@ -36,6 +36,11 @@ class ArgumentParser(object):
                                  help="Target to choose.")
         self.parser.add_argument("operation", metavar='operation', default=OperationType.START, type=OperationType, choices=list(OperationType),
                                  help="Operation for target")
+        self.parser.add_argument("-ll","--log-level", default=LogLevel.ERROR, type=LogLevel,
+                                 choices=list(LogLevel),
+                                 help="Log level for execution")
+        self.parser.add_argument("--log-path", type=str, default="/tmp/jarvis-cd/jarvis.log",
+                                 help="Jarvis log file.")
         self.args = self.parser.parse_args()
         self._validate()
 

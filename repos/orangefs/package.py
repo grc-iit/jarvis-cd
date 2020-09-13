@@ -96,7 +96,7 @@ class Orangefs(Graph):
         ]
         server_start_node = SSHNode("start servers",self.server_data_hosts,server_start_cmds)
         nodes.append(server_start_node)
-        nodes.append(SleepNode(5,print_output=True))
+        nodes.append(SleepNode("sleep timer",5,print_output=True))
         nodes.append(EchoNode("verify server printing","Verifying OrangeFS servers ..."))
 
         verify_server_cmd = "export LD_LIBRARY_PATH={pvfs2_lib}; export PVFS2TAB_FILE={client_pvfs2tab}; " \
