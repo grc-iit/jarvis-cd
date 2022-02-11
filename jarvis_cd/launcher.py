@@ -1,5 +1,6 @@
 import configparser
 from abc import ABC, abstractmethod
+from jarvis_cd.jarvis_manager import JarvisManager
 import pathlib
 import os
 import shutil
@@ -7,34 +8,51 @@ import logging
 
 from jarvis_cd.exception import Error, ErrorCode
 
+class LauncherConfig:
+    def __init__(self, launcher_name):
+        self.launcher_name = launcher_name
+        self.config = {}
+        self._LoadDefaultConfig()
 
-class Graph(ABC):
-    def __init__(self, config_file = None, default_config=None):
+    def _LoadDefaultConfig(self):
+        default_config_path = os.path.join(JarvisManager.GetInstance().GetLauncherPath(self.launcher_name), 'default.ini')
+        if not os.path.exists(default_config_path):
+            raise Error(ErrorCode.INVALID_DEFAULT_CONFIG).format(self.launcher_name)
+        default_config = configparser.ConfigParser()
+        default_config.read(default_config_path)
+        for section in default_config.sections():
+            if section not in self.config:
+                self.config[section] = {}
+            for key in default_config[section]:
+                self.config[section][key.upper()] = os.path.expandvars(default_config[section][key])
+
+    def LoadConfig(self, config_path):
+        if config_path is None:
+            return None
+        if not os.path.exists(config_path):
+            raise Error(ErrorCode.CONFIG_NOT_FOUND).format(config_path)
+        user_config = configparser.ConfigParser()
+        user_config.read(config_path)
+        for section in user_config.sections():
+            if section not in self.config:
+                raise Error(ErrorCode.INVALID_SECTION).format(section, self.config.keys())
+            for key in user_config[section]:
+                if key not in self.config[section]:
+                    raise Error(ErrorCode.INVALID_KEY).format(key, self.config[section].keys())
+                self.config[section][key.upper()] = os.path.expandvars(user_config[section][key])
+
+    def __getitem__(self, key):
+        return self.config[key]
+
+class Launcher(ABC):
+    def __init__(self, config=None, args=None):
         self.nodes = None
-        self.config = configparser.ConfigParser()
-        self.temp_dir = "/tmp/jarvis-cd/orangefs"
-        if os.path.exists(self.temp_dir):
-            shutil.rmtree(self.temp_dir)
-        if not os.path.exists(self.temp_dir):
-            os.makedirs(self.temp_dir)
-        if default_config:
-            self.project_src = "{}".format(pathlib.Path(os.getcwd()).absolute())
-            self.config.read(os.path.join(self.project_src, default_config))
-            for section in self.config.sections():
-                for key in self.config[section]:
-                    self.config[section][key] = os.path.expandvars(self.config[section][key])
-            if config_file:
-                user_config = configparser.ConfigParser()
-                user_config.read(config_file)
-                for section in user_config.sections():
-                    if section not in self.config:
-                        raise Error(ErrorCode.INVALID_SECTION).format(section, default_config)
-                    for key in user_config[section]:
-                        if key not in self.config[section]:
-                            raise Error(ErrorCode.INVALID_KEY).format(key, default_config)
-                        self.config[section][key] = os.path.expandvars(user_config[section][key])
+        self.args = args
+        self.SetConfig(config)
 
     def _convert_hostfile_tolist(self, filename):
+        if not os.path.exists(filename):
+            raise Error(ErrorCode.HOSTFILE_NOT_FOUND).format(filename)
         a_file = open(filename, "r")
         list_of_lists = []
         for line in a_file:
@@ -48,6 +66,10 @@ class Graph(ABC):
         a_file.close()
 
         return list_of_lists
+
+    @abstractmethod
+    def _SetConfig(self):
+        return []
 
     @abstractmethod
     def _DefineStart(self):
@@ -64,6 +86,22 @@ class Graph(ABC):
     @abstractmethod
     def _DefineStatus(self):
         return []
+
+    def SetTempDir(self, temp_dir):
+        self.temp_dir = temp_dir
+        if os.path.exists(self.temp_dir):
+            shutil.rmtree(self.temp_dir)
+        if not os.path.exists(self.temp_dir):
+            os.makedirs(self.temp_dir)
+
+    def SetConfig(self, config):
+        self.config = config
+        if self.config is None:
+            return
+        self._SetConfig()
+
+    def GetConfig(self):
+        return
 
     def Restart(self):
         self.Stop()

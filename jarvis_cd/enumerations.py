@@ -4,6 +4,8 @@ from enum import Enum
 class OperationType(Enum):
     START = 'start'
     STOP = 'stop'
+    RESTART = 'restart'
+    STATUS = 'status'
 
     def __str__(self):
         return self.value

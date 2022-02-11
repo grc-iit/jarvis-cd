@@ -1,4 +1,4 @@
-from pssh.pssh_client import ParallelSSHClient
+from pssh.clients import ParallelSSHClient
 import sys
 import os
 import getpass

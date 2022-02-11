@@ -1,4 +1,50 @@
-#!/bin/bash
-SCRIPT_DIR=`pwd`
-REPO_DIR="$(dirname "$SCRIPT_DIR")"
-python ${REPO_DIR}/jarvis.py "$@"
+#!/usr/bin/env python3
+
+"""
+jarvis_cd [launcher] [operation] [conf.ini]
+"""
+
+from jarvis_cd.jarvis_manager import JarvisManager
+from jarvis_cd.argument_parser import ArgumentParser
+from jarvis_cd.launcher import LauncherConfig
+import sys,os
+import logging
+
+if __name__ == '__main__':
+    #Load the arguments
+    arguments = ArgumentParser.GetInstance()
+    jarvis_manager = JarvisManager.GetInstance()
+
+    #Set the logging output
+    if arguments.args.log_path is None:
+        arguments.args.log_path = os.path.join(jarvis_manager.GetTmpDir(), 'jarvis.log')
+    logging.basicConfig(
+        filename=arguments.args.log_path,
+        level=int(arguments.args.log_level.value),
+        filemode='w',
+        format='[%(levelname)s] %(asctime)s :%(message)s')
+    logging.debug("Launcher {} and Operation {}".format(arguments.args.launcher, arguments.args.operation))
+
+    #Load the Jarvis CD launcher module
+    launcher_module_name = arguments.args.launcher
+    launcher_class_name = arguments.args.launcher.capitalize()
+    launcher_class = jarvis_manager.GetLauncherClass(launcher_module_name, launcher_class_name)
+    logging.info("Loaded class {}".format(launcher_class_name))
+
+    #Load the launcher configuration
+    launcher_config_path = arguments.args.config
+    launcher_config = LauncherConfig(launcher_module_name)
+    launcher_config.LoadConfig(launcher_config_path)
+
+    #Create the launcher class
+    launcher_instance = launcher_class(launcher_config, arguments.args)
+    logging.info("Created class {}".format(launcher_class_name))
+
+    #Load the launcher operation
+    launcher_op_name = arguments.args.operation
+    launcher_op = getattr(launcher_class, str(arguments.args.operation).capitalize())
+    logging.info("Loaded operation {}".format(str(arguments.args.operation).capitalize()))
+
+    #Call the launcher operation
+    result = launcher_op(launcher_instance)
+    logging.info("Finished execution", exc_info=True)

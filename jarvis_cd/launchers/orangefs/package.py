@@ -1,24 +1,22 @@
 from jarvis_cd.echo_node import EchoNode
-from jarvis_cd.exception import Error, ErrorCode
 from jarvis_cd.exec_node import ExecNode
-from jarvis_cd.graph import Graph
+from jarvis_cd.launcher import Launcher, LauncherConfig
 import os
 import socket
-import time
 
 from jarvis_cd.scp_node import SCPNode
 from jarvis_cd.sleep_node import SleepNode
 from jarvis_cd.ssh_node import SSHNode
 
+class Orangefs(Launcher):
+    def __init__(self, config=None, args=None):
+        super().__init__(config, args)
 
-class Orangefs(Graph):
-    _default_config = "repos/orangefs/default.ini"
-    def __init__(self, config_file = None):
-        super().__init__(config_file,self._default_config)
+    def _SetConfig(self):
         self.server_data_hosts = self._convert_hostfile_tolist(self.config['SERVER']['SERVER_DATA_HOST_FILE'])
         self.server_meta_hosts = self._convert_hostfile_tolist(self.config['SERVER']['SERVER_META_HOST_FILE'])
         self.client_hosts = self._convert_hostfile_tolist(self.config['CLIENT']['CLIENT_HOST_FILE'])
-        self.pvfs_genconfig = os.path.join(self.config["COMMON"]["ORANGEFS_INSTALL_DIR"],"bin","pvfs2-genconfig")
+        self.pvfs_genconfig = os.path.join(self.config["COMMON"]["ORANGEFS_INSTALL_DIR"], "bin", "pvfs2-genconfig")
 
     def _DefineClean(self):
         nodes = []
@@ -44,15 +42,15 @@ class Orangefs(Graph):
         nodes = []
         for i, client in enumerate(self.client_hosts):
             cmds = [
-                "sudo umount -l {mount_point}".format(mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']),
-                "sudo umount -f {mount_point}".format(mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']),
-                "sudo umount {mount_point}".format(mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']),
-                "sudo killall -9 pvfs2-client",
-                "sudo killall -9 pvfs2-client-core",
-                "sudo rmmod pvfs2",
-                "sudo kill-pvfs2-client"
+                "umount -l {mount_point}".format(mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']),
+                "umount -f {mount_point}".format(mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']),
+                "umount {mount_point}".format(mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']),
+                "killall -9 pvfs2-client",
+                "killall -9 pvfs2-client-core",
+                "rmmod pvfs2",
+                "kill-pvfs2-client"
             ]
-            node = SSHNode("stop client",client, cmds)
+            node = SSHNode("stop client",client, cmds, sudo=True)
             nodes.append(node)
         nodes.append(SSHNode("stop server",self.server_data_hosts,"killall -9 pvfs2-server"))
         nodes.append(SSHNode("check server", self.client_hosts,"pgrep -la pvfs2-server",print_output=True))

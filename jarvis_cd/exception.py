@@ -33,5 +33,9 @@ class ErrorCode:
     CONFIG_REQUIRED = {"id": 1000, "msg": "Config is required. Check sample {}"}
     INVALID_SECTION = {"id": 1001, "msg": "Section {} is not recognized. Check sample {}"}
     INVALID_KEY = {"id": 1002, "msg": "Key {} is not recognized. Check sample {}"}
+    INVALID_DEFAULT_CONFIG = {"id": 1003, "msg": "The module {} does not have a default configuration."}
+    NOT_INSTALLED = {"id": 1004, "msg": "{} environment variable has not been set."}
+    CONFIG_NOT_FOUND = {"id": 1005, "msg": "Config at {} does not exist."}
+    HOSTFILE_NOT_FOUND = {"id": 1006, "msg": "Hostfile at {} does not exist."}
 
     #Orange FS error code

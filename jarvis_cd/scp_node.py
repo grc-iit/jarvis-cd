@@ -1,4 +1,4 @@
-from pssh.pssh_client import ParallelSSHClient
+from pssh.clients import ParallelSSHClient
 from gevent import joinall
 import sys
 import os
