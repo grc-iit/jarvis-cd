@@ -2,22 +2,32 @@ from pssh.clients import ParallelSSHClient
 import sys
 import os
 import getpass
+from jarvis_cd.hostfile import Hostfile
 
 from jarvis_cd.node import Node
+from jarvis_cd.exception import Error, ErrorCode
 
 sys.stderr = sys.__stderr__
 
 class SSHNode(Node):
     def __init__(self, name, hosts, cmd, username = getpass.getuser(), port=22, sudo=False, print_output=False):
         super().__init__(name, print_output)
-        if type(hosts) == list:
+        if isinstance(hosts, list):
             self.hosts=hosts
-        else:
+        elif isinstance(hosts, str):
             self.hosts=[hosts]
-        if type(cmd) == list:
-            self.cmds=cmd
+        elif isinstance(hosts, Hostfile):
+            self.hosts = hosts.list()
         else:
+            raise Error(ErrorCode.INVALID_TYPE).format("SSHNode hosts", type(hosts))
+
+        if isinstance(cmd, list):
+            self.cmds=cmd
+        elif isinstance(cmd, str):
             self.cmds=[cmd]
+        else:
+            raise Error(ErrorCode.INVALID_TYPE).format("SSHNode cmdss", type(cmd))
+
         self.sudo=sudo
         self.username=username
         self.port = port

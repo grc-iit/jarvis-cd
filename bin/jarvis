@@ -31,13 +31,9 @@ if __name__ == '__main__':
     launcher_class = jarvis_manager.GetLauncherClass(launcher_module_name, launcher_class_name)
     logging.info("Loaded class {}".format(launcher_class_name))
 
-    #Load the launcher configuration
-    launcher_config_path = arguments.args.config
-    launcher_config = LauncherConfig(launcher_module_name)
-    launcher_config.LoadConfig(launcher_config_path)
-
     #Create the launcher class
-    launcher_instance = launcher_class(launcher_config, arguments.args)
+    launcher_config_path = arguments.args.config
+    launcher_instance = launcher_class(launcher_config_path, arguments.args)
     logging.info("Created class {}".format(launcher_class_name))
 
     #Load the launcher operation

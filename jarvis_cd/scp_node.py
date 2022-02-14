@@ -3,18 +3,24 @@ from gevent import joinall
 import sys
 import os
 import getpass
+from jarvis_cd.hostfile import Hostfile
 
 from jarvis_cd.node import Node
+from jarvis_cd.exception import Error, ErrorCode
 
 sys.stderr = sys.__stderr__
 
 class SCPNode(Node):
     def __init__(self, name, hosts, source, destination, username = getpass.getuser(), sudo=False, print_output=False):
         super().__init__(name, print_output)
-        if type(hosts) == list:
-            self.hosts=hosts
+        if isinstance(hosts, list):
+            self.hosts = hosts
+        elif isinstance(hosts, str):
+            self.hosts = [hosts]
+        elif isinstance(hosts, Hostfile):
+            self.hosts = hosts.list()
         else:
-            self.hosts=[hosts]
+            raise Error(ErrorCode.INVALID_TYPE).format("SCPNode hosts", type(hosts))
         self.source = source
         self.destination = destination
         self.sudo=sudo

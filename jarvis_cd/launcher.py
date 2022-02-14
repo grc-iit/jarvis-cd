@@ -8,11 +8,13 @@ import logging
 
 from jarvis_cd.exception import Error, ErrorCode
 
-class LauncherConfig:
-    def __init__(self, launcher_name):
+class LauncherConfig(ABC):
+    def __init__(self, launcher_name, config_path=None):
         self.launcher_name = launcher_name
         self.config = {}
         self._LoadDefaultConfig()
+        if config_path is not None:
+            self.LoadConfig(config_path)
 
     def _LoadDefaultConfig(self):
         default_config_path = os.path.join(JarvisManager.GetInstance().GetLauncherPath(self.launcher_name), 'default.ini')
@@ -25,6 +27,7 @@ class LauncherConfig:
                 self.config[section] = {}
             for key in default_config[section]:
                 self.config[section][key.upper()] = os.path.expandvars(default_config[section][key])
+        self._LoadConfig()
 
     def LoadConfig(self, config_path):
         if config_path is None:
@@ -40,36 +43,19 @@ class LauncherConfig:
                 if key not in self.config[section]:
                     raise Error(ErrorCode.INVALID_KEY).format(key, self.config[section].keys())
                 self.config[section][key.upper()] = os.path.expandvars(user_config[section][key])
-
-    def __getitem__(self, key):
-        return self.config[key]
-
-class Launcher(ABC):
-    def __init__(self, config=None, args=None):
-        self.nodes = None
-        self.args = args
-        self.SetConfig(config)
-
-    def _convert_hostfile_tolist(self, filename):
-        if not os.path.exists(filename):
-            raise Error(ErrorCode.HOSTFILE_NOT_FOUND).format(filename)
-        a_file = open(filename, "r")
-        list_of_lists = []
-        for line in a_file:
-            stripped_line = line.strip()
-            line_list = stripped_line.split(sep=":")
-            if len(line_list) == 2:
-                for i in range(int(line_list[1])):
-                    list_of_lists.append(line_list[0])
-            else:
-                list_of_lists.append(line_list[0])
-        a_file.close()
-
-        return list_of_lists
+        self._LoadConfig()
+        return self
 
     @abstractmethod
-    def _SetConfig(self):
+    def _LoadConfig(self):
         return []
+
+class Launcher(LauncherConfig):
+    def __init__(self, launcher_name, config_path, args):
+        super().__init__(launcher_name, config_path)
+        self.nodes = None
+        self.args = args
+        self.SetTempDir("{}_{}".format(JarvisManager.GetInstance().GetTmpDir(), launcher_name))
 
     @abstractmethod
     def _DefineStart(self):
@@ -93,15 +79,6 @@ class Launcher(ABC):
             shutil.rmtree(self.temp_dir)
         if not os.path.exists(self.temp_dir):
             os.makedirs(self.temp_dir)
-
-    def SetConfig(self, config):
-        self.config = config
-        if self.config is None:
-            return
-        self._SetConfig()
-
-    def GetConfig(self):
-        return
 
     def Restart(self):
         self.Stop()

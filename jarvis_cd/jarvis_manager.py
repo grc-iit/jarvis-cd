@@ -17,9 +17,12 @@ class JarvisManager:
             raise Error(ErrorCode.NOT_INSTALLED).format('JARVIS_CD_TMP')
         self.root = os.environ['JARVIS_CD_ROOT']
         self.tmp = os.environ['JARVIS_CD_TMP']
+
         sys.path.append(self.root)
 
     def GetTmpDir(self):
+        if not os.path.exists(self.tmp):
+            os.makedirs(self.tmp)
         return self.tmp
 
     def GetLauncherClass(self, module_name, class_name):

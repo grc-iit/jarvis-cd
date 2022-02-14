@@ -37,5 +37,7 @@ class ErrorCode:
     NOT_INSTALLED = {"id": 1004, "msg": "{} environment variable has not been set."}
     CONFIG_NOT_FOUND = {"id": 1005, "msg": "Config at {} does not exist."}
     HOSTFILE_NOT_FOUND = {"id": 1006, "msg": "Hostfile at {} does not exist."}
+    TOO_MANY_HOSTS_CHOSEN = {"id": 1007, "msg": "Hostfile at {} does not contain {} hosts, only {}."}
+    INVALID_TYPE = {"id": 1008, "msg": "{}: Has invalid type {}."}
 
     #Orange FS error code

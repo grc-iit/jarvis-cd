@@ -1,5 +1,6 @@
 from jarvis_cd.echo_node import EchoNode
 from jarvis_cd.exec_node import ExecNode
+from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launcher import Launcher, LauncherConfig
 import os
 import socket
@@ -9,14 +10,20 @@ from jarvis_cd.sleep_node import SleepNode
 from jarvis_cd.ssh_node import SSHNode
 
 class Orangefs(Launcher):
-    def __init__(self, config=None, args=None):
-        super().__init__(config, args)
+    def __init__(self, config_path=None, args=None):
+        super().__init__('orangefs', config_path, args)
 
-    def _SetConfig(self):
-        self.server_data_hosts = self._convert_hostfile_tolist(self.config['SERVER']['SERVER_DATA_HOST_FILE'])
-        self.server_meta_hosts = self._convert_hostfile_tolist(self.config['SERVER']['SERVER_META_HOST_FILE'])
-        self.client_hosts = self._convert_hostfile_tolist(self.config['CLIENT']['CLIENT_HOST_FILE'])
+    def _LoadConfig(self):
+        self.server_data_hosts = Hostfile().LoadHostfile(self.config['SERVER']['SERVER_DATA_HOST_FILE'])
+        self.server_meta_hosts = Hostfile().LoadHostfile(self.config['SERVER']['SERVER_META_HOST_FILE'])
+        self.client_hosts = Hostfile().LoadHostfile(self.config['CLIENT']['CLIENT_HOST_FILE'])
         self.pvfs_genconfig = os.path.join(self.config["COMMON"]["ORANGEFS_INSTALL_DIR"], "bin", "pvfs2-genconfig")
+
+    def SetNumHosts(self, num_data_hosts, num_meta_hosts, num_client_hosts):
+        self.server_data_hosts.SelectHosts(num_data_hosts)
+        self.server_meta_hosts.SelectHosts(num_meta_hosts)
+        self.client_hosts.SelectHosts(num_client_hosts)
+        return
 
     def _DefineClean(self):
         nodes = []
@@ -40,7 +47,7 @@ class Orangefs(Launcher):
 
     def _DefineStop(self):
         nodes = []
-        for i, client in enumerate(self.client_hosts):
+        for i, client in self.client_hosts.enumerate():
             cmds = [
                 "umount -l {mount_point}".format(mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']),
                 "umount -f {mount_point}".format(mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']),
@@ -71,13 +78,13 @@ class Orangefs(Launcher):
                     "--storage {data_dir} "\
                     "--metadata {meta_dir} "\
                     "--logfile {log_file} "\
-                    "{conf_file}".format(  binary=self.pvfs_genconfig,
+                    "{conf_file}".format(binary=self.pvfs_genconfig,
                                                             protocol=self.config['SERVER']['PVFS2_PROTOCOL'],
                                                             port=self.config['SERVER']['PVFS2_PORT'],
                                                             dist_name=self.config['SERVER']['PVFS2_DISTRIBUTION_NAME'],
                                                             strip_size=self.config['SERVER']['PVFS2_STRIP_SIZE'],
-                                                            data_servers=",".join(self.server_data_hosts),
-                                                            meta_servers=",".join(self.server_meta_hosts),
+                                                            data_servers=self.server_data_hosts.to_str(sep=','),
+                                                            meta_servers=self.server_meta_hosts.to_str(sep=','),
                                                             data_dir=os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],"data"),
                                                             meta_dir=os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],"meta"),
                                                             log_file=os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],"orangefs.log"),
@@ -86,7 +93,7 @@ class Orangefs(Launcher):
         nodes.append(pfs_genconfig_node)
 
         # set pvfstab on clients
-        for i,client in enumerate(self.client_hosts):
+        for i,client in self.client_hosts.list().enumerate():
             metadata_server = self.server_meta_hosts[i % len(self.server_meta_hosts)]
             metadata_server_ip = socket.gethostbyname(metadata_server)
             cmd = "echo '{protocol}://{ip}:{port}/orangefs {mount_point} pvfs2 defaults,auto 0 0' > {client_pvfs2tab}".format(
@@ -130,7 +137,7 @@ class Orangefs(Launcher):
         kernel_ko = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'], "lib/modules/3.10.0-862.el7.x86_64/kernel/fs/pvfs2/pvfs2.ko")
         pvfs2_client = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'], "sbin","pvfs2-client")
         pvfs2_client_core = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'], "sbin", "pvfs2-client-core")
-        for i,client in enumerate(self.client_hosts):
+        for i,client in self.client_hosts.enumerate():
             metadata_server = self.server_meta_hosts[i % len(self.server_meta_hosts)]
             metadata_server_ip = socket.gethostbyname(metadata_server)
             start_client_cmds = [
