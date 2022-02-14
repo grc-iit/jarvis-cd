@@ -8,7 +8,7 @@ from jarvis_cd.node import Node
 sys.stderr = sys.__stderr__
 
 class SSHNode(Node):
-    def __init__(self, name, hosts, cmd, username = getpass.getuser(), sudo=False, print_output=False):
+    def __init__(self, name, hosts, cmd, username = getpass.getuser(), port=22, sudo=False, print_output=False):
         super().__init__(name, print_output)
         if type(hosts) == list:
             self.hosts=hosts
@@ -20,9 +20,10 @@ class SSHNode(Node):
             self.cmds=[cmd]
         self.sudo=sudo
         self.username=username
+        self.port = port
 
     def _exec_ssh(self, cmd):
-        client = ParallelSSHClient(self.hosts)
+        client = ParallelSSHClient(self.hosts, port=self.port)
         output = client.run_command(cmd, sudo=self.sudo)
         nice_output = dict()
         for host in output:
@@ -47,8 +48,3 @@ class SSHNode(Node):
 
     def __str__(self):
         return "SSHNode {}".format(self.name)
-
-
-
-
-
