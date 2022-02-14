@@ -11,7 +11,7 @@ from jarvis_cd.exception import Error, ErrorCode
 sys.stderr = sys.__stderr__
 
 class SCPNode(Node):
-    def __init__(self, name, hosts, source, destination, username = getpass.getuser(), sudo=False, print_output=False):
+    def __init__(self, name, hosts, source, destination, username = getpass.getuser(), port=22, sudo=False, print_output=False):
         super().__init__(name, print_output)
         if isinstance(hosts, list):
             self.hosts = hosts
@@ -25,9 +25,10 @@ class SCPNode(Node):
         self.destination = destination
         self.sudo=sudo
         self.username=username
+        self.port = port
 
     def _exec_scp(self):
-        client = ParallelSSHClient(self.hosts)
+        client = ParallelSSHClient(self.hosts, port=port)
         output = client.copy_file(self.source, self.destination,True)
         joinall(output, raise_error=True)
         nice_output = dict()
