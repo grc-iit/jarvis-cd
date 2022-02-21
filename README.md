@@ -28,10 +28,10 @@ source ~/.bashrc
 
 ```bash
 # sample ini can be found and overriden at launchers/orangefs/default.ini
-jarvis orangefs start config.ini
+jarvis orangefs start --conf config.ini
 ```
 
 ## Undeploy Orangefs
 ```bash
-jarvis orangefs stop config.ini
+jarvis orangefs stop --conf config.ini
 ```
