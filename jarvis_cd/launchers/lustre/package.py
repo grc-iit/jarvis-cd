@@ -15,6 +15,7 @@ class Lustre(Launcher):
 
     def _LoadConfig(self):
         self.oss_hosts = Hostfile().LoadHostfile(self.config['OBJECT_STORAGE_SERVERS']['HOSTFILE'])
+        self.num_ost_per_node = int(self.config['OBJECT_STORAGE_SERVERS']['NUM_OST_PER_NODE'])
 
     def SetNumHosts(self, num_oss_hosts, num_client_hosts):
         self.oss_hosts.SelectHosts(num_oss_hosts)
