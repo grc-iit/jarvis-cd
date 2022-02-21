@@ -78,7 +78,7 @@ class Lustre(Launcher):
             make_ost_cmd = ';'.join(make_ost_cmd)
             mkdir_ost_cmd = ';'.join(mkdir_ost_cmd)
             mount_ost_cmd = ';'.join(mount_ost_cmd)
-            nodes.append("mount_ost", host, f'{make_ost_cmd};{mkdir_ost_cmd};{mount_ost_cmd}')
+            nodes.append(SSHNode("mount_ost", host, f'{make_ost_cmd};{mkdir_ost_cmd};{mount_ost_cmd}'))
         return nodes
 
 
