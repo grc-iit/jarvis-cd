@@ -39,10 +39,7 @@ class SSHNode(Node):
 
     def _exec_ssh(self, cmd):
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
-        print(f"client = ParallelSSHClient({self.hosts}, user={self.username}, pkey={self.pkey}, password={self.password}, port={self.port})")
         output = client.run_command(cmd, sudo=self.sudo)
-        client.join(output)
-
         nice_output = dict()
         for host_output in output:
             host = host_output.host
