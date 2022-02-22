@@ -39,22 +39,25 @@ class SSHNode(Node):
 
     def _exec_ssh(self, cmd):
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
+        print(f"client = ParallelSSHClient({self.hosts}, user={self.username}, pkey={self.pkey}, password={self.password}, port={self.port})")
         output = client.run_command(cmd, sudo=self.sudo)
+        client.join(output)
+
         nice_output = dict()
-        for host in output:
+        for host_output in output:
+            host = host_output.host
             nice_output[host]={
                 'stdout':[],
                 'stderr':[]
             }
-            for line in output[host]['stdout']:
-                nice_output[host]['stdout'].append(line)
-            for line in output[host]['stderr']:
-                nice_output[host]['stderr'].append(line)
+            nice_output[host]['stdout'] = list(host_output.stdout)
+            nice_output[host]['stderr'] = list(host_output.stderr)
         return nice_output
 
     def Run(self):
         outputs = []
         for i,cmd in enumerate(self.cmds):
+            print(cmd)
             output=self._exec_ssh(cmd)
             if self.print_output:
                 self.Print(output)
