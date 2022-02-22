@@ -2,8 +2,10 @@ import logging
 from enum import Enum
 
 class OperationType(Enum):
+    INIT = 'init'
     START = 'start'
     STOP = 'stop'
+    CLEAN = 'clean'
     RESTART = 'restart'
     STATUS = 'status'
 
