@@ -53,7 +53,6 @@ class Lustre(Launcher):
             f"mkfs.lustre "
             f"--fsname={self.config['BASIC']['FSNAME']} "
             f"--reformat "
-            f"--replace "
             f"--mgsnode={self.config['MANAGEMENT_SERVER']['HOST']}@tcp "
             f"--mdt "
             f"--index=0 {self.config['METADATA_SERVER']['STORAGE']}"
