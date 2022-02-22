@@ -58,7 +58,7 @@ class Lustre(Launcher):
             f"--mdt "
             f"--index=0 {self.config['METADATA_SERVER']['STORAGE']}"
         )
-        mkdir_mdt_cmd = f"mkdir {self.config['METADATA_SERVER']['MOUNT_POINT']}"
+        mkdir_mdt_cmd = f"mkdir -p {self.config['METADATA_SERVER']['MOUNT_POINT']}"
         mount_mdt_cmd = f"mount -t lustre {self.config['METADATA_SERVER']['STORAGE']} {self.config['METADATA_SERVER']['MOUNT_POINT']}"
         nodes.append(SSHNode(
             "make_mdt",
@@ -83,7 +83,7 @@ class Lustre(Launcher):
                     f"--mgsnode={self.config['MANAGEMENT_SERVER']['HOST']}@tcp "
                     f"--index={index} {ost_dev}"
                 ))
-                mkdir_ost_cmd.append(f"mkdir {ost_dir}")
+                mkdir_ost_cmd.append(f"mkdir -p {ost_dir}")
                 mount_ost_cmd.append(f"mount -t lustre {ost_dev} {ost_dir}")
                 index += 1
             make_ost_cmd = ';'.join(make_ost_cmd)
@@ -95,7 +95,7 @@ class Lustre(Launcher):
                                  username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
 
         #Mount the Lustre PFS on the clients
-        mkdir_client_cmd = f"mkdir {self.config['CLIENT']['MOUNT_POINT']}"
+        mkdir_client_cmd = f"mkdir -p {self.config['CLIENT']['MOUNT_POINT']}"
         mount_client_cmd = f"mount -t lustre {self.config['MANAGEMENT_SERVER']['HOST']}@tcp:/{self.config['BASIC']['FSNAME']} {self.config['CLIENT']['MOUNT_POINT']}"
         nodes.append(SSHNode("mount_client",
                              self.client_hosts,
