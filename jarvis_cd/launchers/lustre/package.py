@@ -69,20 +69,13 @@ class Lustre(Launcher):
 
     def _DefineStop(self):
         nodes = []
-        # Unmount Lustre Management Server (MGS)
-        unmount_mgt_cmd = f"umount {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
-        nodes.append(SSHNode("unmount_mgt",
-                             self.config['MANAGEMENT_SERVER']['HOST'],
-                             unmount_mgt_cmd,
-                             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
 
-        # Unmount Lustre Metatadata Server (MDT)
-        unmount_mdt_cmd = f"umount {self.config['METADATA_SERVER']['MOUNT_POINT']}"
-        nodes.append(SSHNode(
-            "unmount_mdt",
-            self.config['METADATA_SERVER']['HOST'],
-            unmount_mdt_cmd,
-            username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+        # Unmount the Lustre PFS on the clients
+        unmount_client_cmd = f"umount {self.config['CLIENT']['MOUNT_POINT']}"
+        nodes.append(SSHNode("unmount_client",
+                             self.client_hosts,
+                             unmount_client_cmd,
+                             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
 
         # Unmount Lustre Object Storage Server (OSS) and Targets (OSTs)
         index = 1
@@ -98,13 +91,23 @@ class Lustre(Launcher):
                                  unmount_ost_cmd,
                                  username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
 
-        # Unmount the Lustre PFS on the clients
-        unmount_client_cmd = f"umount {self.config['CLIENT']['MOUNT_POINT']}"
-        nodes.append(SSHNode("unmount_client",
-                             self.client_hosts,
-                             unmount_client_cmd,
+        # Unmount Lustre Metatadata Server (MDT)
+        unmount_mdt_cmd = f"umount {self.config['METADATA_SERVER']['MOUNT_POINT']}"
+        nodes.append(SSHNode(
+            "unmount_mdt",
+            self.config['METADATA_SERVER']['HOST'],
+            unmount_mdt_cmd,
+            username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+
+
+        # Unmount Lustre Management Server (MGS)
+        unmount_mgt_cmd = f"umount {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
+        nodes.append(SSHNode("unmount_mgt",
+                             self.config['MANAGEMENT_SERVER']['HOST'],
+                             unmount_mgt_cmd,
                              username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
         return nodes
+
 
     def _DefineStart(self):
         nodes = []
