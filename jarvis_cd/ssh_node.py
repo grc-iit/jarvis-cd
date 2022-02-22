@@ -10,7 +10,7 @@ from jarvis_cd.exception import Error, ErrorCode
 sys.stderr = sys.__stderr__
 
 class SSHNode(Node):
-    def __init__(self, name, hosts, cmd, username = getpass.getuser(), port=22, sudo=False, print_output=False):
+    def __init__(self, name, hosts, cmd, username = getpass.getuser(), port=22, pkey=None, password=None, sudo=False, print_output=False):
         super().__init__(name, print_output)
         if isinstance(hosts, list):
             self.hosts=hosts
@@ -28,12 +28,17 @@ class SSHNode(Node):
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SSHNode cmdss", type(cmd))
 
+        if password is None and pkey is None:
+            pkey = f"{os.environ['HOME']}/.ssh/id_rsa"
+
+        self.pkey = pkey
+        self.password = password
         self.sudo=sudo
         self.username=username
         self.port = port
 
     def _exec_ssh(self, cmd):
-        client = ParallelSSHClient(self.hosts, port=self.port)
+        client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
         output = client.run_command(cmd, sudo=self.sudo)
         nice_output = dict()
         for host in output:
