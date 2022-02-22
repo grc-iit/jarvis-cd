@@ -41,7 +41,7 @@ class Lustre(Launcher):
 
         #Make and mount Lustre Management Server (MGS)
         make_mgt_cmd = f"mkfs.lustre --reformat --mgs {self.config['MANAGEMENT_SERVER']['STORAGE']}"
-        mkdir_mgt_cmd = f"mkdir {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
+        mkdir_mgt_cmd = f"mkdir -p {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
         mount_mgt_cmd = f"mount -t lustre {self.config['MANAGEMENT_SERVER']['STORAGE']} {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
         nodes.append(SSHNode("make_mgt",
                              self.config['MANAGEMENT_SERVER']['HOST'],
