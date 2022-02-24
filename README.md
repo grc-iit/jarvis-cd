@@ -24,6 +24,21 @@ bash install.sh
 source ~/.bashrc
 ```
 
+## General Commands
+
+```bash
+jarvis [launcher] [operation] --conf /path/to/config
+#Initialize a service (e.g., may all
+jarvis lustre init --conf config.ini
+#Starts an already-initialized service
+jarvis lustre start --conf config.ini
+#Calls init + start
+jarvis lustre setup --conf config.ini
+jarvis lustre stop --conf config.ini
+jarvis lustre clean --conf config.ini
+jarvis lustre reset --conf config.ini
+```
+
 ## Deploy Orangefs
 
 ```bash

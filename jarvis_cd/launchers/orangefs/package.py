@@ -96,7 +96,7 @@ class Orangefs(Launcher):
         nodes.append(pfs_genconfig_node)
 
         # set pvfstab on clients
-        for i,client in self.client_hosts.list().enumerate():
+        for i,client in self.client_hosts.enumerate():
             metadata_server = self.server_meta_hosts[i % len(self.server_meta_hosts)]
             metadata_server_ip = socket.gethostbyname(metadata_server)
             cmd = "echo '{protocol}://{ip}:{port}/orangefs {mount_point} pvfs2 defaults,auto 0 0' > {client_pvfs2tab}".format(
