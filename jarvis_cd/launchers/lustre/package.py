@@ -164,7 +164,7 @@ class Lustre(Launcher):
         mkdir_client_cmd = f"mkdir -p {self.config['CLIENT']['MOUNT_POINT']}"
         nodes.append(SSHNode("mount_client",
                              self.client_hosts,
-                             {mkdir_client_cmd},
+                             mkdir_client_cmd,
                              username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
         return nodes
 
