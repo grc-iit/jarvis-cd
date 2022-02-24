@@ -140,7 +140,6 @@ class Lustre(Launcher):
         for host in self.oss_hosts:
             make_ost_cmd = []
             mkdir_ost_cmd = []
-            mount_ost_cmd = []
             for i in range(self.num_ost_per_node):
                 ost_id = f"OST{i}"
                 ost_dev = f"{self.config['OBJECT_STORAGE_SERVERS'][ost_id]}"
@@ -176,7 +175,7 @@ class Lustre(Launcher):
         mount_mgt_cmd = f"mount -t lustre {self.config['MANAGEMENT_SERVER']['STORAGE']} {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
         nodes.append(SSHNode("make_mgt",
                              self.config['MANAGEMENT_SERVER']['HOST'],
-                             {mount_mgt_cmd},
+                             mount_mgt_cmd,
                              username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
 
         #Make and mount Lustre Metatadata Server (MDT)
@@ -184,7 +183,7 @@ class Lustre(Launcher):
         nodes.append(SSHNode(
             "make_mdt",
             self.config['METADATA_SERVER']['HOST'],
-            {mount_mdt_cmd},
+            mount_mdt_cmd,
             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
 
         #Make and mount Lustre Object Storage Server (OSS) and Targets (OSTs)
