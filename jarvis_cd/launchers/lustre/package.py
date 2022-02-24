@@ -108,20 +108,18 @@ class Lustre(Launcher):
                              username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
         return nodes
 
-
-    def _DefineStart(self):
+    def _DefineInit(self):
         nodes = []
 
-        #Make and mount Lustre Management Server (MGS)
+        # Make and mount Lustre Management Server (MGS)
         make_mgt_cmd = f"mkfs.lustre --reformat --mgs {self.config['MANAGEMENT_SERVER']['STORAGE']}"
         mkdir_mgt_cmd = f"mkdir -p {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
-        mount_mgt_cmd = f"mount -t lustre {self.config['MANAGEMENT_SERVER']['STORAGE']} {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
         nodes.append(SSHNode("make_mgt",
                              self.config['MANAGEMENT_SERVER']['HOST'],
-                             f'{make_mgt_cmd};{mkdir_mgt_cmd};{mount_mgt_cmd}',
+                             f'{make_mgt_cmd};{mkdir_mgt_cmd}',
                              username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
 
-        #Make and mount Lustre Metatadata Server (MDT)
+        # Make and mount Lustre Metatadata Server (MDT)
         make_mdt_cmd = (
             f"mkfs.lustre "
             f"--fsname={self.config['BASIC']['FSNAME']} "
@@ -131,14 +129,13 @@ class Lustre(Launcher):
             f"--index=0 {self.config['METADATA_SERVER']['STORAGE']}"
         )
         mkdir_mdt_cmd = f"mkdir -p {self.config['METADATA_SERVER']['MOUNT_POINT']}"
-        mount_mdt_cmd = f"mount -t lustre {self.config['METADATA_SERVER']['STORAGE']} {self.config['METADATA_SERVER']['MOUNT_POINT']}"
         nodes.append(SSHNode(
             "make_mdt",
             self.config['METADATA_SERVER']['HOST'],
-            f'{make_mdt_cmd};{mkdir_mdt_cmd};{mount_mdt_cmd}',
+            f'{make_mdt_cmd};{mkdir_mdt_cmd}',
             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
 
-        #Make and mount Lustre Object Storage Server (OSS) and Targets (OSTs)
+        # Make and mount Lustre Object Storage Server (OSS) and Targets (OSTs)
         index = 1
         for host in self.oss_hosts:
             make_ost_cmd = []
@@ -156,22 +153,61 @@ class Lustre(Launcher):
                     f"--index={index} {ost_dev}"
                 ))
                 mkdir_ost_cmd.append(f"mkdir -p {ost_dir}")
-                mount_ost_cmd.append(f"mount -t lustre {ost_dev} {ost_dir}")
                 index += 1
             make_ost_cmd = ';'.join(make_ost_cmd)
             mkdir_ost_cmd = ';'.join(mkdir_ost_cmd)
+            nodes.append(SSHNode("mount_ost",
+                                 host,
+                                 f'{make_ost_cmd};{mkdir_ost_cmd}',
+                                 username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+
+        # Mount the Lustre PFS on the clients
+        mkdir_client_cmd = f"mkdir -p {self.config['CLIENT']['MOUNT_POINT']}"
+        nodes.append(SSHNode("mount_client",
+                             self.client_hosts,
+                             {mkdir_client_cmd},
+                             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+        return nodes
+
+    def _DefineStart(self):
+        nodes = []
+
+        #Make and mount Lustre Management Server (MGS)
+        mount_mgt_cmd = f"mount -t lustre {self.config['MANAGEMENT_SERVER']['STORAGE']} {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
+        nodes.append(SSHNode("make_mgt",
+                             self.config['MANAGEMENT_SERVER']['HOST'],
+                             {mount_mgt_cmd},
+                             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+
+        #Make and mount Lustre Metatadata Server (MDT)
+        mount_mdt_cmd = f"mount -t lustre {self.config['METADATA_SERVER']['STORAGE']} {self.config['METADATA_SERVER']['MOUNT_POINT']}"
+        nodes.append(SSHNode(
+            "make_mdt",
+            self.config['METADATA_SERVER']['HOST'],
+            {mount_mdt_cmd},
+            username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+
+        #Make and mount Lustre Object Storage Server (OSS) and Targets (OSTs)
+        index = 1
+        for host in self.oss_hosts:
+            mount_ost_cmd = []
+            for i in range(self.num_ost_per_node):
+                ost_id = f"OST{i}"
+                ost_dev = f"{self.config['OBJECT_STORAGE_SERVERS'][ost_id]}"
+                ost_dir = f"{self.config['OBJECT_STORAGE_SERVERS']['MOUNT_POINT_BASE']}{i}"
+                mount_ost_cmd.append(f"mount -t lustre {ost_dev} {ost_dir}")
+                index += 1
             mount_ost_cmd = ';'.join(mount_ost_cmd)
             nodes.append(SSHNode("mount_ost",
                                  host,
-                                 f'{make_ost_cmd};{mkdir_ost_cmd};{mount_ost_cmd}',
+                                 mount_ost_cmd,
                                  username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
 
         #Mount the Lustre PFS on the clients
-        mkdir_client_cmd = f"mkdir -p {self.config['CLIENT']['MOUNT_POINT']}"
         mount_client_cmd = f"mount -t lustre {self.config['MANAGEMENT_SERVER']['HOST']}@tcp:/{self.config['BASIC']['FSNAME']} {self.config['CLIENT']['MOUNT_POINT']}"
         nodes.append(SSHNode("mount_client",
                              self.client_hosts,
-                             f'{mkdir_client_cmd};{mount_client_cmd}',
+                             mount_client_cmd,
                              username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
         return nodes
 
