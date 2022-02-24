@@ -58,6 +58,10 @@ class Launcher(LauncherConfig):
         self.SetTempDir("{}_{}".format(JarvisManager.GetInstance().GetTmpDir(), launcher_name))
 
     @abstractmethod
+    def _DefineInit(self):
+        return []
+
+    @abstractmethod
     def _DefineStart(self):
         return []
 
@@ -73,6 +77,20 @@ class Launcher(LauncherConfig):
     def _DefineStatus(self):
         return []
 
+    def _ExecuteNodes(self, nodes):
+        if type(nodes) == list:
+            self.nodes = nodes
+        else:
+            self.nodes = [nodes]
+        outputs = []
+        if len(self.nodes) > 0:
+            outputs = []
+            for i, node in enumerate(self.nodes):
+                logging.info("Executing node {} index {}".format(str(node),i))
+                output = node.Run()
+                outputs.append(output)
+        return outputs
+
     def SetTempDir(self, temp_dir):
         self.temp_dir = temp_dir
         if os.path.exists(self.temp_dir):
@@ -84,63 +102,35 @@ class Launcher(LauncherConfig):
         self.Stop()
         self.Start()
 
+    def Reset(self):
+        self.Stop()
+        self.Clean()
+        self.Init()
+        self.Start()
+
     def Clean(self):
         nodes = self._DefineClean()
-        if type(nodes) == list:
-            self.nodes = nodes
-        else:
-            self.nodes = [nodes]
-        output = []
-        if len(self.nodes) > 0:
-            output = []
-            for i, node in enumerate(self.nodes):
-                logging.info("Executing node {} index {}".format(str(node), i))
-                output.append(node.Run())
-        return output
+        return self._ExecuteNodes(nodes)
 
     def Stop(self):
         nodes = self._DefineStop()
-        if type(nodes) == list:
-            self.nodes = nodes
-        else:
-            self.nodes = [nodes]
-        output = []
-        if len(self.nodes) > 0:
-            output = []
-            for i, node in enumerate(self.nodes):
-                logging.info("Executing node {} index {}".format(str(node),i))
-                output.append(node.Run())
-        return output
+        return self._ExecuteNodes(nodes)
 
     def Start(self):
         nodes = self._DefineStart()
-        if type(nodes) == list:
-            self.nodes = nodes
-        else:
-            self.nodes = [nodes]
-        outputs = []
-        if len(self.nodes) > 0:
-            outputs = []
-            for i, node in enumerate(self.nodes):
-                logging.info("Executing node {} index {}".format(str(node),i))
-                output = node.Run()
-                outputs.append(output)
-        return outputs
+        return self._ExecuteNodes(nodes)
+
+    def Init(self):
+        nodes = self._DefineInit()
+        return self._ExecuteNodes(nodes)
+
+    def Setup(self):
+        self.Init()
+        self.Start()
 
     def Status(self):
         nodes = self._DefineStatus()
-        if type(nodes) == list:
-            self.nodes = nodes
-        else:
-            self.nodes = [nodes]
-        outputs = []
-        if len(self.nodes) > 0:
-            outputs = []
-            for i, node in enumerate(self.nodes):
-                logging.info("Executing node {} index {}".format(str(node), i))
-                output = node.Run()
-                outputs.append(output)
-        return outputs
+        return self._ExecuteNodes(nodes)
 
 
 

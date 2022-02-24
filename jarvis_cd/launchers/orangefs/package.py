@@ -64,6 +64,9 @@ class Orangefs(Launcher):
         nodes.append(SSHNode("clean server data",self.server_data_hosts, "rm -rf {}".format(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'])))
         return nodes
 
+    def _DefineInit(self):
+        return
+
     def _DefineStart(self):
         nodes = []
         pfs_conf = os.path.join(self.temp_dir,"pfs_{}.conf".format(len(self.server_data_hosts)))

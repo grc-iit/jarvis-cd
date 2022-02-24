@@ -4,9 +4,11 @@ from enum import Enum
 class OperationType(Enum):
     INIT = 'init'
     START = 'start'
+    SETUP = 'setup'
     STOP = 'stop'
     CLEAN = 'clean'
     RESTART = 'restart'
+    RESET = 'reset'
     STATUS = 'status'
 
     def __str__(self):
