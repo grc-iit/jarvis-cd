@@ -40,8 +40,8 @@ class LauncherConfig(ABC):
             if section not in self.config:
                 raise Error(ErrorCode.INVALID_SECTION).format(section, self.config.keys())
             for key in user_config[section]:
-                if key not in self.config[section]:
-                    raise Error(ErrorCode.INVALID_KEY).format(key, self.config[section].keys())
+                if key.upper() not in self.config[section]:
+                    raise Error(ErrorCode.INVALID_KEY).format(key.upper(), self.config[section].keys())
                 self.config[section][key.upper()] = os.path.expandvars(user_config[section][key])
         self._LoadConfig()
         return self
