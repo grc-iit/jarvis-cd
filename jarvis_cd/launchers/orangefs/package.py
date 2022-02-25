@@ -146,15 +146,15 @@ class Orangefs(Launcher):
             metadata_server_ip = socket.gethostbyname(metadata_server)
             start_client_cmds = [
                 "mkdir -p {}".format(self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']),
-                "sudo insmod {}".format(kernel_ko),
-                "sudo {} -p {}".format(pvfs2_client, pvfs2_client_core),
-                "sudo mount -t pvfs2 {protocol}://{ip}:{port}/orangefs {mount_point}".format(
+                "insmod {}".format(kernel_ko),
+                "{} -p {}".format(pvfs2_client, pvfs2_client_core),
+                "mount -t pvfs2 {protocol}://{ip}:{port}/orangefs {mount_point}".format(
                     protocol=self.config['SERVER']['PVFS2_PROTOCOL'],
                     port=self.config['SERVER']['PVFS2_PORT'],
                     ip=metadata_server_ip,
                     mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR'])
             ]
-            node = SSHNode("mount pvfs2 client {}".format(metadata_server),client,start_client_cmds)
+            node = SSHNode("mount pvfs2 client {}".format(metadata_server),client,start_client_cmds, sudo=True)
             nodes.append(node)
         return nodes
 
