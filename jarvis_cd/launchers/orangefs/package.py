@@ -65,7 +65,8 @@ class Orangefs(Launcher):
         return nodes
 
     def _DefineInit(self):
-        return
+        nodes = []
+        return nodes
 
     def _DefineStart(self):
         nodes = []
