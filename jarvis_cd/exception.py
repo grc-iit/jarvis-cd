@@ -2,7 +2,8 @@ class Error(BaseException):
     def __init__(self, error_code, child_error = None):
         self._error_code = error_code["id"]
         if child_error is None:
-            self._error_message = "{}".format(error_code["msg"])
+            self._error_message = error_code["msg"]
+            print(self._error_message)
         else:
             self._error_message = str(child_error) + "\n{}".format(error_code["msg"])
 
@@ -12,7 +13,7 @@ class Error(BaseException):
         :param error_code_args:
         :return: Error
         """
-        self._error_message = self._error_message.format(error_code_args)
+        self._error_message = self._error_message.format(*error_code_args)
         return self
 
     def __repr__(self):
