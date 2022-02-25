@@ -28,7 +28,7 @@ class SCPNode(Node):
         self.port = port
 
     def _exec_scp(self):
-        client = ParallelSSHClient(self.hosts, port=port)
+        client = ParallelSSHClient(self.hosts, port=self.port)
         output = client.copy_file(self.source, self.destination,True)
         joinall(output, raise_error=True)
         nice_output = dict()
