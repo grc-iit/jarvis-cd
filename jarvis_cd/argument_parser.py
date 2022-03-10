@@ -18,7 +18,7 @@ class ArgumentParser(object):
     __instance = None
 
     @staticmethod
-    def get_instance():
+    def GetInstance():
         """ Static access method. """
         if ArgumentParser.__instance is None:
             ArgumentParser()
@@ -31,15 +31,17 @@ class ArgumentParser(object):
             raise Exception("This class is a singleton!")
         else:
             ArgumentParser.__instance = self
-        self.parser = argparse.ArgumentParser(description='DLIO Benchmark')
-        self.parser.add_argument("target", metavar='target', type=str,
-                                 help="Target to choose.")
-        self.parser.add_argument("operation", metavar='operation', default=OperationType.START, type=OperationType, choices=list(OperationType),
-                                 help="Operation for target")
+        self.parser = argparse.ArgumentParser(description='Jarvis CD')
+        self.parser.add_argument("launcher", metavar='launcher', type=str,
+                                 help="The launcher for a program")
+        self.parser.add_argument("operation", metavar='operation', type=OperationType, choices=list(OperationType),
+                                 help="Operation for the launcher (e.g., start)")
+        self.parser.add_argument("--config", metavar='configuration', default=None, type=str,
+                                 help="Configuration for the program being launched (optional)")
         self.parser.add_argument("-ll","--log-level", default=LogLevel.ERROR, type=LogLevel,
                                  choices=list(LogLevel),
                                  help="Log level for execution")
-        self.parser.add_argument("--log-path", type=str, default="/tmp/jarvis-cd/jarvis.log",
+        self.parser.add_argument("--log-path", type=str, default=None,
                                  help="Jarvis log file.")
         self.args = self.parser.parse_args()
         self._validate()
