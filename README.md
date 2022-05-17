@@ -8,7 +8,7 @@ Jarvis CD is a continuous deployment software.
 
 ```
 git clone https://github.com/lukemartinlogan/scspkg.git
-cd /path/to/scspkg
+cd scspkg
 bash install.sh
 source ~/.bashrc
 ```
@@ -19,7 +19,7 @@ This install script will install jarvis for the particular user
 (it is not system-wide).
 
 ```bash
-cd /path/to/jarvis_cd
+cd jarvis-cd
 bash install.sh
 source ~/.bashrc
 ```
@@ -28,14 +28,17 @@ source ~/.bashrc
 
 ```bash
 jarvis [launcher] [operation] --conf /path/to/config
-#Initialize a service (e.g., may all
+#Initialize the directories/configuration files required before launching server processes
 jarvis lustre init --conf config.ini
 #Starts an already-initialized service
 jarvis lustre start --conf config.ini
 #Calls init + start
 jarvis lustre setup --conf config.ini
+#Stops a service that has been started (but data is still kept)
 jarvis lustre stop --conf config.ini
+#Destroys all data stored by the service
 jarvis lustre clean --conf config.ini
+#Stop + Clean + Initialize + Start (destroys all data)
 jarvis lustre reset --conf config.ini
 ```
 
