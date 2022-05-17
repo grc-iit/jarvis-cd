@@ -118,6 +118,10 @@ class Orangefs(Launcher):
         copy_node = SCPNode("cp conf file",self.server_data_hosts,self.pfs_conf,self.pfs_conf)
         nodes.append(copy_node)
 
+        ## create server data storage
+        ssh_dir_node = SSHNode("make data dir in server",self.server_data_hosts,"mkdir -p {}".format(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR']))
+        nodes.append(ssh_dir_node)
+
         return nodes
 
     def _DefineStart(self):
@@ -163,5 +167,5 @@ class Orangefs(Launcher):
             mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']
         )
         nodes.append(SSHNode("verify server",self.client_hosts,verify_server_cmd,print_output=True))
-        
+
         return nodes
