@@ -66,7 +66,8 @@ class Orangefs(Launcher):
 
     def _DefineInit(self):
         nodes = []
-
+        
+        pfs_conf = os.path.join(self.temp_dir,"pfs_{}.conf".format(len(self.server_data_hosts)))
         ## create tmp dir
         tmp_dir_node = SSHNode("make tmp dir in clients",self.client_hosts,"mkdir -p {}".format(self.temp_dir))
         nodes.append(tmp_dir_node)
@@ -135,7 +136,7 @@ class Orangefs(Launcher):
 
     def _DefineStart(self):
         nodes = []
-        pfs_conf = os.path.join(self.temp_dir,"pfs_{}.conf".format(len(self.server_data_hosts)))
+
         # start pfs servers
         pvfs2_server = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'],"sbin","pvfs2-server")
         pvfs2_ping = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'],"bin","pvfs2-ping")
