@@ -12,9 +12,12 @@ class LauncherConfig(ABC):
     def __init__(self, launcher_name, config_path=None):
         self.launcher_name = launcher_name
         self.config = {}
+        self.config_path = config_path
+
+    def LoadConfig(self):
         self._LoadDefaultConfig()
-        if config_path is not None:
-            self.LoadConfig(config_path)
+        if self.config_path is not None:
+            self._LoadConfig(self.config_path)
 
     def _LoadDefaultConfig(self):
         default_config_path = os.path.join(JarvisManager.GetInstance().GetLauncherPath(self.launcher_name), 'default.ini')
@@ -29,7 +32,7 @@ class LauncherConfig(ABC):
                 self.config[section][key.upper()] = os.path.expandvars(default_config[section][key])
         self._LoadConfig()
 
-    def LoadConfig(self, config_path):
+    def _LoadConfig(self, config_path):
         if config_path is None:
             return None
         if not os.path.exists(config_path):
@@ -56,6 +59,7 @@ class Launcher(LauncherConfig):
         self.nodes = None
         self.args = args
         self.SetTempDir("{}_{}".format(JarvisManager.GetInstance().GetTmpDir(), launcher_name))
+        self.LoadConfig()
 
     @abstractmethod
     def _DefineInit(self):
@@ -131,7 +135,3 @@ class Launcher(LauncherConfig):
     def Status(self):
         nodes = self._DefineStatus()
         return self._ExecuteNodes(nodes)
-
-
-
-
