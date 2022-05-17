@@ -8,7 +8,7 @@ class Hostfile:
         self.hosts = None
 
     def LoadHostfile(self, filename):
-        if not os.path.exists(filename):
+        if not os.path.exists(filename): 
             raise Error(ErrorCode.HOSTFILE_NOT_FOUND).format(filename)
         a_file = open(filename, "r")
         list_of_lists = []

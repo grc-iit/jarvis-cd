@@ -93,6 +93,7 @@ class Orangefs(Launcher):
                                                             log_file=os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],"orangefs.log"),
                                                             conf_file=self.pfs_conf)
         pfs_genconfig_node = ExecNode("generate pfs conf",pvfs_gen_cmd)
+        print(pvfs_gen_cmd)
         nodes.append(pfs_genconfig_node)
 
         # set pvfstab on clients
@@ -136,8 +137,18 @@ class Orangefs(Launcher):
         ]
         server_start_node = SSHNode("start servers",self.server_data_hosts,server_start_cmds)
         nodes.append(server_start_node)
+
+        #Verify
         nodes.append(SleepNode("sleep timer",5,print_output=True))
         nodes.append(EchoNode("verify server printing","Verifying OrangeFS servers ..."))
+        verify_server_cmd = "export LD_LIBRARY_PATH={pvfs2_lib}; export PVFS2TAB_FILE={client_pvfs2tab}; " \
+                            "{pvfs2_ping} -m {mount_point} | grep 'appears to be correctly configured'".format(
+            pvfs2_lib=os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'],"lib"),
+            client_pvfs2tab=self.config['CLIENT']['CLIENT_PVFS2TAB_FILE'],
+            pvfs2_ping=pvfs2_ping,
+            mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']
+        )
+        nodes.append(SSHNode("verify server",self.client_hosts,verify_server_cmd,print_output=True))
 
         # start pfs client
         kernel_ko = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'], "lib/modules/3.10.0-862.el7.x86_64/kernel/fs/pvfs2/pvfs2.ko")
@@ -158,14 +169,6 @@ class Orangefs(Launcher):
             node = SSHNode("mount pvfs2 client {}".format(metadata_server),client,start_client_cmds)
             nodes.append(node)
 
-        #Verify
-        verify_server_cmd = "export LD_LIBRARY_PATH={pvfs2_lib}; export PVFS2TAB_FILE={client_pvfs2tab}; " \
-                            "{pvfs2_ping} -m {mount_point} | grep 'appears to be correctly configured'".format(
-            pvfs2_lib=os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'],"lib"),
-            client_pvfs2tab=self.config['CLIENT']['CLIENT_PVFS2TAB_FILE'],
-            pvfs2_ping=pvfs2_ping,
-            mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']
-        )
-        nodes.append(SSHNode("verify server",self.client_hosts,verify_server_cmd,print_output=True))
+
 
         return nodes
