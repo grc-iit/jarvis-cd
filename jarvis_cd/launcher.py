@@ -17,7 +17,7 @@ class LauncherConfig(ABC):
     def LoadConfig(self):
         self._LoadDefaultConfig()
         if self.config_path is not None:
-            self._LoadConfig(self.config_path)
+            self._LoadNondefaultConfig(self.config_path)
 
     def _LoadDefaultConfig(self):
         default_config_path = os.path.join(JarvisManager.GetInstance().GetLauncherPath(self.launcher_name), 'default.ini')
@@ -32,7 +32,7 @@ class LauncherConfig(ABC):
                 self.config[section][key.upper()] = os.path.expandvars(default_config[section][key])
         self._LoadConfig()
 
-    def _LoadConfig(self, config_path):
+    def _LoadNondefaultConfig(self, config_path):
         if config_path is None:
             return None
         if not os.path.exists(config_path):
