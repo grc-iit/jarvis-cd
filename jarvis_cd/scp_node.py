@@ -21,6 +21,12 @@ class SCPNode(Node):
             self.hosts = hosts.list()
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SCPNode hosts", type(hosts))
+
+
+        #There's a bug in SCP which cannot copy a file to itself
+        if source == destination:
+            self.hosts = [host if host != "localhost" and host != "127.0.0.1" for host in hosts]
+
         self.source = source
         self.destination = destination
         self.sudo=sudo
@@ -28,6 +34,8 @@ class SCPNode(Node):
         self.port = port
 
     def _exec_scp(self):
+        if len(self.hosts) == 0:
+            return
         client = ParallelSSHClient(self.hosts, port=self.port)
         output = client.copy_file(self.source, self.destination,True)
         joinall(output, raise_error=True)
@@ -47,8 +55,3 @@ class SCPNode(Node):
 
     def __str__(self):
         return "SCPNode {}".format(self.name)
-
-
-
-
-
