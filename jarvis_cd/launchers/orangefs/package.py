@@ -132,12 +132,14 @@ class Orangefs(Launcher):
         # start pfs servers
         pvfs2_server = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'],"sbin","pvfs2-server")
         pvfs2_ping = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'],"bin","pvfs2-ping")
-        server_start_cmds =[
-            "{pfs_server} {pfs_conf} -f".format(pfs_server=pvfs2_server, pfs_conf=self.pfs_conf),
-            "{pfs_server} {pfs_conf}".format(pfs_server=pvfs2_server, pfs_conf=self.pfs_conf)
-        ]
-        server_start_node = SSHNode("start servers",self.server_data_hosts,server_start_cmds)
-        nodes.append(server_start_node)
+        for host in self.server_data_hosts:
+            server_start_cmds =[
+                "{pfs_server} {pfs_conf} -f -a {host}".format(pfs_server=pvfs2_server, pfs_conf=self.pfs_conf, host=host),
+                "{pfs_server} {pfs_conf} -a {host}".format(pfs_server=pvfs2_server, pfs_conf=self.pfs_conf, host=host)
+            ]
+            nodes.append(SSHNode("start pfs servers",host,server_start_cmds)
+        #server_start_node = SSHNode("start servers",self.server_data_hosts,server_start_cmds)
+        #nodes.append(server_start_node)
 
         #Verify
         nodes.append(SleepNode("sleep timer",5,print_output=True))
