@@ -137,7 +137,7 @@ class Orangefs(Launcher):
                 "{pfs_server} {pfs_conf} -f -a {host}".format(pfs_server=pvfs2_server, pfs_conf=self.pfs_conf, host=host),
                 "{pfs_server} {pfs_conf} -a {host}".format(pfs_server=pvfs2_server, pfs_conf=self.pfs_conf, host=host)
             ]
-            nodes.append(SSHNode("start pfs servers",host,server_start_cmds)
+            nodes.append(SSHNode("start pfs servers",host,server_start_cmds))
         #server_start_node = SSHNode("start servers",self.server_data_hosts,server_start_cmds)
         #nodes.append(server_start_node)
 
