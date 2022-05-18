@@ -6,8 +6,9 @@ class OperationType(Enum):
     START = 'start'
     SETUP = 'setup'
     STOP = 'stop'
-    CLEAN = 'clean'
     RESTART = 'restart'
+    CLEAN = 'clean'
+    DESTROY = 'destroy'
     RESET = 'reset'
     STATUS = 'status'
 

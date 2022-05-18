@@ -38,7 +38,9 @@ jarvis lustre setup --conf config.ini
 jarvis lustre stop --conf config.ini
 #Destroys all data stored by the service
 jarvis lustre clean --conf config.ini
-#Stop + Clean + Initialize + Start (destroys all data)
+#Calls stop + clean
+jarvis lustre destroy --conf config.ini
+#Calls Destroy + Initialize + Start
 jarvis lustre reset --conf config.ini
 ```
 
