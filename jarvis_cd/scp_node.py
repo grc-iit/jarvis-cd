@@ -25,7 +25,7 @@ class SCPNode(Node):
 
         #There's a bug in SCP which cannot copy a file to itself
         if source == destination:
-            self.hosts = [host for host in hosts if host != "localhost" and host != "127.0.0.1"]
+            print("WARNING!!! If the machine running this command is also in the hostfile, scp will bug out and remove the data.")
 
         self.source = source
         self.destination = destination

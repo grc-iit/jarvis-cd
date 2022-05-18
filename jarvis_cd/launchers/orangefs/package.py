@@ -19,6 +19,7 @@ class Orangefs(Launcher):
         self.client_hosts = Hostfile().LoadHostfile(self.config['CLIENT']['CLIENT_HOST_FILE'])
         self.pvfs_genconfig = os.path.join(self.config["COMMON"]["ORANGEFS_INSTALL_DIR"], "bin", "pvfs2-genconfig")
         self.pfs_conf = os.path.join(self.temp_dir,"pfs_{}.conf".format(len(self.server_data_hosts)))
+        self.pfs_conf_scp = "{}_src".format(self.pfs_conf)
 
     def SetNumHosts(self, num_data_hosts, num_meta_hosts, num_client_hosts):
         self.server_data_hosts.SelectHosts(num_data_hosts)
@@ -91,7 +92,7 @@ class Orangefs(Launcher):
                                                             data_dir=os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],"data"),
                                                             meta_dir=os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],"meta"),
                                                             log_file=os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],"orangefs.log"),
-                                                            conf_file=self.pfs_conf)
+                                                            conf_file=self.pfs_conf_scp)
         pfs_genconfig_node = ExecNode("generate pfs conf",pvfs_gen_cmd)
         print(pvfs_gen_cmd)
         nodes.append(pfs_genconfig_node)
@@ -116,7 +117,7 @@ class Orangefs(Launcher):
         tmp_dir_node = SSHNode("make tmp dir in clients",self.client_hosts,"mkdir -p {}".format(self.temp_dir))
         nodes.append(tmp_dir_node)
         ## copy pfs conf
-        copy_node = SCPNode("cp conf file",self.server_data_hosts,self.pfs_conf,self.pfs_conf)
+        copy_node = SCPNode("cp conf file",self.server_data_hosts,self.pfs_conf_scp,self.pfs_conf)
         nodes.append(copy_node)
 
         ## create server data storage
