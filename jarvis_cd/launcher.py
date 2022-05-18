@@ -112,6 +112,10 @@ class Launcher(LauncherConfig):
         self.Init()
         self.Start()
 
+    def Destroy(self):
+        self.Stop()
+        self.Clean()
+
     def Clean(self):
         nodes = self._DefineClean()
         return self._ExecuteNodes(nodes)
