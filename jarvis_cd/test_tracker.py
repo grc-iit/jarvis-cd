@@ -42,7 +42,7 @@ class TestTracker(ABC):
         should_stop=False
         print("\n\n\n\n\n")
         print("-----------------------EXPERIMENT_INIT---------------------------")
-        self.ExperimentInit(*self.consts)
+        self.ExperimentInit()
         print("--------------------------------------------------")
 
         for trial,completed in self.trials.items():
@@ -68,7 +68,7 @@ class TestTracker(ABC):
             i += 1
         print("-----------------------EXPERIMENT_END---------------------------")
         self._Checkpoint()
-        self.ExperimentEnd(*self.consts)
+        self.ExperimentEnd()
         print("-----------------------EXPERIMENT_END---------------------------")
 
     @abstractmethod
