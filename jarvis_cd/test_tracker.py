@@ -18,9 +18,6 @@ class TestTracker(ABC):
             self.n_steps = len(self.trials)
         self._Restart()
 
-    def SetConstants(self, *consts):
-        self.consts = consts
-
     def _Restart(self):
         if os.path.exists(self.path):
             print(f'Load checkpoint from {self.path}')
@@ -54,8 +51,8 @@ class TestTracker(ABC):
             if completed is False:
                 print("-----------------------TRIAL_INIT---------------------------")
                 try:
-                    self.TrialInit(*trial, *self.consts)
-                    self.trials[trial] = self.Trial(*trial, *self.consts)
+                    self.TrialInit(*trial)
+                    self.trials[trial] = self.Trial(*trial)
                     print("Trial success")
                 except Exception as e:
                     self._Checkpoint()
@@ -63,7 +60,7 @@ class TestTracker(ABC):
                     print(f'An exception occurred during trial {trial}')
                     print(e)
                 print("-----------------------TRIAL_END---------------------------")
-                self.TrialEnd(*trial, *self.consts)
+                self.TrialEnd(*trial)
                 print("--------------------------------------------------")
                 if should_stop:
                     break
