@@ -19,7 +19,7 @@ class ExecNode(Node):
         self.stdout = None
         self.stderr = None
         self.output = None
-        self.cwd = None
+        self.cwd = cwd
 
     def _start_process(self, command, is_first=True):
         command_array = shlex.split(command)
