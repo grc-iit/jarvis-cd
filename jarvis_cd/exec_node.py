@@ -103,8 +103,7 @@ class ExecNode(Node):
 
     def Run(self):
         self.RunAsync()
-        self.Wait()
+        return self.Wait()
 
     def __str__(self):
         return "ExecNode {}".format(self.name)
-

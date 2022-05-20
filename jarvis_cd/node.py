@@ -16,6 +16,9 @@ class Node(ABC):
             for line in outputs['stderr']:
                 print(Color.RED + "[ERROR] {host} {line}".format(host=host, line=line)+ Color.END)
 
+    def GetOutput(self):
+        return self.output
+
     @abstractmethod
     def Run(self):
         pass

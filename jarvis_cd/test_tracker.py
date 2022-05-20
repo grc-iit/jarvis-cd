@@ -18,8 +18,8 @@ class TestTracker(ABC):
             self.n_steps = len(self.trials)
         self._Restart()
 
-    def SetInputs(self, *inputs):
-        self.inputs = inputs
+    def SetConstants(self, *consts):
+        self.consts = consts
 
     def _Restart(self):
         if os.path.exists(self.path):
@@ -45,7 +45,7 @@ class TestTracker(ABC):
         should_stop=False
         print("\n\n\n\n\n")
         print("-----------------------EXPERIMENT_INIT---------------------------")
-        self.ExperimentInit()
+        self.ExperimentInit(*self.consts)
         print("--------------------------------------------------")
 
         for trial,completed in self.trials.items():
@@ -54,8 +54,8 @@ class TestTracker(ABC):
             if completed is False:
                 print("-----------------------TRIAL_INIT---------------------------")
                 try:
-                    self.TrialInit()
-                    self.trials[trial] = self.Trial(*trial, *self.inputs)
+                    self.TrialInit(*trial, *self.consts)
+                    self.trials[trial] = self.Trial(*trial, *self.consts)
                     print("Trial success")
                 except Exception as e:
                     self._Checkpoint()
@@ -63,7 +63,7 @@ class TestTracker(ABC):
                     print(f'An exception occurred during trial {trial}')
                     print(e)
                 print("-----------------------TRIAL_END---------------------------")
-                self.TrialEnd()
+                self.TrialEnd(*trial, *self.consts)
                 print("--------------------------------------------------")
                 if should_stop:
                     break
@@ -71,7 +71,7 @@ class TestTracker(ABC):
             i += 1
         print("-----------------------EXPERIMENT_END---------------------------")
         self._Checkpoint()
-        self.ExperimentEnd()
+        self.ExperimentEnd(*self.consts)
         print("-----------------------EXPERIMENT_END---------------------------")
 
     @abstractmethod
