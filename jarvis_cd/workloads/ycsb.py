@@ -9,7 +9,7 @@ class YCSB(ExecNode):
         cmd = f"ycsb {op_type} {db_type} -s -P {workload_path} -p {db_dir_var}={data_dir}"
         super().__init__(name, cmd, print_output, collect_output, affinity, sleep_period_ms, max_retries)
 
-    def GetRuntime():
+    def GetRuntime(self):
         for host, line in self.output:
             grp = re.match("\[OVERALL\], RunTime\(ms\), ([0-9]+)", line)
             if grp:
