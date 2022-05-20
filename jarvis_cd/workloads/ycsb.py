@@ -10,7 +10,7 @@ class YCSB(ExecNode):
         super().__init__(name, cmd, print_output, collect_output, affinity, sleep_period_ms, max_retries)
 
     def GetRuntime():
-        for host, line:
+        for host, line in self.output:
             grp = re.match("\[OVERALL\], RunTime\(ms\), ([0-9]+)", line)
             if grp:
                 return float(grp.group(1))
