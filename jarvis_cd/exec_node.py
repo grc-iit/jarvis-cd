@@ -7,7 +7,7 @@ import asyncio
 from jarvis_cd.node import *
 
 class ExecNode(Node):
-    def __init__(self, name, cmd, print_output=False, collect_output=True, affinity=None, sleep_period_ms=100, max_retries=0):
+    def __init__(self, name, cmd, print_output=False, collect_output=True, affinity=None, sleep_period_ms=100, max_retries=0,cwd=None):
         super().__init__(name, print_output, collect_output)
         self.cmd=cmd
         self.proc = None
@@ -19,20 +19,23 @@ class ExecNode(Node):
         self.stdout = None
         self.stderr = None
         self.output = None
+        self.cwd = None
 
     def _start_process(self, command, is_first=True):
         command_array = shlex.split(command)
         if not self.collect_output:
-            self.proc = subprocess.Popen(command_array)
+            self.proc = subprocess.Popen(command_array, cwd=self.cwd)
         elif is_first:
             self.proc = subprocess.Popen(command_array,
                              stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE)
+                             stderr=subprocess.PIPE,
+                             cwd=self.cwd)
         else:
             self.proc = subprocess.Popen(command_array,
                              stdin=self.proc.stdout,
                              stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE)
+                             stderr=subprocess.PIPE,
+                             cwd=self.cwd)
         if self.affinity:
             os.sched_setaffinity(self.GetPid(), self.affinity)
         return self.proc
