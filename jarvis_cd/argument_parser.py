@@ -2,7 +2,6 @@ import argparse
 
 from jarvis_cd.enumerations import OperationType, LogLevel
 
-
 def str2bool(v):
     if isinstance(v, bool):
         return v
@@ -36,7 +35,7 @@ class ArgumentParser(object):
                                  help="The launcher for a program")
         self.parser.add_argument("operation", metavar='operation', type=OperationType, choices=list(OperationType),
                                  help="Operation for the launcher (e.g., start)")
-        self.parser.add_argument("--config", metavar='configuration', default=None, type=str,
+        self.parser.add_argument("--conf", metavar='configuration', default=None, type=str,
                                  help="Configuration for the program being launched (optional)")
         self.parser.add_argument("-ll","--log-level", default=LogLevel.ERROR, type=LogLevel,
                                  choices=list(LogLevel),

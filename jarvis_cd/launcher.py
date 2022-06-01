@@ -1,56 +1,41 @@
-import configparser
+import yaml
 from abc import ABC, abstractmethod
 from jarvis_cd.jarvis_manager import JarvisManager
 import pathlib
 import os
 import shutil
 import logging
+import shutil
 
 from jarvis_cd.exception import Error, ErrorCode
 
 class LauncherConfig(ABC):
     def __init__(self, launcher_name, config_path=None):
         self.launcher_name = launcher_name
-        self.config = {}
         self.config_path = config_path
+        self.config = None
+
+    def DefaultConfigPath(self):
+        return JarvisManager.GetInstance().GetDefaultConfigPath(self.launcher_name)
 
     def LoadConfig(self):
-        self._LoadDefaultConfig()
-        if self.config_path is not None:
-            self._LoadNondefaultConfig(self.config_path)
-
-    def _LoadDefaultConfig(self):
-        default_config_path = os.path.join(JarvisManager.GetInstance().GetLauncherPath(self.launcher_name), 'default.ini')
-        if not os.path.exists(default_config_path):
+        if self.config_path is None:
+            self.config_path = self.DefaultConfigPath()
+        if not os.path.exists(self.config_path):
             raise Error(ErrorCode.INVALID_DEFAULT_CONFIG).format(self.launcher_name)
-        default_config = configparser.ConfigParser()
-        default_config.read(default_config_path)
-        for section in default_config.sections():
-            if section not in self.config:
-                self.config[section] = {}
-            for key in default_config[section]:
-                self.config[section][key.upper()] = os.path.expandvars(default_config[section][key])
-        self._LoadConfig()
+        with open(self.config_path, "r") as fp:
+            self.config = yaml.load(fp.read())
+        self._ProcessConfig()
 
-    def _LoadNondefaultConfig(self, config_path):
-        if config_path is None:
-            return None
-        if not os.path.exists(config_path):
-            raise Error(ErrorCode.CONFIG_NOT_FOUND).format(config_path)
-        user_config = configparser.ConfigParser()
-        user_config.read(config_path)
-        for section in user_config.sections():
-            if section not in self.config:
-                raise Error(ErrorCode.INVALID_SECTION).format(section, self.config.keys())
-            for key in user_config[section]:
-                if key.upper() not in self.config[section]:
-                    raise Error(ErrorCode.INVALID_KEY).format(key.upper(), self.config[section].keys())
-                self.config[section][key.upper()] = os.path.expandvars(user_config[section][key])
-        self._LoadConfig()
-        return self
+    def SetConfig(self, config):
+        self.config = config
+        self._ProcessConfig()
+
+    def _ExpandPath(self, path):
+        return os.path.expandvars(path)
 
     @abstractmethod
-    def _LoadConfig(self):
+    def _ProcessConfig(self):
         return []
 
 class Launcher(LauncherConfig):
@@ -59,7 +44,6 @@ class Launcher(LauncherConfig):
         self.nodes = None
         self.args = args
         self.SetTempDir("{}_{}".format(JarvisManager.GetInstance().GetTmpDir(), launcher_name))
-        self.LoadConfig()
 
     @abstractmethod
     def _DefineInit(self):
@@ -139,3 +123,6 @@ class Launcher(LauncherConfig):
     def Status(self):
         nodes = self._DefineStatus()
         return self._ExecuteNodes(nodes)
+
+    def Cpconf(self, conf_out):
+        shutil.copy(self.DefaultConfigPath(), conf_out)

@@ -13,7 +13,12 @@ class Orangefs(Launcher):
     def __init__(self, config_path=None, args=None):
         super().__init__('orangefs', config_path, args)
 
-    def _LoadConfig(self):
+    def _ProcessConfig(self):
+        self.config["SERVER"]["SERVER_PVFS2TAB_FILE"] = self._ExpandPath(self.config["SERVER"]["SERVER_PVFS2TAB_FILE"])
+        self.config["SERVER"]["SERVER_DATA_HOST_FILE"] = self._ExpandPath(self.config["SERVER"]["SERVER_DATA_HOST_FILE"])
+        self.config["SERVER"]["SERVER_META_HOST_FILE"] = self._ExpandPath(self.config["SERVER"]["SERVER_META_HOST_FILE"])
+        self.config["SERVER"]["SERVER_LOCAL_STORAGE_DIR"] = self._ExpandPath(self.config["SERVER"]["SERVER_LOCAL_STORAGE_DIR"])
+
         self.server_data_hosts = Hostfile().LoadHostfile(self.config['SERVER']['SERVER_DATA_HOST_FILE'])
         self.server_meta_hosts = Hostfile().LoadHostfile(self.config['SERVER']['SERVER_META_HOST_FILE'])
         self.client_hosts = Hostfile().LoadHostfile(self.config['CLIENT']['CLIENT_HOST_FILE'])

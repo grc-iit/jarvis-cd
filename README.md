@@ -28,30 +28,32 @@ source ~/.bashrc
 
 ```bash
 jarvis [launcher] [operation] --conf /path/to/config
+#Copy the default config to a new location (config.yaml)
+jarvis lustre cpconf --conf config.yaml
 #Initialize the directories/configuration files required before launching server processes
-jarvis lustre init --conf config.ini
+jarvis lustre init --conf config.yaml
 #Starts an already-initialized service
-jarvis lustre start --conf config.ini
+jarvis lustre start --conf config.yaml
 #Calls init + start
-jarvis lustre setup --conf config.ini
+jarvis lustre setup --conf config.yaml
 #Stops a service that has been started (but data is still kept)
-jarvis lustre stop --conf config.ini
+jarvis lustre stop --conf config.yaml
 #Destroys all data stored by the service
-jarvis lustre clean --conf config.ini
+jarvis lustre clean --conf config.yaml
 #Calls stop + clean
-jarvis lustre destroy --conf config.ini
+jarvis lustre destroy --conf config.yaml
 #Calls Destroy + Initialize + Start
-jarvis lustre reset --conf config.ini
+jarvis lustre reset --conf config.yaml
 ```
 
 ## Deploy Orangefs
 
 ```bash
 # sample ini can be found and overriden at launchers/orangefs/default.ini
-jarvis orangefs start --conf config.ini
+jarvis orangefs start --conf config.yaml
 ```
 
 ## Undeploy Orangefs
 ```bash
-jarvis orangefs stop --conf config.ini
+jarvis orangefs stop --conf config.yaml
 ```

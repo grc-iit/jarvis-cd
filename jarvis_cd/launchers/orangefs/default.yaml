@@ -1,0 +1,18 @@
+COMMON:
+    ORANGEFS_INSTALL_DIR: "/opt/ohpc/pub/orangefs"
+
+SERVER:
+    SERVER_PVFS2TAB_FILE: "/home/${USER}/orangefs/pvfs2tab"
+    SERVER_DATA_HOST_FILE: "/home/${USER}/orangefs/server_lists"
+    SERVER_META_HOST_FILE: "/home/${USER}/orangefs/server_lists"
+    SERVER_LOCAL_STORAGE_DIR: "/mnt/hdd/${USER}/pvfs2-storage"
+    PVFS2_STRIP_SIZE: 65536
+    PVFS2_DISTRIBUTION_NAME: "simple_stripe"
+    PVFS2_PORT: 3334
+    # protocol can be tcp or ib
+    PVFS2_PROTOCOL: "tcp"
+
+CLIENT:
+    CLIENT_PVFS2TAB_FILE: "/home/${USER}/orangefs/pvfs2tab"
+    CLIENT_HOST_FILE: "/home/${USER}/orangefs/client_lists"
+    CLIENT_MOUNT_POINT_DIR: "/home/${USER}/orangefs/pvfs2-mount"

@@ -13,7 +13,7 @@ class Lustre(Launcher):
     def __init__(self, config_path=None, args=None):
         super().__init__('lustre', config_path, args)
 
-    def _LoadConfig(self):
+    def _ProcessConfig(self):
         self.ssh_port = int(self.config['BASIC']['SSH_PORT'])
         self.ssh_user = self.config['BASIC']['SSH_USER']
         self.oss_hosts = Hostfile().LoadHostfile(self.config['OBJECT_STORAGE_SERVERS']['HOSTFILE'])
