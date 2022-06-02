@@ -59,6 +59,8 @@ class LauncherConfig(ABC):
             return self._ExpandList(var)
         if isinstance(var, str):
             return self._ExpandPath(var)
+        else:
+            return var
 
     def _ExpandPaths(self):
         return self._ExpandVar(self.config)
