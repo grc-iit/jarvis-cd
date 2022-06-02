@@ -10,16 +10,19 @@ import shutil
 from jarvis_cd.exception import Error, ErrorCode
 
 class LauncherConfig(ABC):
-    def __init__(self, launcher_name, config_path=None):
+    def __init__(self, launcher_name, scaffold_dir=None):
         self.launcher_name = launcher_name
-        self.config_path = config_path
+        self.scaffold_dir = scaffold_dir
+        self.config_path = self.ScaffoldConfigPath()
         self.config = None
 
     def DefaultConfigPath(self):
         return JarvisManager.GetInstance().GetDefaultConfigPath(self.launcher_name)
 
     def ScaffoldConfigPath(self):
-        return os.path.join(os.getcwd(), 'jarvis_conf.yaml')
+        if self.scaffold_dir is None:
+            self.scaffold_dir = os.getcwd()
+        return os.path.join(self.scaffold_dir, 'jarvis_conf.yaml')
 
     def LoadConfig(self):
         if self.config_path is None:
@@ -65,8 +68,8 @@ class LauncherConfig(ABC):
         return []
 
 class Launcher(LauncherConfig):
-    def __init__(self, launcher_name, config_path, args):
-        super().__init__(launcher_name, config_path)
+    def __init__(self, launcher_name, scaffold_dir, args):
+        super().__init__(launcher_name, scaffold_dir)
         self.nodes = None
         self.args = args
         self.SetTempDir("{}_{}".format(JarvisManager.GetInstance().GetTmpDir(), launcher_name))

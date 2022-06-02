@@ -35,8 +35,8 @@ class ArgumentParser(object):
                                  help="The launcher for a program")
         self.parser.add_argument("operation", metavar='operation', type=OperationType, choices=list(OperationType),
                                  help="Operation for the launcher (e.g., start)")
-        self.parser.add_argument("--conf", metavar='configuration', default=None, type=str,
-                                 help="Configuration for the program being launched (optional)")
+        self.parser.add_argument("--dir", metavar='scaffold directory', default=None, type=str,
+                                 help="The directory where all configuration files are stored")
         self.parser.add_argument("-ll","--log-level", default=LogLevel.ERROR, type=LogLevel,
                                  choices=list(LogLevel),
                                  help="Log level for execution")

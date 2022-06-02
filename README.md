@@ -29,11 +29,12 @@ source ~/.bashrc
 ```bash
 jarvis [launcher] [operation] --conf /path/to/conf
 #Create directory where configuration data should be stored
+cd ${HOME}
 mkdir lustre_example
 cd lustre_example
 #Create the jarvis configuration file
 jarvis lustre scaffold
-#Initialize the directories/conf files required before launching server processes
+#Initialize the directories/conf files required for launching server processes
 jarvis lustre init
 #Starts an already-initialized service
 jarvis lustre start
@@ -47,4 +48,11 @@ jarvis lustre setup
 jarvis lustre destroy
 #Calls Destroy + Initialize + Start
 jarvis lustre reset
+```
+
+To run these commands outside of the scaffold directory:
+```bash
+jarvis lustre scaffold --dir ${HOME}/lustre_example
+jarvis lustre init --dir ${HOME}/lustre_example
+...
 ```

@@ -32,8 +32,8 @@ if __name__ == '__main__':
     logging.info("Loaded class {}".format(launcher_class_name))
 
     #Create the launcher class
-    launcher_config_path = arguments.args.conf
-    launcher_instance = launcher_class(launcher_config_path, arguments.args)
+    scaffold_dir = arguments.args.dir
+    launcher_instance = launcher_class(scaffold_dir, arguments.args)
     logging.info("Created class {}".format(launcher_class_name))
 
     #Load the launcher operation
