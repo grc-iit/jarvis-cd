@@ -7,6 +7,7 @@ CONF:
 SERVER:
   name: daos_server
   access_points: ['localhost']
+  port: 10001
   transport_config:
     allow_insecure: false
     client_cert_dir: ${SCAFFOLD}/daosCA/certs
@@ -16,6 +17,7 @@ SERVER:
 AGENT:
   name: daos_server
   access_points: ['localhost']
+  port: 10001
   transport_config:
     allow_insecure: false
     ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
@@ -23,7 +25,8 @@ AGENT:
     key: ${SCAFFOLD}/daosCA/certs/agent.key
 CONTROL:
   name: daos_server
-  access_points: ['localhost']
+  hostlist: ['localhost']
+  port: 10001
   transport_config:
     allow_insecure: false
     ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
