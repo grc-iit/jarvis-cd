@@ -5,6 +5,8 @@ CONF:
   AGENT: ${SCAFFOLD}/daos_agent.yaml
   CONTROL: ${SCAFFOLD}/daos_control.yaml
 SERVER:
+  name: daos_server
+  access_points: ['localhost']
   transport_config:
     allow_insecure: false
     client_cert_dir: ${SCAFFOLD}/daosCA/certs
@@ -12,6 +14,7 @@ SERVER:
     cert: ${SCAFFOLD}/daosCA/certs/server.crt
     key: ${SCAFFOLD}/daosCA/certs/server.key
 AGENT:
+  name: daos_server
   access_points: ['localhost']
   transport_config:
     allow_insecure: false
@@ -19,6 +22,8 @@ AGENT:
     cert: ${SCAFFOLD}/daosCA/certs/agent.crt
     key: ${SCAFFOLD}/daosCA/certs/agent.key
 CONTROL:
+  name: daos_server
+  access_points: ['localhost']
   transport_config:
     allow_insecure: false
     ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
