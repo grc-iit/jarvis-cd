@@ -6,17 +6,17 @@ CONF:
   CONTROL: ${SCAFFOLD}/daos_control.yaml
 SERVER:
   transport_config:
-    client_cert_dir: ${SCAFFOLD}/daosCA
-    ca_cert: ${SCAFFOLD}/daosCA/daosCA.crt
-    cert: ${SCAFFOLD}/daosCA/server.crt
-    key: ${SCAFFOLD}/daosCA/server.key
+    client_cert_dir: ${SCAFFOLD}/daosCA/certs
+    ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
+    cert: ${SCAFFOLD}/daosCA/certs/server.crt
+    key: ${SCAFFOLD}/daosCA/certs/server.key
 AGENT:
   transport_config:
-    ca_cert: ${SCAFFOLD}/daosCA/daosCA.crt
-    cert: ${SCAFFOLD}/daosCA/agent.crt
-    key: ${SCAFFOLD}/daosCA/agent.key
+    ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
+    cert: ${SCAFFOLD}/daosCA/certs/agent.crt
+    key: ${SCAFFOLD}/daosCA/certs/agent.key
 CONTROL:
   transport_config:
-    ca_cert: ${SCAFFOLD}/daosCA/daosCA.crt
-    cert: ${SCAFFOLD}/daosCA/admin.crt
-    key: ${SCAFFOLD}/daosCA/admin.key
+    ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
+    cert: ${SCAFFOLD}/daosCA/certs/admin.crt
+    key: ${SCAFFOLD}/daosCA/certs/admin.key
