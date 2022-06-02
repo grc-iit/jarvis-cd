@@ -31,16 +31,12 @@ class Daos(Launcher):
     def _DefineInit(self):
         nodes = []
         #Generate security certificates
-        #gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh"
-        #print(gen_certificates_cmd)
-        #nodes.append(ExecNode('Generate Certificates', gen_certificates_cmd))
+        gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
+        nodes.append(ExecNode('Generate Certificates', gen_certificates_cmd))
         #Generate config files
-        with open(self.config['CONF']['SERVER'], 'w') as fp:
-            yaml.dump(self.config['SERVER'], fp)
-        with open(self.config['CONF']['AGENT'], 'w') as fp:
-            yaml.dump(self.config['AGENT'], fp)
-        with open(self.config['CONF']['CONTROL'], 'w') as fp:
-            yaml.dump(self.config['CONTROL'], fp)
+        self._CreateServerConfig()
+        self._CreateAgentConfig()
+        self._CreateControlConfig()
         #Detect network type (if not already configured)
 
         return nodes
@@ -83,3 +79,18 @@ class Daos(Launcher):
                              mount_client_cmd,
                              username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
         return nodes
+
+    def _CreateServerConfig(self):
+        with open(self.config['CONF']['SERVER'], 'w') as fp:
+            yaml.dump(self.config['SERVER'], fp)
+        return
+
+    def _CreateAgentConfig(self):
+        with open(self.config['CONF']['AGENT'], 'w') as fp:
+            yaml.dump(self.config['AGENT'], fp)
+        return
+
+    def _CreateControlConfig(self):
+        with open(self.config['CONF']['CONTROL'], 'w') as fp:
+            yaml.dump(self.config['CONTROL'], fp)
+        return
