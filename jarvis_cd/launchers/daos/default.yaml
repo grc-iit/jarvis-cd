@@ -13,15 +13,15 @@ SERVER:
   control_log_file: ${SCAFFOLD}/daos_server.log
   transport_config:
     allow_insecure: null
-    ca_cert: ${DAOS_SCAFFOLD}/daosCA/certs/daosCA.crt
-    cert: ${DAOS_SCAFFOLD}/daosCA/certs/server.crt
-    client_cert_dir: ${DAOS_SCAFFOLD}/daosCA/certs
-    key: ${DAOS_SCAFFOLD}/daosCA/certs/server.key
+    ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
+    cert: ${SCAFFOLD}/daosCA/certs/server.crt
+    client_cert_dir: ${SCAFFOLD}/daosCA/certs
+    key: ${SCAFFOLD}/daosCA/certs/server.key
   engines:
     - storage:
         - class: ram
           scm_size: 1
-          scm_mount: ${DAOS_SCAFFOLD}/ram1
+          scm_mount: ${SCAFFOLD}/ram1
 AGENT:
   name: daos_server
   access_points: ['localhost']
