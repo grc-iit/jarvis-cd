@@ -42,9 +42,9 @@ if __name__ == '__main__':
     logging.info("Loaded operation {}".format(str(arguments.args.operation).capitalize()))
 
     #Call the launcher operation
-    if launcher_op_name != 'cpconf':
+    if launcher_op_name != 'scaffold':
         launcher_instance.LoadConfig()
         result = launcher_op(launcher_instance)
     else:
-        result = launcher_op(launcher_instance, launcher_config_path)
+        result = launcher_op(launcher_instance)
     logging.info("Finished execution", exc_info=True)

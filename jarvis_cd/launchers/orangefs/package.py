@@ -14,14 +14,19 @@ class Orangefs(Launcher):
         super().__init__('orangefs', config_path, args)
 
     def _ProcessConfig(self):
+        self.config["COMMON"]["ORANGEFS_INSTALL_DIR"] = self._ExpandPath(self.config["COMMON"]["ORANGEFS_INSTALL_DIR"])
         self.config["SERVER"]["SERVER_PVFS2TAB_FILE"] = self._ExpandPath(self.config["SERVER"]["SERVER_PVFS2TAB_FILE"])
         self.config["SERVER"]["SERVER_DATA_HOST_FILE"] = self._ExpandPath(self.config["SERVER"]["SERVER_DATA_HOST_FILE"])
         self.config["SERVER"]["SERVER_META_HOST_FILE"] = self._ExpandPath(self.config["SERVER"]["SERVER_META_HOST_FILE"])
         self.config["SERVER"]["SERVER_LOCAL_STORAGE_DIR"] = self._ExpandPath(self.config["SERVER"]["SERVER_LOCAL_STORAGE_DIR"])
+        self.config["CLIENT"]["CLIENT_PVFS2TAB_FILE"] = self._ExpandPath(self.config["CLIENT"]["CLIENT_PVFS2TAB_FILE"])
+        self.config["CLIENT"]["CLIENT_HOST_FILE"] = self._ExpandPath(self.config["CLIENT"]["CLIENT_HOST_FILE"])
+        self.config["CLIENT"]["CLIENT_MOUNT_POINT_DIR"] = self._ExpandPath(self.config["CLIENT"]["CLIENT_MOUNT_POINT_DIR"])
 
         self.server_data_hosts = Hostfile().LoadHostfile(self.config['SERVER']['SERVER_DATA_HOST_FILE'])
         self.server_meta_hosts = Hostfile().LoadHostfile(self.config['SERVER']['SERVER_META_HOST_FILE'])
         self.client_hosts = Hostfile().LoadHostfile(self.config['CLIENT']['CLIENT_HOST_FILE'])
+
         self.pvfs_genconfig = os.path.join(self.config["COMMON"]["ORANGEFS_INSTALL_DIR"], "bin", "pvfs2-genconfig")
         self.pfs_conf = os.path.join(self.temp_dir,"pfs_{}.conf".format(len(self.server_data_hosts)))
         self.pfs_conf_scp = "{}_src".format(self.pfs_conf)

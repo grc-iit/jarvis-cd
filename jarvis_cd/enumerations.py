@@ -11,7 +11,7 @@ class OperationType(Enum):
     DESTROY = 'destroy'
     RESET = 'reset'
     STATUS = 'status'
-    CPCONF = 'cpconf'
+    Scaffold = 'scaffold'
 
     def __str__(self):
         return self.value

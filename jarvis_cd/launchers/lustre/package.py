@@ -14,20 +14,22 @@ class Lustre(Launcher):
         super().__init__('lustre', config_path, args)
 
     def _ProcessConfig(self):
+        self.config["MANAGEMENT_SERVER"]["MOUNT_POINT"] = self._ExpandPath(self.config["MANAGEMENT_SERVER"]["MOUNT_POINT"])
+        self.config["METADATA_SERVER"]["MOUNT_POINT"] = self._ExpandPath(self.config["METADATA_SERVER"]["MOUNT_POINT"])
+        self.config["OBJECT_STORAGE_SERVERS"]["MOUNT_POINT_BASE"] = self._ExpandPath(self.config["OBJECT_STORAGE_SERVERS"]["MOUNT_POINT_BASE"])
+        self.config["OBJECT_STORAGE_SERVERS"]["HOSTFILE"] = self._ExpandPath(self.config["OBJECT_STORAGE_SERVERS"]["HOSTFILE"])
+        self.config["CLIENT"]["MOUNT_POINT"] = self._ExpandPath(self.config["CLIENT"]["MOUNT_POINT"])
+
         self.ssh_port = int(self.config['BASIC']['SSH_PORT'])
         self.ssh_user = self.config['BASIC']['SSH_USER']
         self.oss_hosts = Hostfile().LoadHostfile(self.config['OBJECT_STORAGE_SERVERS']['HOSTFILE'])
         self.client_hosts = Hostfile().LoadHostfile(self.config['CLIENT']['HOSTFILE'])
-        self.num_ost_per_node = int(self.config['OBJECT_STORAGE_SERVERS']['NUM_OST_PER_NODE'])
-
-    def SetNumHosts(self, num_oss_hosts, num_client_hosts):
-        self.oss_hosts.SelectHosts(num_oss_hosts)
-        self.client_hosts.SelectHosts(num_client_hosts)
-        return
+        self.osts = self.config['OBJECT_STORAGE_SERVER']['OSTS']
+        self.num_ost_per_node = len(self.osts)
 
     def _DefineClean(self):
         nodes = []
-        #Remove Lustre Management Server
+        # Remove Lustre Management Server
         rm_mgt_cmd = f"rm -rf {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
         nodes.append(SSHNode("rm_mgt",
                              self.config['MANAGEMENT_SERVER']['HOST'],
@@ -99,7 +101,6 @@ class Lustre(Launcher):
             unmount_mdt_cmd,
             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
 
-
         # Unmount Lustre Management Server (MGS)
         unmount_mgt_cmd = f"umount {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
         nodes.append(SSHNode("unmount_mgt",
@@ -140,9 +141,7 @@ class Lustre(Launcher):
         for host in self.oss_hosts:
             make_ost_cmd = []
             mkdir_ost_cmd = []
-            for i in range(self.num_ost_per_node):
-                ost_id = f"OST{i}"
-                ost_dev = f"{self.config['OBJECT_STORAGE_SERVERS'][ost_id]}"
+            for i, ost_dev in enumerate(self.osts):
                 ost_dir = f"{self.config['OBJECT_STORAGE_SERVERS']['MOUNT_POINT_BASE']}{i}"
                 make_ost_cmd.append((
                     f"mkfs.lustre --ost "
@@ -171,14 +170,14 @@ class Lustre(Launcher):
     def _DefineStart(self):
         nodes = []
 
-        #Make and mount Lustre Management Server (MGS)
+        # Make and mount Lustre Management Server (MGS)
         mount_mgt_cmd = f"mount -t lustre {self.config['MANAGEMENT_SERVER']['STORAGE']} {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
         nodes.append(SSHNode("make_mgt",
                              self.config['MANAGEMENT_SERVER']['HOST'],
                              mount_mgt_cmd,
                              username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
 
-        #Make and mount Lustre Metatadata Server (MDT)
+        # Make and mount Lustre Metatadata Server (MDT)
         mount_mdt_cmd = f"mount -t lustre {self.config['METADATA_SERVER']['STORAGE']} {self.config['METADATA_SERVER']['MOUNT_POINT']}"
         nodes.append(SSHNode(
             "make_mdt",
@@ -186,13 +185,11 @@ class Lustre(Launcher):
             mount_mdt_cmd,
             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
 
-        #Make and mount Lustre Object Storage Server (OSS) and Targets (OSTs)
+        # Make and mount Lustre Object Storage Server (OSS) and Targets (OSTs)
         index = 1
         for host in self.oss_hosts:
             mount_ost_cmd = []
-            for i in range(self.num_ost_per_node):
-                ost_id = f"OST{i}"
-                ost_dev = f"{self.config['OBJECT_STORAGE_SERVERS'][ost_id]}"
+            for i, ost_dev in enumerate(self.osts):
                 ost_dir = f"{self.config['OBJECT_STORAGE_SERVERS']['MOUNT_POINT_BASE']}{i}"
                 mount_ost_cmd.append(f"mount -t lustre {ost_dev} {ost_dir}")
                 index += 1
@@ -202,7 +199,7 @@ class Lustre(Launcher):
                                  mount_ost_cmd,
                                  username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
 
-        #Mount the Lustre PFS on the clients
+        # Mount the Lustre PFS on the clients
         mount_client_cmd = f"mount -t lustre {self.config['MANAGEMENT_SERVER']['HOST']}@tcp:/{self.config['BASIC']['FSNAME']} {self.config['CLIENT']['MOUNT_POINT']}"
         nodes.append(SSHNode("mount_client",
                              self.client_hosts,

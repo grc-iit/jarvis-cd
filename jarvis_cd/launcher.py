@@ -25,6 +25,8 @@ class LauncherConfig(ABC):
             raise Error(ErrorCode.INVALID_DEFAULT_CONFIG).format(self.launcher_name)
         with open(self.config_path, "r") as fp:
             self.config = yaml.load(fp.read())
+        if 'SCAFFOLD' in self.config:
+            os.environ['SCAFFOLD'] = str(self.config['SCAFFOLD'])
         self._ProcessConfig()
 
     def SetConfig(self, config):
@@ -86,6 +88,35 @@ class Launcher(LauncherConfig):
         if not os.path.exists(self.temp_dir):
             os.makedirs(self.temp_dir)
 
+    def Scaffold(self):
+        old_conf_path = self.DefaultConfigPath()
+        new_conf_path = os.path.join(os.getcwd(), 'conf.yaml')
+        with open(old_conf_path, "r") as old_fp:
+            with open(new_conf_path, 'w') as new_fp:
+                conf = yaml.load(old_fp, Loader=yaml.FullLoader)
+                conf['SCAFFOLD'] = os.getcwd()
+                yaml.dump(conf, new_fp)
+
+    def Init(self):
+        nodes = self._DefineInit()
+        return self._ExecuteNodes(nodes)
+
+    def Start(self):
+        nodes = self._DefineStart()
+        return self._ExecuteNodes(nodes)
+
+    def Stop(self):
+        nodes = self._DefineStop()
+        return self._ExecuteNodes(nodes)
+
+    def Clean(self):
+        nodes = self._DefineClean()
+        return self._ExecuteNodes(nodes)
+
+    def Status(self):
+        nodes = self._DefineStatus()
+        return self._ExecuteNodes(nodes)
+
     def Restart(self):
         self.Stop()
         self.Start()
@@ -100,29 +131,6 @@ class Launcher(LauncherConfig):
         self.Stop()
         self.Clean()
 
-    def Clean(self):
-        nodes = self._DefineClean()
-        return self._ExecuteNodes(nodes)
-
-    def Stop(self):
-        nodes = self._DefineStop()
-        return self._ExecuteNodes(nodes)
-
-    def Start(self):
-        nodes = self._DefineStart()
-        return self._ExecuteNodes(nodes)
-
-    def Init(self):
-        nodes = self._DefineInit()
-        return self._ExecuteNodes(nodes)
-
     def Setup(self):
         self.Init()
         self.Start()
-
-    def Status(self):
-        nodes = self._DefineStatus()
-        return self._ExecuteNodes(nodes)
-
-    def Cpconf(self, conf_out):
-        shutil.copy(self.DefaultConfigPath(), conf_out)

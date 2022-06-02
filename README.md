@@ -28,8 +28,8 @@ source ~/.bashrc
 
 ```bash
 jarvis [launcher] [operation] --conf /path/to/config
-#Copy the default config to a new location (config.yaml)
-jarvis lustre cpconf --conf config.yaml
+#Create the basic configuration files the user needs to edit in the current directory
+jarvis lustre scaffold
 #Initialize the directories/configuration files required before launching server processes
 jarvis lustre init --conf config.yaml
 #Starts an already-initialized service

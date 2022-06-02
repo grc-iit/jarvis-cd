@@ -1,6 +1,6 @@
+SCAFFOLD: null
 COMMON:
     ORANGEFS_INSTALL_DIR: "/opt/ohpc/pub/orangefs"
-
 SERVER:
     SERVER_PVFS2TAB_FILE: "/home/${USER}/orangefs/pvfs2tab"
     SERVER_DATA_HOST_FILE: "/home/${USER}/orangefs/server_lists"
@@ -11,7 +11,6 @@ SERVER:
     PVFS2_PORT: 3334
     # protocol can be tcp or ib
     PVFS2_PROTOCOL: "tcp"
-
 CLIENT:
     CLIENT_PVFS2TAB_FILE: "/home/${USER}/orangefs/pvfs2tab"
     CLIENT_HOST_FILE: "/home/${USER}/orangefs/client_lists"
