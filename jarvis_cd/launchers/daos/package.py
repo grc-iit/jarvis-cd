@@ -31,8 +31,9 @@ class Daos(Launcher):
 
     def _DefineStart(self):
         nodes = []
-        start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']}"
-        node.append(ExecNode('Start DAOS', start_cmd))
+        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['DAOS_ROOT']}"
+        node.append(ExecNode('Start DAOS', server_start_cmd))
+        agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
         return nodes
 
     def _DefineClean(self):

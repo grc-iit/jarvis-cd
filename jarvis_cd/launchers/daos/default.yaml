@@ -12,7 +12,7 @@ SERVER:
   telemetry_port: 9191
   control_log_file: ${SCAFFOLD}/daos_server.log
   transport_config:
-    allow_insecure: null
+    allow_insecure: false
     ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
     cert: ${SCAFFOLD}/daosCA/certs/server.crt
     client_cert_dir: ${SCAFFOLD}/daosCA/certs
