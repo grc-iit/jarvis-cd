@@ -14,100 +14,12 @@ class Lustre(Launcher):
         super().__init__('lustre', config_path, args)
 
     def _ProcessConfig(self):
-        self.config["MANAGEMENT_SERVER"]["MOUNT_POINT"] = self._ExpandPath(self.config["MANAGEMENT_SERVER"]["MOUNT_POINT"])
-        self.config["METADATA_SERVER"]["MOUNT_POINT"] = self._ExpandPath(self.config["METADATA_SERVER"]["MOUNT_POINT"])
-        self.config["OBJECT_STORAGE_SERVERS"]["MOUNT_POINT_BASE"] = self._ExpandPath(self.config["OBJECT_STORAGE_SERVERS"]["MOUNT_POINT_BASE"])
-        self.config["OBJECT_STORAGE_SERVERS"]["HOSTFILE"] = self._ExpandPath(self.config["OBJECT_STORAGE_SERVERS"]["HOSTFILE"])
-        self.config["CLIENT"]["MOUNT_POINT"] = self._ExpandPath(self.config["CLIENT"]["MOUNT_POINT"])
-
         self.ssh_port = int(self.config['BASIC']['SSH_PORT'])
         self.ssh_user = self.config['BASIC']['SSH_USER']
         self.oss_hosts = Hostfile().LoadHostfile(self.config['OBJECT_STORAGE_SERVERS']['HOSTFILE'])
         self.client_hosts = Hostfile().LoadHostfile(self.config['CLIENT']['HOSTFILE'])
         self.osts = self.config['OBJECT_STORAGE_SERVER']['OSTS']
         self.num_ost_per_node = len(self.osts)
-
-    def _DefineClean(self):
-        nodes = []
-        # Remove Lustre Management Server
-        rm_mgt_cmd = f"rm -rf {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
-        nodes.append(SSHNode("rm_mgt",
-                             self.config['MANAGEMENT_SERVER']['HOST'],
-                             rm_mgt_cmd,
-                             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
-
-        # Remove Lustre Metatadata Server (MDT)
-        rm_mdt_cmd = f"rm -rf {self.config['METADATA_SERVER']['MOUNT_POINT']}"
-        nodes.append(SSHNode(
-            "make_mdt",
-            self.config['METADATA_SERVER']['HOST'],
-            rm_mdt_cmd,
-            username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
-
-        # Remove Lustre Object Storage Server (OSS) and Targets (OSTs)
-        for host in self.oss_hosts:
-            rm_ost_cmds = []
-            for i in range(self.num_ost_per_node):
-                ost_dir = f"{self.config['OBJECT_STORAGE_SERVERS']['MOUNT_POINT_BASE']}{i}"
-                rm_ost_cmds.append(f"rm -rf {ost_dir}")
-            rm_ost_cmd = ';'.join(rm_ost_cmds)
-            nodes.append(SSHNode("rm_ost",
-                                 host,
-                                 rm_ost_cmd,
-                                 username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
-
-        # Remove the Lustre PFS on the clients
-        rm_client_cmd = f"rm -rf {self.config['CLIENT']['MOUNT_POINT']}"
-        nodes.append(SSHNode("mount_client",
-                             self.client_hosts,
-                             rm_client_cmd,
-                             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
-        return nodes
-
-    def _DefineStatus(self):
-        nodes = []
-
-        return nodes
-
-    def _DefineStop(self):
-        nodes = []
-
-        # Unmount the Lustre PFS on the clients
-        unmount_client_cmd = f"umount {self.config['CLIENT']['MOUNT_POINT']}"
-        nodes.append(SSHNode("unmount_client",
-                             self.client_hosts,
-                             unmount_client_cmd,
-                             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
-
-        # Unmount Lustre Object Storage Server (OSS) and Targets (OSTs)
-        index = 1
-        for host in self.oss_hosts:
-            unmount_ost_cmd = []
-            for i in range(self.num_ost_per_node):
-                ost_dir = f"{self.config['OBJECT_STORAGE_SERVERS']['MOUNT_POINT_BASE']}{i}"
-                unmount_ost_cmd.append(f"umount {ost_dir}")
-                index += 1
-            unmount_ost_cmd = ';'.join(unmount_ost_cmd)
-            nodes.append(SSHNode("unmount_ost",
-                                 host,
-                                 unmount_ost_cmd,
-                                 username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
-
-        # Unmount Lustre Metatadata Server (MDT)
-        unmount_mdt_cmd = f"umount {self.config['METADATA_SERVER']['MOUNT_POINT']}"
-        nodes.append(SSHNode(
-            "unmount_mdt",
-            self.config['METADATA_SERVER']['HOST'],
-            unmount_mdt_cmd,
-            username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
-
-        # Unmount Lustre Management Server (MGS)
-        unmount_mgt_cmd = f"umount {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
-        nodes.append(SSHNode("unmount_mgt",
-                             self.config['MANAGEMENT_SERVER']['HOST'],
-                             unmount_mgt_cmd,
-                             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
-        return nodes
 
     def _DefineInit(self):
         nodes = []
@@ -205,6 +117,88 @@ class Lustre(Launcher):
                              self.client_hosts,
                              mount_client_cmd,
                              username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+        return nodes
+
+    def _DefineStop(self):
+        nodes = []
+
+        # Unmount the Lustre PFS on the clients
+        unmount_client_cmd = f"umount {self.config['CLIENT']['MOUNT_POINT']}"
+        nodes.append(SSHNode("unmount_client",
+                             self.client_hosts,
+                             unmount_client_cmd,
+                             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+
+        # Unmount Lustre Object Storage Server (OSS) and Targets (OSTs)
+        index = 1
+        for host in self.oss_hosts:
+            unmount_ost_cmd = []
+            for i in range(self.num_ost_per_node):
+                ost_dir = f"{self.config['OBJECT_STORAGE_SERVERS']['MOUNT_POINT_BASE']}{i}"
+                unmount_ost_cmd.append(f"umount {ost_dir}")
+                index += 1
+            unmount_ost_cmd = ';'.join(unmount_ost_cmd)
+            nodes.append(SSHNode("unmount_ost",
+                                 host,
+                                 unmount_ost_cmd,
+                                 username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+
+        # Unmount Lustre Metatadata Server (MDT)
+        unmount_mdt_cmd = f"umount {self.config['METADATA_SERVER']['MOUNT_POINT']}"
+        nodes.append(SSHNode(
+            "unmount_mdt",
+            self.config['METADATA_SERVER']['HOST'],
+            unmount_mdt_cmd,
+            username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+
+        # Unmount Lustre Management Server (MGS)
+        unmount_mgt_cmd = f"umount {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
+        nodes.append(SSHNode("unmount_mgt",
+                             self.config['MANAGEMENT_SERVER']['HOST'],
+                             unmount_mgt_cmd,
+                             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+        return nodes
+
+    def _DefineClean(self):
+        nodes = []
+        # Remove Lustre Management Server
+        rm_mgt_cmd = f"rm -rf {self.config['MANAGEMENT_SERVER']['MOUNT_POINT']}"
+        nodes.append(SSHNode("rm_mgt",
+                             self.config['MANAGEMENT_SERVER']['HOST'],
+                             rm_mgt_cmd,
+                             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+
+        # Remove Lustre Metatadata Server (MDT)
+        rm_mdt_cmd = f"rm -rf {self.config['METADATA_SERVER']['MOUNT_POINT']}"
+        nodes.append(SSHNode(
+            "make_mdt",
+            self.config['METADATA_SERVER']['HOST'],
+            rm_mdt_cmd,
+            username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+
+        # Remove Lustre Object Storage Server (OSS) and Targets (OSTs)
+        for host in self.oss_hosts:
+            rm_ost_cmds = []
+            for i in range(self.num_ost_per_node):
+                ost_dir = f"{self.config['OBJECT_STORAGE_SERVERS']['MOUNT_POINT_BASE']}{i}"
+                rm_ost_cmds.append(f"rm -rf {ost_dir}")
+            rm_ost_cmd = ';'.join(rm_ost_cmds)
+            nodes.append(SSHNode("rm_ost",
+                                 host,
+                                 rm_ost_cmd,
+                                 username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+
+        # Remove the Lustre PFS on the clients
+        rm_client_cmd = f"rm -rf {self.config['CLIENT']['MOUNT_POINT']}"
+        nodes.append(SSHNode("mount_client",
+                             self.client_hosts,
+                             rm_client_cmd,
+                             username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
+        return nodes
+
+    def _DefineStatus(self):
+        nodes = []
+
         return nodes
 
 

@@ -4,6 +4,7 @@ from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launcher import Launcher, LauncherConfig
 import os
 import socket
+import yaml
 
 from jarvis_cd.scp_node import SCPNode
 from jarvis_cd.sleep_node import SleepNode
@@ -29,7 +30,19 @@ class Daos(Launcher):
 
     def _DefineInit(self):
         nodes = []
-        gen_certificates_cmd = "`scspkg pkg-root daos`/lib64/daos/certgen/gen_certificates.sh"
+        #Generate security certificates
+        #gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh"
+        #print(gen_certificates_cmd)
+        #nodes.append(ExecNode('Generate Certificates', gen_certificates_cmd))
+        #Generate config files
+        with open(self.config['CONF']['SERVER'], 'w') as fp:
+            yaml.dump(self.config['SERVER'], fp)
+        with open(self.config['CONF']['AGENT'], 'w') as fp:
+            yaml.dump(self.config['AGENT'], fp)
+        with open(self.config['CONF']['CONTROL'], 'w') as fp:
+            yaml.dump(self.config['CONTROL'], fp)
+        #Detect network type (if not already configured)
+
         return nodes
 
     def _DefineStart(self):
@@ -70,7 +83,3 @@ class Daos(Launcher):
                              mount_client_cmd,
                              username=self.ssh_user, port=self.ssh_port, print_output=True, sudo=True))
         return nodes
-
-
-
-
