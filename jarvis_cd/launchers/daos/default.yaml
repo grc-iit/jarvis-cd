@@ -1,18 +1,18 @@
 SCAFFOLD: null
 DAOS_ROOT: ${DAOS_ROOT}
+NAME: daos_server
+PORT: 10001
+SECURE: true
 CONF:
   SERVER: ${SCAFFOLD}/daos_server.yaml
   AGENT: ${SCAFFOLD}/daos_agent.yaml
   CONTROL: ${SCAFFOLD}/daos_control.yaml
 SERVER:
-  name: daos_server
-  access_points: ['localhost']
-  port: 10001
+  access_points: ${SCAFFOLD}/server_hosts.txt
   provider: ofi+tcp
   telemetry_port: 9191
   control_log_file: ${SCAFFOLD}/daos_server.log
   transport_config:
-    allow_insecure: false
     ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
     cert: ${SCAFFOLD}/daosCA/certs/server.crt
     client_cert_dir: ${SCAFFOLD}/daosCA/certs
@@ -38,20 +38,14 @@ SERVER:
           bdev_size: 1
           bdev_list: ['${SCAFFOLD}/file_test']
 AGENT:
-  name: daos_server
-  access_points: ['localhost']
-  port: 10001
+  access_points: ${SCAFFOLD}/agent_hosts.txt
   transport_config:
-    allow_insecure: false
     ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
     cert: ${SCAFFOLD}/daosCA/certs/agent.crt
     key: ${SCAFFOLD}/daosCA/certs/agent.key
 CONTROL:
-  name: daos_server
-  hostlist: ['localhost']
-  port: 10001
+  hostlist: ${SCAFFOLD}/control_hosts.txt
   transport_config:
-    allow_insecure: false
     ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
     cert: ${SCAFFOLD}/daosCA/certs/admin.crt
     key: ${SCAFFOLD}/daosCA/certs/admin.key

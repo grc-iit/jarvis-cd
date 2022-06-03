@@ -13,6 +13,8 @@ class LauncherConfig(ABC):
     def __init__(self, launcher_name, scaffold_dir=None):
         self.launcher_name = launcher_name
         self.scaffold_dir = scaffold_dir
+        if self.scaffold_dir is None:
+            self.scaffold_dir = os.getcwd()
         self.config_path = self.ScaffoldConfigPath()
         self.config = None
 
@@ -20,9 +22,10 @@ class LauncherConfig(ABC):
         return JarvisManager.GetInstance().GetDefaultConfigPath(self.launcher_name)
 
     def ScaffoldConfigPath(self):
-        if self.scaffold_dir is None:
-            self.scaffold_dir = os.getcwd()
         return os.path.join(self.scaffold_dir, 'jarvis_conf.yaml')
+
+    def CheckIfHostPath(self):
+        return os.path.join(self.scaffold_dir, 'is_host')
 
     def LoadConfig(self):
         if self.config_path is None:
@@ -125,6 +128,9 @@ class Launcher(LauncherConfig):
                 conf = yaml.load(old_fp, Loader=yaml.FullLoader)
                 conf['SCAFFOLD'] = os.getcwd()
                 yaml.dump(conf, new_fp)
+
+        with open(self.CheckIfHostPath(), 'w') as fp:
+            fp.write()
 
     def Init(self):
         nodes = self._DefineInit()

@@ -23,16 +23,18 @@ module load daos
 
 ```bash
 SCAFFOLD=`pwd`
-#Generate security certificates
+#Generate security certificates (copy to all nodes)
 ${DAOS_ROOT}/lib64/daos/certgen/gen_certificates.sh ${SCAFFOLD}
-#Start DAOS server
+#Start DAOS server (per-node)
 sudo ${DAOS_ROOT}/bin/daos_server start -o ${SCAFFOLD}/daos_server.yaml -d ${SCAFFOLD}
-#Format DAOS storage 
-sudo ${DAOS_ROOT}/bin/dmg storage format -o ${SCAFFOLD}/daos_control.yaml
-#Start DAOS agents
+#Check if DAOS has started (per-node)
+sudo ${DAOS_ROOT}/bin/dmg -o ${SCAFFOLD}/daos_control.yaml system query -v
+#Format DAOS storage (per-node)
+sudo ${DAOS_ROOT}/bin/dmg storage format -o ${SCAFFOLD}/daos_control.yaml 
+#Start DAOS agents (per-node)
 sudo ${DAOS_ROOT}/bin/daos_agent start -o ${SCAFFOLD}/daos_agent.yaml -s ${SCAFFOLD}
-#Create a single storage pool
-sudo ${DAOS_ROOT}/bin/dmg pool create big_pool
+#Check status (per-node)
+cat "/tmp/daos_agent.log"
 ```
 
 ## IO500
@@ -126,10 +128,11 @@ module load mpifileutils
 ```bash
 scspkg create io500
 cd `scspkg pkg-src io500`
+scspkg add-deps io500 mpifileutils
+scspkg set-env io500 MY_DAOS_INSTALL_PATH `scspkg pkg-root daos`
+scspkg set-env io500 MY_MFU_INSTALL_PATH `scspkg pkg-root mpifileutils`
 git clone https://github.com/IO500/io500.git -b io500-isc21
 cd io500
-export MY_DAOS_INSTALL_PATH=`scspkg pkg-root daos`
-export MY_MFU_INSTALL_PATH=`scspkg pkg-root mpifileutils`
 ```
 
 ```bash  
@@ -196,4 +199,14 @@ git apply io500_Makefile.patch
 https://daosio.atlassian.net/wiki/spaces/DC/pages/4874571083/IO-500+ISC21
 ```bash
 ./prepare.sh
+```
+
+```bash
+${DAOS_ROOT}/bin/dmg -o daos_control.yaml pool create -z 100G --label io500_pool
+${DAOS_ROOT}/bin/dmg -o daos_control.yaml pool create -z 500M --label io500_pool
+daos container create --type POSIX --pool io500_pool
+```
+
+```bash
+mpssh "dfuse --pool=$DAOS_POOL --container=$DAOS_CONT -m $DAOS_FUSE"
 ```

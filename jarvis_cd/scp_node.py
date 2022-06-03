@@ -11,7 +11,7 @@ from jarvis_cd.exception import Error, ErrorCode
 sys.stderr = sys.__stderr__
 
 class SCPNode(Node):
-    def __init__(self, name, hosts, source, destination, username = getpass.getuser(), port=22, sudo=False, print_output=False):
+    def __init__(self, name, hosts, source, destination, username = getpass.getuser(), port=22, sudo=False, print_output=False, host_aliases=None):
         super().__init__(name, print_output)
         if isinstance(hosts, list):
             self.hosts = hosts
@@ -22,10 +22,13 @@ class SCPNode(Node):
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SCPNode hosts", type(hosts))
 
-
         #There's a bug in SCP which cannot copy a file to itself
         if source == destination:
-            print("WARNING!!! If the machine running this command is also in the hostfile, scp will bug out and remove the data.")
+            if host_aliases is None:
+                print("WARNING!!! If the machine running this command is also in the hostfile, scp will bug out and remove the data.")
+            else:
+                for alias in host_aliases:
+                    self.hosts.remove(alias)
 
         self.source = source
         self.destination = destination
