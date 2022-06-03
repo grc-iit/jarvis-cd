@@ -17,7 +17,7 @@ class Daos(Launcher):
     def _ProcessConfig(self):
         self.server_hosts = Hostfile().LoadHostfile(self.config['CONTROL']['access_points'])
         self.agent_hosts = Hostfile().LoadHostfile(self.config['AGENT']['access_points'])
-        self.control_hosts = Hostfile().LoadHostfile(self.config['CONTROL']['access_points'])
+        self.control_hosts = Hostfile().LoadHostfile(self.config['CONTROL']['hostlist'])
         return
 
     def _DefineInit(self):
@@ -82,7 +82,7 @@ class Daos(Launcher):
         self.config['CONTROL']['allow_insecure'] = self.config['SECURE']
         self.config['CONTROL']['port'] = self.config['PORT']
         self.config['CONTROL']['name'] = self.config['NAME']
-        self.config['CONTROL']['access_points'] = self.control_hosts.list()
+        self.config['CONTROL']['hostlist'] = self.control_hosts.list()
         with open(self.config['CONF']['CONTROL'], 'w') as fp:
             yaml.dump(self.config['CONTROL'], fp)
         return
