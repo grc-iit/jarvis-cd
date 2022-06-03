@@ -7,7 +7,7 @@ import asyncio
 from jarvis_cd.node import *
 
 class ExecNode(Node):
-    def __init__(self, name, cmd, print_output=False, collect_output=True, affinity=None, sleep_period_ms=100, max_retries=0,cwd=None):
+    def __init__(self, name, cmd, print_output=False, collect_output=True, affinity=None, sleep_period_ms=100, max_retries=0,cwd=None, sudo=False):
         super().__init__(name, print_output, collect_output)
         self.cmd=cmd
         self.proc = None
@@ -20,6 +20,7 @@ class ExecNode(Node):
         self.stderr = None
         self.output = None
         self.cwd = cwd
+        self.sudo = sudo
 
     def _start_process(self, command, is_first=True):
         command_array = shlex.split(command)
@@ -54,6 +55,8 @@ class ExecNode(Node):
         :param commands: the string of the command to be executed
         :return: stdout: standard output of command , stderr  standard error of command
         """
+        if self.sudo:
+            commands = [f"sudo {command}" for command in commands]
         if isinstance(commands, str):
             commands = [commands]
         for i, command in enumerate(commands):

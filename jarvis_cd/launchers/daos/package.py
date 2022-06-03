@@ -32,8 +32,11 @@ class Daos(Launcher):
     def _DefineStart(self):
         nodes = []
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['DAOS_ROOT']}"
-        node.append(ExecNode('Start DAOS', server_start_cmd))
+        node.append(ExecNode('Start DAOS', server_start_cmd, sudo=True))
+        storage_format_cmd = f"${DAOS_ROOT}/bin/dmg storage format --force -o ${SCAFFOLD}/daos_control.yaml"
+        node.append(ExecNode('Format DAOS', storage_format_cmd, sudo=True))
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
+        node.append(ExecNode('Start DAOS Agent', agent_start_cmd, sudo=True))
         return nodes
 
     def _DefineClean(self):
