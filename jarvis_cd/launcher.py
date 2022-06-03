@@ -128,9 +128,8 @@ class Launcher(LauncherConfig):
                 conf = yaml.load(old_fp, Loader=yaml.FullLoader)
                 conf['SCAFFOLD'] = os.getcwd()
                 yaml.dump(conf, new_fp)
-
         with open(self.CheckIfHostPath(), 'w') as fp:
-            fp.write()
+            pass
 
     def Init(self):
         nodes = self._DefineInit()
