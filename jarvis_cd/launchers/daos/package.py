@@ -26,7 +26,7 @@ class Daos(Launcher):
         gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
         nodes.append(ExecNode('Generate Certificates', gen_certificates_cmd))
         #Copy the certificates to all servers
-        nodes.append(SCPNode('Distribute Certificates', ))
+        #nodes.append(SCPNode('Distribute Certificates', ))
         #Generate config files
         self._CreateServerConfig()
         self._CreateAgentConfig()
