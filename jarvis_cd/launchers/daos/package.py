@@ -15,7 +15,7 @@ class Daos(Launcher):
         super().__init__('daos', config_path, args)
 
     def _ProcessConfig(self):
-        self.server_hosts = Hostfile().LoadHostfile(self.config['CONTROL']['access_points'])
+        self.server_hosts = Hostfile().LoadHostfile(self.config['SERVER']['access_points'])
         self.agent_hosts = Hostfile().LoadHostfile(self.config['AGENT']['access_points'])
         self.control_hosts = Hostfile().LoadHostfile(self.config['CONTROL']['hostlist'])
         return
