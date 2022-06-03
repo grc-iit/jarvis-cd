@@ -61,7 +61,7 @@ class Daos(Launcher):
         return nodes
 
     def _CreateServerConfig(self):
-        self.config['SERVER']['allow_insecure'] = self.config['SECURE']
+        self.config['SERVER']['transport_config']['allow_insecure'] = self.config['SECURE']
         self.config['SERVER']['port'] = self.config['PORT']
         self.config['SERVER']['name'] = self.config['NAME']
         self.config['SERVER']['access_points'] = self.server_hosts.list()
@@ -70,7 +70,7 @@ class Daos(Launcher):
         return
 
     def _CreateAgentConfig(self):
-        self.config['AGENT']['allow_insecure'] = self.config['SECURE']
+        self.config['AGENT']['transport_config']['allow_insecure'] = self.config['SECURE']
         self.config['AGENT']['port'] = self.config['PORT']
         self.config['AGENT']['name'] = self.config['NAME']
         self.config['AGENT']['access_points'] = self.agent_hosts.list()
@@ -79,7 +79,7 @@ class Daos(Launcher):
         return
 
     def _CreateControlConfig(self):
-        self.config['CONTROL']['allow_insecure'] = self.config['SECURE']
+        self.config['CONTROL']['transport_config']['allow_insecure'] = self.config['SECURE']
         self.config['CONTROL']['port'] = self.config['PORT']
         self.config['CONTROL']['name'] = self.config['NAME']
         self.config['CONTROL']['hostlist'] = self.control_hosts.list()
