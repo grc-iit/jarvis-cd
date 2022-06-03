@@ -22,7 +22,7 @@ SERVER:
       targets: 1
       first_core: 0
       nr_xs_helpers: 0
-      fabric_iface: eth0
+      fabric_iface: ens3
       fabric_iface_port: 31416
       log_file: ${SCAFFOLD}/daos_engine.0.log
       env_vars:

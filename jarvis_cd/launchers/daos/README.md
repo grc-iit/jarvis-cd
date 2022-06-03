@@ -27,12 +27,12 @@ SCAFFOLD=`pwd`
 ${DAOS_ROOT}/lib64/daos/certgen/gen_certificates.sh ${SCAFFOLD}
 #Start DAOS server (per-node)
 sudo ${DAOS_ROOT}/bin/daos_server start -o ${SCAFFOLD}/daos_server.yaml -d ${SCAFFOLD}
-#Check if DAOS has started (per-node)
-sudo ${DAOS_ROOT}/bin/dmg -o ${SCAFFOLD}/daos_control.yaml system query -v
-#Format DAOS storage (per-node)
-sudo ${DAOS_ROOT}/bin/dmg storage format -o ${SCAFFOLD}/daos_control.yaml 
 #Start DAOS agents (per-node)
 sudo ${DAOS_ROOT}/bin/daos_agent start -o ${SCAFFOLD}/daos_agent.yaml -s ${SCAFFOLD}
+#Format DAOS storage (per-node)
+sudo ${DAOS_ROOT}/bin/dmg storage format -o ${SCAFFOLD}/daos_control.yaml 
+#Check if DAOS has started (per-node)
+sudo ${DAOS_ROOT}/bin/dmg -o ${SCAFFOLD}/daos_control.yaml system query -v
 #Check status (per-node)
 cat "/tmp/daos_agent.log"
 ```
