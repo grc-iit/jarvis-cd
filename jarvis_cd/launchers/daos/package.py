@@ -43,10 +43,10 @@ class Daos(Launcher):
         nodes = []
         #Start DAOS server
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
-        node.append(ExecNode('Start DAOS', server_start_cmd, sudo=True))
+        nodes.append(ExecNode('Start DAOS', server_start_cmd, sudo=True))
         #Start client
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
-        node.append(ExecNode('Start DAOS Agent', agent_start_cmd, sudo=True))
+        nodes.append(ExecNode('Start DAOS Agent', agent_start_cmd, sudo=True))
         return nodes
 
     def _DefineClean(self):
