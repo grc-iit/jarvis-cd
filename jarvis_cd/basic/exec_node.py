@@ -83,7 +83,7 @@ class ExecNode(Node):
         else:
             return None
 
-    async def _Run(self):
+    async def _RunAsync(self):
         self.output = []
         retries = 0
         while True:
@@ -94,28 +94,24 @@ class ExecNode(Node):
             retries += 1
             print(f"Retrying {self.cmd}")
         self.proc.wait()
-        if self.print_output and self.collect_output:
-            self.Print(self.output)
 
     def RunAsync(self):
         self.loop = asyncio.get_event_loop()
-        self.future = self.loop.create_task(self._Run())
+        self.future = self.loop.create_task(self._RunAsync())
+        return self
 
     def Wait(self):
         if self.loop is not None and self.future is not None:
             self.loop.run_until_complete(self.future)
             self.loop = None
             self.future = None
-            return self.output
+        return self
 
-    def Run(self):
+    def _Run(self):
         self.RunAsync()
-        if self.exec_async:
-            return { "localhost": {
-                    "stdout": [""],
-                    "stderr": [""]
-                }}
-        return self.Wait()
+        if not self.exec_async:
+            self.Wait()
+        return self
 
     def __str__(self):
         return "ExecNode {}".format(self.name)

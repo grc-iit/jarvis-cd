@@ -1,6 +1,6 @@
-from jarvis_cd.exec_node import ExecNode
+from jarvis_cd.basic.exec_node import ExecNode
 import re
-import os,sys
+
 
 class YCSB(ExecNode):
     def __init__(self, name, db_type, op_type, workload_path, data_dir, ycsb_dir,

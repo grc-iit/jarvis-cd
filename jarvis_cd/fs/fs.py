@@ -1,4 +1,4 @@
-from jarvis_cd.exec_node import ExecNode
+from jarvis_cd.basic.exec_node import ExecNode
 
 class DropCaches(ExecNode):
     def __init__(self, name, print_output=False, collect_output=True, affinity=None, sleep_period_ms=100, max_retries=0):

@@ -99,20 +99,6 @@ class Launcher(LauncherConfig):
     def _DefineStatus(self):
         return []
 
-    def _ExecuteNodes(self, nodes):
-        if type(nodes) == list:
-            self.nodes = nodes
-        else:
-            self.nodes = [nodes]
-        outputs = []
-        if len(self.nodes) > 0:
-            outputs = []
-            for i, node in enumerate(self.nodes):
-                logging.info("Executing node {} index {}".format(str(node),i))
-                output = node.Run()
-                outputs.append(output)
-        return outputs
-
     def SetTempDir(self, temp_dir):
         self.temp_dir = temp_dir
         if os.path.exists(self.temp_dir):

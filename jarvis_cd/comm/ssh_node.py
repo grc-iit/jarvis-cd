@@ -51,15 +51,9 @@ class SSHNode(Node):
             nice_output[host]['stderr'] = list(host_output.stderr)
         return nice_output
 
-    def Run(self):
-        outputs = []
-        for i,cmd in enumerate(self.cmds):
-            print(cmd)
-            output=self._exec_ssh(cmd)
-            if self.print_output:
-                self.Print(output)
-            outputs.append(output)
-        return outputs
+    def _Run(self):
+        self.output = [self._exec_ssh(cmd) for i,cmd in enumerate(self.cmds)]
+        return self
 
     def __str__(self):
         return "SSHNode {}".format(self.name)

@@ -1,14 +1,8 @@
-from jarvis_cd.echo_node import EchoNode
-from jarvis_cd.exec_node import ExecNode
+from jarvis_cd.basic.exec_node import ExecNode
 from jarvis_cd.hostfile import Hostfile
-from jarvis_cd.launcher import Launcher, LauncherConfig
-import os
-import socket
+from jarvis_cd.launcher import Launcher
 import yaml
 
-from jarvis_cd.scp_node import SCPNode
-from jarvis_cd.sleep_node import SleepNode
-from jarvis_cd.ssh_node import SSHNode
 
 class Daos(Launcher):
     def __init__(self, config_path=None, args=None):
@@ -21,10 +15,9 @@ class Daos(Launcher):
         return
 
     def _DefineInit(self):
-        nodes = []
         #Generate security certificates
         gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
-        nodes.append(ExecNode('Generate Certificates', gen_certificates_cmd))
+        ExecNode('Generate Certificates', gen_certificates_cmd).Run()
         #Copy the certificates to all servers
         #nodes.append(SCPNode('Distribute Certificates', ))
         #Generate config files
@@ -37,7 +30,6 @@ class Daos(Launcher):
         #Format storage
         #storage_format_cmd = f"${DAOS_ROOT}/bin/dmg storage format --force -o {self.config['CONF']['CONTROL']}"
         #node.append(ExecNode('Format DAOS', storage_format_cmd, sudo=True))
-        return nodes
 
     def _DefineStart(self):
         nodes = []
@@ -47,18 +39,15 @@ class Daos(Launcher):
         #Start client
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
         nodes.append(ExecNode('Start DAOS Agent', agent_start_cmd, sudo=True))
-        return nodes
 
     def _DefineClean(self):
-        return nodes
+        pass
 
     def _DefineStop(self):
-        nodes = []
-        return nodes
+        pass
 
     def _DefineStatus(self):
-        nodes = []
-        return nodes
+        pass
 
     def _CreateServerConfig(self):
         self.config['SERVER']['transport_config']['allow_insecure'] = self.config['SECURE']
@@ -67,7 +56,6 @@ class Daos(Launcher):
         self.config['SERVER']['access_points'] = self.server_hosts.list()
         with open(self.config['CONF']['SERVER'], 'w') as fp:
             yaml.dump(self.config['SERVER'], fp)
-        return
 
     def _CreateAgentConfig(self):
         self.config['AGENT']['transport_config']['allow_insecure'] = self.config['SECURE']
@@ -76,7 +64,6 @@ class Daos(Launcher):
         self.config['AGENT']['access_points'] = self.agent_hosts.list()
         with open(self.config['CONF']['AGENT'], 'w') as fp:
             yaml.dump(self.config['AGENT'], fp)
-        return
 
     def _CreateControlConfig(self):
         self.config['CONTROL']['transport_config']['allow_insecure'] = self.config['SECURE']
@@ -85,4 +72,3 @@ class Daos(Launcher):
         self.config['CONTROL']['hostlist'] = self.control_hosts.list()
         with open(self.config['CONF']['CONTROL'], 'w') as fp:
             yaml.dump(self.config['CONTROL'], fp)
-        return

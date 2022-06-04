@@ -6,15 +6,14 @@ class EchoNode(Node):
         super().__init__(name, print_output=True)
         self.message = message
 
-    def Run(self):
-        output={
+    def _Run(self):
+        self.output = {
             'localhost':{
                 'stdout':[self.message],
                 'stderr':[]
             }
         }
-        if self.print_output:
-            self.Print(output)
-        return output
+        return self
+
     def __str__(self):
         return "EchoNode {}".format(self.name)
