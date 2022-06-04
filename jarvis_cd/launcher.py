@@ -118,24 +118,19 @@ class Launcher(LauncherConfig):
             pass
 
     def Init(self):
-        nodes = self._DefineInit()
-        return self._ExecuteNodes(nodes)
+        self._DefineInit()
 
     def Start(self):
-        nodes = self._DefineStart()
-        return self._ExecuteNodes(nodes)
+        self._DefineStart()
 
     def Stop(self):
-        nodes = self._DefineStop()
-        return self._ExecuteNodes(nodes)
+        self._DefineStop()
 
     def Clean(self):
-        nodes = self._DefineClean()
-        return self._ExecuteNodes(nodes)
+        self._DefineClean()
 
     def Status(self):
-        nodes = self._DefineStatus()
-        return self._ExecuteNodes(nodes)
+        self._DefineStatus()
 
     def Restart(self):
         self.Stop()
