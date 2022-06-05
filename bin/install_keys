@@ -37,18 +37,18 @@ class ArgumentParser(object):
                                  help="The name of the public/private key pair within the src_key_dir")
         self.parser.add_argument("--port", metavar='port', default=22, type=str,
                                  help="The port number for ssh")
-        self.parser.add_argument("--user", metavar='user', default=os.environ['USER'], type=str,
+        self.parser.add_argument("--user", metavar='username', default=os.environ['USER'], type=str,
                                  help="The username for ssh")
-        self.parser.add_argument("--hosts", metavar='ip addr file', default=None, type=str,
+        self.parser.add_argument("--hosts", metavar='hostfile.txt', default=None, type=str,
                                  help="The set of all hosts to bootstrap")
-        self.parser.add_argument("--host", metavar='ip addr', default=None, type=str,
+        self.parser.add_argument("--host", metavar='ip_addr', default=None, type=str,
                                  help="The single host to bootstrap")
         self.parser.add_argument("--src_key_dir", metavar='path', default=None, type=str,
                                  help="Where to search for key pair on the current host")
         self.parser.add_argument("--dst_key_dir", metavar='path', default=None, type=str,
                                  help="Where to install key pair on destination hosts")
-        self.parser.add_argument("--priv_key", metavar='path', default=False, type=bool,
-                                 help="Whether or not to install private key")
+        self.parser.add_argument("--priv_key", metavar='bool', default=False, type=bool,
+                                 help="Whether or not to install private key on hosts")
         self.args = self.parser.parse_args()
         self._validate()
 
