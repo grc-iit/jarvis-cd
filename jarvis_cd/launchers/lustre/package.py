@@ -1,5 +1,5 @@
 from jarvis_cd.hostfile import Hostfile
-from jarvis_cd.launcher import Launcher
+from jarvis_cd.launchers.launcher import Launcher
 
 from jarvis_cd.comm.ssh_node import SSHNode
 

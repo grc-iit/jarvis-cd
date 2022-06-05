@@ -5,9 +5,8 @@ jarvis_cd [launcher] [operation] [conf.ini]
 """
 
 from jarvis_cd.jarvis_manager import JarvisManager
-from jarvis_cd.argument_parser import ArgumentParser
-from jarvis_cd.launcher import LauncherConfig
-import sys,os
+from jarvis_cd.launchers.argument_parser import ArgumentParser
+import os
 import logging
 
 if __name__ == '__main__':

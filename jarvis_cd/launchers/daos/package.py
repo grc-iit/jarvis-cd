@@ -1,6 +1,6 @@
 from jarvis_cd.basic.exec_node import ExecNode
 from jarvis_cd.hostfile import Hostfile
-from jarvis_cd.launcher import Launcher
+from jarvis_cd.launchers.launcher import Launcher
 import yaml
 
 

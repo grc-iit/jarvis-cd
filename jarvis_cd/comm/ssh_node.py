@@ -10,8 +10,10 @@ from jarvis_cd.exception import Error, ErrorCode
 sys.stderr = sys.__stderr__
 
 class SSHNode(Node):
-    def __init__(self, name, hosts, cmd, username = getpass.getuser(), port=22, pkey=None, password=None, sudo=False, print_output=False):
-        super().__init__(name, print_output)
+    def __init__(self, name, hosts, cmd,
+                 username = getpass.getuser(), pkey=None, password=None, port=22,
+                 sudo=False, print_output=True, collect_output=True):
+        super().__init__(name, print_output, collect_output)
         if isinstance(hosts, list):
             self.hosts=hosts
         elif isinstance(hosts, str):
