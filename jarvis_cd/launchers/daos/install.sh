@@ -1,54 +1,67 @@
-#DAOS
+#!/bin/bash
 
-## Install
-```bash
+OS=$1
+
+#######INSTALL SPACK
+git clone https://github.com/spack/spack.git
+cd spack
+echo ". `pwd`/share/spack/setup-env.sh" >> ~/.bashrc
+source ~/.bashrc
+
+#######INSTALL SCSPKG
+git clone https://github.com/scs-lab/scspkg.git
+cd scspkg
+bash install.sh
+source ~/.bashrc
+
+#######INSTALL Jarvis
+git clone git@github.com:lukemartinlogan/jarvis-cd.git -b development
+git checkout development
+cd jarvis-cd
+python3 -m pip install -e .
+
+#######INSTALL MPICH
+spack install mpich
+spack load mpich
+
+#######INSTALL DAOS
 scspkg create daos
 cd `scspkg pkg-src daos`
 git clone --recurse-submodules -b release/2.0 https://github.com/daos-stack/daos.git
 cd daos
 
-#EL (including CentOS)
-sudo ./utils/scripts/install-ubuntu20.sh
+#Centos7
+if [ $OS == 'el7' ]; then
+  sudo ./utils/scripts/install-centos7.sh
+#Centos8
+elif [ $OS == 'el8']; then
+  sudo ./utils/scripts/install-el8.sh
 #OpenSUSE
-sudo ./utils/scripts/install-leap15.sh
+elif [ $OS == 'suse']; then
+  sudo ./utils/scripts/install-leap15.sh
 #Ubuntu
-./utils/scripts/install-ubuntu20.sh
+elif [ $OS == 'ubuntu' ]; then
+  sudo ./utils/scripts/install-ubuntu20.sh
+else
+  echo "Invalid OS $OS"
+  exit
+fi
 
 scons prefix=`scspkg pkg-root daos` --config=force --build-deps=yes install
 scspkg set-env daos DAOS_ROOT `scspkg pkg-root daos`
 module load daos
-```
 
-## Deploy
-
-```bash
-SCAFFOLD=`pwd`
-#Generate security certificates (copy to all nodes)
-${DAOS_ROOT}/lib64/daos/certgen/gen_certificates.sh ${SCAFFOLD}
-#Start DAOS server (per-node)
-sudo ${DAOS_ROOT}/bin/daos_server start -o ${SCAFFOLD}/daos_server.yaml -d ${SCAFFOLD}
-#Start DAOS agents (per-node)
-sudo ${DAOS_ROOT}/bin/daos_agent start -o ${SCAFFOLD}/daos_agent.yaml -s ${SCAFFOLD}
-#Format DAOS storage (per-node)
-sudo ${DAOS_ROOT}/bin/dmg storage format -o ${SCAFFOLD}/daos_control.yaml 
-#Check if DAOS has started (per-node)
-sudo ${DAOS_ROOT}/bin/dmg -o ${SCAFFOLD}/daos_control.yaml system query -v
-#Check status (per-node)
-cat "/tmp/daos_agent.log"
-```
-
-## IO500
-
+#######INSTALL IO500
 ### LibArchive
-```bash
+
 #Ubuntu
 sudo apt install libarchive-dev libbz2-dev
 #Red hat
 sudo apt install libarchive-devel libbz2-devel
-```
+
 
 ### LIBCIRCLE
-```bash
+
 scspkg create libcircle
 cd `scspkg pkg-src libcircle` 
 wget https://github.com/hpc/libcircle/releases/download/v0.3/libcircle-0.3.0.tar.gz
@@ -58,10 +71,10 @@ cd libcircle-0.3.0
 make -j8
 make install
 module load libcircle
-```
+
 
 ### LWGRP
-```bash
+
 scspkg create lwgrp
 cd `scspkg pkg-src lwgrp`
 wget https://github.com/llnl/lwgrp/releases/download/v1.0.2/lwgrp-1.0.2.tar.gz
@@ -71,10 +84,10 @@ cd lwgrp-1.0.2
 make -j8
 make install
 module load lwgrp
-```
+
 
 ### DTCMP
-```bash
+
 scspkg create dtcmp
 scspkg add-deps lwgrp
 cd `scspkg pkg-src dtcmp`
@@ -85,18 +98,16 @@ cd dtcmp-1.1.0
 make -j8
 make install
 module load dtcmp
-```
+
 
 ### MPIFILEUTILS
-```bash
+
 scspkg create mpifileutils
 scspkg add-deps mpifileutils libcircle dtcmp daos
 cd `scspkg pkg-src mpifileutils`
 git clone https://github.com/mchaarawi/mpifileutils -b pfind_integration
 cd mpifileutils
-```
 
-```
 cat << EOF > cmake.patch
 --- CMakeLists.txt	2022-06-03 00:05:20.147138999 +0000
 +++ CMakeLists.txt	2022-06-03 00:05:47.251030826 +0000
@@ -110,9 +121,7 @@ cat << EOF > cmake.patch
    CMAKE_POLICY(SET CMP0042 NEW)
 EOF
 git apply cmake.patch
-```
 
-```
 mkdir build
 cd build
 cmake ../ \
@@ -122,10 +131,9 @@ cmake ../ \
   -DCMAKE_INSTALL_PREFIX=`scspkg pkg-root mpifileutils`
 make -j8 install
 module load mpifileutils
-```
+
 
 ### IO500
-```bash
 scspkg create io500
 cd `scspkg pkg-src io500`
 scspkg add-deps io500 mpifileutils
@@ -133,9 +141,8 @@ scspkg set-env io500 MY_DAOS_INSTALL_PATH `scspkg pkg-root daos`
 scspkg set-env io500 MY_MFU_INSTALL_PATH `scspkg pkg-root mpifileutils`
 git clone https://github.com/IO500/io500.git -b io500-isc21
 cd io500
-```
+module load io500
 
-```bash  
 cat << EOF > io500_prepare.patch
 diff --git a/prepare.sh b/prepare.sh
 index f8908d7..19d4aa6 100755
@@ -170,9 +177,7 @@ index f8908d7..19d4aa6 100755
    \$MAKE install
 EOF
 git apply io500_prepare.patch
-```
 
-```bash
 cat << EOF > io500_Makefile.patch
 diff --git a/Makefile b/Makefile
 index 2975471..5dce307 100644
@@ -194,18 +199,4 @@ index 2975471..5dce307 100644
  VERSION_TREE=\$(shell git diff src | wc -l | sed -e 's/   *//g' -e 's/^0//' | sed "s/\([0-9]\)/-\1/")
 EOF
 git apply io500_Makefile.patch
-```
-
-```bash
 ./prepare.sh
-```
-
-```bash
-${DAOS_ROOT}/bin/dmg -o daos_control.yaml pool create -z 100G --label io500_pool
-${DAOS_ROOT}/bin/dmg -o daos_control.yaml pool create -z 500M --label io500_pool
-daos container create --type POSIX --pool io500_pool
-```
-
-```bash
-mpssh "dfuse --pool=$DAOS_POOL --container=$DAOS_CONT -m $DAOS_FUSE"
-```
