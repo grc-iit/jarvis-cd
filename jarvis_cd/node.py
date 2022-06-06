@@ -13,9 +13,11 @@ class Node(ABC):
             "stderr": [""]
         }}
 
-    def Print(self):
+    def _format_output(self):
         if isinstance(self.output, dict):
             self.output = [self.output]
+
+    def Print(self):
         #For each command
         for host_outputs in self.output:
             #Print all host outputs
@@ -34,8 +36,10 @@ class Node(ABC):
 
     def Run(self):
         self._Run()
+        self._format_output()
         if self.print_output:
             self.Print()
+        return self
 
     def __str__(self):
         return self.name

@@ -14,7 +14,7 @@ sudo ./utils/scripts/install-leap15.sh
 #Ubuntu
 ./utils/scripts/install-ubuntu20.sh
 
-scons prefix=`scspkg pkg-root daos` --config=force --build-deps=yes install
+scons PREFIX=`scspkg pkg-root daos` --config=force --build-deps=yes install
 scspkg set-env daos DAOS_ROOT `scspkg pkg-root daos`
 module load daos
 ```
@@ -24,7 +24,8 @@ module load daos
 ```bash
 SCAFFOLD=`pwd`
 #Generate security certificates (copy to all nodes)
-${DAOS_ROOT}/lib64/daos/certgen/gen_certificates.sh ${SCAFFOLD}
+jarvis daos scaffold
+jarvis daos init
 #Start DAOS server (per-node)
 sudo ${DAOS_ROOT}/bin/daos_server start -o ${SCAFFOLD}/daos_server.yaml -d ${SCAFFOLD}
 #Start DAOS agents (per-node)

@@ -18,7 +18,6 @@ class ExecNode(Node):
         self.future = None
         self.stdout = None
         self.stderr = None
-        self.output = None
         self.cwd = cwd
         self.sudo = sudo
         self.exec_async = exec_async

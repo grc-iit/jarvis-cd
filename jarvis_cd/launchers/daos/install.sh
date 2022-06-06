@@ -8,21 +8,27 @@ cd spack
 echo ". `pwd`/share/spack/setup-env.sh" >> ~/.bashrc
 source ~/.bashrc
 
+#######INSTALL MPICH
+spack install mpich
+spack load mpich
+
+#######INSTALL Jarvis
+cd ${HOME}
+git clone git@github.com:lukemartinlogan/jarvis-cd.git -b development
+cd jarvis-cd
+python3 -m pip install -e .
+
 #######INSTALL SCSPKG
+cd ${HOME}
 git clone https://github.com/scs-lab/scspkg.git
 cd scspkg
 bash install.sh
 source ~/.bashrc
 
-#######INSTALL Jarvis
-git clone git@github.com:lukemartinlogan/jarvis-cd.git -b development
-git checkout development
-cd jarvis-cd
-python3 -m pip install -e .
-
-#######INSTALL MPICH
-spack install mpich
-spack load mpich
+#######FACTOR NCURSES (for DAOS)
+scspkg from-spack ncurses
+module load ncurses-mod
+spack load ncurses
 
 #######INSTALL DAOS
 scspkg create daos
@@ -47,18 +53,17 @@ else
   exit
 fi
 
-scons prefix=`scspkg pkg-root daos` --config=force --build-deps=yes install
+CFLAGS="-I $NCURSES_PATH" scons PREFIX=`scspkg pkg-root daos` --config=force --build-deps=yes install
 scspkg set-env daos DAOS_ROOT `scspkg pkg-root daos`
 module load daos
 
 #######INSTALL IO500
-### LibArchive
 
-#Ubuntu
-sudo apt install libarchive-dev libbz2-dev
-#Red hat
-sudo apt install libarchive-devel libbz2-devel
-
+### LIBARCHIVE
+spack install libarchive
+scspkg from-spack libarchive
+module load libarchive-mod
+spack load libarchive
 
 ### LIBCIRCLE
 
