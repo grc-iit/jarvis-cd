@@ -4,24 +4,24 @@ Jarvis CD is a continuous deployment software.
 
 ## Dependencies
 
-### SCSPKG
-
-```
-git clone https://github.com/lukemartinlogan/scspkg.git
-cd scspkg
-bash install.sh
-source ~/.bashrc
-```
-
 ## Install Jarvis
 
 This install script will install jarvis for the particular user
 (it is not system-wide).
 
-```bash
+### For Regular Users
+```{bash}
+git clone https://github.com/scs-lab/jarvis-cd.git
 cd jarvis-cd
-bash install.sh
-source ~/.bashrc
+python3 -m pip . --user
+```
+
+### For Developers
+
+```{bash}
+git clone git@github.com:scs-lab/jarvis-cd.git -b development
+cd jarvis-cd
+python3 -m pip install -e .
 ```
 
 ## Basic Commands
