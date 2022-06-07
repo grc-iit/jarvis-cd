@@ -77,7 +77,6 @@ class Launcher(LauncherConfig):
         super().__init__(launcher_name, scaffold_dir)
         self.nodes = None
         self.args = args
-        self.SetTempDir("{}_{}".format(JarvisManager.GetInstance().GetTmpDir(), launcher_name))
 
     @abstractmethod
     def _DefineInit(self):
@@ -98,13 +97,6 @@ class Launcher(LauncherConfig):
     @abstractmethod
     def _DefineStatus(self):
         return []
-
-    def SetTempDir(self, temp_dir):
-        self.temp_dir = temp_dir
-        if os.path.exists(self.temp_dir):
-            shutil.rmtree(self.temp_dir)
-        if not os.path.exists(self.temp_dir):
-            os.makedirs(self.temp_dir)
 
     def Scaffold(self):
         old_conf_path = self.DefaultConfigPath()

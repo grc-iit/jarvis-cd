@@ -16,7 +16,7 @@ if __name__ == '__main__':
 
     #Set the logging output
     if arguments.args.log_path is None:
-        arguments.args.log_path = os.path.join(jarvis_manager.GetTmpDir(), 'jarvis.log')
+        arguments.args.log_path = '/tmp/jarvis.log'
     logging.basicConfig(
         filename=arguments.args.log_path,
         level=int(arguments.args.log_level.value),

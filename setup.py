@@ -3,7 +3,7 @@ import setuptools
 setuptools.setup(
     name="jarvis",
     packages=['jarvis_cd'],
-    scripts=['bin/install_keys', 'bin/jarvis'],
+    scripts=['bin/install_keys', 'bin/dspack', 'bin/jarvis'],
     version="0.0.1",
     author="Luke Logan",
     author_email="llogan@hawk.iit.edu",

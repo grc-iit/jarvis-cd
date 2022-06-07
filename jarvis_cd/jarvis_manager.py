@@ -1,5 +1,7 @@
 import sys,os
 from jarvis_cd.exception import Error, ErrorCode
+import pathlib
+
 
 class JarvisManager:
     instance_ = None
@@ -11,18 +13,8 @@ class JarvisManager:
         return JarvisManager.instance_
 
     def __init__(self):
-        if 'JARVIS_CD_ROOT' not in os.environ:
-            raise Error(ErrorCode.NOT_INSTALLED).format('JARVIS_CD_ROOT')
-        if 'JARVIS_CD_TMP' not in os.environ:
-            raise Error(ErrorCode.NOT_INSTALLED).format('JARVIS_CD_TMP')
-        self.root = os.environ['JARVIS_CD_ROOT']
-        self.tmp = os.environ['JARVIS_CD_TMP']
+        self.root = os.path.dirname(pathlib.Path(__file__).parent.resolve())
         sys.path.append(self.root)
-
-    def GetTmpDir(self):
-        if not os.path.exists(self.tmp):
-            os.makedirs(self.tmp)
-        return self.tmp
 
     def GetLauncherClass(self, module_name, class_name):
         jarvis_cd = __import__('jarvis_cd.launchers.{}.package'.format(module_name))

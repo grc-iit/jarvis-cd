@@ -53,7 +53,7 @@ else
   exit
 fi
 
-CFLAGS="-I $NCURSES_PATH" scons PREFIX=`scspkg pkg-root daos` --config=force --build-deps=yes install
+scons PREFIX=`scspkg pkg-root daos` --config=force --build-deps=yes install
 scspkg set-env daos DAOS_ROOT `scspkg pkg-root daos`
 module load daos
 
