@@ -13,7 +13,7 @@ This install script will install jarvis for the particular user
 ```{bash}
 git clone https://github.com/scs-lab/jarvis-cd.git
 cd jarvis-cd
-python3 -m pip . --user
+python3 -m pip install . --user
 ```
 
 ### For Developers
@@ -21,6 +21,7 @@ python3 -m pip . --user
 ```{bash}
 git clone git@github.com:scs-lab/jarvis-cd.git -b development
 cd jarvis-cd
+python3 -m pip install -e . --user
 python3 -m pip install -e . --user
 ```
 

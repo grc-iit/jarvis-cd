@@ -11,6 +11,7 @@ source ~/.bashrc
 #######INSTALL MPICH
 spack install mpich
 spack load mpich
+spack unload ncurses
 
 #######INSTALL Jarvis
 cd ${HOME}
@@ -24,11 +25,6 @@ git clone https://github.com/scs-lab/scspkg.git
 cd scspkg
 bash install.sh
 source ~/.bashrc
-
-#######FACTOR NCURSES (for DAOS)
-scspkg from-spack ncurses
-module load ncurses-mod
-spack load ncurses
 
 #######INSTALL DAOS
 scspkg create daos
@@ -60,50 +56,8 @@ module load daos
 #######INSTALL IO500
 
 ### LIBARCHIVE
-spack install libarchive
-scspkg from-spack libarchive
-module load libarchive-mod
+spack install libarchive libcircle lwgrp dtcmp
 spack load libarchive
-
-### LIBCIRCLE
-
-scspkg create libcircle
-cd `scspkg pkg-src libcircle` 
-wget https://github.com/hpc/libcircle/releases/download/v0.3/libcircle-0.3.0.tar.gz
-tar -zxf libcircle-0.3.0.tar.gz
-cd libcircle-0.3.0
-./configure --prefix=`scspkg pkg-root libcircle`
-make -j8
-make install
-module load libcircle
-
-
-### LWGRP
-
-scspkg create lwgrp
-cd `scspkg pkg-src lwgrp`
-wget https://github.com/llnl/lwgrp/releases/download/v1.0.2/lwgrp-1.0.2.tar.gz
-tar -zxf lwgrp-1.0.2.tar.gz
-cd lwgrp-1.0.2
-./configure --prefix=`scspkg pkg-root lwgrp`
-make -j8
-make install
-module load lwgrp
-
-
-### DTCMP
-
-scspkg create dtcmp
-scspkg add-deps lwgrp
-cd `scspkg pkg-src dtcmp`
-wget https://github.com/llnl/dtcmp/releases/download/v1.1.0/dtcmp-1.1.0.tar.gz
-tar -zxf dtcmp-1.1.0.tar.gz
-cd dtcmp-1.1.0
-./configure --prefix=`scspkg pkg-root dtcmp` --with-lwgrp=`scspkg pkg-root lwgrp`
-make -j8
-make install
-module load dtcmp
-
 
 ### MPIFILEUTILS
 
@@ -131,8 +85,8 @@ mkdir build
 cd build
 cmake ../ \
   -DENABLE_XATTRS=OFF \
-  -DWITH_DTCMP_PREFIX=`scspkg pkg-root dtcmp` \
-  -DWITH_LibCircle_PREFIX=`scspkg pkg-root libcircle` \
+  -DWITH_DTCMP_PREFIX=`dspack prefix --pkg dtcmp` \
+  -DWITH_LibCircle_PREFIX=`dspack prefix --pkg libcircle` \
   -DCMAKE_INSTALL_PREFIX=`scspkg pkg-root mpifileutils`
 make -j8 install
 module load mpifileutils

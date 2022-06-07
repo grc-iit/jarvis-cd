@@ -9,6 +9,8 @@ import sys,os
 import argparse
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.comm.ssh_node import SSHNode
+from jarvis_cd.basic.exec_node import ExecNode
+import re
 
 class ArgumentParser(object):
     __instance = None
@@ -29,7 +31,7 @@ class ArgumentParser(object):
             ArgumentParser.__instance = self
         self.parser = argparse.ArgumentParser(description='Install/update spack')
         self.parser.add_argument("operation", metavar='optype', type=str,
-                                 help="The dspack operation (install/update/uninstall)")
+                                 help="The dspack operation (install/update/uninstall/prefix)")
         self.parser.add_argument("--key_dir", metavar='path', default=f'{os.environ["USER"]}/.ssh', type=str,
                                  help="The directory where to search for keys")
         self.parser.add_argument("--key", metavar='name', default='id_rsa', type=str,
@@ -46,14 +48,13 @@ class ArgumentParser(object):
                                  help="The hash to checkout")
         self.parser.add_argument("--spack_dev", metavar='name', default='spack', type=str,
                                  help="The name of the user with the spack fork to use")
+        self.parser.add_argument("--pkg", metavar='name', default='spack', type=str,
+                                 help="The name of a spackage")
         self.args = self.parser.parse_args()
         self._validate()
 
     def _validate(self):
-        if self.args.hosts is None and self.args.host is None:
-            print("Must provide either --hosts or --host")
-            self.parser.print_help()
-            exit(1)
+        pass
 
 def InstallSpack(username, key_dir, key_name, port, hosts, branch, commit, spack_dev):
     print("Install spack")
@@ -98,6 +99,15 @@ def ResetBashrc():
     with open(f'{os.environ["HOME"]}/.bashrc', 'w') as fp:
         fp.write(bashrc)
 
+def ModulePath(spack_query):
+    spack_mod_path = None
+    spack_mod_path_stdout = ExecNode('spack path', f'spack find --paths {spack_query}').Run().output[0]['localhost']['stdout']
+    for line in spack_mod_path_stdout:
+        grp = re.search(f'({os.environ["SPACK_ROOT"]}.*)', line)
+        if grp:
+            spack_mod_path = grp.group(1)
+    print(spack_mod_path)
+
 if __name__ == '__main__':
     arguments = ArgumentParser.GetInstance()
     hosts = []
@@ -105,10 +115,10 @@ if __name__ == '__main__':
         hosts = Hostfile.LoadHostfile(arguments.args.hostfile).list()
     else:
         hosts = ['localhost']
-    if arguments.args.src_key_dir is None:
-        arguments.args.src_key_dir = os.path.join(os.environ['HOME'], '.ssh')
-    if arguments.args.dst_key_dir is None:
-        arguments.args.dst_key_dir = f'/home/{arguments.args.user}/.ssh'
+    if arguments.args.key_dir is None:
+        arguments.args.key_dir = os.path.join(os.environ['HOME'], '.ssh')
+    if arguments.args.key_dir is None:
+        arguments.args.key_dir = f'/home/{arguments.args.user}/.ssh'
 
     operation = arguments.args.operation
     username = arguments.args.user
@@ -118,6 +128,7 @@ if __name__ == '__main__':
     branch = arguments.args.branch
     commit = arguments.args.commit
     spack_dev = arguments.args.spack_dev
+    pkg = arguments.args.pkg
 
     if operation == 'install':
         InstallSpack(username, key_dir, key_name, port, hosts, branch, commit, spack_dev)
@@ -125,5 +136,7 @@ if __name__ == '__main__':
         UpdateSpack(username, key_dir, key_name, port, hosts, branch, commit)
     elif operation == 'uninstall':
         UninstallSpack(username, key_dir, key_name, port, hosts)
-    elif operation == 'reset_bashrc'
+    elif operation == 'reset_bashrc':
         ResetBashrc()
+    elif operation == 'prefix':
+        ModulePath(pkg)
