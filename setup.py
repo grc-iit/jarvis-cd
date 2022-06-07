@@ -1,8 +1,8 @@
 import setuptools
 
 setuptools.setup(
-    name="jarvis",
-    packages=['jarvis_cd'],
+    name="jarvis_cd",
+    packages=setuptools.find_packages(),
     scripts=['bin/install_keys', 'bin/dspack', 'bin/jarvis'],
     version="0.0.1",
     author="Luke Logan",

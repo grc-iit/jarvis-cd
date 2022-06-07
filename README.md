@@ -21,7 +21,7 @@ python3 -m pip . --user
 ```{bash}
 git clone git@github.com:scs-lab/jarvis-cd.git -b development
 cd jarvis-cd
-python3 -m pip install -e .
+python3 -m pip install -e . --user
 ```
 
 ## Basic Commands
