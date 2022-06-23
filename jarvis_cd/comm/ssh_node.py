@@ -37,7 +37,7 @@ class SSHNode(Node):
         self.password = password
         self.sudo=sudo
         self.username=username
-        self.port = port
+        self.port = int(port)
 
     def _exec_ssh(self, cmd):
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)

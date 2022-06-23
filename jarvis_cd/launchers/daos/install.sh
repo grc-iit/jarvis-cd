@@ -57,12 +57,11 @@ module load daos
 
 ### LIBARCHIVE
 spack install libarchive libcircle lwgrp dtcmp
-spack load libarchive
+spack load libarchive libcircle lwgrp dtcmp
 
 ### MPIFILEUTILS
 
 scspkg create mpifileutils
-scspkg add-deps mpifileutils libcircle dtcmp daos
 cd `scspkg pkg-src mpifileutils`
 git clone https://github.com/mchaarawi/mpifileutils -b pfind_integration
 cd mpifileutils
@@ -72,10 +71,10 @@ cat << EOF > cmake.patch
 +++ CMakeLists.txt	2022-06-03 00:05:47.251030826 +0000
 @@ -1,6 +1,7 @@
  PROJECT(MFU)
- 
+
  CMAKE_MINIMUM_REQUIRED(VERSION 3.1)
 +link_libraries("-luuid -ldaos -ldfs -ldaos_common -lgurt -lpthread")
- 
+
  IF(POLICY CMP0042)
    CMAKE_POLICY(SET CMP0042 NEW)
 EOF
@@ -109,21 +108,21 @@ index f8908d7..19d4aa6 100755
 +++ b/prepare.sh
 @@ -8,7 +8,7 @@ echo It will output OK at the end if builds succeed
  echo
- 
+
  IOR_HASH=0410a38e985e0862a9fd9abec017abffc4c5fc43
 -PFIND_HASH=62c3a7e31
 +PFIND_HASH=mfu_integration
- 
+
  INSTALL_DIR=\$PWD
  BIN=\$INSTALL_DIR/bin
 @@ -59,7 +59,7 @@ function get_ior {
- 
+
  function get_pfind {
    echo "Preparing parallel find"
 -  git_co https://github.com/VI4IO/pfind.git pfind \$PFIND_HASH
 +  git_co https://github.com/mchaarawi/pfind pfind \$PFIND_HASH
  }
- 
+
  function get_schema_tools {
 @@ -73,7 +73,7 @@ function build_ior {
    pushd \$BUILD/ior
@@ -146,14 +145,14 @@ index 2975471..5dce307 100644
  CC = mpicc
  CFLAGS += -std=gnu99 -Wall -Wempty-body -Werror -Wstrict-prototypes -Werror=maybe-uninitialized -Warray-bounds
 +CFLAGS += -I${MY_DAOS_INSTALL_PATH}/include -I${MY_MFU_INSTALL_PATH}/include
- 
+
  IORCFLAGS = \$(shell grep CFLAGS ./build/ior/src/build.conf | cut -d "=" -f 2-)
  CFLAGS += -g3 -lefence -I./include/ -I./src/ -I./build/pfind/src/ -I./build/ior/src/
  IORLIBS = \$(shell grep LDFLAGS ./build/ior/src/build.conf | cut -d "=" -f 2-)
  LDFLAGS += -lm \$(IORCFLAGS) \$(IORLIBS) # -lgpfs # may need some additional flags as provided to IOR
 +LDFLAGS += -L${MY_DAOS_INSTALL_PATH}/lib64 -ldaos -ldaos_common -ldfs -lgurt -luuid
 +LDFLAGS += -L${MY_MFU_INSTALL_PATH}/lib64 -lmfu_dfind -lmfu
- 
+
  VERSION_GIT=\$(shell git describe --always --abbrev=12)
  VERSION_TREE=\$(shell git diff src | wc -l | sed -e 's/   *//g' -e 's/^0//' | sed "s/\([0-9]\)/-\1/")
 EOF

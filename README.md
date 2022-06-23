@@ -2,27 +2,46 @@
 
 Jarvis CD is a continuous deployment software.
 
-## Dependencies
+## 1. Install Jarvis (Locally)
 
-## Install Jarvis
-
-This install script will install jarvis for the particular user
-(it is not system-wide).
-
-### For Regular Users
+#### For Regular Users
 ```{bash}
-git clone https://github.com/scs-lab/jarvis-cd.git
-cd jarvis-cd
-python3 -m pip install . --user
+python3 -m pip install git+https://github.com/scs-lab/jarvis-cd.git --user
 ```
 
-### For Developers
+#### For Developers
 
 ```{bash}
-git clone git@github.com:scs-lab/jarvis-cd.git -b development
 cd jarvis-cd
+git checkout development
 python3 -m pip install -e . --user
-python3 -m pip install -e . --user
+```
+
+## 2. Install Jarvis (Distributed)
+
+To install jarvis in a multi-node environment, we include a script called dspack.
+dspack can be used to install SSH keys, spack, and then jarivs.
+Below we show an example of how to deploy jarvis in Chameleon Cloud.
+
+### 1.1. Bootstrap SSH
+
+If you're planning on cloning private github repos, you need to install SSH
+keys. To do this, do the following:
+
+```bash
+#Install SSH keys: localhost -> head node
+dspack setup_ssh --key scs_chameleon_pass --user cc --host ${HOST_IP} --priv_key True
+#SSH into head node
+ssh cc@${HOST_IP} -i ~/.ssh/scs_chameleon_pass
+#Install SSH keys: head node -> all others
+dspack setup_ssh --key scs_chameleon_pass --hosts hostfile.txt  --priv_key True
+```
+
+### 1.2. Installing spack and Jarvis
+
+```
+dspack jarvis install --key scs_chameleon_pass --hosts hostfile.txt
+dspack spack install --key scs_chameleon_pass --hosts hostfile.txt
 ```
 
 ## Basic Commands
@@ -56,35 +75,4 @@ To run these commands outside of the scaffold directory:
 jarvis lustre scaffold --dir ${HOME}/lustre_example
 jarvis lustre init --dir ${HOME}/lustre_example
 ...
-```
-
-## Setup SSH
-
-Jarvis includes a small script for installing SSH keys to a set of nodes.
-This is useful for bootstrapping Chameleon instances, for example.
-
-Usage:
-```
-Must provide either --hosts or --host
-usage: install_keys [-h] [--key name] [--port port] [--user username] [--hosts hostfile.txt] [--host ip_addr]
-                    [--src_key_dir path] [--dst_key_dir path] [--priv_key bool]
-
-Bootstrap SSH
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --key name            The name of the public/private key pair within the src_key_dir
-  --port port           The port number for ssh
-  --user username       The username for ssh
-  --hosts hostfile.txt  The set of all hosts to bootstrap
-  --host ip_addr        The single host to bootstrap
-  --src_key_dir path    Where to search for key pair on the current host
-  --dst_key_dir path    Where to install key pair on destination hosts
-  --priv_key bool       Whether or not to install private key on hosts
-```
-Must specify at least on of --host or --hosts.
-
-Example:
-```
-install_keys --key chameleon --user cc --host [host-ip]
-```
+``` 

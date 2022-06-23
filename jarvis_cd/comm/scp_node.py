@@ -39,7 +39,7 @@ class SCPNode(Node):
         self.destination = destination
         self.sudo=sudo
         self.username=username
-        self.port = port
+        self.port = int(port)
         self.pkey = pkey
         self.password = password
 

@@ -2,141 +2,44 @@
 #!/usr/bin/env python3
 
 """
-dspack: a distributed wrapper for spack installations
+dspack: a distributed wrapper for spack installations.
+
+dspack ssh_setup
+dspack spack install
+dspack spack uninstall
+dspack prefix [pkg-name]
+dspack [spack-query]
 """
 
 import sys,os
 import argparse
-from jarvis_cd.hostfile import Hostfile
-from jarvis_cd.comm.ssh_node import SSHNode
-from jarvis_cd.basic.exec_node import ExecNode
 import re
-
-class ArgumentParser(object):
-    __instance = None
-
-    @staticmethod
-    def GetInstance():
-        """ Static access method. """
-        if ArgumentParser.__instance is None:
-            ArgumentParser()
-        return ArgumentParser.__instance
-
-    def __init__(self):
-        super().__init__()
-        """ Virtually private constructor. """
-        if ArgumentParser.__instance is not None:
-            raise Exception("This class is a singleton!")
-        else:
-            ArgumentParser.__instance = self
-        self.parser = argparse.ArgumentParser(description='Install/update spack')
-        self.parser.add_argument("operation", metavar='optype', type=str,
-                                 help="The dspack operation (install/update/uninstall/prefix)")
-        self.parser.add_argument("--key_dir", metavar='path', default=f'{os.environ["USER"]}/.ssh', type=str,
-                                 help="The directory where to search for keys")
-        self.parser.add_argument("--key", metavar='name', default='id_rsa', type=str,
-                                 help="The name of the public/private key pair within the key_dir")
-        self.parser.add_argument("--port", metavar='port', default=22, type=str,
-                                 help="The port number for ssh")
-        self.parser.add_argument("--user", metavar='username', default=os.environ['USER'], type=str,
-                                 help="The username for ssh")
-        self.parser.add_argument("--hosts", metavar='hostfile.txt', default=None, type=str,
-                                 help="The set of all hosts to bootstrap")
-        self.parser.add_argument("--branch", metavar='name', default='releases/v0.18', type=str,
-                                 help="The branch to switch to")
-        self.parser.add_argument("--commit", metavar='hash', default=None, type=str,
-                                 help="The hash to checkout")
-        self.parser.add_argument("--spack_dev", metavar='name', default='spack', type=str,
-                                 help="The name of the user with the spack fork to use")
-        self.parser.add_argument("--pkg", metavar='name', default='spack', type=str,
-                                 help="The name of a spackage")
-        self.args = self.parser.parse_args()
-        self._validate()
-
-    def _validate(self):
-        pass
-
-def InstallSpack(username, key_dir, key_name, port, hosts, branch, commit, spack_dev):
-    print("Install spack")
-    priv_key = f'{key_dir}/{key_name}'
-    #Create SSH directory on all nodes
-    cmds = []
-    cmds.append(f'git clone https://github.com/{spack_dev}/spack.git')
-    cmds.append(f'cd spack')
-    if commit is not None:
-        cmds.append(f'git checkout {commit}')
-    if branch is not None:
-        cmds.append(f'git checkout {branch}')
-    cmds.append(f'echo \". {os.getcwd()}/share/spack/setup-env.sh\" >> {os.environ["HOME"]}/.bashrc')
-    SSHNode('Install spack', hosts, cmds, pkey=priv_key, username=username, port=port, collect_output=False).Run()
-
-def UpdateSpack(username, key_dir, key_name, port, hosts, branch, commit):
-    priv_key = f'{key_dir}/{key_name}'
-    cmds = []
-    cmds.append(f'cd {os.environ["SPACK_ROOT"]}/spack')
-    if commit is not None:
-        cmds.append(f'git checkout {commit}')
-    if branch is not None:
-        cmds.append(f'git checkout {branch}')
-        cmds.append(f'git pull origin {branch}')
-    else:
-        cmds.append(f'git pull origin master')
-    SSHNode('Update spack', hosts, cmds, pkey=priv_key, username=username, port=port, collect_output=False).Run()
-
-def UninstallSpack(username, key_dir, key_name, port, hosts):
-    priv_key = f'{key_dir}/{key_name}'
-    cmds = [
-        f'dspack reset_bashrc',
-        f'rm -rf {os.environ["SPACK_ROOT"]}'
-    ]
-    SSHNode('Uninstall spack', hosts, cmds, pkey=priv_key, username=username, port=port, collect_output=False).Run()
-    return
-
-def ResetBashrc():
-    with open(f'{os.environ["HOME"]}/.bashrc', 'r') as fp:
-        bashrc = fp.read()
-        bashrc = bashrc.replace(f'. {os.environ["SPACK_ROOT"]}/share/spack/setup-env.sh\n', '')
-    with open(f'{os.environ["HOME"]}/.bashrc', 'w') as fp:
-        fp.write(bashrc)
-
-def ModulePath(spack_query):
-    spack_mod_path = None
-    spack_mod_path_stdout = ExecNode('spack path', f'spack find --paths {spack_query}').Run().output[0]['localhost']['stdout']
-    for line in spack_mod_path_stdout:
-        grp = re.search(f'({os.environ["SPACK_ROOT"]}.*)', line)
-        if grp:
-            spack_mod_path = grp.group(1)
-    print(spack_mod_path)
+from jarvis_cd.bootstrap.spack_setup import SpackSetup
+from jarvis_cd.bootstrap.spack_wrapper import SpackWrapper
+from jarvis_cd.bootstrap.ssh_setup import SSHSetup
+from jarvis_cd.bootstrap.jarvis_setup import JarvisSetup
 
 if __name__ == '__main__':
-    arguments = ArgumentParser.GetInstance()
-    hosts = []
-    if arguments.args.hosts is not None:
-        hosts = Hostfile.LoadHostfile(arguments.args.hostfile).list()
+    # Get top-level operation
+    op_args = sys.argv[1:2]
+    other_args = []
+    if len(sys.argv) > 2:
+        other_args = sys.argv[2:]
+    op_parser = argparse.ArgumentParser(description='dspack script')
+    op_parser.add_argument("operation", metavar='operation (setup_ssh,spack,jarvis)', type=str,
+                                help="The dspack operation")
+    args = op_parser.parse_args(op_args)
+    op = args.operation
+
+    # Second-level args
+    parser = None
+    if op == 'setup_ssh':
+        parser = SSHSetup(other_args)
+    elif op == 'spack':
+        parser = SpackSetup(other_args)
+    elif op == 'jarvis':
+        parser = JarvisSetup(other_args)
     else:
-        hosts = ['localhost']
-    if arguments.args.key_dir is None:
-        arguments.args.key_dir = os.path.join(os.environ['HOME'], '.ssh')
-    if arguments.args.key_dir is None:
-        arguments.args.key_dir = f'/home/{arguments.args.user}/.ssh'
-
-    operation = arguments.args.operation
-    username = arguments.args.user
-    port = arguments.args.port
-    key_dir = arguments.args.key_dir
-    key_name = arguments.args.key
-    branch = arguments.args.branch
-    commit = arguments.args.commit
-    spack_dev = arguments.args.spack_dev
-    pkg = arguments.args.pkg
-
-    if operation == 'install':
-        InstallSpack(username, key_dir, key_name, port, hosts, branch, commit, spack_dev)
-    elif operation == 'update':
-        UpdateSpack(username, key_dir, key_name, port, hosts, branch, commit)
-    elif operation == 'uninstall':
-        UninstallSpack(username, key_dir, key_name, port, hosts)
-    elif operation == 'reset_bashrc':
-        ResetBashrc()
-    elif operation == 'prefix':
-        ModulePath(pkg)
+        parser = SpackWrapper(other_args)
+    parser.ParseArgs()
+    parser.DoArgs()
