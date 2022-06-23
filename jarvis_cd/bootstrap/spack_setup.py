@@ -66,10 +66,9 @@ class SpackSetup:
         cmds = []
         cmds.append(f'git clone {self.repo}')
         cmds.append(f'cd spack')
+        cmds.append(f'git switch {self.branch}')
         if self.commit is not None:
-            cmds.append(f'git checkout {self.commit}')
-        if self.branch is not None:
-            cmds.append(f'git checkout {self.branch}')
+            cmds.append(f'git switch {self.commit}')
         cmds.append(f'sed -i.old \"1s;^;. $HOME/spack/share/spack/setup-env.sh\\n;" ~/.bashrc')
         SSHNode('Install spack', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port, collect_output=False).Run()
 
@@ -77,13 +76,10 @@ class SpackSetup:
         priv_key = f'{self.key_dir}/{self.key_name}'
         cmds = []
         cmds.append(f'cd $SPACK_ROOT')
+        cmds.append(f'git pull origin {self.branch}')
+        cmds.append(f'git switch {self.branch}')
         if self.commit is not None:
-            cmds.append(f'git checkout {self.commit}')
-        if self.branch is not None:
-            cmds.append(f'git pull origin {self.branch}')
-            cmds.append(f'git checkout {self.branch}')
-        else:
-            cmds.append(f'git pull origin master')
+            cmds.append(f'git switch {self.commit}')
         SSHNode('Update spack', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port, collect_output=False).Run()
 
     def Uninstall(self):
@@ -97,6 +93,6 @@ class SpackSetup:
     def ResetBashrc(self):
         with open(f'{os.environ["HOME"]}/.bashrc', 'r') as fp:
             bashrc = fp.read()
-            bashrc = bashrc.replace(f'. {os.environ["HOME"]}/share/spack/setup-env.sh\n', '')
+            bashrc = bashrc.replace(f'. {os.environ["HOME"]}/spack/share/spack/setup-env.sh\n', '')
         with open(f'{os.environ["HOME"]}/.bashrc', 'w') as fp:
             fp.write(bashrc)
