@@ -91,8 +91,7 @@ class JarvisSetup:
         priv_key = f'{self.key_dir}/{self.key_name}'
         cmds = []
         cmds.append(f'python3 $JARVIS_ROOT/bin/dspack jarvis reset_bashrc')
-        #cmds.append(f'rm -rf $JARVIS_ROOT')
-        #cmds.append(f'python3 -m pip uninstall jarvis-cd')
+        cmds.append(f'rm -rf $JARVIS_ROOT')
         SSHNode('Uninstall Jarvis', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port, collect_output=False).Run()
 
     def ResetBashrc(self):
