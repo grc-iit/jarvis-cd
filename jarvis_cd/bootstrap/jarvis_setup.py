@@ -51,7 +51,6 @@ class JarvisSetup:
         self.repo = self.args.repo
 
     def DoArgs(self):
-        print(self.operation)
         if self.operation == 'install':
             self.Install()
         elif self.operation == 'update':
@@ -97,8 +96,8 @@ class JarvisSetup:
         SSHNode('Uninstall Jarvis', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port, collect_output=False).Run()
 
     def ResetBashrc(self):
-        with open(f'$HOME/.bashrc', 'r') as fp:
+        with open(f'{os.environ["HOME"]}/.bashrc', 'r') as fp:
             bashrc = fp.read()
             bashrc = bashrc.replace(f'export JARVIS_ROOT=$HOME/jarvis-cd\\n', '')
-        with open(f'$HOME/.bashrc', 'w') as fp:
+        with open(f'{os.environ["HOME"]}/.bashrc', 'w') as fp:
             fp.write(bashrc)
