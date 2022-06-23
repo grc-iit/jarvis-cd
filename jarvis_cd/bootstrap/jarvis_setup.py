@@ -51,8 +51,11 @@ class JarvisSetup:
         self.repo = self.args.repo
 
     def DoArgs(self):
+        print(self.operation)
         if self.operation == 'install':
             self.Install()
+        elif self.operation == 'update':
+            self.Update()
         elif self.operation == 'uninstall':
             self.Uninstall()
         elif self.operation == 'reset_bashrc':
@@ -67,7 +70,7 @@ class JarvisSetup:
         cmds.append(f'git switch {self.branch}')
         if self.commit is not None:
             cmds.append(f'git switch {self.commit}')
-        cmds.append(f'echo export JARVIS_ROOT=/home/{self.username}/jarvis-cd >> ~/.bashrc')
+        cmds.append(f'sed -i.old \"1s;^;export JARVIS_ROOT=$HOME/jarvis-cd\\n;" ~/.bashrc')
         cmds.append(f'python3 -m pip install -r requirements.txt')
         cmds.append(f'python3 -m pip install -e . --user')
         SSHNode('Install Jarvis', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port,
@@ -76,7 +79,7 @@ class JarvisSetup:
     def Update(self):
         priv_key = f'{self.key_dir}/{self.key_name}'
         cmds = []
-        cmds.append(f'cd {os.environ["JARVIS_ROOT"]}')
+        cmds.append(f'cd $JARVIS_ROOT')
         cmds.append(f'git pull origin {self.branch}')
         cmds.append(f'git switch {self.branch}')
         if self.commit is not None:
@@ -88,14 +91,14 @@ class JarvisSetup:
     def Uninstall(self):
         priv_key = f'{self.key_dir}/{self.key_name}'
         cmds = []
-        cmds.append(f'dspack jarvis reset_bashrc')
-        cmds.append(f'rm -rf $JARVIS_ROOT')
-        cmds.append(f'python3 -m pip uninstall jarvis-cd --user')
+        cmds.append(f'python3 $JARVIS_ROOT/bin/dspack jarvis reset_bashrc')
+        #cmds.append(f'rm -rf $JARVIS_ROOT')
+        #cmds.append(f'python3 -m pip uninstall jarvis-cd')
         SSHNode('Uninstall Jarvis', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port, collect_output=False).Run()
 
     def ResetBashrc(self):
-        with open(f'{os.environ["HOME"]}/.bashrc', 'r') as fp:
+        with open(f'$HOME/.bashrc', 'r') as fp:
             bashrc = fp.read()
-            bashrc = bashrc.replace(f'. {os.environ["SPACK_ROOT"]}/share/spack/setup-env.sh\n', '')
-        with open(f'{os.environ["HOME"]}/.bashrc', 'w') as fp:
+            bashrc = bashrc.replace(f'export JARVIS_ROOT=$HOME/jarvis-cd\\n', '')
+        with open(f'$HOME/.bashrc', 'w') as fp:
             fp.write(bashrc)

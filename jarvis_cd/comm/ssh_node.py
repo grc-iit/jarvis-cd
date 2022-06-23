@@ -54,7 +54,7 @@ class SSHNode(Node):
         return nice_output
 
     def _Run(self):
-        cmd = " && ".join(self.cmds)
+        cmd = " ; ".join(self.cmds)
         #self.output = [self._exec_ssh(cmd) for i,cmd in enumerate(self.cmds)]
         self.output = self._exec_ssh(cmd)
         return self

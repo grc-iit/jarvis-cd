@@ -70,13 +70,13 @@ class SpackSetup:
             cmds.append(f'git checkout {self.commit}')
         if self.branch is not None:
             cmds.append(f'git checkout {self.branch}')
-        cmds.append(f'echo \". /home/{self.username}/share/spack/setup-env.sh\" >> ~/.bashrc')
+        cmds.append(f'sed -i.old \"1s;^;. $HOME/share/spack/setup-env.sh\\n;" ~/.bashrc')
         SSHNode('Install spack', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port, collect_output=False).Run()
 
     def Update(self):
         priv_key = f'{self.key_dir}/{self.key_name}'
         cmds = []
-        cmds.append(f'cd {os.environ["SPACK_ROOT"]}')
+        cmds.append(f'cd $SPACK_ROOT')
         if self.commit is not None:
             cmds.append(f'git checkout {self.commit}')
         if self.branch is not None:
@@ -89,14 +89,14 @@ class SpackSetup:
     def Uninstall(self):
         priv_key = f'{self.key_dir}/{self.key_name}'
         cmds = [
-            f'dspack spack reset_bashrc',
-            f'rm -rf {os.environ["SPACK_ROOT"]}'
+            f'python3 $JARVIS_ROOT/bin/dspack spack reset_bashrc',
+            f'rm -rf $SPACK_ROOT'
         ]
         SSHNode('Uninstall spack', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port, collect_output=False).Run()
 
     def ResetBashrc(self):
-        with open(f'{os.environ["HOME"]}/.bashrc', 'r') as fp:
+        with open(f'$HOME/.bashrc', 'r') as fp:
             bashrc = fp.read()
-            bashrc = bashrc.replace(f'. /home/{self.username}/share/spack/setup-env.sh\n', '')
-        with open(f'{os.environ["HOME"]}/.bashrc', 'w') as fp:
+            bashrc = bashrc.replace(f'. $HOME/share/spack/setup-env.sh\n', '')
+        with open(f'$HOME/.bashrc', 'w') as fp:
             fp.write(bashrc)
