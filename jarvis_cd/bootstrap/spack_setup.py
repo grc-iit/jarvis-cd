@@ -70,7 +70,7 @@ class SpackSetup:
             cmds.append(f'git checkout {self.commit}')
         if self.branch is not None:
             cmds.append(f'git checkout {self.branch}')
-        cmds.append(f'sed -i.old \"1s;^;. $HOME/share/spack/setup-env.sh\\n;" ~/.bashrc')
+        cmds.append(f'sed -i.old \"1s;^;. $HOME/spack/share/spack/setup-env.sh\\n;" ~/.bashrc')
         SSHNode('Install spack', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port, collect_output=False).Run()
 
     def Update(self):
@@ -95,8 +95,8 @@ class SpackSetup:
         SSHNode('Uninstall spack', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port, collect_output=False).Run()
 
     def ResetBashrc(self):
-        with open(f'$HOME/.bashrc', 'r') as fp:
+        with open(f'{os.environ["HOME"]}/.bashrc', 'r') as fp:
             bashrc = fp.read()
-            bashrc = bashrc.replace(f'. $HOME/share/spack/setup-env.sh\n', '')
-        with open(f'$HOME/.bashrc', 'w') as fp:
+            bashrc = bashrc.replace(f'. {os.environ["HOME"]}/share/spack/setup-env.sh\n', '')
+        with open(f'{os.environ["HOME"]}/.bashrc', 'w') as fp:
             fp.write(bashrc)

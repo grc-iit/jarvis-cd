@@ -98,6 +98,6 @@ class JarvisSetup:
     def ResetBashrc(self):
         with open(f'{os.environ["HOME"]}/.bashrc', 'r') as fp:
             bashrc = fp.read()
-            bashrc = bashrc.replace(f'export JARVIS_ROOT={os.environ["HOME"]}/jarvis-cd\\n', '')
+            bashrc = bashrc.replace(f'export JARVIS_ROOT={os.environ["HOME"]}/jarvis-cd\n', '')
         with open(f'{os.environ["HOME"]}/.bashrc', 'w') as fp:
             fp.write(bashrc)
