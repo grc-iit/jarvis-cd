@@ -21,11 +21,11 @@ class JarvisSetup:
                                  help="The set of all hosts to bootstrap")
         self.parser.add_argument("--host", metavar='ip_addr', default=None, type=str,
                                  help="The single host to bootstrap")
-        self.parser.add_argument("--branch", metavar='name', default='releases/v0.18', type=str,
+        self.parser.add_argument("--branch", metavar='name', default='master', type=str,
                                  help="The branch to switch to")
         self.parser.add_argument("--commit", metavar='hash', default=None, type=str,
                                  help="The hash to checkout")
-        self.parser.add_argument("--repo", metavar='repo', default='git@github.com:lukemartinlogan/jarvis-cd.git', type=str,
+        self.parser.add_argument("--repo", metavar='repo', default='https://github.com/lukemartinlogan/jarvis-cd.git', type=str,
                                  help=f"The jarvis repo to clone")
         self.args = self.parser.parse_args(argv)
 
@@ -64,12 +64,11 @@ class JarvisSetup:
         cmds = []
         cmds.append(f'git clone {self.repo}')
         cmds.append(f'cd jarvis-cd')
+        cmds.append(f'git switch {self.branch}')
         if self.commit is not None:
-            cmds.append(f'git checkout {self.commit}')
-        elif self.branch is not None:
-            cmds.append(f'git checkout {self.branch}')
-        cmds.append(f'echo export JARVIS_ROOT=/home/{self.username}/jarvis-cd')
-        cmds.append(f'python3 -m pip install requirements.txt')
+            cmds.append(f'git switch {self.commit}')
+        cmds.append(f'echo export JARVIS_ROOT=/home/{self.username}/jarvis-cd >> ~/.bashrc')
+        cmds.append(f'python3 -m pip install -r requirements.txt')
         cmds.append(f'python3 -m pip install -e . --user')
         SSHNode('Install Jarvis', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port,
                 collect_output=False).Run()
@@ -78,26 +77,23 @@ class JarvisSetup:
         priv_key = f'{self.key_dir}/{self.key_name}'
         cmds = []
         cmds.append(f'cd {os.environ["JARVIS_ROOT"]}')
+        cmds.append(f'git pull origin {self.branch}')
+        cmds.append(f'git switch {self.branch}')
         if self.commit is not None:
             cmds.append(f'git checkout {self.commit}')
-        elif self.branch is not None:
-            cmds.append(f'git pull origin {self.branch}')
-            cmds.append(f'git checkout {self.branch}')
-        else:
-            cmds.append(f'git pull origin master')
+        cmds.append(f'python3 -m pip install -r requirements.txt')
         SSHNode('Update jarvis', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port,
                 collect_output=False).Run()
 
-    def Uninstall(self, hosts):
+    def Uninstall(self):
         priv_key = f'{self.key_dir}/{self.key_name}'
         cmds = []
         cmds.append(f'dspack jarvis reset_bashrc')
         cmds.append(f'rm -rf $JARVIS_ROOT')
         cmds.append(f'python3 -m pip uninstall jarvis-cd --user')
-        SSHNode('Uninstall Jarvis', hosts, cmds, pkey=priv_key, username=self.username, port=self.port, collect_output=False).Run()
-        return
+        SSHNode('Uninstall Jarvis', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port, collect_output=False).Run()
 
-    def ResetBashrc():
+    def ResetBashrc(self):
         with open(f'{os.environ["HOME"]}/.bashrc', 'r') as fp:
             bashrc = fp.read()
             bashrc = bashrc.replace(f'. {os.environ["SPACK_ROOT"]}/share/spack/setup-env.sh\n', '')

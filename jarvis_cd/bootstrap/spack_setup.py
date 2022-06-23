@@ -70,7 +70,7 @@ class SpackSetup:
             cmds.append(f'git checkout {self.commit}')
         if self.branch is not None:
             cmds.append(f'git checkout {self.branch}')
-        cmds.append(f'echo \". /home/{self.username}/share/spack/setup-env.sh\" >> {os.environ["HOME"]}/.bashrc')
+        cmds.append(f'echo \". /home/{self.username}/share/spack/setup-env.sh\" >> ~/.bashrc')
         SSHNode('Install spack', self.hosts, cmds, pkey=priv_key, username=self.username, port=self.port, collect_output=False).Run()
 
     def Update(self):
