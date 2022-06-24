@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+
+"""
+jarvis-bootstrap: a distributed wrapper for spack installations.
+
+jarvis-bootstrap scaffold
+jarvis-bootstrap ssh_setup
+jarvis-bootstrap ssh
+jarvis-bootstrap deps
+"""
+
+import sys,os
+import re
+from jarvis_cd.bootstrap.spack_setup import SpackSetup
+from jarvis_cd.bootstrap.spack_wrapper import SpackWrapper
+from jarvis_cd.bootstrap.ssh_setup import SSHSetup
+from jarvis_cd.bootstrap.jarvis_setup import JarvisSetup
+from jarvis_cd.bootstrap.config import BootstrapConfig
+
+def help():
+    print("Usage: jarvis-bootstrap [main_op] [sub_op]")
+    print("main_op: scaffold, setup_ssh, ssh, deps")
+    print()
+    print("jarvis-bootstrap scaffold [sub_op]")
+    print("  sub_op: local/remote")
+    print("jarvis-bootstrap setup_ssh")
+    print("jarvis-bootstrap ssh")
+    print("jarvis-bootstrap deps [sub_op]")
+    print("  sub_op: install, update, uninstall")
+
+if __name__ == '__main__':
+    # Get top-level operation
+    if len(sys.argv) >= 2:
+        op = sys.argv[1]
+    else:
+        help()
+        exit(0)
+
+    # Get configuration file
+    conf = BootstrapConfig().LoadConfig()
+
+    # Second-level args
+    if op == 'scaffold':
+        if len(sys.argv) >= 3:
+            sub_op = sys.argv[2]
+        else:
+            help()
+            exit(1)
+        conf.Scaffold(sub_op)
+    elif op == 'setup_ssh':
+        SSHSetup(conf).Run()
+    elif op == 'ssh':
+        JarvisSSH(conf).Run()
+    elif op == 'deps':
+        if len(sys.argv) >= 3:
+            sub_op = sys.argv[2]
+        else:
+            help()
+            exit(1)
+        JarivsSetup(conf).Run()
+        SpackSetup(conf).Run()
+    else:
+        print(f"Invalid operation: {op}")
+        help()
+        exit(1)

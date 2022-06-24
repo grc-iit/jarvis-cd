@@ -24,8 +24,5 @@ class JarvisManager:
         klass = getattr(package, class_name)
         return klass
 
-    def GetLauncherPath(self, module_name):
-        return os.path.join(self.root, 'jarvis_cd', 'launchers', module_name)
-
-    def GetDefaultConfigPath(self, launcher_name):
-        return os.path.join(self.GetLauncherPath(launcher_name), 'default.yaml')
+    def GetJarvisRoot(self):
+        return self.root

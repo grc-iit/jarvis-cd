@@ -1,0 +1,17 @@
+jarvis_cd:
+  repo: https://github.com/lukemartinlogan/jarvis-cd.git
+  name: jarvis-cd
+  branch: develop
+  commit: null
+  path: ${HOME}/jarvis-cd
+spack:
+  repo: https://github.com/spack/spack.git
+  branch: releases/v0.18
+  commit: null
+  path: ${HOME}/spack
+scs_repo:
+  repo: https://github.com/lukemartinlogan/scs-repo.git
+  name: scs-repo
+  branch: master
+  commit: null
+  path: ${HOME}/scs-repo

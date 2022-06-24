@@ -1,0 +1,28 @@
+username: cc
+ssh_hosts: hostfile.txt
+ssh_port: 22
+ssh_keys:
+  primary:
+    key: scs_chameleon_pass
+    key_dir: ${HOME}/.ssh
+    dst_key_dir: ${HOME}/.ssh
+  github:
+    key_name: id_rsa
+    key_dir: ${HOME}/.ssh
+spack:
+  repo: https://github.com/spack/spack.git
+  branch: releases/v0.18
+  commit: null
+  path: ${HOME}/spack
+jarvis_cd:
+  repo: https://github.com/lukemartinlogan/jarvis-cd.git
+  name: jarvis-cd
+  branch: develop
+  commit: null
+  path: ${HOME}/jarvis-cd
+scs_repo:
+  repo: https://github.com/lukemartinlogan/scs-repo.git
+  name: scs-repo
+  branch: master
+  commit: null
+  path: ${HOME}/scs-repo

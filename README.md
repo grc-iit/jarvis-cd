@@ -2,77 +2,170 @@
 
 Jarvis CD is a continuous deployment software.
 
-## 1. Install Jarvis (Locally)
+## 1. Dependencies
 
-#### For Regular Users
-```{bash}
-python3 -m pip install git+https://github.com/scs-lab/jarvis-cd.git --user
-```
+Jarvis requires the following:
+1. Python 3.6+
+2. Spack
+3. scs-repo
 
-#### For Developers
+dependencies.sh installs python.  
+jarvis-bootstrap installs spack, scs-repo, and jarvis. 
 
-```{bash}
-cd jarvis-cd
-git checkout development
-python3 -m pip install -e . --user
-```
+## 2. Install Jarvis (Locally)
 
-## 2. Install Jarvis (Distributed)
-
-To install jarvis in a multi-node environment, we include a script called dspack.
-dspack can be used to install SSH keys, spack, and then jarivs.
-Below we show an example of how to deploy jarvis in Chameleon Cloud.
-
-### 1.1. Bootstrap SSH
-
-If you're planning on cloning private github repos, you need to install SSH
-keys. To do this, do the following:
-
+The following commands will install jarvis locally
 ```bash
-#Install SSH keys: localhost -> head node
-dspack setup_ssh --key scs_chameleon_pass --user cc --host ${HOST_IP} --priv_key True
-#SSH into head node
-ssh cc@${HOST_IP} -i ~/.ssh/scs_chameleon_pass
-#Install SSH keys: head node -> all others
-dspack setup_ssh --key scs_chameleon_pass --hosts hostfile.txt  --priv_key True
+cd jarvis_cd
+PREFIX=${HOME} bash dependencies.sh
+bin/jarvis-bootstrap scaffold local
+bin/jarvis-bootstrap deps install
 ```
 
-### 1.2. Installing spack and Jarvis
+To customize the installation of dependencies, modify the conf.yaml produced by the scaffold command.
+
+```yaml
 
 ```
-dspack jarvis install --key scs_chameleon_pass --hosts hostfile.txt
-dspack spack install --key scs_chameleon_pass --hosts hostfile.txt
-```
 
-## Basic Commands
+## 3. Basic Commands
 
 ```bash
 jarvis [launcher] [operation] --conf /path/to/conf
 #Create directory where configuration data should be stored
 cd ${HOME}
-mkdir lustre_example
-cd lustre_example
+mkdir daos_example
+cd daos_example
 #Create the jarvis configuration file
-jarvis lustre scaffold
+jarvis daos scaffold
 #Initialize the directories/conf files required for launching server processes
-jarvis lustre init
+jarvis daos init
 #Starts an already-initialized service
-jarvis lustre start
+jarvis daos start
 #Stops a service that has been started (but data is still kept)
-jarvis lustre stop
+jarvis daos stop
 #Destroys all data stored by the service
-jarvis lustre clean
+jarvis daos clean
 #Calls init + start
-jarvis lustre setup
+jarvis daos setup
 #Calls stop + clean
-jarvis lustre destroy
+jarvis daos destroy
 #Calls Destroy + Initialize + Start
-jarvis lustre reset
+jarvis daos reset
 ```
 
 To run these commands outside of the scaffold directory:
 ```bash
-jarvis lustre scaffold --dir ${HOME}/lustre_example
-jarvis lustre init --dir ${HOME}/lustre_example
+jarvis daos scaffold --dir ${HOME}/daos_example
+jarvis daos init --dir ${HOME}/daos_example
 ...
 ``` 
+
+## 4. Installing a Storage System using Spack
+
+We have developed various spack scripts for installing storage systems.
+```bash
+spack install daos
+```
+
+## 5. Installing a Storage System in a New Machine
+
+Jarvis can be used to deploy a storage system in a new machine.
+However, this requires setting up SSH and installing a few dependencies on each node.
+Here, we show how to use Jarvis in Chameleon Cloud.
+
+### 5.1. Install Jarvis-CD Locally
+
+Initially, you are on your local machine, and you want to SSH into Chameleon. To do this,
+install Jarvis locally on your machine using the steps above in Sections 1-2.
+
+### 5.2. Connect to Chameleon Head Node
+
+The following command will create a YAML file (conf.yaml) in the directory cc:
+```bash
+mkdir cc
+cd cc
+jarvis-bootstrap scaffold
+```
+
+Modify conf.yaml to reflect your allocation:
+```yaml
+username: cc
+ssh_hosts: hostfile.txt
+ssh_port: 22
+ssh_keys:
+  primary:
+    key: scs_chameleon_pass
+    key_dir: ${HOME}/.ssh
+  github:
+    key_name: id_rsa
+    key_dir: ${HOME}/.ssh
+```
+other_keys is used to specify any other SSH keys needed to be installed for potentially different services.
+This will install both public and private keys (if private is available).
+
+After this, run the following command to do the following:
+* Make sure the Chameleon head node is added to your known_hosts file
+* Install your public key on the head node
+* Install your private key on the head node (only if you need to clone private github repos)
+* Ensure SSH directories and keys have proper permissions
+```
+jarvis-bootstrap setup_ssh
+```
+
+Connect to Chameleon using the following command:
+```
+jarvis-bootstrap ssh
+```
+
+### 5.3. Install Jarvis-CD on the Head Node
+
+Install jarvis on the head node using the steps above in Sections 1-2.
+
+### 5.4 Setup SSH between the Head Node and All Others
+
+```bash
+mkdir cc
+cd cc
+jarvis-bootstrap scaffold
+touch hosts.txt
+```
+
+Create a "hostfile" which contains a list of all ip addresses to connect to:
+```text
+[ip-addr-1]
+[ip-addr-2]
+...
+```
+
+```yaml
+username: cc
+key: scs_chameleon_pass
+key_dir: ${HOME}/.ssh
+port: 22
+hosts: hostfile.txt
+other_keys:
+  -
+    key_name: id_rsa
+    key_dir: ${HOME}/.ssh
+```
+
+This will setup SSH to all nodes in the "hostfile"
+```bash
+jarvis-bootstrap setup_ssh
+```
+
+### 5.5. Install Jarvis-CD and its Dependencies on All Other Nodes
+
+The following commands will install/update/uninstall Jarvis on all machines listed in hostfile.txt.
+```
+jarvis-bootstrap deps install
+jarvis-bootstrap deps update
+jarvis-bootstrap deps uninstall 
+```
+
+### 5.5 Install Storage System using Spack
+
+```
+jarvis daos install
+```
