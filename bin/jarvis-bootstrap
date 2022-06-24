@@ -12,9 +12,9 @@ jarvis-bootstrap deps
 import sys,os
 import re
 from jarvis_cd.bootstrap.spack_setup import SpackSetup
-from jarvis_cd.bootstrap.spack_wrapper import SpackWrapper
 from jarvis_cd.bootstrap.ssh_setup import SSHSetup
 from jarvis_cd.bootstrap.jarvis_setup import JarvisSetup
+from jarvis_cd.bootstrap.ssh import JarvisSSH
 from jarvis_cd.bootstrap.config import BootstrapConfig
 
 def help():
@@ -37,7 +37,7 @@ if __name__ == '__main__':
         exit(0)
 
     # Get configuration file
-    conf = BootstrapConfig().LoadConfig()
+    conf = BootstrapConfig().LoadConfig().Get()
 
     # Second-level args
     if op == 'scaffold':
@@ -57,8 +57,8 @@ if __name__ == '__main__':
         else:
             help()
             exit(1)
-        JarivsSetup(conf).Run()
-        SpackSetup(conf).Run()
+        JarvisSetup(conf, sub_op).Run()
+        SpackSetup(conf, sub_op).Run()
     else:
         print(f"Invalid operation: {op}")
         help()

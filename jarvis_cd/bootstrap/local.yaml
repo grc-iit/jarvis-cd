@@ -1,16 +1,16 @@
 jarvis_cd:
-  repo: https://github.com/lukemartinlogan/jarvis-cd.git
+  repo: https://github.com/lukemartinlogan/jarvis-cd.installer
   name: jarvis-cd
   branch: develop
   commit: null
-  path: ${HOME}/jarvis-cd
+  path: $PWD
 spack:
-  repo: https://github.com/spack/spack.git
+  repo: https://github.com/spack/spack.installer
   branch: releases/v0.18
   commit: null
   path: ${HOME}/spack
 scs_repo:
-  repo: https://github.com/lukemartinlogan/scs-repo.git
+  repo: https://github.com/lukemartinlogan/scs-repo.installer
   name: scs-repo
   branch: master
   commit: null

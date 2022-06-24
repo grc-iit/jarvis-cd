@@ -9,20 +9,18 @@ ssh_keys:
   github:
     key_name: id_rsa
     key_dir: ${HOME}/.ssh
+dep_prefix: ${HOME}
 spack:
-  repo: https://github.com/spack/spack.git
+  repo: https://github.com/spack/spack.installer
   branch: releases/v0.18
   commit: null
-  path: ${HOME}/spack
 jarvis_cd:
-  repo: https://github.com/lukemartinlogan/jarvis-cd.git
+  repo: https://github.com/lukemartinlogan/jarvis-cd.installer
   name: jarvis-cd
   branch: develop
   commit: null
-  path: ${HOME}/jarvis-cd
 scs_repo:
-  repo: https://github.com/lukemartinlogan/scs-repo.git
+  repo: https://github.com/lukemartinlogan/scs-repo.installer
   name: scs-repo
   branch: master
   commit: null
-  path: ${HOME}/scs-repo

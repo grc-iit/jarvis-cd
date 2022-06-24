@@ -4,7 +4,7 @@
 ```bash
 scspkg create daos
 cd `scspkg pkg-src daos`
-git clone --recurse-submodules -b release/2.0 https://github.com/daos-stack/daos.git
+installer clone --recurse-submodules -b release/2.0 https://github.com/daos-stack/daos.git
 cd daos
 
 #EL (including CentOS)
@@ -93,7 +93,7 @@ module load dtcmp
 scspkg create mpifileutils
 scspkg add-deps mpifileutils libcircle dtcmp daos
 cd `scspkg pkg-src mpifileutils`
-git clone https://github.com/mchaarawi/mpifileutils -b pfind_integration
+installer clone https://github.com/mchaarawi/mpifileutils -b pfind_integration
 cd mpifileutils
 ```
 
@@ -132,7 +132,7 @@ cd `scspkg pkg-src io500`
 scspkg add-deps io500 mpifileutils
 scspkg set-env io500 MY_DAOS_INSTALL_PATH `scspkg pkg-root daos`
 scspkg set-env io500 MY_MFU_INSTALL_PATH `scspkg pkg-root mpifileutils`
-git clone https://github.com/IO500/io500.git -b io500-isc21
+installer clone https://github.com/IO500/io500.git -b io500-isc21
 cd io500
 ```
 
@@ -194,7 +194,7 @@ index 2975471..5dce307 100644
  VERSION_GIT=\$(shell git describe --always --abbrev=12)
  VERSION_TREE=\$(shell git diff src | wc -l | sed -e 's/   *//g' -e 's/^0//' | sed "s/\([0-9]\)/-\1/")
 EOF
-git apply io500_Makefile.patch
+installer apply io500_Makefile.patch
 ```
 
 ```bash

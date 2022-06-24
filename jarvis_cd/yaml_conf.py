@@ -37,8 +37,11 @@ class YAMLConfig(ABC):
         self._ProcessConfig()
         return self
 
+    def Get(self):
+        return self.config
+
     def Scaffold(self, conf_type='default'):
-        old_conf_path = self.DefaultConfigPath()
+        old_conf_path = self.DefaultConfigPath(conf_type)
         new_conf_path = self.ScaffoldConfigPath()
         with open(old_conf_path, "r") as old_fp:
             with open(new_conf_path, 'w') as new_fp:

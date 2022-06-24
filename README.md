@@ -18,14 +18,31 @@ The following commands will install jarvis locally
 ```bash
 cd jarvis_cd
 PREFIX=${HOME} bash dependencies.sh
-bin/jarvis-bootstrap scaffold local
-bin/jarvis-bootstrap deps install
+source ~/.bashrc
+python3 bin/jarvis-bootstrap scaffold local
+python3 bin/jarvis-bootstrap deps install
 ```
 
 To customize the installation of dependencies, modify the conf.yaml produced by the scaffold command.
 
 ```yaml
-
+jarvis_cd:
+  repo: https://github.com/lukemartinlogan/jarvis-cd.installer
+  name: jarvis-cd
+  branch: develop
+  commit: null
+  path: ${HOME}/jarvis-cd
+spack:
+  repo: https://github.com/spack/spack.installer
+  branch: releases/v0.18
+  commit: null
+  path: ${HOME}/spack
+scs_repo:
+  repo: https://github.com/lukemartinlogan/scs-repo.installer
+  name: scs-repo
+  branch: master
+  commit: null
+  path: ${HOME}/scs-repo
 ```
 
 ## 3. Basic Commands
@@ -85,13 +102,13 @@ The following command will create a YAML file (conf.yaml) in the directory cc:
 ```bash
 mkdir cc
 cd cc
-jarvis-bootstrap scaffold
+jarvis-bootstrap scaffold remote
 ```
 
-Modify conf.yaml to reflect your allocation:
+Modify conf.yaml to reflect your allocation and SSH keys:
 ```yaml
 username: cc
-ssh_hosts: hostfile.txt
+ssh_host: the IP of the head node
 ssh_port: 22
 ssh_keys:
   primary:
@@ -101,8 +118,6 @@ ssh_keys:
     key_name: id_rsa
     key_dir: ${HOME}/.ssh
 ```
-other_keys is used to specify any other SSH keys needed to be installed for potentially different services.
-This will install both public and private keys (if private is available).
 
 After this, run the following command to do the following:
 * Make sure the Chameleon head node is added to your known_hosts file
@@ -127,7 +142,7 @@ Install jarvis on the head node using the steps above in Sections 1-2.
 ```bash
 mkdir cc
 cd cc
-jarvis-bootstrap scaffold
+jarvis-bootstrap scaffold remote
 touch hosts.txt
 ```
 
@@ -138,14 +153,16 @@ Create a "hostfile" which contains a list of all ip addresses to connect to:
 ...
 ```
 
+Modify conf.yaml again to reflect your allocation and SSH keys:
 ```yaml
 username: cc
-key: scs_chameleon_pass
-key_dir: ${HOME}/.ssh
-port: 22
-hosts: hostfile.txt
-other_keys:
-  -
+ssh_hosts: hostfile.txt
+ssh_port: 22
+ssh_keys:
+  primary:
+    key: scs_chameleon_pass
+    key_dir: ${HOME}/.ssh
+  github:
     key_name: id_rsa
     key_dir: ${HOME}/.ssh
 ```
@@ -164,8 +181,10 @@ jarvis-bootstrap deps update
 jarvis-bootstrap deps uninstall 
 ```
 
-### 5.5 Install Storage System using Spack
+### 5.6. Install Storage System using Spack
 
+The following command is a distributed wrapper around spack, and will perform a parallel install
+of DAOS in all nodes specified in hostfile.txt.
 ```
-jarvis daos install
+jarvis-spack install daos
 ```

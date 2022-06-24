@@ -1,8 +1,13 @@
+#!/bin/bash
 
-if [[ -z "${$PREFIX}" ]]; then
+####VARIABLES
+#PREFIX: the place where to install dependencies
+if [[ -z "${PREFIX}" ]]; then
   PREFIX=${HOME}
 fi
-mkdir $PREFIX
+
+#Create the directory used to house all dependencies
+mkdir -p $PREFIX
 
 #Detect python version
 PYTHON_NEEDED=1
@@ -18,14 +23,14 @@ then
   PYTHON_NEEDED=0
 fi
 
-#Source bash noninteractive in bashrc at head of file
+#Source bashni in bashrc at head of file
 if `cat ~/.bashrc | grep "source ~/.bashni"`
 then
   sed -i.old "1s;^;source ~/.bashni\\n;" ~/.bashrc
 fi
 
 #Install python if necessary
-if [[ $PYTHON_NEEDED ]]
+if [[ $PYTHON_NEEDED -eq 1 ]]
 then
   echo "Installing Python 3.6"
   mkdir -p ${PREFIX}/python3.6/src

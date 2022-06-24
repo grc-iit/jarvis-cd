@@ -1,4 +1,5 @@
 import os
+from jarvis_cd.hostfile import Hostfile
 
 class SSHArgs:
     def ParseSSHArgs(self):
@@ -7,6 +8,7 @@ class SSHArgs:
         self.key_dir = os.path.join(os.environ["HOME"], ".ssh")
         self.key_name = "id_rsa"
         self.port = 22
+        self.username = os.environ["USER"]
 
         if "ssh_hosts" in self.conf and self.conf["ssh_hosts"] is not None:
             self.hosts = Hostfile.LoadHostfile(self.conf["ssh_hosts"]).list()
@@ -22,7 +24,7 @@ class SSHArgs:
             self.port = int(self.conf["ssh_port"])
         if "ssh_keys" in self.conf:
             self.ssh_keys = self.conf["ssh_keys"]
-        self.key_dir, self.key_name, self.dst_key_dir = GetKeyInfo('primary')
+        self.key_dir, self.key_name, self.dst_key_dir = self.GetKeyInfo('primary')
         self.private_key = self._GetPrivateKey(self.key_dir, self.key_name)
         self.public_key = self._GetPublicKey(self.key_dir, self.key_name)
 

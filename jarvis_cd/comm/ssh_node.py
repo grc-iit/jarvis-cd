@@ -39,7 +39,7 @@ class SSHNode(Node):
         self.sudo=sudo
         self.username=username
         self.port = int(port)
-        self.do_ssh = True
+        self.do_ssh = do_ssh
 
     def _exec_ssh(self, cmd):
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
@@ -61,7 +61,7 @@ class SSHNode(Node):
             cmd = " ; ".join(self.cmds)
             self.output = self._exec_ssh(cmd)
         else:
-            self.output = ExecNode('SSH Command', cmds, print_output, collect_output).Run().GetOutput()
+            self.output = ExecNode('SSH Command', self.cmds, self.print_output, self.collect_output, shell=True).Run().GetOutput()
         return self
 
     def __str__(self):
