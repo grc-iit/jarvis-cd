@@ -28,7 +28,6 @@ To customize the installation of dependencies, modify the conf.yaml produced by 
 ```yaml
 jarvis_cd:
   repo: https://github.com/lukemartinlogan/jarvis-cd.installer
-  name: jarvis-cd
   branch: develop
   commit: null
   path: ${HOME}/jarvis-cd
@@ -36,13 +35,11 @@ spack:
   repo: https://github.com/spack/spack.installer
   branch: releases/v0.18
   commit: null
-  path: ${HOME}/spack
 scs_repo:
   repo: https://github.com/lukemartinlogan/scs-repo.installer
   name: scs-repo
   branch: master
   commit: null
-  path: ${HOME}/scs-repo
 ```
 
 ## 3. Basic Commands
@@ -186,5 +183,5 @@ jarvis-bootstrap deps uninstall
 The following command is a distributed wrapper around spack, and will perform a parallel install
 of DAOS in all nodes specified in hostfile.txt.
 ```
-jarvis-spack install daos
+jarvis-pssh "spack install daos"
 ```
