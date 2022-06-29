@@ -18,7 +18,7 @@ class GitArgs:
         cmds.append(f'mkdir -p {self.repo_path}')
         cmds.append(f'cd {self.repo_path}/..')
         cmds.append(f'git clone {self.repo}')
-        cmds.append(f'cd {self.repo_name}')
+        cmds.append(f'cd {self.repo_path}')
         cmds.append(f'git switch {self.branch}')
         if self.commit is not None:
             print(f"COMMIT: {self.commit}")
