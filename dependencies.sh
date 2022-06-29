@@ -44,10 +44,10 @@ then
   make -j8
   make install
 
-  PATH=${$PREFIX}/bin:${PATH}
-  LD_LIBRARY_PATH=${$PREFIX}/lib:${PATH}
-  LIBRARY_PATH=${$PREFIX}/lib:${PATH}
-  CPATH=${$PREFIX}/include:${PATH}
+  PATH=${PREFIX}/bin:${PATH}
+  LD_LIBRARY_PATH=${PREFIX}/lib:${PATH}
+  LIBRARY_PATH=${PREFIX}/lib:${PATH}
+  CPATH=${PREFIX}/include:${PATH}
 
   echo "export PATH=$PATH" >> ~/.bashni
   echo "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> ~/.bashni
