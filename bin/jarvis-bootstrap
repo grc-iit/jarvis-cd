@@ -59,6 +59,7 @@ if __name__ == '__main__':
             exit(1)
         JarvisSetup(conf, sub_op).Run()
         SpackSetup(conf, sub_op).Run()
+        SCSRepoSetup(conf, sub_op).Run()
     else:
         print(f"Invalid operation: {op}")
         help()

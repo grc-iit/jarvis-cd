@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#zlib, zlib-devel, make, cmake
+#zlib, zlib-devel, make, cmake, openssl-devel
 
 ####VARIABLES
 #PREFIX: the place where to install dependencies
@@ -26,8 +26,11 @@ then
 fi
 
 #Source bashni in bashrc at head of file
-if `cat ~/.bashrc | grep "source ~/.bashni"`
+if [[ `cat ~/.bashrc | grep "source ~/.bashni"` ]]
 then
+  echo "Already sourcing ~/.bashni"
+else
+  echo "Adding source ~/.bashni to bashrc"
   sed -i.old "1s;^;source ~/.bashni\\n;" ~/.bashrc
 fi
 
@@ -55,4 +58,6 @@ then
   echo "export LIBRARY_PATH=$LIBRARY_PATH" >> ~/.bashni
   echo "export CPATH=$CPATH" >> ~/.bashni
   source ~/.bashni
+
+  pip3 install --upgrade pip
 fi

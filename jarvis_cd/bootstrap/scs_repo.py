@@ -7,11 +7,11 @@ from jarvis_cd.bootstrap.git_args import GitArgs
 from jarvis_cd.basic.check_command import CheckCommandNode
 import sys,os
 
-class SpackRepoSetup(SSHArgs,GitArgs):
+class SCSRepoSetup(SSHArgs,GitArgs):
     def __init__(self, conf, operation):
         self.conf = conf
         self.ParseSSHArgs()
-        self.ParseGitArgs('spack')
+        self.ParseGitArgs('scs_repo')
         self.operation = operation
 
     def Run(self):
@@ -26,17 +26,18 @@ class SpackRepoSetup(SSHArgs,GitArgs):
         # Create SSH directory on all nodes
         cmds = []
         self.GitCloneCommand(cmds)
-        cmds.append(f'echo ". $HOME/spack/share/spack/setup-env.sh" >> ~/.bashni')
-        SSHNode('Install spack', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port, collect_output=False, do_ssh=self.do_ssh).Run()
+        cmds.append(f'spack repo add ../scs-repo')
+        cmds.append(f'echo export SCS_REPO=$PWD >> ~/.bashni')
+        SSHNode('Install SCS repo', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port, collect_output=False, do_ssh=self.do_ssh).Run()
 
     def Update(self):
         cmds = []
-        self.GitUpdateCommand(cmds, '$SPACK_ROOT')
-        SSHNode('Update spack', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port, collect_output=False, do_ssh=self.do_ssh).Run()
+        self.GitUpdateCommand(cmds, '$SCS_REPO')
+        SSHNode('Update SCS repo', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port, collect_output=False, do_ssh=self.do_ssh).Run()
 
     def Uninstall(self):
         cmds = [
             f'python3 $JARVIS_ROOT/bin/jarvis-bootstrap spack reset_bashrc',
-            f'rm -rf $SPACK_ROOT'
+            f'rm -rf $SCS_REPO'
         ]
-        SSHNode('Uninstall spack', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port, collect_output=False, do_ssh=self.do_ssh).Run()
+        SSHNode('Uninstall scs-repo', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port, collect_output=False, do_ssh=self.do_ssh).Run()

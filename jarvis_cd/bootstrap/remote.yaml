@@ -11,16 +11,16 @@ ssh_keys:
     key_dir: ${HOME}/.ssh
 dep_prefix: ${HOME}
 spack:
-  repo: https://github.com/spack/spack.installer
+  repo: https://github.com/spack/spack
   branch: releases/v0.18
   commit: null
 jarvis_cd:
-  repo: https://github.com/lukemartinlogan/jarvis-cd.installer
+  repo: https://github.com/lukemartinlogan/jarvis-cd
   name: jarvis-cd
   branch: develop
   commit: null
 scs_repo:
-  repo: https://github.com/lukemartinlogan/scs-repo.installer
+  repo: https://github.com/lukemartinlogan/scs-repo
   name: scs-repo
   branch: master
   commit: null
