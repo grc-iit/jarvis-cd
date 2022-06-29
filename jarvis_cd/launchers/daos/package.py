@@ -3,7 +3,6 @@ from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launchers.launcher import Launcher
 import yaml
 
-
 class Daos(Launcher):
     def __init__(self, config_path=None, args=None):
         super().__init__('daos', config_path, args)
