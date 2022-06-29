@@ -34,20 +34,21 @@ fi
 #Install python if necessary
 if [[ $PYTHON_NEEDED -eq 1 ]]
 then
+  PYTHON_DIR=${PREFIX}/python3.6
   echo "Installing Python 3.6"
-  mkdir -p ${PREFIX}/python3.6/src
-  cd ${PREFIX}/python3.6/src
+  mkdir -p ${PYTHON_DIR}/src
+  cd ${PYTHON_DIR}/src
   wget https://www.python.org/ftp/python/3.6.14/Python-3.6.14.tgz
   tar -xzf Python-3.6.14.tgz
   cd Python-3.6.14
-  ./configure --prefix=${PREFIX}/python3.6
+  ./configure --prefix=${PYTHON_DIR}
   make -j8
   make install
 
-  PATH=${PREFIX}/bin:${PATH}
-  LD_LIBRARY_PATH=${PREFIX}/lib:${PATH}
-  LIBRARY_PATH=${PREFIX}/lib:${PATH}
-  CPATH=${PREFIX}/include:${PATH}
+  PATH=${PYTHON_DIR}/bin:${PATH}
+  LD_LIBRARY_PATH=${PYTHON_DIR}/lib:${PATH}
+  LIBRARY_PATH=${PYTHON_DIR}/lib:${PATH}
+  CPATH=${PYTHON_DIR}/include:${PATH}
 
   echo "export PATH=$PATH" >> ~/.bashni
   echo "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> ~/.bashni
