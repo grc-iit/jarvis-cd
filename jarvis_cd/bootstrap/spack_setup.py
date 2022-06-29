@@ -30,7 +30,7 @@ class SpackSetup(SSHArgs,GitArgs):
         if CheckCommandNode('Check Spack', 'spack').Run().Exists():
             print("Spack already exists")
             return
-        self.GitCloneCommand(cmds)
+        self.GitCloneCommands(cmds)
         cmds.append(f'echo ". $PWD/share/spack/setup-env.sh" >> ~/.bashni')
         SSHNode('Install spack', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port, collect_output=False, do_ssh=self.do_ssh).Run()
 

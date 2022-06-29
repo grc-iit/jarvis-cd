@@ -25,7 +25,7 @@ class SCSRepoSetup(SSHArgs,GitArgs):
     def Install(self):
         # Create SSH directory on all nodes
         cmds = []
-        self.GitCloneCommand(cmds)
+        self.GitCloneCommands(cmds)
         cmds.append(f'spack repo add ../scs-repo')
         cmds.append(f'echo export SCS_REPO=$PWD >> ~/.bashni')
         SSHNode('Install SCS repo', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port, collect_output=False, do_ssh=self.do_ssh).Run()
