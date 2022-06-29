@@ -11,7 +11,7 @@ jarvis-bootstrap deps
 
 import sys,os
 import re
-from jarvis_cd.bootstrap.spack_setup import SCSRepoSetup
+from jarvis_cd.bootstrap.scs_repo_setup import SCSRepoSetup
 from jarvis_cd.bootstrap.spack_setup import SpackSetup
 from jarvis_cd.bootstrap.ssh_setup import SSHSetup
 from jarvis_cd.bootstrap.jarvis_setup import JarvisSetup
