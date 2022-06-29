@@ -37,7 +37,7 @@ if __name__ == '__main__':
         exit(0)
 
     # Get configuration file
-    conf = BootstrapConfig().LoadConfig().Get()
+    conf = BootstrapConfig().LoadConfig()
 
     # Second-level args
     if op == 'scaffold':
@@ -48,18 +48,18 @@ if __name__ == '__main__':
             exit(1)
         conf.Scaffold(sub_op)
     elif op == 'setup_ssh':
-        SSHSetup(conf).Run()
+        SSHSetup(conf.Get()).Run()
     elif op == 'ssh':
-        JarvisSSH(conf).Run()
+        JarvisSSH(conf.Get()).Run()
     elif op == 'deps':
         if len(sys.argv) >= 3:
             sub_op = sys.argv[2]
         else:
             help()
             exit(1)
-        JarvisSetup(conf, sub_op).Run()
-        SpackSetup(conf, sub_op).Run()
-        SCSRepoSetup(conf, sub_op).Run()
+        JarvisSetup(conf.Get(), sub_op).Run()
+        SpackSetup(conf.Get(), sub_op).Run()
+        SCSRepoSetup(conf.Get(), sub_op).Run()
     else:
         print(f"Invalid operation: {op}")
         help()
