@@ -22,5 +22,5 @@ jarvis_cd:
 scs_repo:
   repo: https://github.com/lukemartinlogan/scs-repo
   name: scs-repo
-  branch: master
+  branch: main
   commit: null

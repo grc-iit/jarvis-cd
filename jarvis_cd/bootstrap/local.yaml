@@ -10,6 +10,6 @@ spack:
   path: ${HOME}/spack
 scs_repo:
   repo: https://github.com/lukemartinlogan/scs-repo
-  branch: master
+  branch: main
   commit: null
   path: ${HOME}/scs-repo
