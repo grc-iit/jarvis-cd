@@ -36,7 +36,7 @@ class SpackSetup(SSHArgs,GitArgs):
 
     def Update(self):
         cmds = []
-        self.GitUpdateCommand(cmds, '$SPACK_ROOT')
+        self.GitUpdateCommands(cmds, '$SPACK_ROOT')
         SSHNode('Update spack', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port, collect_output=False, do_ssh=self.do_ssh).Run()
 
     def Uninstall(self):

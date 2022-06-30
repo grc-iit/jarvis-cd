@@ -21,7 +21,6 @@ class GitArgs:
         cmds.append(f'cd {self.repo_path}')
         cmds.append(f'git switch {self.branch}')
         if self.commit is not None:
-            print(f"COMMIT: {self.commit}")
             cmds.append(f'git switch {self.commit}')
 
     def GitUpdateCommands(self, cmds, repo_path):

@@ -32,7 +32,7 @@ class SCSRepoSetup(SSHArgs,GitArgs):
 
     def Update(self):
         cmds = []
-        self.GitUpdateCommand(cmds, '$SCS_REPO')
+        self.GitUpdateCommands(cmds, '$SCS_REPO')
         SSHNode('Update SCS repo', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port, collect_output=False, do_ssh=self.do_ssh).Run()
 
     def Uninstall(self):
