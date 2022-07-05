@@ -5,10 +5,11 @@ ssh_keys:
   primary:
     key: scs_chameleon_pass
     key_dir: ${HOME}/.ssh
-    dst_key_dir: ${HOME}/.ssh
+    dst_key_dir: /home/cc/.ssh
   github:
-    key_name: id_rsa
+    key: id_rsa
     key_dir: ${HOME}/.ssh
+    dst_key_dir: /home/cc/.ssh
 dep_prefix: ${HOME}
 spack:
   repo: https://github.com/spack/spack

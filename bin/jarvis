@@ -45,5 +45,5 @@ if __name__ == '__main__':
         launcher_instance.LoadConfig()
         result = launcher_op(launcher_instance)
     else:
-        result = launcher_op(launcher_instance)
+        result = launcher_op(launcher_instance, arguments.args.conf)
     logging.info("Finished execution", exc_info=True)

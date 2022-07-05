@@ -1,5 +1,5 @@
 SCAFFOLD: null
-DAOS_ROOT: ${DAOS_ROOT}
+DAOS_ROOT: $SPACK{DAOS_ROOT}
 NAME: daos_server
 PORT: 10001
 SECURE: true
@@ -29,12 +29,10 @@ SERVER:
         - FI_SOCKETS_MAX_CONN_RETRY=1
         - FI_SOCKETS_CONN_TIMEOUT=2000
       storage:
-        -
-          class: ram
+        - class: ram
           scm_size: 1
           scm_mount: '${SCAFFOLD}/scm_test'
-        -
-          class: file
+        - class: file
           bdev_size: 1
           bdev_list: ['${SCAFFOLD}/file_test']
 AGENT:
@@ -49,3 +47,10 @@ CONTROL:
     ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
     cert: ${SCAFFOLD}/daosCA/certs/admin.crt
     key: ${SCAFFOLD}/daosCA/certs/admin.key
+POOLS:
+  - name: io500_pool
+    size: 100G
+    type: POSIX
+CONTAINERS:
+  - name: io500_container
+    pool: io500_pool

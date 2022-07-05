@@ -36,7 +36,7 @@ class SSHSetup(SSHArgs):
             ExecNode('Install public key', f'ssh-copy-id -f -i {self.private_key} -p {self.port} {self.username}@{host}',
                      collect_output=False).Run()
         # Create SSH directory on all nodes
-        SSHNode('Make SSH directory', self.hosts, f'mkdir {self.dst_key_dir}', pkey=src_priv_key, username=self.username, port=self.port,
+        SSHNode('Make SSH directory', self.hosts, f'mkdir {self.dst_key_dir}', pkey=self.private_key, username=self.username, port=self.port,
                 collect_output=False).Run()
 
         # Copy all keys:
@@ -46,10 +46,12 @@ class SSHSetup(SSHArgs):
             src_priv_key = self._GetPrivateKey(key_dir, key_name)
             dst_pub_key = self._GetPublicKey(dst_key_dir, key_name)
             dst_priv_key = self._GetPrivateKey(dst_key_dir, key_name)
+            print(f"Copying {src_pub_key} to {dst_pub_key}")
             SCPNode('Copy public key to hosts', self.hosts, src_pub_key, dst_pub_key, pkey=self.private_key, username=self.username,
                     port=self.port,
                     collect_output=False).Run()
             if os.path.exists(src_priv_key):
+                print(f"Copying {src_priv_key} to {dst_priv_key}")
                 SCPNode('Copy private key to hosts', self.hosts, src_priv_key, dst_priv_key, pkey=self.private_key,
                         username=self.username, port=self.port,
                         collect_output=False).Run()

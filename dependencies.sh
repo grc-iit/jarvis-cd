@@ -32,6 +32,7 @@ then
 else
   echo "Adding source ~/.bashni to bashrc"
   sed -i.old "1s;^;source ~/.bashni\\n;" ~/.bashrc
+  touch ~/.bashni
 fi
 
 #Install python if necessary

@@ -37,6 +37,8 @@ class ArgumentParser(object):
                                  help="Operation for the launcher (e.g., start)")
         self.parser.add_argument("--dir", metavar='scaffold directory', default=None, type=str,
                                  help="The directory where all configuration files are stored")
+        self.parser.add_argument("--conf", metavar='scaffold conf type', default='default', type=str,
+                                 help="The type of scaffold configuration to generate")
         self.parser.add_argument("-ll","--log-level", default=LogLevel.ERROR, type=LogLevel,
                                  choices=list(LogLevel),
                                  help="Log level for execution")
