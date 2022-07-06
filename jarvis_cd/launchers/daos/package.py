@@ -16,7 +16,9 @@ class Daos(Launcher):
 
     def _DefineInit(self):
         #Create DAOS_ROOT sybmolic link
-        LinkSpackage("Link Spackage", self.config['DAOS_SPACK'], self.config['DAOS_ROOT'])
+        LinkSpackage("Link Spackage", self.server_hosts, self.config['DAOS_SPACK'], self.config['DAOS_ROOT'])
+        LinkSpackage("Link Spackage", self.agent_hosts, self.config['DAOS_SPACK'], self.config['DAOS_ROOT'])
+        LinkSpackage("Link Spackage", self.control_hosts, self.config['DAOS_SPACK'], self.config['DAOS_ROOT'])
         #Generate security certificates
         gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
         ExecNode('Generate Certificates', gen_certificates_cmd).Run()
