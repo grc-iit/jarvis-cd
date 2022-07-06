@@ -23,17 +23,30 @@ class Daos(Launcher):
         gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
         ExecNode('Generate Certificates', gen_certificates_cmd).Run()
         #Copy the certificates to all servers
-        #nodes.append(SCPNode('Distribute Certificates', ))
+        SCPNode('Distribute Certificates', self.server_hosts, )
         #Generate config files
         self._CreateServerConfig()
         self._CreateAgentConfig()
         self._CreateControlConfig()
         #Start DAOS server
-        #server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
-        #node.append(ExecNode('Start DAOS', server_start_cmd, sudo=True))
+        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
+        ExecNode('Start DAOS', server_start_cmd, sudo=True).Run()
         #Format storage
-        #storage_format_cmd = f"${DAOS_ROOT}/bin/dmg storage format --force -o {self.config['CONF']['CONTROL']}"
-        #node.append(ExecNode('Format DAOS', storage_format_cmd, sudo=True))
+        storage_format_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg storage format --force -o {self.config['CONF']['CONTROL']}"
+        ExecNode('Format DAOS', storage_format_cmd, sudo=True).Run()
+        #Create storage pools
+        for pool in self.config['POOLS']:
+            create_pool_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} pool create -z {pool['size']} --label {pool['label']}"
+            ExecNode('Create Pool', create_pool_cmd).Run()
+        #Create containers
+        for container in self.config['CONTAINERS']:
+            create_container_cmd = [
+                f"{self.config['DAOS_ROOT']}/bin/daos container create",
+                f"--type {container['type']}",
+                f"--pool {container['pool']}",
+            ]
+            create_container_cmd = " ".join(create_container_cmd)
+            ExecNode('Create Container', create_container_cmd).Run()
 
     def _DefineStart(self):
         nodes = []
@@ -43,6 +56,9 @@ class Daos(Launcher):
         #Start client
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
         nodes.append(ExecNode('Start DAOS Agent', agent_start_cmd, sudo=True))
+
+    def _DefineUpdate(self):
+        pass
 
     def _DefineClean(self):
         pass

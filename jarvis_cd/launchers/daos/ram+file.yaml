@@ -34,6 +34,9 @@ SERVER:
         - class: ram
           scm_size: 100
           scm_mount: '${SCAFFOLD}/scm_test'
+        - class: file
+          bdev_size: 100
+          bdev_list: ['${SCAFFOLD}/file_test']
 AGENT:
   access_points: ${SCAFFOLD}/agent_hosts.txt
   transport_config:
