@@ -75,7 +75,7 @@ class Daos(Launcher):
                     f"-m {container['mount']}"
                 ]
                 mount_cmd = " ".join(mount_cmd)
-                SSHNode('Mount Container', self.client_hosts, mount_cmd).Run()
+                SSHNode('Mount Container', self.agent_hosts, mount_cmd).Run()
 
     def _DefineUpdate(self):
         pass
