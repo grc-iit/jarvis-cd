@@ -50,7 +50,6 @@ class ExecNode(Node):
             self.proc = subprocess.Popen(commands, cwd=self.cwd, shell=True)
         else:
             self.proc = subprocess.Popen(commands,
-                                         stdin=self.proc.stdout,
                                          stdout=subprocess.PIPE,
                                          stderr=subprocess.PIPE,
                                          cwd=self.cwd,

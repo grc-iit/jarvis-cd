@@ -11,10 +11,13 @@ from jarvis_cd.exception import Error, ErrorCode
 sys.stderr = sys.__stderr__
 
 class SSHNode(Node):
-    def __init__(self, name, hosts, cmd,
-                 username = getpass.getuser(), pkey=None, password=None, port=22,
+    def __init__(self, name, hosts, cmds,
+                 username=None, pkey=None, password=None, port=22,
                  sudo=False, print_output=True, collect_output=True, do_ssh=True):
         super().__init__(name, print_output, collect_output)
+
+        if username is None:
+            username = getpass.getuser()
         if isinstance(hosts, list):
             self.hosts=hosts
         elif isinstance(hosts, str):
@@ -24,12 +27,12 @@ class SSHNode(Node):
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SSHNode hosts", type(hosts))
 
-        if isinstance(cmd, list):
-            self.cmds=cmd
-        elif isinstance(cmd, str):
-            self.cmds=[cmd]
+        if isinstance(cmds, list):
+            self.cmds=cmds
+        elif isinstance(cmds, str):
+            self.cmds=[cmds]
         else:
-            raise Error(ErrorCode.INVALID_TYPE).format("SSHNode cmdss", type(cmd))
+            raise Error(ErrorCode.INVALID_TYPE).format("SSHNode cmdss", type(cmds))
 
         if password is None and pkey is None:
             pkey = f"{os.environ['HOME']}/.ssh/id_rsa"

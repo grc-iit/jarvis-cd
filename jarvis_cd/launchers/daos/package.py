@@ -1,6 +1,7 @@
 from jarvis_cd.basic.exec_node import ExecNode
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launchers.launcher import Launcher
+from jarvis_cd.spack.link_package import LinkSpackage
 import yaml
 
 class Daos(Launcher):
@@ -14,6 +15,8 @@ class Daos(Launcher):
         return
 
     def _DefineInit(self):
+        #Create DAOS_ROOT sybmolic link
+        LinkSpackage("Link Spackage", self.config['DAOS_SPACK'], self.config['DAOS_ROOT'])
         #Generate security certificates
         gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
         ExecNode('Generate Certificates', gen_certificates_cmd).Run()

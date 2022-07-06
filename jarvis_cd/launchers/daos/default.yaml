@@ -1,5 +1,7 @@
 SCAFFOLD: null
-DAOS_ROOT: $SPACK{DAOS_ROOT}
+DAOS_SPACK:
+  package_name: daos
+DAOS_ROOT: ${SCAFFOLD}/daos_install
 NAME: daos_server
 PORT: 10001
 SECURE: true
