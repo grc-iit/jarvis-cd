@@ -1,4 +1,6 @@
 from jarvis_cd.basic.exec_node import ExecNode
+from jarvis_cd.comm.ssh_node import SSHNode
+from jarvis_cd.comm.scp_node import SCPNode
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launchers.launcher import Launcher
 from jarvis_cd.spack.link_package import LinkSpackage
@@ -23,14 +25,16 @@ class Daos(Launcher):
         gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
         ExecNode('Generate Certificates', gen_certificates_cmd).Run()
         #Copy the certificates to all servers
-        SCPNode('Distribute Certificates', self.server_hosts, )
+        SCPNode('Distribute Certificates', self.server_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA")
+        SCPNode('Distribute Certificates', self.agent_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA")
+        SCPNode('Distribute Certificates', self.control_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA")
         #Generate config files
         self._CreateServerConfig()
         self._CreateAgentConfig()
         self._CreateControlConfig()
-        #Start DAOS server
+        #Start DAOS server (on all server nodes)
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
-        ExecNode('Start DAOS', server_start_cmd, sudo=True).Run()
+        SSHNode('Start DAOS', self.server_hosts, server_start_cmd, sudo=True).Run()
         #Format storage
         storage_format_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg storage format --force -o {self.config['CONF']['CONTROL']}"
         ExecNode('Format DAOS', storage_format_cmd, sudo=True).Run()
