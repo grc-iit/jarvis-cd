@@ -47,10 +47,10 @@ CONTROL:
     cert: ${SCAFFOLD}/daosCA/certs/admin.crt
     key: ${SCAFFOLD}/daosCA/certs/admin.key
 POOLS:
-  - name: io500_pool
+  - label: io500_pool
     size: 100G
 CONTAINERS:
-  - name: io500_container
+  - label: io500_container
     pool: io500_pool
     type: POSIX
     mount: ${SCAFFOLD}/daos_mount

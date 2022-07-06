@@ -33,24 +33,29 @@ class Daos(Launcher):
         self._CreateAgentConfig()
         self._CreateControlConfig()
         #Start DAOS server (on all server nodes)
+        print("Starting DAOS server")
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         SSHNode('Start DAOS', self.server_hosts, server_start_cmd, sudo=True).Run()
         #Format storage
+        print("Formatting DAOS storage")
         storage_format_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg storage format --force -o {self.config['CONF']['CONTROL']}"
         ExecNode('Format DAOS', storage_format_cmd, sudo=True).Run()
         #Create storage pools
+        print("Create storage pools")
         for pool in self.config['POOLS']:
             create_pool_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} pool create -z {pool['size']} --label {pool['label']}"
-            ExecNode('Create Pool', create_pool_cmd).Run()
+            ExecNode('Create Pool', create_pool_cmd, sudo=True).Run()
         #Create containers
+        print("Create containers")
         for container in self.config['CONTAINERS']:
             create_container_cmd = [
                 f"{self.config['DAOS_ROOT']}/bin/daos container create",
                 f"--type {container['type']}",
                 f"--pool {container['pool']}",
+                f"--label {container['label']}"
             ]
             create_container_cmd = " ".join(create_container_cmd)
-            ExecNode('Create Container', create_container_cmd).Run()
+            ExecNode('Create Container', create_container_cmd, sudo=True).Run()
 
     def _DefineStart(self):
         nodes = []
@@ -60,6 +65,17 @@ class Daos(Launcher):
         #Start client
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
         nodes.append(ExecNode('Start DAOS Agent', agent_start_cmd, sudo=True))
+        #Mount containers on clients
+        for container in self.config['CONTAINERS']:
+            if 'mount' in container and container['mount'] is not None:
+                mount_cmd = [
+                    'dfuse',
+                    f"--pool {container['pool']}",
+                    f"--container {container['label']}",
+                    f"-m {container['mount']}"
+                ]
+                mount_cmd = " ".join(mount_cmd)
+                SSHNode('Mount Container', self.client_hosts, mount_cmd).Run()
 
     def _DefineUpdate(self):
         pass
