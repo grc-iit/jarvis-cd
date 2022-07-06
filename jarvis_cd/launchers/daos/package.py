@@ -32,10 +32,14 @@ class Daos(Launcher):
         self._CreateServerConfig()
         self._CreateAgentConfig()
         self._CreateControlConfig()
-        #Start DAOS server (on all server nodes)
+        #Start dummy DAOS server (on all server nodes)
         print("Starting DAOS server")
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         SSHNode('Start DAOS', self.server_hosts, server_start_cmd, sudo=True).Run()
+        #Get networking options
+        print("Scanning networks")
+        network_check_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} network scan > {self.config['SCAFFOLD']}/netscan.txt"
+        ExecNode('Get Networks', network_check_cmd, sudo=True, shell=True).Run()
         #Format storage
         print("Formatting DAOS storage")
         storage_format_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg storage format --force -o {self.config['CONF']['CONTROL']}"
