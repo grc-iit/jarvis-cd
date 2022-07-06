@@ -69,7 +69,7 @@ class Daos(Launcher):
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
                 mount_cmd = [
-                    'dfuse',
+                    f"{self.config['DAOS_ROOT']}/bin/dfuse",
                     f"--pool {container['pool']}",
                     f"--container {container['label']}",
                     f"-m {container['mount']}"
