@@ -32,10 +32,12 @@ class SSHNode(Node):
         elif isinstance(cmds, str):
             self.cmds=[cmds]
         else:
-            raise Error(ErrorCode.INVALID_TYPE).format("SSHNode cmdss", type(cmds))
+            raise Error(ErrorCode.INVALID_TYPE).format("SSHNode cmds", type(cmds))
 
         if password is None and pkey is None:
             pkey = f"{os.environ['HOME']}/.ssh/id_rsa"
+        if self.hosts[0] == 'localhost' and len(self.hosts) == 1:
+            do_ssh = False
 
         self.pkey = pkey
         self.password = password
