@@ -36,6 +36,8 @@ class SSHNode(Node):
 
         if password is None and pkey is None:
             pkey = f"{os.environ['HOME']}/.ssh/id_rsa"
+
+        #Do not execute SSH if only localhost
         if self.hosts[0] == 'localhost' and len(self.hosts) == 1:
             do_ssh = False
 
