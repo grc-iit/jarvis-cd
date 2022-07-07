@@ -13,7 +13,7 @@ sys.stderr = sys.__stderr__
 class SSHNode(Node):
     def __init__(self, name, hosts, cmds,
                  username=None, pkey=None, password=None, port=22,
-                 sudo=False, print_output=True, collect_output=True, do_ssh=True, run_async=False):
+                 sudo=False, print_output=True, collect_output=True, do_ssh=True, exec_async=False):
         super().__init__(name, print_output, collect_output)
 
         if username is None:
@@ -47,7 +47,7 @@ class SSHNode(Node):
         self.username=username
         self.port = int(port)
         self.do_ssh = do_ssh
-        self.run_async = run_async
+        self.exec_async = exec_async
 
     def _exec_ssh(self, cmd):
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
@@ -67,11 +67,11 @@ class SSHNode(Node):
         #self.output = [self._exec_ssh(cmd) for i,cmd in enumerate(self.cmds)]
         if self.do_ssh:
             cmd = " ; ".join(self.cmds)
-            if self.run_async:
+            if self.exec_async:
                 cmd = f"nohup {cmd}"
             self.output = self._exec_ssh(cmd)
         else:
-            self.output = ExecNode('SSH Command', self.cmds, self.print_output, self.collect_output, shell=True, sudo=self.sudo, run_async=self.run_async).Run().GetOutput()
+            self.output = ExecNode('SSH Command', self.cmds, self.print_output, self.collect_output, shell=True, sudo=self.sudo, exec_async=self.exec_async).Run().GetOutput()
         return self
 
     def __str__(self):
