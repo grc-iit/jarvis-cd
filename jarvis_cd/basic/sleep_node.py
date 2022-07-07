@@ -8,7 +8,7 @@ class SleepNode(Node):
         super().__init__(name, print_output)
         self.timer = timer
 
-    def Run(self):
+    def _Run(self):
         time.sleep(self.timer)
         self.output = {
             'localhost': {
