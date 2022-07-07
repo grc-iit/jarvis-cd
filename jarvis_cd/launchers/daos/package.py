@@ -22,17 +22,15 @@ class Daos(Launcher):
         return
 
     def _DefineInit(self):
+        #Create SCAFFOLD on all nodes
+        SSHNode("Make Scaffold Directory", self.server_hosts, f"mkdir -p {self.scaffold_dir}", ssh_info=self.ssh_info).Run()
         #Create DAOS_ROOT sybmolic link
-        LinkSpackage("Link Spackage", self.server_hosts, self.config['DAOS_SPACK'], self.config['DAOS_ROOT']).Run()
-        LinkSpackage("Link Spackage", self.agent_hosts, self.config['DAOS_SPACK'], self.config['DAOS_ROOT']).Run()
-        LinkSpackage("Link Spackage", self.control_hosts, self.config['DAOS_SPACK'], self.config['DAOS_ROOT']).Run()
+        LinkSpackage("Link Spackage", self.server_hosts, self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], ssh_info=self.ssh_info).Run()
+        LinkSpackage("Link Spackage", self.agent_hosts, self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], ssh_info=self.ssh_info).Run()
+        LinkSpackage("Link Spackage", self.control_hosts, self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], ssh_info=self.ssh_info).Run()
         #Generate security certificates
         gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
         ExecNode('Generate Certificates', gen_certificates_cmd).Run()
-        #Copy the certificates to all servers
-        SCPNode('Distribute Certificates', self.server_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA", ssh_info=self.ssh_info)
-        SCPNode('Distribute Certificates', self.agent_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA", ssh_info=self.ssh_info)
-        SCPNode('Distribute Certificates', self.control_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA", ssh_info=self.ssh_info)
         #View network ifaces
         print("Detect Network Interfaces")
         DetectNetworks('Detect Networks').Run()
@@ -42,6 +40,13 @@ class Daos(Launcher):
         self._CreateServerConfig()
         self._CreateAgentConfig()
         self._CreateControlConfig()
+        #Copy the scaffold to all servers
+        SCPNode('Distribute Configs & Keys', self.server_hosts, f"{self.config['SCAFFOLD']}",
+                f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info)
+        SCPNode('Distribute Configs & Keys', self.agent_hosts, f"{self.config['SCAFFOLD']}",
+                f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info)
+        SCPNode('Distribute Configs & Keys', self.control_hosts, f"{self.config['SCAFFOLD']}",
+                f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info)
         #Start dummy DAOS server (on all server nodes)
         print("Starting DAOS server")
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
