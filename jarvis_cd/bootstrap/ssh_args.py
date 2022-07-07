@@ -11,7 +11,7 @@ class SSHArgs:
         self.username = os.environ["USER"]
 
         if "ssh_hosts" in self.conf and self.conf["ssh_hosts"] is not None:
-            self.hosts = Hostfile.LoadHostfile(self.conf["ssh_hosts"]).list()
+            self.hosts = Hostfile().LoadHostfile(self.conf["ssh_hosts"]).list()
         if "ssh_host" in self.conf and self.conf["ssh_host"] is not None:
             self.hosts.append(self.conf["ssh_host"])
         if len(self.hosts) == 0:
