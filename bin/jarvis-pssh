@@ -20,6 +20,6 @@ if __name__ == '__main__':
         exit()
     op = sys.argv[1]
     conf = BootstrapConfig().LoadConfig().Get()
-    ssh_cmd_node = SSHCommand(conf)
+    ssh_cmd_node = SSHCommand(conf, op)
     ssh_cmd_node.Run()
 
