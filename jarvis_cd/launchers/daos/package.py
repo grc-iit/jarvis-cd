@@ -59,7 +59,7 @@ class Daos(Launcher):
         print(network_check_cmd)
         #ExecNode('Get Networks', network_check_cmd, sudo=True, shell=True).Run()
         #Link SCAFFOLD to /var/run/daos_agent
-        link_cmd = f"ln -s {self.scafold_dir} /var/run/daos_agent"
+        link_cmd = f"ln -s {self.scaffold_dir} /var/run/daos_agent"
         SSHNode('Link agent folder', self.agent_hosts, link_cmd, sudo=True, ssh_info=self.ssh_info)
         #Create storage pools
         print("Create storage pools")
