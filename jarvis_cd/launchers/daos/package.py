@@ -5,6 +5,7 @@ from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launchers.launcher import Launcher
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.hardware.list_net import DetectNetworks
+from jarvis_cd.basic.sleep_node import SleepNode
 import yaml
 
 class Daos(Launcher):
@@ -43,9 +44,10 @@ class Daos(Launcher):
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         print(server_start_cmd)
         SSHNode('Start DAOS', self.server_hosts, server_start_cmd, sudo=True, exec_async=True).Run()
+        SleepNode('Wait for Server', 3)
         #Get networking options
         print("Scanning networks")
-        network_check_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} network scan > {self.config['SCAFFOLD']}/netscan.txt"
+        network_check_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} network scan"
         ExecNode('Get Networks', network_check_cmd, sudo=True, shell=True).Run()
         #Format storage
         print("Formatting DAOS storage")
@@ -75,7 +77,7 @@ class Daos(Launcher):
         nodes.append(ExecNode('Start DAOS', server_start_cmd, sudo=True))
         #Start client
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
-        nodes.append(ExecNode('Start DAOS Agent', agent_start_cmd, sudo=True))
+        ExecNode('Start DAOS Agent', agent_start_cmd, sudo=True).Run()
         #Mount containers on clients
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
@@ -88,14 +90,13 @@ class Daos(Launcher):
                 mount_cmd = " ".join(mount_cmd)
                 SSHNode('Mount Container', self.agent_hosts, mount_cmd).Run()
 
-    def _DefineUpdate(self):
-        pass
-
     def _DefineClean(self):
         pass
 
     def _DefineStop(self):
-        pass
+        server_stop_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg system stop -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
+        ExecNode('Stop DAOS', server_stop_cmd, sudo=True).Run()
+        KillNode('Kill DAOS', 'daos').Run()
 
     def _DefineStatus(self):
         pass
