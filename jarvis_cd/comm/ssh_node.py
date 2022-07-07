@@ -68,7 +68,7 @@ class SSHNode(Node):
             cmd = " ; ".join(self.cmds)
             self.output = self._exec_ssh(cmd)
         else:
-            self.output = ExecNode('SSH Command', self.cmds, self.print_output, self.collect_output, shell=True).Run().GetOutput()
+            self.output = ExecNode('SSH Command', self.cmds, self.print_output, self.collect_output, shell=True, sudo=self.sudo).Run().GetOutput()
         return self
 
     def __str__(self):
