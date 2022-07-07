@@ -97,7 +97,7 @@ class Daos(Launcher):
     def _DefineStop(self):
         server_stop_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg system stop -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         ExecNode('Stop DAOS', server_stop_cmd, sudo=True).Run()
-        KillNode('Kill DAOS', 'daos').Run()
+        KillNode('Kill DAOS', '.*daos.*').Run()
 
     def _DefineStatus(self):
         pass
