@@ -51,7 +51,7 @@ class Daos(Launcher):
         print("Formatting DAOS storage")
         storage_format_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg storage format --force -o {self.config['CONF']['CONTROL']}"
         print(storage_format_cmd)
-        #ExecNode('Format DAOS', storage_format_cmd, sudo=True).Run()
+        #SSHNode('Format DAOS', self.server_hosts, storage_format_cmd, sudo=True, ssh_info=self.ssh_info).Run()
         #Get networking options
         print("Scanning networks")
         network_check_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} network scan -p all"
@@ -62,7 +62,7 @@ class Daos(Launcher):
         for pool in self.config['POOLS']:
             create_pool_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} pool create -z {pool['size']} --label {pool['label']}"
             print(create_pool_cmd)
-            #ExecNode('Create Pool', create_pool_cmd, sudo=True).Run()
+            #ExecNode('Create Pool', create_pool_cmd).Run()
         #Create containers
         print("Create containers")
         for container in self.config['CONTAINERS']:
@@ -74,15 +74,17 @@ class Daos(Launcher):
             ]
             create_container_cmd = " ".join(create_container_cmd)
             print(create_container_cmd)
-            #ExecNode('Create Container', create_container_cmd, sudo=True).Run()
+            #ExecNode('Create Container', create_container_cmd).Run()
 
     def _DefineStart(self):
         #Start DAOS server
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
-        SSHNode('Start DAOS', self.server_hosts, server_start_cmd, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+        print(server_start_cmd)
+        #SSHNode('Start DAOS', self.server_hosts, server_start_cmd, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
         #Start client
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
-        SSHNode('Start DAOS Agent', self.agent_hosts, agent_start_cmd, sudo=True, ssh_info=self.ssh_info).Run()
+        print(agent_start_cmd)
+        #SSHNode('Start DAOS Agent', self.agent_hosts, agent_start_cmd, sudo=True, ssh_info=self.ssh_info).Run()
         #Mount containers on clients
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
@@ -93,7 +95,8 @@ class Daos(Launcher):
                     f"-m {container['mount']}"
                 ]
                 mount_cmd = " ".join(mount_cmd)
-                SSHNode('Mount Container', self.agent_hosts, mount_cmd).Run()
+                print(mount_cmd)
+                #SSHNode('Mount Container', self.agent_hosts, mount_cmd).Run()
 
     def _DefineClean(self):
         pass
