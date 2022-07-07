@@ -54,7 +54,7 @@ class Daos(Launcher):
         #ExecNode('Format DAOS', storage_format_cmd, sudo=True).Run()
         #Get networking options
         print("Scanning networks")
-        network_check_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} network scan"
+        network_check_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} network scan -p all"
         print(network_check_cmd)
         #ExecNode('Get Networks', network_check_cmd, sudo=True, shell=True).Run()
         #Create storage pools
