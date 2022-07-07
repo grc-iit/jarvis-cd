@@ -33,8 +33,9 @@ class SSHSetup(SSHArgs):
         print("Install SSH keys")
         # Ensure pubkey trusted on all nodes
         for host in self.hosts:
-            ExecNode('Install public key', f'ssh-copy-id -f -i {self.public_key} -p {self.port} {self.username}@{host}',
-                     collect_output=False).Run()
+            copy_id_cmd = f"ssh-copy-id -f -i {self.public_key} -p {self.port} {self.username}@{host}"
+            print(copy_id_cmd)
+            ExecNode('Install public key', copy_id_cmd, collect_output=False).Run()
         # Create SSH directory on all nodes
         SSHNode('Make SSH directory', self.hosts, f'mkdir {self.dst_key_dir}', pkey=self.private_key, username=self.username, port=self.port,
                 collect_output=False).Run()
