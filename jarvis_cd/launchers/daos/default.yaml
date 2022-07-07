@@ -44,6 +44,8 @@ AGENT:
     ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
     cert: ${SCAFFOLD}/daosCA/certs/agent.crt
     key: ${SCAFFOLD}/daosCA/certs/agent.key
+  runtime_dir: ${SCAFFOLD}
+  log_file: ${SCAFFOLD}/daos_agent.log
 CONTROL:
   hostlist: ${SCAFFOLD}/control_hosts.txt
   transport_config:
