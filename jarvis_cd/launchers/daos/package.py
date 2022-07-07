@@ -45,20 +45,19 @@ class Daos(Launcher):
         print("Starting DAOS server")
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         print(server_start_cmd)
-        #SSHNode('Start DAOS', self.server_hosts, server_start_cmd, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
-        #SleepNode('Wait for Server', 3).Run()
+        SSHNode('Start DAOS', self.server_hosts, server_start_cmd, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+        SleepNode('Wait for Server', 3).Run()
         #Format storage
         print("Formatting DAOS storage")
         storage_format_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg storage format --force -o {self.config['CONF']['CONTROL']}"
         print(storage_format_cmd)
-        #ExecNode('Format DAOS', storage_format_cmd, sudo=True).Run()
+        ExecNode('Format DAOS', storage_format_cmd, sudo=True).Run()
         #Get networking options
         print("Scanning networks")
         network_check_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} network scan"
         print(network_check_cmd)
-        #ExecNode('Get Networks', network_check_cmd, sudo=True, shell=True).Run()
+        ExecNode('Get Networks', network_check_cmd, sudo=True, shell=True).Run()
         #Create storage pools
-        exit(1)
         print("Create storage pools")
         for pool in self.config['POOLS']:
             create_pool_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} pool create -z {pool['size']} --label {pool['label']}"
