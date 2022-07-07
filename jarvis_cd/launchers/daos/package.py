@@ -97,6 +97,7 @@ class Daos(Launcher):
         #Mount containers on clients
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
+                mkdir_cmd = f"mkdir -p {container['mount']}"
                 mount_cmd = [
                     f"{self.config['DAOS_ROOT']}/bin/dfuse",
                     f"--pool {container['pool']}",
@@ -104,6 +105,8 @@ class Daos(Launcher):
                     f"-m {container['mount']}"
                 ]
                 mount_cmd = " ".join(mount_cmd)
+                cmds = [mkdir_cmd, mount_cmd]
+                print()
                 print(mount_cmd)
                 #SSHNode('Mount Container', self.agent_hosts, mount_cmd).Run()
 
@@ -111,6 +114,12 @@ class Daos(Launcher):
         pass
 
     def _DefineStop(self):
+        #Unmount containers
+        for container in self.config['CONTAINERS']:
+            if 'mount' in container and container['mount'] is not None:
+                umount_cmd = f"fusermount3 -u {container['mount']}"
+                SSHNode('Unmount Container', self.agent_hosts, umount_cmd, ssh_info=self.ssh_info).Run()
+        #Kill servers
         server_stop_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg system stop -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         ExecNode('Stop DAOS', server_stop_cmd, sudo=True).Run()
         KillNode('Kill DAOS', '.*daos.*').Run()

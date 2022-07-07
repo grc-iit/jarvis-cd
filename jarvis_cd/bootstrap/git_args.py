@@ -13,6 +13,8 @@ class GitArgs:
             self.repo_name = repo
         if "path" in self.conf[repo] and self.conf[repo]['path'] is not None:
             self.repo_path = self.conf[repo]['path']
+        else:
+            self.repo_path = os.path.join(os.environ['HOME'], self.repo_name)
 
     def GitCloneCommands(self, cmds):
         cmds.append(f'mkdir -p {self.repo_path}')
