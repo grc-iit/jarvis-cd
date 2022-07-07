@@ -46,6 +46,9 @@ class SCPNode(Node):
                     if alias in self.hosts:
                         self.hosts.remove(alias)
 
+        #What SCP hosts are there?
+        print(self.hosts)
+
         #Fill in defaults for username, password, and pkey
         if username is None:
             username = getpass.getuser()

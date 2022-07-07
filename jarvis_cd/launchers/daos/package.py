@@ -41,10 +41,13 @@ class Daos(Launcher):
         self._CreateAgentConfig()
         self._CreateControlConfig()
         #Copy the scaffold to all servers
+        print("Sending SCAFFOLD to server nodes")
         SCPNode('Distribute Configs & Keys', self.server_hosts, f"{self.config['SCAFFOLD']}",
                 f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info).Run()
+        print("Sending SCAFFOLD to client nodes")
         SCPNode('Distribute Configs & Keys', self.agent_hosts, f"{self.config['SCAFFOLD']}",
                 f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info).Run()
+        print("Sending SCAFFOLD to control nodes")
         SCPNode('Distribute Configs & Keys', self.control_hosts, f"{self.config['SCAFFOLD']}",
                 f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info).Run()
         #Start dummy DAOS server (on all server nodes)
