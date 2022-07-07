@@ -3,6 +3,7 @@ from jarvis_cd.comm.ssh_node import SSHNode
 from jarvis_cd.comm.scp_node import SCPNode
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launchers.launcher import Launcher
+from jarvis_cd.basic.link_node import LinkNode
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.hardware.list_net import DetectNetworks
 from jarvis_cd.basic.sleep_node import SleepNode
@@ -57,6 +58,9 @@ class Daos(Launcher):
         network_check_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} network scan -p all"
         print(network_check_cmd)
         #ExecNode('Get Networks', network_check_cmd, sudo=True, shell=True).Run()
+        #Link SCAFFOLD to /var/run/daos_agent
+        link_cmd = f"ln -s {self.scafold_dir} /var/run/daos_agent"
+        SSHNode('Link agent folder', self.agent_hosts, link_cmd, sudo=True, ssh_info=self.ssh_info)
         #Create storage pools
         print("Create storage pools")
         for pool in self.config['POOLS']:
@@ -84,7 +88,7 @@ class Daos(Launcher):
         #Start client
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
         print(agent_start_cmd)
-        #SSHNode('Start DAOS Agent', self.agent_hosts, agent_start_cmd, sudo=True, ssh_info=self.ssh_info).Run()
+        #SSHNode('Start DAOS Agent', self.agent_hosts, agent_start_cmd, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
         #Mount containers on clients
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
