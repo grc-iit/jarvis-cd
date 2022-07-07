@@ -64,12 +64,11 @@ class SSHNode(Node):
         return nice_output
 
     def _Run(self):
-        #self.output = [self._exec_ssh(cmd) for i,cmd in enumerate(self.cmds)]
         if self.do_ssh:
             cmd = " ; ".join(self.cmds)
             if self.exec_async:
                 cmd = f"nohup {cmd}"
-            self.output = self._exec_ssh(cmd)
+            self.output = [self._exec_ssh(cmd)]
         else:
             self.output = ExecNode('SSH Command', self.cmds, self.print_output, self.collect_output, shell=True, sudo=self.sudo, exec_async=self.exec_async).Run().GetOutput()
         return self

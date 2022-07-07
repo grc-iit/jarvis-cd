@@ -1,21 +1,15 @@
 from abc import ABC, abstractmethod
-
 from jarvis_cd.enumerations import Color
-
 
 class Node(ABC):
     def __init__(self, name, print_output=True, collect_output=True):
         self.print_output = print_output
         self.name = name
         self.collect_output = collect_output
-        self.output = { "localhost": {
+        self.output = [{ "localhost": {
             "stdout": [""],
             "stderr": [""]
-        }}
-
-    def _format_output(self):
-        if isinstance(self.output, dict):
-            self.output = [self.output]
+        }}]
 
     def Print(self):
         #For each command
@@ -36,7 +30,6 @@ class Node(ABC):
 
     def Run(self):
         self._Run()
-        self._format_output()
         if self.print_output:
             self.Print()
         return self

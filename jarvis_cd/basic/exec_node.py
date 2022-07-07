@@ -58,10 +58,10 @@ class ExecNode(Node):
     def _get_output(self):
         if self.collect_output:
             self.stdout, self.stderr = self.proc.communicate()
-            self.output = { "localhost": {
+            self.output = [{ "localhost": {
                 "stdout": [line.decode("utf-8") for line in self.stdout.splitlines()],
                 "stderr": [line.decode("utf-8") for line in self.stderr.splitlines()]
-            }}
+            }}]
 
     def _exec_cmds(self,commands):
         """
