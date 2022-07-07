@@ -18,7 +18,7 @@ class KillNode(Node):
                 pids.append(int(words[1]))
         if len(pids) > 0:
             for pid in pids:
-                ExecNode('Kill', f"kill -9 {pid}", sudo=True)
+                ExecNode('Kill', f"kill -9 {pid}", sudo=True).Run()
                 self.output[0]['localhost']['stdout'].append(f"Killing {pid}")
         else:
             self.output[0]['localhost']['stdout'].append(f"No PIDs to kill")
