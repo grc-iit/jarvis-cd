@@ -13,7 +13,7 @@ sys.stderr = sys.__stderr__
 class SSHNode(Node):
     def __init__(self, name, hosts, cmds,
                  username=None, pkey=None, password=None, port=22,
-                 sudo=False, print_output=True, collect_output=True, do_ssh=True, exec_async=False):
+                 sudo=False, print_output=True, collect_output=True, do_ssh=True, exec_async=False, ssh_info=None):
         super().__init__(name, print_output, collect_output)
 
         if username is None:

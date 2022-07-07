@@ -34,12 +34,9 @@ class SCPNode(Node):
             if 'host_aliases' in ssh_info:
                 host_aliases = ssh_info['host_aliases']
 
-        # Do not execute SCP if only localhost
-        if self.hosts[0] == 'localhost' and len(self.hosts) == 1:
-            self.hosts = []
-
         #There's a bug in SCP which cannot copy a file to itself
         if source == destination:
+            self.hosts.remove('localhost')
             if host_aliases is None:
                 print("WARNING!!! If the machine running this command is also in the hostfile, scp will bug out and remove the data.")
             else:
