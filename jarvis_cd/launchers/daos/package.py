@@ -49,6 +49,7 @@ class Daos(Launcher):
         #Format storage
         print("Formatting DAOS storage")
         storage_format_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg storage format --force -o {self.config['CONF']['CONTROL']}"
+        print(storage_format_cmd)
         ExecNode('Format DAOS', storage_format_cmd, sudo=True).Run()
         #Get networking options
         print("Scanning networks")
