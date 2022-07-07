@@ -5,4 +5,5 @@ import sys
 if __name__ == '__main__':
     if len(sys.argv) < 2:
         print("USAGE: jarvis-exec [python code]")
+        exit(1)
     exec(sys.argv[1])
