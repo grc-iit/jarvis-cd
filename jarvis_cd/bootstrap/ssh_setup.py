@@ -27,13 +27,13 @@ class SSHSetup(SSHArgs):
         # Ensure all self.hosts are trusted on this machine
         print("Add all hosts to known_hosts")
         for host in self.hosts:
-            ExecNode('trust nodes', f'ssh -p {self.port} {self.username}@{host} echo init').Run()
+            ExecNode('trust nodes', f'ssh -i {self.private_key} -p {self.port} {self.username}@{host} echo init').Run()
 
     def InstallKeys(self):
         print("Install SSH keys")
         # Ensure pubkey trusted on all nodes
         for host in self.hosts:
-            ExecNode('Install public key', f'ssh-copy-id -f -i {self.private_key} -p {self.port} {self.username}@{host}',
+            ExecNode('Install public key', f'ssh-copy-id -f -i {self.public_key} -p {self.port} {self.username}@{host}',
                      collect_output=False).Run()
         # Create SSH directory on all nodes
         SSHNode('Make SSH directory', self.hosts, f'mkdir {self.dst_key_dir}', pkey=self.private_key, username=self.username, port=self.port,
