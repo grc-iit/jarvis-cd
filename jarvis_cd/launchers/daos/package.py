@@ -42,11 +42,11 @@ class Daos(Launcher):
         self._CreateControlConfig()
         #Copy the scaffold to all servers
         SCPNode('Distribute Configs & Keys', self.server_hosts, f"{self.config['SCAFFOLD']}",
-                f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info)
+                f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info).Run()
         SCPNode('Distribute Configs & Keys', self.agent_hosts, f"{self.config['SCAFFOLD']}",
-                f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info)
+                f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info).Run()
         SCPNode('Distribute Configs & Keys', self.control_hosts, f"{self.config['SCAFFOLD']}",
-                f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info)
+                f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info).Run()
         #Start dummy DAOS server (on all server nodes)
         print("Starting DAOS server")
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
@@ -65,7 +65,7 @@ class Daos(Launcher):
         #ExecNode('Get Networks', network_check_cmd, sudo=True, shell=True).Run()
         #Link SCAFFOLD to /var/run/daos_agent
         link_cmd = f"ln -s {self.scaffold_dir} /var/run/daos_agent"
-        SSHNode('Link agent folder', self.agent_hosts, link_cmd, sudo=True, ssh_info=self.ssh_info)
+        SSHNode('Link agent folder', self.agent_hosts, link_cmd, sudo=True, ssh_info=self.ssh_info).Run()
         #Create storage pools
         print("Create storage pools")
         for pool in self.config['POOLS']:
@@ -87,6 +87,7 @@ class Daos(Launcher):
             ]
             create_container_cmd = " ".join(create_container_cmd)
             print(create_container_cmd)
+            SSHNode('Create Mount Directory', self.client_hosts, f"mkdir -p {container['mount']}", ssh_info=self.ssh_info).Run()
             #ExecNode('Create Container', create_container_cmd).Run()
         self.Stop()
 
@@ -111,7 +112,6 @@ class Daos(Launcher):
                 ]
                 mount_cmd = " ".join(mount_cmd)
                 cmds = [mkdir_cmd, mount_cmd]
-                print()
                 print(mount_cmd)
                 #SSHNode('Mount Container', self.agent_hosts, mount_cmd).Run()
 
