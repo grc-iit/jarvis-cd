@@ -12,6 +12,8 @@ class SSHCommand(SSHArgs):
         self.ParseSSHArgs()
 
     def Run(self):
+        print(self.hosts)
+        print(self.op)
         SSHNode("Run Command", self.hosts, self.op, pkey=self.private_key, username=self.username, port=self.port, collect_output=False, do_ssh=self.do_ssh, sudo=True).Run()
 
 if __name__ == '__main__':
