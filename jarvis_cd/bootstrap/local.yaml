@@ -1,6 +1,6 @@
 jarvis_cd:
   repo: https://github.com/lukemartinlogan/jarvis-cd
-  branch: develop
+  branch: development
   commit: null
   path: $PWD
 spack:
