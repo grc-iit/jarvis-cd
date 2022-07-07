@@ -53,9 +53,9 @@ class SCPNode(Node):
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
         output = client.copy_file(self.source, self.destination,True)
         joinall(output, raise_error=True)
-        self.output = dict()
+        self.output = [{}]
         for host in output:
-            self.output[host] = {
+            self.output[0][host] = {
                 'stdout': [],
                 'stderr': []
             }

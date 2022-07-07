@@ -7,12 +7,12 @@ class EchoNode(Node):
         self.message = message
 
     def _Run(self):
-        self.output = {
+        self.output = [{
             'localhost':{
                 'stdout':[self.message],
                 'stderr':[]
             }
-        }
+        }]
         return self
 
     def __str__(self):
