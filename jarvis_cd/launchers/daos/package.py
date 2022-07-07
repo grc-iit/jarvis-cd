@@ -4,6 +4,7 @@ from jarvis_cd.comm.scp_node import SCPNode
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launchers.launcher import Launcher
 from jarvis_cd.spack.link_package import LinkSpackage
+from jarvis_cd.hardware.list_net import DetectNetworks
 import yaml
 
 class Daos(Launcher):
@@ -28,6 +29,11 @@ class Daos(Launcher):
         SCPNode('Distribute Certificates', self.server_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA")
         SCPNode('Distribute Certificates', self.agent_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA")
         SCPNode('Distribute Certificates', self.control_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA")
+        #View network ifaces
+        print("Detect Network Interfaces")
+        DetectNetworks('Detect Networks').Run()
+        iface = input('Select an initial network iface')
+        self.config['SERVER']['engines'][0]['fabric_iface'] = iface
         #Generate config files
         self._CreateServerConfig()
         self._CreateAgentConfig()
