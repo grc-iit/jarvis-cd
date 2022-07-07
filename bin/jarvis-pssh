@@ -8,7 +8,7 @@ from jarvis_cd.bootstrap.ssh_args import SSHArgs
 class SSHCommand(SSHArgs):
     def __init__(self, conf, op):
         self.conf = conf
-        self.op = op
+        self.op = str(op)
         self.ParseSSHArgs()
 
     def Run(self):
