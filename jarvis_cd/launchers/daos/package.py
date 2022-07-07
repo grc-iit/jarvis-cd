@@ -17,6 +17,7 @@ class Daos(Launcher):
         self.server_hosts = Hostfile().LoadHostfile(self.config['SERVER']['access_points'])
         self.agent_hosts = Hostfile().LoadHostfile(self.config['AGENT']['access_points'])
         self.control_hosts = Hostfile().LoadHostfile(self.config['CONTROL']['hostlist'])
+        self.ssh_info = self.config['SSH']
         return
 
     def _DefineInit(self):
@@ -28,9 +29,9 @@ class Daos(Launcher):
         gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
         ExecNode('Generate Certificates', gen_certificates_cmd).Run()
         #Copy the certificates to all servers
-        SCPNode('Distribute Certificates', self.server_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA")
-        SCPNode('Distribute Certificates', self.agent_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA")
-        SCPNode('Distribute Certificates', self.control_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA")
+        SCPNode('Distribute Certificates', self.server_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA", ssh_info=self.ssh_info)
+        SCPNode('Distribute Certificates', self.agent_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA", ssh_info=self.ssh_info)
+        SCPNode('Distribute Certificates', self.control_hosts, f"{self.config['SCAFFOLD']}/daosCA", f"{self.config['SCAFFOLD']}/daosCA", ssh_info=self.ssh_info)
         #View network ifaces
         print("Detect Network Interfaces")
         DetectNetworks('Detect Networks').Run()

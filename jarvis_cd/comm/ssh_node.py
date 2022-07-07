@@ -27,6 +27,16 @@ class SSHNode(Node):
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SSHNode hosts", type(hosts))
 
+        if ssh_info is not None:
+            if 'username' in ssh_info:
+                username = ssh_info['username']
+            if 'key' in ssh_info and 'key_dir' in ssh_info:
+                pkey = os.path.join(ssh_info['key_dir'], ssh_info['key'])
+            if 'port' in ssh_info:
+                port = ssh_info['port']
+            if 'host_aliases' in ssh_info:
+                host_aliases = ssh_info['host_aliases']
+
         if isinstance(cmds, list):
             self.cmds=cmds
         elif isinstance(cmds, str):
@@ -34,6 +44,9 @@ class SSHNode(Node):
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SSHNode cmds", type(cmds))
 
+        #Fill in defaults for username, password, and pkey
+        if username is None:
+            username = getpass.getuser()
         if password is None and pkey is None:
             pkey = f"{os.environ['HOME']}/.ssh/id_rsa"
 

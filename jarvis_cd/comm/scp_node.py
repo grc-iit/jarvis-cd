@@ -12,8 +12,8 @@ sys.stderr = sys.__stderr__
 
 class SCPNode(Node):
     def __init__(self, name, hosts, source, destination,
-                 username = getpass.getuser(), pkey=None, password=None, port=22,
-                 sudo=False, print_output=True, collect_output=True, host_aliases=None):
+                 username=None, pkey=None, password=None, port=22,
+                 sudo=False, print_output=True, collect_output=True, host_aliases=None, ssh_info=None):
         super().__init__(name, print_output, collect_output)
         if isinstance(hosts, list):
             self.hosts = hosts
@@ -23,6 +23,16 @@ class SCPNode(Node):
             self.hosts = hosts.list()
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SCPNode hosts", type(hosts))
+
+        if ssh_info is not None:
+            if 'username' in ssh_info:
+                username = ssh_info['username']
+            if 'key' in ssh_info and 'key_dir' in ssh_info:
+                pkey = os.path.join(ssh_info['key_dir'], ssh_info['key'])
+            if 'port' in ssh_info:
+                port = ssh_info['port']
+            if 'host_aliases' in ssh_info:
+                host_aliases = ssh_info['host_aliases']
 
         # Do not execute SCP if only localhost
         if self.hosts[0] == 'localhost' and len(self.hosts) == 1:
@@ -36,6 +46,9 @@ class SCPNode(Node):
                 for alias in host_aliases:
                     self.hosts.remove(alias)
 
+        #Fill in defaults for username, password, and pkey
+        if username is None:
+            username = getpass.getuser()
         if password is None and pkey is None:
             pkey = f"{os.environ['HOME']}/.ssh/id_rsa"
 
