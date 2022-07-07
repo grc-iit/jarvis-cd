@@ -42,7 +42,7 @@ class Daos(Launcher):
         print("Starting DAOS server")
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         print(server_start_cmd)
-        SSHNode('Start DAOS', self.server_hosts, server_start_cmd, sudo=True).Run()
+        SSHNode('Start DAOS', self.server_hosts, server_start_cmd, sudo=True, run_async=True).Run()
         #Get networking options
         print("Scanning networks")
         network_check_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} network scan > {self.config['SCAFFOLD']}/netscan.txt"
