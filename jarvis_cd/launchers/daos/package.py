@@ -6,6 +6,7 @@ from jarvis_cd.launchers.launcher import Launcher
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.hardware.list_net import DetectNetworks
 from jarvis_cd.basic.sleep_node import SleepNode
+from jarvis_cd.basic.kill_node import KillNode
 import yaml
 
 class Daos(Launcher):
