@@ -40,7 +40,7 @@ class Daos(Launcher):
         self._CreateControlConfig()
         #Start dummy DAOS server (on all server nodes)
         print("Starting DAOS server")
-        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']} &"
+        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         print(server_start_cmd)
         SSHNode('Start DAOS', self.server_hosts, server_start_cmd, sudo=True).Run()
         #Get networking options
