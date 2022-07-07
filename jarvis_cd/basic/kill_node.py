@@ -12,7 +12,7 @@ class KillNode(Node):
         node = ExecNode('Get Processes', 'ps -ef').Run()
         pids = []
         for line in node.output[0]['localhost']['stdout']:
-            words = line.split(' ')
+            words = line.split()
             cmd = " ".join(words[7:])
             if re.match(self.program_regex, cmd):
                 pids.append(int(words[1]))
