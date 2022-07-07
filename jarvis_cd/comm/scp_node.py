@@ -37,12 +37,14 @@ class SCPNode(Node):
         #There's a bug in SCP which cannot copy a file to itself
         if source == destination:
             self.hosts = self.hosts.copy()
-            self.hosts.remove('localhost')
+            if 'localhost' in self.hosts:
+                self.hosts.remove('localhost')
             if host_aliases is None:
                 print("WARNING!!! If the machine running this command is also in the hostfile, scp will bug out and remove the data.")
             else:
                 for alias in host_aliases:
-                    self.hosts.remove(alias)
+                    if alias in self.hosts:
+                        self.hosts.remove(alias)
 
         #Fill in defaults for username, password, and pkey
         if username is None:
