@@ -73,9 +73,7 @@ class SSHNode(Node):
 
     def _exec_ssh(self, cmd):
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
-        print(f"ssh -tt -i {self.pkey} {self.username}@{self.hosts[0]} sudo sh -c '{cmd}'")
-        print(f"Exec async: {self.exec_async}")
-        output = client.run_command(cmd, sudo=self.sudo, use_pty=not self.exec_async, shell=self.shell)
+        output = client.run_command(cmd, sudo=self.sudo, use_pty=not self.exec_async)
         nice_output = dict()
         for host_output in output:
             host = host_output.host

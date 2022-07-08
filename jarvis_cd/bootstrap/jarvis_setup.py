@@ -38,7 +38,6 @@ class JarvisSetup(SSHArgs,GitArgs):
         cmds = []
         self.GitUpdateCommands(cmds, '$JARVIS_ROOT')
         cmds.append(f'bash dependencies.sh')
-        cmds.append(f'python3 -m pip install -r requirements.txt')
         cmds.append(f'python3 -m pip install -e . -r requirements.txt  --user')
         SSHNode('Update jarvis', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port,
                 collect_output=False, do_ssh=self.do_ssh).Run()
