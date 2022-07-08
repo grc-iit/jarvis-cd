@@ -138,7 +138,7 @@ class Daos(Launcher):
 
     def _CreateServerConfig(self):
         server_config = self.config.copy()['SERVER']
-        server_config.remove('hosts')
+        del server_config['hosts']
         server_config['transport_config']['allow_insecure'] = self.config['SECURE']
         server_config['port'] = self.config['PORT']
         server_config['name'] = self.config['NAME']
@@ -148,7 +148,7 @@ class Daos(Launcher):
 
     def _CreateAgentConfig(self):
         agent_config = self.config.copy()['AGENT']
-        agent_config.remove('hosts')
+        del agent_config['hosts']
         agent_config['transport_config']['allow_insecure'] = self.config['SECURE']
         agent_config['port'] = self.config['PORT']
         agent_config['name'] = self.config['NAME']
@@ -158,7 +158,7 @@ class Daos(Launcher):
 
     def _CreateControlConfig(self):
         control_config = self.config.copy()['CONTROL']
-        control_config.remove('hosts')
+        del control_config['hosts']
         control_config['transport_config']['allow_insecure'] = self.config['SECURE']
         control_config['port'] = self.config['PORT']
         control_config['name'] = self.config['NAME']
