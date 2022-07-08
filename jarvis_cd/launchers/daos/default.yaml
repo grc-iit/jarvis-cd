@@ -15,7 +15,7 @@ CONF:
   CONTROL: ${SCAFFOLD}/daos_control.yaml
 HOSTS: ${SCAFFOLD}/hostfile.txt
 SERVER:
-  hosts: 1-4
+  hosts: 2-4
   provider: ofi+sockets
   telemetry_port: 9191
   control_log_file: ${SCAFFOLD}/daos_server.log

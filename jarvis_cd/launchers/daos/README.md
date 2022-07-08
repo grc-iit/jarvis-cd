@@ -20,9 +20,19 @@ pip3 install scons pyelftools
 
 ## Deploy
 
+### Notes
+
+* Daos server requires an odd number of hosts.
+
+### Step 1: Create a hostfile
+
+```bash
+```
+
+### Step 2: Deploy
+
 ```bash
 SCAFFOLD=`pwd`
-#Generate security certificates (copy to all nodes)
 jarvis daos scaffold
 jarvis daos init
 jarvis daos start
