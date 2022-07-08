@@ -33,6 +33,10 @@ class SCPNode(Node):
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SCPNode source paths", type(sources))
 
+        #Make sure host_aliases is not None
+        if host_aliases is None:
+            host_aliases = []
+
         #Prioritize the SSH_INFO data structure
         if ssh_info is not None:
             if 'username' in ssh_info:
@@ -60,7 +64,7 @@ class SCPNode(Node):
                 self.hosts = self.hosts.copy()
                 if 'localhost' in self.hosts:
                     self.hosts.remove('localhost')
-                if host_aliases is None:
+                if len(host_aliases) == 0:
                     print("WARNING!!! If the machine running this command is also in the hostfile, scp will bug out and remove the data.")
                 else:
                     for alias in host_aliases:
