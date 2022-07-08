@@ -26,13 +26,13 @@ then
 fi
 
 #Source bashni in bashrc at head of file
-if [[ `cat ~/.bashrc | grep "source ~/.bashni"` ]]
+if [[ `cat ${HOME}/.bashrc | grep "source ${HOME}/.bashni"` ]]
 then
-  echo "Already sourcing ~/.bashni"
+  echo "Already sourcing ${HOME}/.bashni"
 else
-  echo "Adding source ~/.bashni to bashrc"
-  sed -i.old "1s;^;source ~/.bashni\\n;" ~/.bashrc
-  touch ~/.bashni
+  echo "Adding source ${HOME}/.bashni to bashrc"
+  sed -i.old "1s;^;source ${HOME}/.bashni\\n;" ${HOME}/.bashrc
+  touch ${HOME}/.bashni
 fi
 
 #chmod +x all jarvis binaries
@@ -57,11 +57,11 @@ then
   LIBRARY_PATH=${PYTHON_DIR}/lib:${PATH}
   CPATH=${PYTHON_DIR}/include:${PATH}
 
-  echo "export PATH=$PATH" >> ~/.bashni
-  echo "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> ~/.bashni
-  echo "export LIBRARY_PATH=$LIBRARY_PATH" >> ~/.bashni
-  echo "export CPATH=$CPATH" >> ~/.bashni
-  source ~/.bashni
+  echo "export PATH=$PATH" >> ${HOME}/.bashni
+  echo "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> ${HOME}/.bashni
+  echo "export LIBRARY_PATH=$LIBRARY_PATH" >> ${HOME}/.bashni
+  echo "export CPATH=$CPATH" >> ${HOME}/.bashni
+  source ${HOME}/.bashni
 
   pip3 install --upgrade pip
 fi
