@@ -4,16 +4,6 @@ import sys,os
 from jarvis_cd.comm.ssh_config import SSHConfig
 from jarvis_cd.comm.ssh_node import SSHNode
 
-class SSHCommand(SSHArgs):
-    def __init__(self, conf, op):
-        self.conf = conf
-        self.op = str(op)
-        self.ParseSSHArgs()
-
-    def Run(self):
-        print(self.hosts)
-        print(self.op)
-
 if __name__ == '__main__':
     if len(sys.argv) != 2:
         print("USAGE: jarvis-pssh [command]")
