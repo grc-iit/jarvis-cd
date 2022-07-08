@@ -7,6 +7,10 @@ class Hostfile:
         self.all_hosts = None
         self.hosts = None
 
+    def Combine(self, *host_sets):
+        self.all_hosts = list({host for hosts in host_sets for host in hosts})
+        self.hosts = self.all_hosts
+
     def LoadHostfile(self, filename):
         if not os.path.exists(filename): 
             raise Error(ErrorCode.HOSTFILE_NOT_FOUND).format(filename)
@@ -26,10 +30,21 @@ class Hostfile:
         self.filename = filename
         return self
 
-    def SelectHosts(self, count):
-        if count > len(self.all_hosts):
-            raise Error(ErrorCode.TOO_MANY_HOSTS_CHOSEN).format(self.filename, count, len(self.all_hosts))
-        self.hosts = self.all_hosts[0:count]
+    def SelectHosts(self, hostset):
+        #Hosts are numbered from 1
+        hosts = self.copy()
+        hosts.hosts = []
+        ranges = hostset.split(',')
+        for range in ranges:
+            range = range.split('-')
+            if len(range) == 2:
+                min = int(range[0])
+                max = int(range[1])
+                hosts.hosts += hosts.all_hosts[min-1:max]
+            else:
+                val = int(range[0])
+                hosts.hosts += [hosts.all_hosts[val-1]]
+        return hosts
 
     def list(self):
         return self.hosts
@@ -39,6 +54,14 @@ class Hostfile:
 
     def to_str(self, sep=','):
         return sep.join(self.hosts)
+
+    def copy(self):
+        hosts = Hostfile()
+        if self.all_hosts:
+            hosts.all_hosts = self.all_hosts.copy()
+        if self.hosts:
+            hosts.hosts = self.hosts.copy()
+        return hosts
 
     def __len__(self):
         return len(self.hosts)

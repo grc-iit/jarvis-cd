@@ -5,7 +5,7 @@ from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launchers.launcher import Launcher
 from jarvis_cd.basic.link_node import LinkNode
 from jarvis_cd.spack.link_package import LinkSpackage
-from jarvis_cd.hardware.list_net import DetectNetworks
+from jarvis_cd.hardware.detect_networks import DetectNetworks
 from jarvis_cd.basic.sleep_node import SleepNode
 from jarvis_cd.basic.kill_node import KillNode
 import yaml
@@ -15,45 +15,41 @@ class Daos(Launcher):
         super().__init__('daos', config_path, args)
 
     def _ProcessConfig(self):
-        self.server_hosts = Hostfile().LoadHostfile(self.config['SERVER']['access_points'])
-        self.agent_hosts = Hostfile().LoadHostfile(self.config['AGENT']['access_points'])
-        self.control_hosts = Hostfile().LoadHostfile(self.config['CONTROL']['hostlist'])
+        self.all_hosts = Hostfile().LoadHostfile(self.config['HOSTS'])
+        self.server_hosts = self.all_hosts.SelectHosts(self.config['SERVER']['hosts'])
+        self.agent_hosts = self.all_hosts.SelectHosts(self.config['AGENT']['hosts'])
+        self.control_hosts = self.all_hosts.SelectHosts(self.config['CONTROL']['hosts'])
         self.ssh_info = self.config['SSH']
+        self.ssh_info['host_aliases'] = FindHostAliases().Run().GetAliases()
         return
 
     def _DefineInit(self):
         #Create SCAFFOLD on all nodes
         SSHNode("Make Scaffold Directory", self.server_hosts, f"mkdir -p {self.scaffold_dir}", ssh_info=self.ssh_info).Run()
         #Create DAOS_ROOT sybmolic link
-        LinkSpackage("Link Spackage", self.server_hosts, self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], ssh_info=self.ssh_info).Run()
-        LinkSpackage("Link Spackage", self.agent_hosts, self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], ssh_info=self.ssh_info).Run()
-        LinkSpackage("Link Spackage", self.control_hosts, self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], ssh_info=self.ssh_info).Run()
+        LinkSpackage("Link Spackage", self.all_hosts, self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], ssh_info=self.ssh_info).Run()
         #Generate security certificates
         gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
         ExecNode('Generate Certificates', gen_certificates_cmd).Run()
         #View network ifaces
         print("Detect Network Interfaces")
         DetectNetworks('Detect Networks').Run()
-        iface = input('Select an initial network iface: ')
+        iface = input('Select an initial network interface: ')
         self.config['SERVER']['engines'][0]['fabric_iface'] = iface
         #Generate config files
         self._CreateServerConfig()
         self._CreateAgentConfig()
         self._CreateControlConfig()
-        #Copy the scaffold to all servers
-        for host in self.server_hosts:
-            print(f"scp -i ~/.ssh/scs_chameleon_pass -r {self.config['SCAFFOLD']} cc@{host}:{self.config['SCAFFOLD']}")
-        """
-        print("Sending SCAFFOLD to server nodes")
-        SCPNode('Distribute Configs & Keys', self.server_hosts, f"{self.config['SCAFFOLD']}",
+        #Copy the certificates+config to all servers
+        to_copy = [
+            self.config['CONF']['AGENT'],
+            self.config['CONF']['SERVER'],
+            self.config['CONF']['CONTROL'],
+            f"{self.scaffold_dir}/jarvis_conf.yaml",
+            f"{self.scaffold_dir}/daosCA"
+        ]
+        SCPNode('Distribute Configs & Keys', self.all_hosts, f"{self.config['SCAFFOLD']}",
                 f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info).Run()
-        print("Sending SCAFFOLD to client nodes")
-        SCPNode('Distribute Configs & Keys', self.agent_hosts, f"{self.config['SCAFFOLD']}",
-                f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info).Run()
-        print("Sending SCAFFOLD to control nodes")
-        SCPNode('Distribute Configs & Keys', self.control_hosts, f"{self.config['SCAFFOLD']}",
-                f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info).Run()
-        """
         #Start dummy DAOS server (on all server nodes)
         print("Starting DAOS server")
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
@@ -140,25 +136,31 @@ class Daos(Launcher):
         pass
 
     def _CreateServerConfig(self):
-        self.config['SERVER']['transport_config']['allow_insecure'] = self.config['SECURE']
-        self.config['SERVER']['port'] = self.config['PORT']
-        self.config['SERVER']['name'] = self.config['NAME']
-        self.config['SERVER']['access_points'] = self.server_hosts.list()
+        server_config = self.config.copy()['SERVER']
+        server_config.remove('hosts')
+        server_config['transport_config']['allow_insecure'] = self.config['SECURE']
+        server_config['port'] = self.config['PORT']
+        server_config['name'] = self.config['NAME']
+        server_config['access_points'] = self.server_hosts.list()
         with open(self.config['CONF']['SERVER'], 'w') as fp:
-            yaml.dump(self.config['SERVER'], fp)
+            yaml.dump(server_config, fp)
 
     def _CreateAgentConfig(self):
-        self.config['AGENT']['transport_config']['allow_insecure'] = self.config['SECURE']
-        self.config['AGENT']['port'] = self.config['PORT']
-        self.config['AGENT']['name'] = self.config['NAME']
-        self.config['AGENT']['access_points'] = self.agent_hosts.list()
+        agent_config = self.config.copy()['AGENT']
+        agent_config.remove('hosts')
+        agent_config['transport_config']['allow_insecure'] = self.config['SECURE']
+        agent_config['port'] = self.config['PORT']
+        agent_config['name'] = self.config['NAME']
+        agent_config['access_points'] = self.agent_hosts.list()
         with open(self.config['CONF']['AGENT'], 'w') as fp:
             yaml.dump(self.config['AGENT'], fp)
 
     def _CreateControlConfig(self):
-        self.config['CONTROL']['transport_config']['allow_insecure'] = self.config['SECURE']
-        self.config['CONTROL']['port'] = self.config['PORT']
-        self.config['CONTROL']['name'] = self.config['NAME']
-        self.config['CONTROL']['hostlist'] = self.control_hosts.list()
+        control_config = self.config.copy()['CONTROL']
+        control_config.remove('hosts')
+        control_config['transport_config']['allow_insecure'] = self.config['SECURE']
+        control_config['port'] = self.config['PORT']
+        control_config['name'] = self.config['NAME']
+        control_config['hostlist'] = self.control_hosts.list()
         with open(self.config['CONF']['CONTROL'], 'w') as fp:
-            yaml.dump(self.config['CONTROL'], fp)
+            yaml.dump(control_config, fp)

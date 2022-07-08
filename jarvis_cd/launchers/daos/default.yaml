@@ -13,8 +13,9 @@ CONF:
   SERVER: ${SCAFFOLD}/daos_server.yaml
   AGENT: ${SCAFFOLD}/daos_agent.yaml
   CONTROL: ${SCAFFOLD}/daos_control.yaml
+HOSTS: ${SCAFFOLD}/hostfile.txt
 SERVER:
-  access_points: ${SCAFFOLD}/server_hosts.txt
+  hosts: 1-4
   provider: ofi+sockets
   telemetry_port: 9191
   control_log_file: ${SCAFFOLD}/daos_server.log
@@ -38,8 +39,11 @@ SERVER:
         - class: ram
           scm_size: 100
           scm_mount: '${SCAFFOLD}/scm_test'
+        - class: file
+          bdev_size: 100
+          bdev_list: [ '${SCAFFOLD}/file_test' ]
 AGENT:
-  access_points: ${SCAFFOLD}/agent_hosts.txt
+  hosts: 1-4
   transport_config:
     ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
     cert: ${SCAFFOLD}/daosCA/certs/agent.crt
@@ -47,7 +51,7 @@ AGENT:
   runtime_dir: ${SCAFFOLD}
   log_file: ${SCAFFOLD}/daos_agent.log
 CONTROL:
-  hostlist: ${SCAFFOLD}/control_hosts.txt
+  hosts: 1
   transport_config:
     ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
     cert: ${SCAFFOLD}/daosCA/certs/admin.crt
