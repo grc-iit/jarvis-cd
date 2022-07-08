@@ -33,10 +33,6 @@ class SCPNode(Node):
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SCPNode source paths", type(sources))
 
-        #Make sure host_aliases is not None
-        if host_aliases is None:
-            host_aliases = []
-
         #Prioritize the SSH_INFO data structure
         if ssh_info is not None:
             if 'username' in ssh_info:
@@ -89,7 +85,6 @@ class SCPNode(Node):
         if len(self.hosts) == 0:
             return
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
-        print(self.hosts)
         for source in self.sources:
             destination = self.destination
             if len(self.sources) > 1:
