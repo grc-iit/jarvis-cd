@@ -79,8 +79,8 @@ class SCPNode(Node):
             destination = self.destination
             if len(self.sources) > 1:
                 destination = os.path.join(self.destination, os.path.basename(source))
-            print(f"SCP {source} to {self.destination} on {self.hosts}")
-            output = client.copy_file(source, self.destination, recurse=os.path.isdir(source))
+            print(f"SCP {source} to {destination} on {self.hosts}")
+            output = client.copy_file(source, destination, recurse=os.path.isdir(source))
             joinall(output, raise_error=True)
         return self
 
