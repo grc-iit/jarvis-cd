@@ -7,6 +7,6 @@ class SSHConfig(YAMLConfig):
         return os.path.join(self.jarvis_root, 'comm', f"{conf_type}.yaml")
 
     def _ProcessConfig(self):
-        self.ssh_info = self.config['SSH']
-        self.ssh_info['host_aliases'] = FindHostAliases('Get Aliases', self.all_hosts).Run().GetAliases()
         self.hosts = Hostfile().LoadHostfile(self.config['HOSTS'])
+        self.ssh_info = self.config['SSH']
+        self.ssh_info['host_aliases'] = FindHostAliases('Get Aliases', self.hosts).Run().GetAliases()
