@@ -49,12 +49,12 @@ class SSHSetup(SSHArgs):
             dst_priv_key = self._GetPrivateKey(dst_key_dir, key_name)
             print(f"Copying {src_pub_key} to {dst_pub_key}")
             SCPNode('Copy public key to hosts', self.hosts, src_pub_key, dst_pub_key, pkey=self.private_key, username=self.username,
-                    port=self.port,
+                    port=self.port, host_aliases=self.host_aliases,
                     collect_output=False).Run()
             if os.path.exists(src_priv_key):
                 print(f"Copying {src_priv_key} to {dst_priv_key}")
                 SCPNode('Copy private key to hosts', self.hosts, src_priv_key, dst_priv_key, pkey=self.private_key,
-                        username=self.username, port=self.port,
+                        username=self.username, port=self.port, host_aliases=self.host_aliases,
                         collect_output=False).Run()
 
     def _SSHPermissionsCmd(self, key_location):

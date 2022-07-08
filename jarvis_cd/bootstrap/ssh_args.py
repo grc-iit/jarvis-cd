@@ -1,5 +1,6 @@
 import os
 from jarvis_cd.hostfile import Hostfile
+from jarvis_cd.hardware.host_aliases import FindHostAliases
 
 class SSHArgs:
     def ParseSSHArgs(self):
@@ -27,6 +28,7 @@ class SSHArgs:
         self.key_dir, self.key_name, self.dst_key_dir = self.GetKeyInfo('primary')
         self.private_key = self._GetPrivateKey(self.key_dir, self.key_name)
         self.public_key = self._GetPublicKey(self.key_dir, self.key_name)
+        self.host_aliases = FindHostAliases('Get Aliases', self.hosts).Run().GetAliases()
 
     def _GetPublicKey(self, key_dir, key_name):
         return f'{key_dir}/{key_name}.pub'
