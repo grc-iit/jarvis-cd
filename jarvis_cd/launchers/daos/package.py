@@ -43,6 +43,7 @@ class Daos(Launcher):
         self._CreateControlConfig()
         #Copy the certificates+config to all servers
         to_copy = [
+            self.config['HOSTS'],
             self.config['CONF']['AGENT'],
             self.config['CONF']['SERVER'],
             self.config['CONF']['CONTROL'],
