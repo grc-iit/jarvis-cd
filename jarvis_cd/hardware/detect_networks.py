@@ -11,4 +11,4 @@ class DetectNetworks(Node):
         for card,addrs in self.net_cards.items():
             self.output[0]['localhost']['stdout'].append(str(card))
             for addr in addrs:
-                self.output[0]['localhost']['stdout'].append(f"  {addr}")
+                self.output[0]['localhost']['stdout'].append(f"  {addr.address}")

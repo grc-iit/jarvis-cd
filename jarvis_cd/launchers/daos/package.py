@@ -88,9 +88,9 @@ class Daos(Launcher):
                 f"--pool {container['pool']}",
                 f"--label {container['label']}"
             ]
+            SSHNode('Create Mount Directory', self.agent_hosts, f"mkdir -p {container['mount']}", ssh_info=self.ssh_info).Run()
             create_container_cmd = " ".join(create_container_cmd)
             print(create_container_cmd)
-            SSHNode('Create Mount Directory', self.client_hosts, f"mkdir -p {container['mount']}", ssh_info=self.ssh_info).Run()
             #ExecNode('Create Container', create_container_cmd).Run()
         self.Stop()
 
