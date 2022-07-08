@@ -13,6 +13,8 @@ class KillNode(Node):
         pids = []
         for line in node.output[0]['localhost']['stdout']:
             words = line.split()
+            if len(words) <= 7:
+                continue
             cmd = " ".join(words[7:])
             if re.match(self.program_regex, cmd):
                 pids.append(int(words[1]))

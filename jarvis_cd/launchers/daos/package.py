@@ -128,10 +128,12 @@ class Daos(Launcher):
             if 'mount' in container and container['mount'] is not None:
                 umount_cmd = f"fusermount3 -u {container['mount']}"
                 SSHNode('Unmount Container', self.agent_hosts, umount_cmd, ssh_info=self.ssh_info).Run()
-        #Kill servers
+        #Politefully stop servers
         server_stop_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg system stop -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         ExecNode('Stop DAOS', server_stop_cmd, sudo=True).Run()
-        KillNode('Kill DAOS', '.*daos.*').Run()
+        #Kill anything else DAOS spawns
+        kill_cmd = 'jarvis-kill ".*daos.*"'
+        SSHNode('Kill DAOS', self.all_hosts, kill_cmd, sudo=True)
 
     def _DefineStatus(self):
         pass
