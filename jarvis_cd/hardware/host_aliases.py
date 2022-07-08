@@ -1,4 +1,5 @@
 from jarvis_cd.hardware.detect_networks import DetectNetworks
+from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.node import Node
 
 class FindHostAliases(DetectNetworks):
