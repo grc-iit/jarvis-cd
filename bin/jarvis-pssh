@@ -10,5 +10,5 @@ if __name__ == '__main__':
         exit()
     op = sys.argv[1]
     conf = SSHConfig().LoadConfig().Get()
-    SSHNode("Run Command", self.hosts, self.op).Run()
+    SSHNode("Run Command", conf.hosts, op).Run()
 

@@ -1,3 +1,4 @@
+from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.yaml_conf import YAMLConfig
 
 class SSHConfig(YAMLConfig):
@@ -6,3 +7,4 @@ class SSHConfig(YAMLConfig):
 
     def _ProcessConfig(self):
         self.ssh_info = self.config['SSH']
+        self.hosts = Hostfile().LoadHostfile(self.config['HOSTS'])
