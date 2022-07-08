@@ -61,7 +61,6 @@ class SSHNode(Node):
         self.port = int(port)
         self.do_ssh = do_ssh
         self.exec_async = exec_async
-        self.is_daemon = is_daemon
 
     def _exec_ssh(self, cmd):
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
