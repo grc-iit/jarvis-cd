@@ -9,6 +9,8 @@ if __name__ == '__main__':
         print("USAGE: jarvis-pssh [command]")
         exit()
     op = sys.argv[1]
-    conf = SSHConfig().LoadConfig().Get()
-    SSHNode("Run Command", conf.hosts, op).Run()
+    conf = SSHConfig().LoadConfig()
+    print(conf.hosts)
+    print(conf.ssh_info)
+    SSHNode("Run Command", conf.hosts, op, ssh_info=conf.ssh_info).Run()
 
