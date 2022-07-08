@@ -47,7 +47,7 @@ class SSHSetup(SSHArgs):
             src_priv_key = self._GetPrivateKey(key_dir, key_name)
             dst_pub_key = self._GetPublicKey(dst_key_dir, key_name)
             dst_priv_key = self._GetPrivateKey(dst_key_dir, key_name)
-            print(f"Copying {src_pub_key} to {dst_pub_key}")
+            print(f"Copying {src_pub_key} to {dst_pub_key} (aliases={self.host_aliases})")
             SCPNode('Copy public key to hosts', self.hosts, src_pub_key, dst_pub_key, pkey=self.private_key, username=self.username,
                     port=self.port, host_aliases=self.host_aliases,
                     collect_output=False).Run()

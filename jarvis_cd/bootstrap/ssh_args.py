@@ -30,7 +30,6 @@ class SSHArgs:
         self.public_key = self._GetPublicKey(self.key_dir, self.key_name)
         self.host_aliases = FindHostAliases('Get Aliases', self.hosts).Run().GetAliases()
         print(self.host_aliases)
-        exit()
 
     def _GetPublicKey(self, key_dir, key_name):
         return f'{key_dir}/{key_name}.pub'
