@@ -56,7 +56,7 @@ class Daos(Launcher):
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         print(server_start_cmd)
         SSHNode('Start DAOS', self.server_hosts, server_start_cmd, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
-        SleepNode('Wait for Server', 3).Run()
+        SleepNode('Wait for Server', 6).Run()
         #Format storage
         print("Formatting DAOS storage")
         storage_format_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg storage format --force -o {self.config['CONF']['CONTROL']}"
