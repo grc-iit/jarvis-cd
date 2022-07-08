@@ -61,10 +61,11 @@ class SSHNode(Node):
         self.port = int(port)
         self.do_ssh = do_ssh
         self.exec_async = exec_async
+        self.is_daemon = is_daemon
 
     def _exec_ssh(self, cmd):
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
-        output = client.run_command(cmd, sudo=self.sudo)
+        output = client.run_command(cmd, sudo=self.sudo, use_pty=not self.exec_async)
         nice_output = dict()
         for host_output in output:
             host = host_output.host
@@ -79,8 +80,6 @@ class SSHNode(Node):
     def _Run(self):
         if self.do_ssh:
             cmd = " ; ".join(self.cmds)
-            if self.exec_async:
-                cmd = f"nohup {cmd}"
             self.output = self._exec_ssh(cmd)
         else:
             self.output = ExecNode('SSH Command', self.cmds, self.print_output, self.collect_output, shell=True, sudo=self.sudo, exec_async=self.exec_async).Run().GetOutput()
