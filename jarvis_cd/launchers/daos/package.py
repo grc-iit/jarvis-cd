@@ -133,7 +133,7 @@ class Daos(Launcher):
         ExecNode('Stop DAOS', server_stop_cmd, sudo=True).Run()
         #Kill anything else DAOS spawns
         kill_cmd = 'jarvis-kill ".*daos.*"'
-        SSHNode('Kill DAOS', self.all_hosts, kill_cmd, sudo=True)
+        SSHNode('Kill DAOS', self.all_hosts, kill_cmd, sudo=True).Run()
 
     def _DefineStatus(self):
         pass
