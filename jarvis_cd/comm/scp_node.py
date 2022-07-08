@@ -89,7 +89,7 @@ class SCPNode(Node):
             destination = self.destination
             if len(self.sources) > 1:
                 destination = os.path.join(self.destination, os.path.basename(source))
-            output = client.copy_file(source, destination, recurse=os.path.isdir(source), sudo=self.sudo)
+            output = client.copy_file(source, destination, recurse=os.path.isdir(source))
             joinall(output, raise_error=True)
         return self
 
