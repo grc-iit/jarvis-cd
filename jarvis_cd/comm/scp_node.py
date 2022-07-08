@@ -76,6 +76,7 @@ class SCPNode(Node):
             return
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
         for source in self.sources:
+            print(f"SCP {source} to {self.destination} on {self.hosts}")
             output = client.copy_file(source, self.destination, True)
             joinall(output, raise_error=True)
         return self
