@@ -21,7 +21,7 @@ class Daos(Launcher):
         self.agent_hosts = self.all_hosts.SelectHosts(self.config['AGENT']['hosts'])
         self.control_hosts = self.all_hosts.SelectHosts(self.config['CONTROL']['hosts'])
         self.ssh_info = self.config['SSH']
-        self.ssh_info['host_aliases'] = FindHostAliases().Run().GetAliases()
+        self.ssh_info['host_aliases'] = FindHostAliases('Get Aliases', self.all_hosts).Run().GetAliases()
         return
 
     def _DefineInit(self):
