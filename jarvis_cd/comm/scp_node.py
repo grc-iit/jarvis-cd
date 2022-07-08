@@ -56,7 +56,11 @@ class SCPNode(Node):
 
         #There's a bug in SCP which cannot copy a file to itself
         for source in self.sources:
-            if os.path.samefile(source, destination) or os.path.samefile(os.path.dirname(source), destination):
+            src_file = os.path.normpath(source)
+            dst_file = os.path.normpath(destination)
+            src_dir = os.path.normpath(os.path.dirname(source))
+            dst_dir = os.path.normpath(destination)
+            if src_file == dst_file or src_dir == dst_dir:
                 self.hosts = self.hosts.copy()
                 if 'localhost' in self.hosts:
                     self.hosts.remove('localhost')
