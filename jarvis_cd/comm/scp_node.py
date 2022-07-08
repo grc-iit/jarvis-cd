@@ -84,12 +84,12 @@ class SCPNode(Node):
     def _Run(self):
         if len(self.hosts) == 0:
             return
-        client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port, sudo=self.sudo)
+        client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
         for source in self.sources:
             destination = self.destination
             if len(self.sources) > 1:
                 destination = os.path.join(self.destination, os.path.basename(source))
-            output = client.copy_file(source, destination, recurse=os.path.isdir(source))
+            output = client.copy_file(source, destination, recurse=os.path.isdir(source), sudo=self.sudo)
             joinall(output, raise_error=True)
         return self
 
