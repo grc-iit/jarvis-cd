@@ -32,6 +32,7 @@ class Hostfile:
 
     def SelectHosts(self, hostset):
         #Hosts are numbered from 1
+        hostset = str(hostset)
         hosts = self.copy()
         hosts.hosts = []
         ranges = hostset.split(',')
