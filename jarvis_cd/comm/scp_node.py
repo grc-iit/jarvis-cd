@@ -89,6 +89,7 @@ class SCPNode(Node):
         if len(self.hosts) == 0:
             return
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
+        print(self.hosts)
         for source in self.sources:
             destination = self.destination
             if len(self.sources) > 1:
