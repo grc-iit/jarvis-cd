@@ -5,6 +5,7 @@ from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launchers.launcher import Launcher
 from jarvis_cd.basic.link_node import LinkNode
 from jarvis_cd.spack.link_package import LinkSpackage
+from jarvis_cd.hardware.host_aliases import FindHostAliases
 from jarvis_cd.hardware.detect_networks import DetectNetworks
 from jarvis_cd.basic.sleep_node import SleepNode
 from jarvis_cd.basic.kill_node import KillNode
