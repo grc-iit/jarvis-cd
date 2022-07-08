@@ -35,6 +35,9 @@ else
   touch ~/.bashni
 fi
 
+#chmod +x all jarvis binaries
+chmod +x bin/*
+
 #Install python if necessary
 if [[ $PYTHON_NEEDED -eq 1 ]]
 then
