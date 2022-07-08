@@ -46,7 +46,7 @@ class SCPNode(Node):
 
         #There's a bug in SCP which cannot copy a file to itself
         for source in self.sources:
-            if source == destination or os.path.samefile(os.path.dirname(source), destination):
+            if os.path.samefile(source, destination) or os.path.samefile(os.path.dirname(source), destination):
                 self.hosts = self.hosts.copy()
                 if 'localhost' in self.hosts:
                     self.hosts.remove('localhost')
@@ -76,8 +76,11 @@ class SCPNode(Node):
             return
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
         for source in self.sources:
+            destination = self.destination
+            if len(self.sources) > 1:
+                destination = os.path.join(self.destination, os.path.basename(source))
             print(f"SCP {source} to {self.destination} on {self.hosts}")
-            output = client.copy_file(source, self.destination, True)
+            output = client.copy_file(source, self.destination, recurse=os.path.isdir(source))
             joinall(output, raise_error=True)
         return self
 
