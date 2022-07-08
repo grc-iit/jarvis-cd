@@ -87,7 +87,9 @@ class SSHNode(Node):
 
     def _Run(self):
         if self.sudo:
-            self.cmds.insert(0, f"source /home/{self.username}/.bashrc")
+            self.cmds.insert(0, f"export PATH=`sudo -u {self.username} echo $PATH`:$PATH")
+            self.cmds.insert(0, f"export LD_LIBRARY_PATH=`sudo -u {self.username} echo $LD_LIBRARY_PATH`:$LD_LIBRARY_PATH")
+            self.cmds.insert(1, f"source /home/{self.username}/.bashrc")
         if self.do_ssh:
             cmd = " ; ".join(self.cmds)
             self.output = self._exec_ssh(cmd)
