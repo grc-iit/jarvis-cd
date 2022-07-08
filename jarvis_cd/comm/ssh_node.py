@@ -16,8 +16,7 @@ class SSHNode(Node):
                  sudo=False, print_output=True, collect_output=True, do_ssh=True, exec_async=False, ssh_info=None):
         super().__init__(name, print_output, collect_output)
 
-        if username is None:
-            username = getpass.getuser()
+        #Make sure hosts in proper format
         if isinstance(hosts, list):
             self.hosts=hosts
         elif isinstance(hosts, str):
@@ -27,6 +26,11 @@ class SSHNode(Node):
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SSHNode hosts", type(hosts))
 
+        #Make sure username is set
+        if username is None:
+            username = getpass.getuser()
+
+        #Prioritize ssh_info structure
         if ssh_info is not None:
             if 'username' in ssh_info:
                 username = ssh_info['username']
@@ -34,9 +38,12 @@ class SSHNode(Node):
                 pkey = os.path.join(ssh_info['key_dir'], ssh_info['key'])
             if 'port' in ssh_info:
                 port = ssh_info['port']
-            if 'host_aliases' in ssh_info:
-                host_aliases = ssh_info['host_aliases']
+            if 'sudo' in ssh_info:
+                sudo = ssh_info['sudo']
+            if 'shell' in ssh_info:
+                shell = ssh_info['shell']
 
+        #Make sure commands is a list
         if isinstance(cmds, list):
             self.cmds=cmds
         elif isinstance(cmds, str):
@@ -51,7 +58,7 @@ class SSHNode(Node):
             pkey = f"{os.environ['HOME']}/.ssh/id_rsa"
 
         #Do not execute SSH if only localhost
-        if self.hosts[0] == 'localhost' and len(self.hosts) == 1:
+        if len(self.hosts) == 0:
             do_ssh = False
 
         self.pkey = pkey

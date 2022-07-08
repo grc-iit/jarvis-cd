@@ -33,6 +33,10 @@ class SCPNode(Node):
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SCPNode source paths", type(sources))
 
+        #Make sure host_aliases is not None
+        if host_aliases is None:
+            host_aliases = []
+
         #Prioritize the SSH_INFO data structure
         if ssh_info is not None:
             if 'username' in ssh_info:
@@ -42,7 +46,13 @@ class SCPNode(Node):
             if 'port' in ssh_info:
                 port = ssh_info['port']
             if 'host_aliases' in ssh_info:
-                host_aliases = ssh_info['host_aliases']
+                if isinstance(ssh_info['host_aliases'], list):
+                    host_aliases += ssh_info['host_aliases']
+                else:
+                    host_aliases.append(ssh_info['host_aliases'])
+            if 'sudo' in ssh_info:
+                sudo = ssh_info['sudo']
+
 
         #There's a bug in SCP which cannot copy a file to itself
         for source in self.sources:
@@ -74,7 +84,7 @@ class SCPNode(Node):
     def _Run(self):
         if len(self.hosts) == 0:
             return
-        client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
+        client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port, sudo=self.sudo)
         for source in self.sources:
             destination = self.destination
             if len(self.sources) > 1:
