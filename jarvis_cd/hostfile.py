@@ -7,10 +7,6 @@ class Hostfile:
         self.all_hosts = None
         self.hosts = None
 
-    def Combine(self, *host_sets):
-        self.all_hosts = list({host for hosts in host_sets for host in hosts})
-        self.hosts = self.all_hosts
-
     def LoadHostfile(self, filename):
         if not os.path.exists(filename): 
             raise Error(ErrorCode.HOSTFILE_NOT_FOUND).format(filename)
@@ -29,6 +25,16 @@ class Hostfile:
         self.hosts = self.all_hosts
         self.filename = filename
         return self
+
+    def SetHosts(self, hosts):
+        self.all_hosts = hosts
+        self.hosts = hosts
+
+    def Load(self, hosts):
+        if isinstance(hosts, str):
+            self.LoadHostfile(hosts)
+        else:
+            self.SetHosts(hosts)
 
     def SelectHosts(self, hostset):
         #Hosts are numbered from 1

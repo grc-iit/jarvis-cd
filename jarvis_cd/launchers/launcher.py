@@ -1,7 +1,8 @@
 import yaml
-from abc import ABC, abstractmethod
 from jarvis_cd.jarvis_manager import JarvisManager
 from jarvis_cd.yaml_conf import YAMLConfig
+from jarvis_cd.comm.ssh_config import SSHConfig
+from jarvis_cd.hostfile import Hostfile
 import pathlib
 import os
 import shutil
@@ -10,7 +11,7 @@ import shutil
 
 from jarvis_cd.exception import Error, ErrorCode
 
-class Launcher(YAMLConfig):
+class Launcher(SSHConfig):
     def __init__(self, launcher_name, scaffold_dir, args):
         super().__init__(scaffold_dir)
         self.launcher_name = launcher_name
@@ -18,7 +19,7 @@ class Launcher(YAMLConfig):
         self.args = args
 
     def DefaultConfigPath(self, conf_type='default'):
-        return os.path.join(self.jarvis_root, 'jarvis_cd', 'launchers', self.launcher_name, f'{conf_type}.yaml')
+        return os.path.join(self.jarvis_root, 'jarvis_cd', 'launchers', self.launcher_name, 'conf', f'{conf_type}.yaml')
 
     @abstractmethod
     def _DefineInit(self):

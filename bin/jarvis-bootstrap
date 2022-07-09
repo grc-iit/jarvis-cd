@@ -15,7 +15,6 @@ from jarvis_cd.bootstrap.scs_repo_setup import SCSRepoSetup
 from jarvis_cd.bootstrap.spack_setup import SpackSetup
 from jarvis_cd.bootstrap.ssh_setup import SSHSetup
 from jarvis_cd.bootstrap.jarvis_setup import JarvisSetup
-from jarvis_cd.bootstrap.ssh import JarvisSSH
 from jarvis_cd.bootstrap.config import BootstrapConfig
 
 def help():
@@ -25,7 +24,6 @@ def help():
     print("jarvis-bootstrap scaffold [sub_op]")
     print("  sub_op: local/remote")
     print("jarvis-bootstrap setup_ssh")
-    print("jarvis-bootstrap ssh")
     print("jarvis-bootstrap deps [sub_op]")
     print("  sub_op: install, update, uninstall")
 
@@ -50,11 +48,6 @@ if __name__ == '__main__':
         conf.Scaffold(sub_op)
     elif op == 'setup_ssh':
         SSHSetup(conf.Get()).Run()
-    elif op == 'ssh':
-        host_id = 0
-        if len(sys.argv) > 2:
-            host_id = int(sys.argv[2])
-        JarvisSSH(conf.Get(), host_id).Run()
     elif op == 'deps':
         if len(sys.argv) >= 3:
             sub_op = sys.argv[2]

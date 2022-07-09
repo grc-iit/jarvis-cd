@@ -16,13 +16,10 @@ class Daos(Launcher):
         super().__init__('daos', config_path, args)
 
     def _ProcessConfig(self):
-        self.all_hosts = Hostfile().LoadHostfile(self.config['HOSTS'])
+        super()._ProcessConfig()
         self.server_hosts = self.all_hosts.SelectHosts(self.config['SERVER']['hosts'])
         self.agent_hosts = self.all_hosts.SelectHosts(self.config['AGENT']['hosts'])
         self.control_hosts = self.all_hosts.SelectHosts(self.config['CONTROL']['hosts'])
-        self.ssh_info = self.config['SSH']
-        self.ssh_info['host_aliases'] = FindHostAliases('Get Aliases', self.all_hosts).Run().GetAliases()
-        return
 
     def _DefineInit(self):
         #Create SCAFFOLD on all nodes

@@ -1,57 +1,43 @@
-import argparse
-from jarvis_cd.hostfile import Hostfile
-from jarvis_cd.comm.ssh_node import SSHNode
+from jarvis_cd.installer.git_node import GitNode, GitOps
+from jarvis_cd.installer.modify_env_node import ModifyEnvNode, ModifyEnvNodeOps
+from jarvis_cd.installer.pip_node import LocalPipNode
 from jarvis_cd.basic.exec_node import ExecNode
-from jarvis_cd.bootstrap.ssh_args import SSHArgs
-from jarvis_cd.bootstrap.git_args import GitArgs
+from jarvis_cd.bootstrap.package import Package
+from jarvis_cd.comm.ssh_node import SSHNode
+from jarvis_cd.comm.scp_node import SCPNode
 import sys,os
+import shutil
 
-class JarvisSetup(SSHArgs,GitArgs):
-    def __init__(self, conf, operation):
-        self.conf = conf
-        self.ParseSSHArgs()
-        self.ParseGitArgs('jarvis_cd')
-        self.operation = operation
-
-    def Run(self):
-        if self.operation == 'install':
-            self.Install()
-        elif self.operation == 'update':
-            self.Update()
-        elif self.operation == 'uninstall':
-            self.Uninstall()
-        elif self.operation == 'reset_bashrc':
-            self.ResetBashrc()
-
+class JarvisSetup(Package):
     def Install(self):
-        cmds = []
-        self.GitCloneCommands(cmds)
-        cmds.append(f'bash dependencies.sh')
-        cmds.append(f'python3 -m pip install')
-        cmds.append(f'python3 -m pip install -e . -r requirements.txt  --user')
-        cmds.append(f'echo \"export JARVIS_ROOT=$PWD\" >> ~/.bashni')
-        cmds.append(f'echo \"export PYTHONPATH=\`sudo -u {self.username} \$JARVIS_ROOT/bin/jarvis-py-paths\`:\$PYTHONPATH\" >> ~/.bashni')
-        SSHNode('Install Jarvis', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port,
-                collect_output=False, do_ssh=self.do_ssh).Run()
+        jarvis_root = self.config['jarvis']['path']
+        SCPNode('copy jarvis', self.config['jarvis']['path'], self.config['jarvis']['path'], ssh_info=self.ssh_info).Run()
+        SSHNode('jarvis deps', f"./{jarvis_root}/dependencies.sh").Run()
+        SSHNode('install jarvis', f"cd {self.config['jarvs']['path']}; ./bin/jarvis-bootstrap deps local_install jarvis").Run()
 
-    def Update(self):
-        cmds = []
-        self.GitUpdateCommands(cmds, '$JARVIS_ROOT')
-        cmds.append(f'bash dependencies.sh')
-        cmds.append(f'python3 -m pip install -e . -r requirements.txt  --user')
-        SSHNode('Update jarvis', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port,
-                collect_output=False, do_ssh=self.do_ssh).Run()
+    def _LocalInstall(self):
+        jarvis_root = self.config['jarvis']['path']
+        GitNode('clone', self.config['jarvis']['repo'], jarvis_root, GitOps.CLONE,
+                branch=self.config['jarvis']['branch'], commit=self.config['jarvis']['commit']).Run()
+        LocalPipNode('install', jarvis_root).Run()
 
-    def Uninstall(self):
-        cmds = []
-        cmds.append(f'$JARVIS_ROOT/bin/jarvis-bootstrap jarvis reset_bashrc')
-        cmds.append(f'rm -rf $JARVIS_ROOT')
-        SSHNode('Uninstall Jarvis', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port,
-                collect_output=False, do_ssh=self.do_ssh).Run()
+        #Ensure that the variables aren't already being set
+        ModifyEnvNode('jarvis_root', self.bashni, f"export JARVIS_ROOT", ModifyEnvNodeOps.REMOVE).Run()
+        ModifyEnvNode('pypath', self.bashni, f"export PYTHONPATH", ModifyEnvNodeOps.REMOVE).Run()
 
-    def ResetBashrc(self):
-        with open(f'{os.environ["HOME"]}/.bashni', 'r') as fp:
-            bashrc = fp.read()
-            bashrc = bashrc.replace(f'export JARVIS_ROOT={os.environ["HOME"]}/jarvis-cd\n', '')
-        with open(f'{os.environ["HOME"]}/.bashni', 'w') as fp:
-            fp.write(bashrc)
+        #Set the variables to their proper values
+        ModifyEnvNode('jarvis_root', self.bashni, f"export JARVIS_ROOT={jarvis_root}", ModifyEnvNodeOps.APPEND).Run()
+        ModifyEnvNode('pypath', self.bashni, f"export PYTHONPATH=\`sudo -u {self.username} \$JARVIS_ROOT/bin/jarvis-py-paths\`:\$PYTHONPATH", ModifyEnvNodeOps.APPEND).Run()
+
+    def _LocalUpdate(self):
+        jarvis_root = os.environ['JARVIS_ROOT']
+        GitNode('clone', self.config['jarvis']['repo'], jarvis_root, GitOps.UPDATE,
+                branch=self.config['jarvis']['branch'], commit=self.config['jarvis']['commit']).Run()
+        ExecNode('deps', f"./{jarvis_root}/dependencies.sh").Run()
+        LocalPipNode('install', jarvis_root).Run()
+
+    def _LocalUninstall(self):
+        jarvis_root = os.environ['JARVIS_ROOT']
+        shutil.rmtree(jarvis_root)
+        ModifyEnvNode('jarvis_root', self.bashni, f"export JARVIS_ROOT", ModifyEnvNodeOps.REMOVE).Run()
+        ModifyEnvNode('pypath', self.bashni, f"export PYTHONPATH", ModifyEnvNodeOps.REMOVE).Run()
