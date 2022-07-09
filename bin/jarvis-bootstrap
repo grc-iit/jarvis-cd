@@ -51,7 +51,10 @@ if __name__ == '__main__':
     elif op == 'setup_ssh':
         SSHSetup(conf.Get()).Run()
     elif op == 'ssh':
-        JarvisSSH(conf.Get()).Run()
+        host_id = 0
+        if len(sys.argv) > 2:
+            host_id = int(sys.argv[2])
+        JarvisSSH(conf.Get(), host_id).Run()
     elif op == 'deps':
         if len(sys.argv) >= 3:
             sub_op = sys.argv[2]
