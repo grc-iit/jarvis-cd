@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+
+import sys
+while '' in sys.path:
+  sys.path.remove('')
+print(":".join(sys.path))

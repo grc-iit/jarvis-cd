@@ -88,14 +88,8 @@ class SSHNode(Node):
 
     def _Run(self):
         if self.sudo:
-            pythonpath = """
-import sys
-while \'\' in sys.path:
-  sys.path.remove('')
-print(\":\".join(sys.path))
-"""
-            self.cmds.insert(0, f"export PYTHONPATH=`python3 -c \"{pythonpath}\"`:$PATH")
-            self.cmds.insert(1, f"source /home/{self.username}/.bashrc")
+            self.cmds.insert(0, f"source /home/{self.username}/.bashrc")
+            self.cmds.insert(1, f"export PYTHONPATH=`$JARVIS_ROOT/bin/jarvis-py-paths`:$PYTHONPATH")
         if self.do_ssh:
             cmd = " ; ".join(self.cmds)
             self.output = self._exec_ssh(cmd)
