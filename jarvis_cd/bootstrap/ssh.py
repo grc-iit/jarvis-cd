@@ -8,4 +8,4 @@ class JarvisSSH(SSHArgs):
         self.ParseSSHArgs()
 
     def Run(self):
-        ExecNode('Do SSH', f'ssh -p {self.port} {self.username}@{self.hosts[self.host_id]}', collect_output=False).Run()
+        ExecNode('Do SSH', f'ssh -i {self.private_key} -p {self.port} {self.username}@{self.hosts[self.host_id]}', collect_output=False).Run()
