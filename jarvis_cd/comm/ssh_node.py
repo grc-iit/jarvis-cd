@@ -83,12 +83,18 @@ class SSHNode(Node):
             }
             nice_output[host]['stdout'] = list(host_output.stdout)
             nice_output[host]['stderr'] = list(host_output.stderr)
+            nice_output[host]['stdout'].insert(0, cmd)
         return [nice_output]
 
     def _Run(self):
         if self.sudo:
-            self.cmds.insert(0, f"export PATH=`sudo -u {self.username} echo $PATH`:$PATH")
-            self.cmds.insert(0, f"export LD_LIBRARY_PATH=`sudo -u {self.username} echo $LD_LIBRARY_PATH`:$LD_LIBRARY_PATH")
+            pythonpath = """
+            import sys
+            while '' in sys.path:
+                sys.path.remove('')
+            print(":".join(sys.path))
+            """
+            self.cmds.insert(0, f"export PYTHONPATH=`python3 -c {pythonpath}`:$PATH")
             self.cmds.insert(1, f"source /home/{self.username}/.bashrc")
         if self.do_ssh:
             cmd = " ; ".join(self.cmds)
