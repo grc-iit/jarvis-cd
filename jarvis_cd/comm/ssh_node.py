@@ -90,7 +90,7 @@ class SSHNode(Node):
         if self.sudo:
             pythonpath = """
 import sys
-while '' in sys.path:
+while \'\' in sys.path:
   sys.path.remove('')
 print(\":\".join(sys.path))
 """
