@@ -94,7 +94,7 @@ class SSHNode(Node):
                 sys.path.remove('')
             print(":".join(sys.path))
             """
-            self.cmds.insert(0, f"export PYTHONPATH=`python3 -c {pythonpath}`:$PATH")
+            self.cmds.insert(0, f"export PYTHONPATH=`python3 -c \"{pythonpath}\"`:$PATH")
             self.cmds.insert(1, f"source /home/{self.username}/.bashrc")
         if self.do_ssh:
             cmd = " ; ".join(self.cmds)
