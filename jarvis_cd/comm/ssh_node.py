@@ -88,12 +88,7 @@ class SSHNode(Node):
 
     def _Run(self):
         if self.sudo:
-            pythonpath = """
-            import sys
-            while '' in sys.path:
-                sys.path.remove('')
-            print(":".join(sys.path))
-            """
+            pythonpath = "import sys\nwhile '' in sys.path:\n  sys.path.remove('')\nprint(\":\".join(sys.path))"
             self.cmds.insert(0, f"export PYTHONPATH=`python3 -c \"{pythonpath}\"`:$PATH")
             self.cmds.insert(1, f"source /home/{self.username}/.bashrc")
         if self.do_ssh:
