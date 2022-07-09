@@ -89,7 +89,6 @@ class SSHNode(Node):
     def _Run(self):
         if self.sudo:
             self.cmds.insert(0, f"source /home/{self.username}/.bashrc")
-            self.cmds.insert(1, f"export PYTHONPATH=`$JARVIS_ROOT/bin/jarvis-py-paths`:$PYTHONPATH")
         if self.do_ssh:
             cmd = " ; ".join(self.cmds)
             self.output = self._exec_ssh(cmd)
