@@ -30,7 +30,7 @@ class JarvisSetup(SSHArgs,GitArgs):
         cmds.append(f'python3 -m pip install')
         cmds.append(f'python3 -m pip install -e . -r requirements.txt  --user')
         cmds.append(f'echo \"export JARVIS_ROOT=$PWD\" >> ~/.bashni')
-        cmds.append(f'echo \"export PYTHONPATH=\`\$JARVIS_ROOT/bin/jarvis-py-paths\`:\$PYTHONPATH\" >> ~/.bashni')
+        cmds.append(f'echo \"export PYTHONPATH=\`sudo -u {self.username} \$JARVIS_ROOT/bin/jarvis-py-paths\`:\$PYTHONPATH\" >> ~/.bashni')
         SSHNode('Install Jarvis', self.hosts, cmds, pkey=self.private_key, username=self.username, port=self.port,
                 collect_output=False, do_ssh=self.do_ssh).Run()
 
