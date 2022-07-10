@@ -1,7 +1,7 @@
 from jarvis_cd.basic.exec_node import ExecNode
 from jarvis_cd.basic.exec_node import ExecNode
 from jarvis_cd.comm.scp_node import SCPNode
-from jarvis_cd.comm.issh_node import InteractiveSSHExecNode
+from jarvis_cd.comm.issh_node import InteractiveSSHNode
 from jarvis_cd.bootstrap.package import BootstrapConfig
 import sys,os
 
@@ -22,16 +22,16 @@ class SSHSetup(BootstrapConfig):
         # Ensure all self.all_hosts are trusted on this machine
         print("Add all hosts to known_hosts")
         for host in self.all_hosts:
-            InteractiveSSHExecNode('init connect', host, self.ssh_info, only_init=True)
+            InteractiveSSHNode(host, self.ssh_info, only_init=True)
 
     def InstallKeys(self):
         print("Install SSH keys")
         # Ensure pubkey trusted on all nodes
         for host in self.all_hosts:
             copy_id_cmd = f"ssh-copy-id -f -i {self.public_key} -p {self.port} {self.username}@{host}"
-            ExecNode'Install public key', copy_id_cmd).Run()
+            ExecNode(copy_id_cmd).Run()
         # Create SSH directory on all nodes
-        ExecNode('Make SSH directory', self.all_hosts, f'mkdir {self.dst_key_dir}', ssh_info=self.ssh_info).Run()
+        ExecNode(f'mkdir {self.dst_key_dir}', hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
         # Copy all keys:
         for key_entry in self.ssh_keys.keys():
@@ -40,10 +40,10 @@ class SSHSetup(BootstrapConfig):
             src_priv_key = self._GetPrivateKey(key_dir, key_name)
             dst_pub_key = self._GetPublicKey(dst_key_dir, key_name)
             dst_priv_key = self._GetPrivateKey(dst_key_dir, key_name)
-            SCPNode('Copy public key to hosts', self.all_hosts, src_pub_key, dst_pub_key, ssh_info=self.ssh_info).Run()
+            SCPNode(src_pub_key, dst_pub_key, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
             if os.path.exists(src_priv_key):
                 print(f"Copying {src_priv_key} to {dst_priv_key}")
-                SCPNode('Copy private key to hosts', self.all_hosts, src_priv_key, dst_priv_key, ssh_info=self.ssh_info).Run()
+                SCPNode(src_priv_key, dst_priv_key, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def _SSHPermissionsCmd(self, key_location):
         commands = []
@@ -64,5 +64,5 @@ class SSHSetup(BootstrapConfig):
     def SSHPermissions(self):
         src_cmd = self._SSHPermissionsCmd('local')
         dst_cmd = self._SSHPermissionsCmd('remote')
-        ExecNode'Set permissions locally', src_cmd, collect_output=False).Run()
-        ExecNode('Set permissions on destination', self.all_hosts, dst_cmd, ssh_info=self.ssh_info).Run()
+        ExecNode(src_cmd, collect_output=False).Run()
+        ExecNode(dst_cmd, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()

@@ -1,23 +1,16 @@
 from pssh.clients import ParallelSSHClient
 from gevent import joinall
 import sys, os
-import getpass
-from jarvis_cd.hostfile import Hostfile
-from jarvis_cd.comm.ssh_config import SSHArgs
+from jarvis_cd.basic.parallel_node import ParallelNode
 
 from jarvis_cd.node import Node
 from jarvis_cd.exception import Error, ErrorCode
 
 sys.stderr = sys.__stderr__
 
-class SCPNode(Node,SSHArgs):
-    def __init__(self, sources, destination,
-                 hosts=None, username=None, pkey=None, password=None, port=22,
-                 sudo=False, shell=True, host_aliases=None, ssh_info=None,
-                 print_output=True, collect_output=True):
-        super().__init__(print_output, collect_output)
-        self._ProcessArgs(hosts=hosts, username=username, pkey=pkey, password=password, port=port,
-                 sudo=sudo, shell=shell, host_aliases=host_aliases, ssh_info=ssh_info)
+class SCPNode(ParallelNode):
+    def __init__(self, sources, destination, **kwargs):
+        super().__init__(**kwargs)
 
         #Make sure the sources is a list
         if isinstance(sources, list):

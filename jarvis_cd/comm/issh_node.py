@@ -4,7 +4,7 @@ import getpass
 import sys, os
 from jarvis_cd.exception import Error, ErrorCode
 
-class InteractiveSSHExecNode(ExecNode):
+class InteractiveSSHNode(ExecNode):
     def __init__(self, host, ssh_info, only_init=False):
         #Set default values
         self.username = getpass.getuser()

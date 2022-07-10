@@ -57,13 +57,13 @@ class Package(BootstrapConfig):
             self._LocalUninstall()
 
     def Install(self):
-        ExecNode('pssh', f"jarvis-bootstrap deps local_install {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        ExecNode(f"jarvis-bootstrap deps local_install {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def Update(self):
-        ExecNode('pssh', f"jarvis-bootstrap deps local_update {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        ExecNode(f"jarvis-bootstrap deps local_update {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def Uninstall(self):
-        ExecNode('pssh', f"jarvis-bootstrap deps local_uninstall {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        ExecNode(f"jarvis-bootstrap deps local_uninstall {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     @abstractmethod
     def _LocalInstall(self):

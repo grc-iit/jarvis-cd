@@ -2,7 +2,7 @@
 #USAGE jarvis-ssh [host-id]
 
 from jarvis_cd.comm.ssh_config import SSHConfig
-from jarvis_cd.comm.issh_node import InteractiveSSHExecNode
+from jarvis_cd.comm.issh_node import InteractiveSSHNode
 import sys,os
 
 if __name__ == '__main__':
@@ -13,4 +13,4 @@ if __name__ == '__main__':
     if len(sys.argv) > 2:
         print("USAGE: jarvis-ssh [host-id]")
         exit(1)
-    InteractiveSSHExecNode('Do SSH', conf.hosts[host_id], conf.ssh_info).Run()
+    InteractiveSSHNode(conf.hosts[host_id], conf.ssh_info).Run()

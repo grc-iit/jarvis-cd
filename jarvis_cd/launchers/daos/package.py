@@ -45,7 +45,7 @@ class Daos(Launcher):
             f"{self.scaffold_dir}/jarvis_conf.yaml",
             f"{self.scaffold_dir}/daosCA"
         ]
-        SCPNode(self.all_hosts, to_copy, f"{self.config['SCAFFOLD']}", ssh_info=self.ssh_info).Run()
+        SCPNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
         #Start dummy DAOS server (on all server nodes)
         print("Starting DAOS server")
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
