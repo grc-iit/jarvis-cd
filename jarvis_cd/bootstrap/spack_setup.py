@@ -8,7 +8,7 @@ class SpackSetup(Package):
     def _LocalInstall(self):
         # Create SSH directory on all nodes
         spack_root = self.config['spack']['path']
-        GitNode('clone', self.config['spack']['repo'], spack_root, GitOps.CLONE,
+        GitNode(self.config['spack']['repo'], spack_root, GitOps.CLONE,
                 branch=self.config['spack']['branch'], commit=self.config['spack']['commit'],
                 collect_output=False, print_output=True).Run()
         ModifyEnvNode('rm spackenv', self.bashni, f". {spack_root}/share/spack/setup-env.sh", ModifyEnvNodeOps.REMOVE).Run()
@@ -16,7 +16,7 @@ class SpackSetup(Package):
 
     def _LocalUpdate(self):
         spack_root = os.environ['SPACK_ROOT']
-        GitNode('pull', self.config['spack']['repo'], spack_root, GitOps.UPDATE,
+        GitNode(self.config['spack']['repo'], spack_root, GitOps.UPDATE,
                 branch=self.config['spack']['branch'], commit=self.config['spack']['commit'],
                 collect_output=False, print_output=True).Run()
 

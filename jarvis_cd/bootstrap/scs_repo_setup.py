@@ -8,7 +8,7 @@ import shutil
 class SCSRepoSetup(Package):
     def _LocalInstall(self):
         scs_repo_root = self.config['scs_repo']['path']
-        GitNode('clone', self.config['scs_repo']['repo'], scs_repo_root, GitOps.CLONE,
+        GitNode(self.config['scs_repo']['repo'], scs_repo_root, GitOps.CLONE,
                 branch=self.config['scs_repo']['branch'], commit=self.config['scs_repo']['commit'],
                 collect_output=False, print_output=True).Run()
         ExecNode(f'spack repo add {scs_repo_root}').Run()
@@ -17,7 +17,7 @@ class SCSRepoSetup(Package):
 
     def _LocalUpdate(self):
         scs_repo_root = os.environ['SCS_REPO']
-        GitNode('clone', self.config['scs_repo']['repo'], scs_repo_root, GitOps.UPDATE,
+        GitNode(self.config['scs_repo']['repo'], scs_repo_root, GitOps.UPDATE,
                 branch=self.config['scs_repo']['branch'], commit=self.config['scs_repo']['commit'],
                 collect_output=False, print_output=True).Run()
 

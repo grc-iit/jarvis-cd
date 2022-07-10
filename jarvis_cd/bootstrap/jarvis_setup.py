@@ -10,14 +10,14 @@ import shutil
 class JarvisSetup(Package):
     def Install(self):
         jarvis_root = self.config['jarvis_cd']['path']
-        SCPNode('copy jarvis', self.config['jarvis_cd']['path'], self.config['jarvis_cd']['path'], hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        SCPNode(self.config['jarvis_cd']['path'], self.config['jarvis_cd']['path'], hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
         cmds = [
             f"./{jarvis_root}/dependencies.sh",
             f"export PYTHONPATH={jarvis_root}",
             f"cd {self.config['jarvis_cd']['path']}",
             f"./bin/jarvis-bootstrap deps local_install jarvis"
         ]
-        ExecNode('install jarvis', cmds, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        ExecNode(cmds, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def _LocalInstall(self):
         jarvis_root = self.config['jarvis_cd']['path']
@@ -32,9 +32,9 @@ class JarvisSetup(Package):
 
     def _LocalUpdate(self):
         jarvis_root = os.environ['JARVIS_ROOT']
-        GitNode('clone', self.config['jarvis_cd']['repo'], jarvis_root, GitOps.UPDATE,
+        GitNode(self.config['jarvis_cd']['repo'], jarvis_root, GitOps.UPDATE,
                 branch=self.config['jarvis_cd']['branch'], commit=self.config['jarvis_cd']['commit']).Run()
-        ExecNode('deps', f"./{jarvis_root}/dependencies.sh").Run()
+        ExecNode(f"./{jarvis_root}/dependencies.sh").Run()
         LocalPipNode('install', jarvis_root).Run()
 
     def _LocalUninstall(self):
