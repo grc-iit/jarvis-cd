@@ -13,7 +13,7 @@ sys.stderr = sys.__stderr__
 """
 SCPNode has various concerns:
     1. /home/cc/hi.txt -> /home/cc will result in error, since /home/cc is a directory. Must specify full path.
-    2. Pscp cannot recursively copy directories. Possibly only when directories pre-existed. Fixed.
+    2. Pscp cannot recursively copy directories if directory already exists on destination. Fixed.
     3. /home/cc/hi.txt -> /home/cc/hi.txt will delete hi.txt if the same host executing SCP is also in the hostfile. Fixed.
 """
 
@@ -62,7 +62,8 @@ class SCPNode(ParallelNode):
             #Create source dir -> destination command
             if is_dir:
                 node = LsNode(source).Run()
-                source_files = node.GetFiles()
+                #source_files = node.GetFiles()
+                source_files = []
                 rel_path = os.path.relpath(source, source)
                 dst_path = os.path.join(self.destination, rel_path)
                 dirs[source] = dst_path

@@ -11,17 +11,17 @@ ssh_keys:
     key_dir: ${HOME}/.ssh
     dst_key_dir: /home/cc/.ssh
 jarvis_cd:
-  repo: https://github.com/lukemartinlogan/jarvis-cd
+  url: https://github.com/lukemartinlogan/jarvis-cd
   branch: development
   commit: null
   path: $PWD
 spack:
-  repo: https://github.com/spack/spack
+  url: https://github.com/spack/spack
   branch: releases/v0.18
   commit: null
   path: ${HOME}/spack
 scs_repo:
-  repo: https://github.com/lukemartinlogan/scs-repo
+  url: https://github.com/lukemartinlogan/scs-repo
   branch: main
   commit: null
   path: ${HOME}/scs-repo
