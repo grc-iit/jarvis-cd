@@ -4,7 +4,7 @@ from jarvis_cd.basic.exec_node import ExecNode
 import re
 
 class KillNode(Node):
-    def __init__(self, name, program_regex):
+    def __init__(self, program_regex):
         self.program_regex = program_regex
         super().__init__(name)
 

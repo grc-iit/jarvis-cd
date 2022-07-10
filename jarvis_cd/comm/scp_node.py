@@ -11,11 +11,11 @@ from jarvis_cd.exception import Error, ErrorCode
 sys.stderr = sys.__stderr__
 
 class SCPNode(Node,SSHArgs):
-    def __init__(self, name, sources, destination,
+    def __init__(self, sources, destination,
                  hosts=None, username=None, pkey=None, password=None, port=22,
                  sudo=False, shell=True, host_aliases=None, ssh_info=None,
                  print_output=True, collect_output=True):
-        super().__init__(name, print_output, collect_output)
+        super().__init__(print_output, collect_output)
         self._ProcessArgs(hosts=hosts, username=username, pkey=pkey, password=password, port=port,
                  sudo=sudo, shell=shell, host_aliases=host_aliases, ssh_info=ssh_info)
 

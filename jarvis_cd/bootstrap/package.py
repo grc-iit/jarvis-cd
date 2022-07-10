@@ -1,5 +1,5 @@
 
-from jarvis_cd.comm.ssh_node import SSHNode
+from jarvis_cd.basic.exec_node import ExecNode
 from abc import ABC, abstractmethod
 from jarvis_cd.comm.ssh_config import SSHConfig
 from enum import Enum
@@ -57,13 +57,13 @@ class Package(BootstrapConfig):
             self._LocalUninstall()
 
     def Install(self):
-        SSHNode('pssh', f"jarvis-bootstrap deps local_install {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        ExecNode('pssh', f"jarvis-bootstrap deps local_install {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def Update(self):
-        SSHNode('pssh', f"jarvis-bootstrap deps local_update {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        ExecNode('pssh', f"jarvis-bootstrap deps local_update {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def Uninstall(self):
-        SSHNode('pssh', f"jarvis-bootstrap deps local_uninstall {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        ExecNode('pssh', f"jarvis-bootstrap deps local_uninstall {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     @abstractmethod
     def _LocalInstall(self):

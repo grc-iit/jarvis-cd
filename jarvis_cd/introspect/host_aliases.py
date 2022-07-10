@@ -1,9 +1,9 @@
-from jarvis_cd.hardware.detect_networks import DetectNetworks
+from jarvis_cd.introspect.detect_networks import DetectNetworks
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.node import Node
 
 class FindHostAliases(DetectNetworks):
-    def __init__(self, name, hosts):
+    def __init__(self, hosts):
         #Hosts
         if isinstance(hosts, list):
             self.hosts = hosts
@@ -14,7 +14,7 @@ class FindHostAliases(DetectNetworks):
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SCPNode hosts", type(hosts))
         self.host_aliases = ['localhost']
-        super().__init__(name, print_output=False)
+        super().__init__(print_output=False)
 
     def _Run(self):
         super()._Run()

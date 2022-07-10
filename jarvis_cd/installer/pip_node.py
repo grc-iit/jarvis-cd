@@ -4,7 +4,7 @@ from jarvis_cd.basic.exec_node import ExecNode
 import sys,os
 
 class LocalPipNode(Node):
-    def __init__(self, name, path, inplace=True, user=True):
+    def __init__(self, path, inplace=True, user=True):
         super().__init__(name)
         self.path = path
         self.inplace = inplace

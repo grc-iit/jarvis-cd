@@ -1,12 +1,10 @@
 
-from jarvis_cd.comm.ssh_node import SSHNode
+from jarvis_cd.basic.exec_node import ExecNode
 
-class LinkSpackage(SSHNode):
-    def __init__(self, name, hosts, spack_query_dict, link_path,
-                 username=None, pkey=None, password=None, port=22,
-                 sudo=False, print_output=True, collect_output=True, do_ssh=True, ssh_info=None):
+class LinkSpackage(ExecNode):
+    def __init__(self, spack_query_dict, link_path, **kwargs):
         self.spack_query_dict = spack_query_dict
         package_name = self.spack_query_dict['package_name']
         spack_query = package_name
         cmds = f"ln -s `spack find  --format \"{{prefix}}\" {spack_query}` {link_path}"
-        super().__init__(name, hosts, cmds, username, pkey, password, port, sudo, print_output, collect_output, do_ssh, ssh_info=ssh_info)
+        super().__init__(cmds, **kwargs)

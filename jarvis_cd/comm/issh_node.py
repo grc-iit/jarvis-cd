@@ -4,8 +4,8 @@ import getpass
 import sys, os
 from jarvis_cd.exception import Error, ErrorCode
 
-class InteractiveSSHNode(ExecNode):
-    def __init__(self, name, host, ssh_info, only_init=False):
+class InteractiveSSHExecNode(ExecNode):
+    def __init__(self, host, ssh_info, only_init=False):
         #Set default values
         self.username = getpass.getuser()
         self.pkey = None
@@ -30,4 +30,4 @@ class InteractiveSSHNode(ExecNode):
             cmd = f"ssh -i {self.pkey} -p {self.port} {self.username}@{self.host} {self.cmd}"
         else:
             cmd = f"ssh -p {self.port} {self.username}@{self.host} {self.cmd}"
-        super.__init__(name, cmd, print_output=True, collect_output=False)
+        super.__init__(cmd, print_output=True, collect_output=False)

@@ -11,7 +11,7 @@ class SCSRepoSetup(Package):
         GitNode('clone', self.config['scs_repo']['repo'], scs_repo_root, GitOps.CLONE,
                 branch=self.config['scs_repo']['branch'], commit=self.config['scs_repo']['commit'],
                 collect_output=False, print_output=True).Run()
-        ExecNode('add repo', f'spack repo add {scs_repo_root}').Run()
+        ExecNode'add repo', f'spack repo add {scs_repo_root}').Run()
         ModifyEnvNode('add env var', self.bashni, f"export SCS_REPO", ModifyEnvNodeOps.REMOVE).Run()
         ModifyEnvNode('add env var', self.bashni, f"export SCS_REPO={scs_repo_root}", ModifyEnvNodeOps.APPEND).Run()
 

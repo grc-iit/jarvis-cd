@@ -9,8 +9,8 @@ class GitOps(Enum):
     UPDATE='update'
 
 class GitNode(Node):
-    def __init__(self, name, url, path, method, branch=None, commit=None, collect_output=True, print_output=True):
-        super.__init__(name, collect_output=collect_output, print_output=print_output)
+    def __init__(self, url, path, method, branch=None, commit=None, collect_output=True, print_output=True):
+        super.__init__(collect_output=collect_output, print_output=print_output)
         self.url = url
         self.branch = branch
         self.commit = commit

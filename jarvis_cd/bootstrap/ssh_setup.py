@@ -1,7 +1,7 @@
 from jarvis_cd.basic.exec_node import ExecNode
-from jarvis_cd.comm.ssh_node import SSHNode
+from jarvis_cd.basic.exec_node import ExecNode
 from jarvis_cd.comm.scp_node import SCPNode
-from jarvis_cd.comm.issh_node import InteractiveSSHNode
+from jarvis_cd.comm.issh_node import InteractiveSSHExecNode
 from jarvis_cd.bootstrap.package import BootstrapConfig
 import sys,os
 
@@ -22,16 +22,16 @@ class SSHSetup(BootstrapConfig):
         # Ensure all self.all_hosts are trusted on this machine
         print("Add all hosts to known_hosts")
         for host in self.all_hosts:
-            InteractiveSSHNode('init connect', host, self.ssh_info, only_init=True)
+            InteractiveSSHExecNode('init connect', host, self.ssh_info, only_init=True)
 
     def InstallKeys(self):
         print("Install SSH keys")
         # Ensure pubkey trusted on all nodes
         for host in self.all_hosts:
             copy_id_cmd = f"ssh-copy-id -f -i {self.public_key} -p {self.port} {self.username}@{host}"
-            ExecNode('Install public key', copy_id_cmd).Run()
+            ExecNode'Install public key', copy_id_cmd).Run()
         # Create SSH directory on all nodes
-        SSHNode('Make SSH directory', self.all_hosts, f'mkdir {self.dst_key_dir}', ssh_info=self.ssh_info).Run()
+        ExecNode('Make SSH directory', self.all_hosts, f'mkdir {self.dst_key_dir}', ssh_info=self.ssh_info).Run()
 
         # Copy all keys:
         for key_entry in self.ssh_keys.keys():
@@ -64,5 +64,5 @@ class SSHSetup(BootstrapConfig):
     def SSHPermissions(self):
         src_cmd = self._SSHPermissionsCmd('local')
         dst_cmd = self._SSHPermissionsCmd('remote')
-        ExecNode('Set permissions locally', src_cmd, collect_output=False).Run()
-        SSHNode('Set permissions on destination', self.all_hosts, dst_cmd, ssh_info=self.ssh_info).Run()
+        ExecNode'Set permissions locally', src_cmd, collect_output=False).Run()
+        ExecNode('Set permissions on destination', self.all_hosts, dst_cmd, ssh_info=self.ssh_info).Run()

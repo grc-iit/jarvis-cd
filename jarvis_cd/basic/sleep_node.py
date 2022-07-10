@@ -4,8 +4,8 @@ from jarvis_cd.node import Node
 
 
 class SleepNode(Node):
-    def __init__(self, name,  timer, print_output=False):
-        super().__init__(name, print_output)
+    def __init__(self,  timer, print_output=False):
+        super().__init__(print_output)
         self.timer = timer
 
     def _Run(self):

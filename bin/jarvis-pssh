@@ -2,7 +2,7 @@
 
 import sys,os
 from jarvis_cd.comm.ssh_config import SSHConfig
-from jarvis_cd.comm.ssh_node import SSHNode
+from jarvis_cd.basic.exec_node import ExecNode
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
@@ -10,5 +10,5 @@ if __name__ == '__main__':
         exit()
     op = sys.argv[1]
     conf = SSHConfig().LoadConfig()
-    SSHNode("Run Command", conf.hosts, op, ssh_info=conf.ssh_info).Run()
+    ExecNode("Run Command", conf.hosts, op, ssh_info=conf.ssh_info).Run()
 

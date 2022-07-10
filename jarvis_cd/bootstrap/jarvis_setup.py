@@ -1,9 +1,8 @@
 from jarvis_cd.installer.git_node import GitNode, GitOps
 from jarvis_cd.installer.modify_env_node import ModifyEnvNode, ModifyEnvNodeOps
 from jarvis_cd.installer.pip_node import LocalPipNode
-from jarvis_cd.basic.exec_node import ExecNode
 from jarvis_cd.bootstrap.package import Package
-from jarvis_cd.comm.ssh_node import SSHNode
+from jarvis_cd.basic.exec_node import ExecNode
 from jarvis_cd.comm.scp_node import SCPNode
 import sys,os
 import shutil
@@ -15,10 +14,10 @@ class JarvisSetup(Package):
         cmds = [
             f"./{jarvis_root}/dependencies.sh",
             f"export PYTHONPATH={jarvis_root}",
-            f"cd {self.config['jarvs']['path']}",
+            f"cd {self.config['jarvis_cd']['path']}",
             f"./bin/jarvis-bootstrap deps local_install jarvis"
         ]
-        SSHNode('install jarvis', cmds, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        ExecNode('install jarvis', cmds, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def _LocalInstall(self):
         jarvis_root = self.config['jarvis_cd']['path']

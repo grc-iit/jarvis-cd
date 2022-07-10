@@ -1,6 +1,6 @@
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.yaml_conf import YAMLConfig
-from jarvis_cd.hardware.host_aliases import FindHostAliases
+from jarvis_cd.introspect.host_aliases import FindHostAliases
 from jarvis_cd.exception import Error, ErrorCode
 import getpass
 import sys,os
@@ -34,59 +34,3 @@ class SSHConfig(YAMLConfig):
 
     def _GetPrivateKey(self, key_dir, key_name):
         return f'{key_dir}/{key_name}'
-
-class SSHArgs:
-    def _ProcessArgs(self, hosts=None, username=None, pkey=None, password=None, port=22,
-         sudo=False, shell=True, host_aliases=None, ssh_info=None):
-
-        #Make sure hosts in proper format
-        if hosts is None:
-            hosts = []
-        if isinstance(hosts, list):
-            self.hosts = hosts
-        elif isinstance(hosts, str):
-            self.hosts = [hosts]
-        elif isinstance(hosts, Hostfile):
-            self.hosts = hosts.list()
-        else:
-            raise Error(ErrorCode.INVALID_TYPE).format("SSHNode hosts", type(hosts))
-
-        # Make sure host_aliases is not None
-        if host_aliases is None:
-            host_aliases = []
-
-        #Prioritize ssh_info structure
-        if ssh_info is not None:
-            if 'username' in ssh_info:
-                username = ssh_info['username']
-            if 'key' in ssh_info and 'key_dir' in ssh_info:
-                pkey = os.path.join(ssh_info['key_dir'], ssh_info['key'])
-            if 'password' in ssh_info:
-                password = password
-            if 'port' in ssh_info:
-                port = ssh_info['port']
-            if 'sudo' in ssh_info:
-                sudo = ssh_info['sudo']
-            if 'shell' in ssh_info:
-                shell = ssh_info['shell']
-            if 'host_aliases' in ssh_info:
-                if isinstance(ssh_info['host_aliases'], list):
-                    host_aliases += ssh_info['host_aliases']
-                else:
-                    host_aliases.append(ssh_info['host_aliases'])
-
-        # Fill in defaults for username, password, and pkey
-        if username is None:
-            username = getpass.getuser()
-        if password is None and pkey is None:
-            pkey = f"{os.environ['HOME']}/.ssh/id_rsa"
-
-        self.pkey = pkey
-        self.password = password
-        self.sudo = sudo
-        self.username = username
-        self.port = int(port)
-        self.do_ssh = len(self.hosts) == 0
-        self.shell = shell
-        self.host_aliases = host_aliases
-

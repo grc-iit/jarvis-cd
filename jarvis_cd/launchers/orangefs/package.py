@@ -7,7 +7,7 @@ import socket
 
 from jarvis_cd.comm.scp_node import SCPNode
 from jarvis_cd.basic.sleep_node import SleepNode
-from jarvis_cd.comm.ssh_node import SSHNode
+from jarvis_cd.basic.exec_node import ExecNode
 
 class Orangefs(Launcher):
     def __init__(self, config_path=None, args=None):
@@ -66,18 +66,18 @@ class Orangefs(Launcher):
                 client_pvfs2tab=self.config['CLIENT']['CLIENT_PVFS2TAB_FILE']
             ))
             cmd.append("mkdir -p {}".format(self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']))
-            node = SSHNode("set pvfstab for client {}".format(metadata_server),client,cmds)
+            node = ExecNode("set pvfstab for client {}".format(metadata_server),client,cmds)
             node.Run()
 
         ## create tmp dir
-        tmp_dir_node = SSHNode("make tmp dir in clients",self.client_hosts,"mkdir -p {}".format(self.temp_dir))
+        tmp_dir_node = ExecNode("make tmp dir in clients",self.client_hosts,"mkdir -p {}".format(self.temp_dir))
         tmp_dir_node.Run()
         ## copy pfs conf
         copy_node = SCPNode("cp conf file",self.server_data_hosts,self.pfs_conf_scp,self.pfs_conf)
         copy_node.Run()
 
         ## create server data storage
-        ssh_dir_node = SSHNode("make data dir in server",self.server_data_hosts,"mkdir -p {}".format(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR']))
+        ssh_dir_node = ExecNode("make data dir in server",self.server_data_hosts,"mkdir -p {}".format(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR']))
         ssh_dir_node.Run()
 
     def _DefineStart(self):
@@ -91,7 +91,7 @@ class Orangefs(Launcher):
                 "{pfs_server} {pfs_conf} -f -a {host}".format(pfs_server=pvfs2_server, pfs_conf=self.pfs_conf, host=host),
                 "{pfs_server} {pfs_conf} -a {host}".format(pfs_server=pvfs2_server, pfs_conf=self.pfs_conf, host=host)
             ]
-            start_pfs_servers = SSHNode("start pfs servers",host,server_start_cmds)
+            start_pfs_servers = ExecNode("start pfs servers",host,server_start_cmds)
             start_pfs_servers.Run()
 
         #Verify
@@ -104,7 +104,7 @@ class Orangefs(Launcher):
             pvfs2_ping=pvfs2_ping,
             mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']
         )
-        verify_server = SSHNode("verify server",self.client_hosts,verify_server_cmd,print_output=True)
+        verify_server = ExecNode("verify server",self.client_hosts,verify_server_cmd,print_output=True)
         verify_server.Run()
 
         # start pfs client
@@ -123,7 +123,7 @@ class Orangefs(Launcher):
                     ip=metadata_server_ip,
                     mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR'])
             ]
-            SSHNode("mount pvfs2 client {}".format(metadata_server),client,start_client_cmds).Run()
+            ExecNode("mount pvfs2 client {}".format(metadata_server),client,start_client_cmds).Run()
 
     def _DefineStop(self):
         for i, client in self.client_hosts.enumerate():
@@ -136,18 +136,18 @@ class Orangefs(Launcher):
                 "rmmod pvfs2",
                 "kill-pvfs2-client"
             ]
-            SSHNode("stop client",client, cmds, sudo=True).Run()
-        SSHNode("stop server",self.server_data_hosts,"killall -9 pvfs2-server").Run()
-        SSHNode("check server", self.client_hosts,"pgrep -la pvfs2-server",print_output=True).Run()
+            ExecNode("stop client",client, cmds, sudo=True).Run()
+        ExecNode("stop server",self.server_data_hosts,"killall -9 pvfs2-server").Run()
+        ExecNode("check server", self.client_hosts,"pgrep -la pvfs2-server",print_output=True).Run()
 
     def _DefineClean(self):
-        SSHNode("clean client data", self.client_hosts,
+        ExecNode("clean client data", self.client_hosts,
                              "rm -rf {}/*".format(self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR'])).Run()
-        SSHNode("clean server data", self.server_data_hosts,
+        ExecNode("clean server data", self.server_data_hosts,
                              "rm -rf {}".format(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'])).Run()
 
     def _DefineStatus(self):
-        SSHNode("check clients", self.server_data_hosts, "mount | grep pvfs").Run()
+        ExecNode("check clients", self.server_data_hosts, "mount | grep pvfs").Run()
         pvfs2_ping = os.path.join(self.config['COMMON']['ORANGEFS_INSTALL_DIR'], "bin", "pvfs2-ping")
         verify_server_cmd = "export LD_LIBRARY_PATH={pvfs2_lib}; export PVFS2TAB_FILE={client_pvfs2tab}; " \
                             "{pvfs2_ping} -m {mount_point} | grep 'appears to be correctly configured'".format(
@@ -156,5 +156,5 @@ class Orangefs(Launcher):
             pvfs2_ping=pvfs2_ping,
             mount_point=self.config['CLIENT']['CLIENT_MOUNT_POINT_DIR']
         )
-        SSHNode("check server", self.client_hosts, verify_server_cmd, print_output=True).Run()
+        ExecNode("check server", self.client_hosts, verify_server_cmd, print_output=True).Run()
 

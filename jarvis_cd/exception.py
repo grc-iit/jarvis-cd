@@ -40,5 +40,5 @@ class ErrorCode:
     HOSTFILE_NOT_FOUND = {"id": 1006, "msg": "Hostfile at {} does not exist."}
     TOO_MANY_HOSTS_CHOSEN = {"id": 1007, "msg": "Hostfile at {} does not contain {} hosts, only {}."}
     INVALID_TYPE = {"id": 1008, "msg": "{}: Has invalid type {}."}
-
+    INVALID_CMD_LIST = {"id": 1009, "msg": "ExecNode command list has a mix of both strings and nodes. {}"}
     #Orange FS error code

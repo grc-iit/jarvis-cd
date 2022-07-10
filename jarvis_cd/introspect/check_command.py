@@ -4,8 +4,8 @@ import shutil
 from jarvis_cd.node import *
 
 class CheckCommandNode(Node):
-    def __init__(self, name, program, print_output=True, collect_output=True):
-        super().__init__(name, print_output, collect_output)
+    def __init__(self, program, print_output=True, collect_output=True):
+        super().__init__(print_output, collect_output)
         self.program = program
 
     def _Run(self):
