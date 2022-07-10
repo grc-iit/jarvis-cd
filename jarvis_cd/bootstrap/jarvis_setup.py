@@ -22,6 +22,7 @@ class JarvisSetup(Package):
 
     def _LocalInstall(self):
         jarvis_root = self.config['jarvis_cd']['path']
+        LocalPipNode(jarvis_root).Run()
 
         #Ensure that the variables aren't already being set
         ModifyEnvNode(self.jarvis_env, f"export JARVIS_ROOT", ModifyEnvNodeOps.REMOVE).Run()

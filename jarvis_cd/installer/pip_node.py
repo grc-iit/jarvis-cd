@@ -21,4 +21,4 @@ class LocalPipNode(Node):
         if self.user:
             cmd.append('--user')
         cmd = ' '.join(cmd)
-        ExecNode('run pip', cmd).Run()
+        ExecNode(cmd).Run()
