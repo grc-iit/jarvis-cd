@@ -9,6 +9,9 @@ class SSHConfig(YAMLConfig):
     def DefaultConfigPath(self, conf_type='default'):
         return os.path.join(self.jarvis_root, 'comm', 'conf', f"{conf_type}.yaml")
 
+    def _Scaffold(self):
+        return
+
     def _ProcessConfig(self):
         self.public_key = None
         self.private_key = None

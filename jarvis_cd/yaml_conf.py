@@ -45,9 +45,10 @@ class YAMLConfig(ABC):
         new_conf_path = self.ScaffoldConfigPath()
         with open(old_conf_path, "r") as old_fp:
             with open(new_conf_path, 'w') as new_fp:
-                conf = yaml.load(old_fp, Loader=yaml.FullLoader)
-                conf['SCAFFOLD'] = self.scaffold_dir
-                yaml.dump(conf, new_fp)
+                self.config = yaml.load(old_fp, Loader=yaml.FullLoader)
+                self.config['SCAFFOLD'] = self.scaffold_dir
+                self._Scaffold()
+                yaml.dump(self.config, new_fp)
 
     def SetConfig(self, config):
         if isinstance(config, YAMLConfig):
@@ -84,5 +85,9 @@ class YAMLConfig(ABC):
         pass
 
     @abstractmethod
+    def _Scaffold(self):
+        pass
+
+    @abstractmethod
     def _ProcessConfig(self):
-        return []
+        pass

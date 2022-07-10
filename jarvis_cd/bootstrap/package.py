@@ -10,7 +10,7 @@ class BootstrapConfig(SSHConfig):
     def DefaultConfigPath(self, conf_type='remote'):
         return os.path.join(self.jarvis_root, 'jarvis_cd', 'bootstrap', 'conf', f'{conf_type}.yaml')
 
-    def Scaffold(self, conf_type='local'):
+    def _Scaffold(self):
         #Check if jarvis already installed
         if 'JARVIS_ROOT' in os.environ:
             self.config['jarvis_cd']['path'] = os.environ['JARVIS_ROOT']
@@ -23,9 +23,6 @@ class BootstrapConfig(SSHConfig):
         #Check if scsrepo already installed
         if 'SCS_REPO' in os.environ:
             self.config['scs_repo']['path'] = os.environ['SCS_REPO']
-
-        #Persist configuration
-        super().Scaffold(conf_type)
 
     def _ProcessConfig(self):
         super()._ProcessConfig()
