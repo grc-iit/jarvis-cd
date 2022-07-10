@@ -36,7 +36,6 @@ class JarvisSetup(Package):
         jarvis_root = os.environ['JARVIS_ROOT']
         GitNode(self.config['jarvis_cd']['repo'], jarvis_root, GitOps.UPDATE,
                 branch=self.config['jarvis_cd']['branch'], commit=self.config['jarvis_cd']['commit']).Run()
-        ExecNode(f"{jarvis_root}/dependencies.sh").Run()
         LocalPipNode(jarvis_root).Run()
 
     def _LocalUninstall(self):
