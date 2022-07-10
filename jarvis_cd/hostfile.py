@@ -29,12 +29,14 @@ class Hostfile:
     def SetHosts(self, hosts):
         self.all_hosts = hosts
         self.hosts = hosts
+        return self
 
     def Load(self, hosts):
         if isinstance(hosts, str):
             self.LoadHostfile(hosts)
         else:
             self.SetHosts(hosts)
+        return self
 
     def SelectHosts(self, hostset):
         #Hosts are numbered from 1

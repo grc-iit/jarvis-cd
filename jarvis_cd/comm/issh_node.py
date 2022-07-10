@@ -30,4 +30,4 @@ class InteractiveSSHNode(ExecNode):
             cmd = f"ssh -i {self.pkey} -p {self.port} {self.username}@{self.host} {self.cmd}"
         else:
             cmd = f"ssh -p {self.port} {self.username}@{self.host} {self.cmd}"
-        super.__init__(cmd, print_output=True, collect_output=False)
+        super().__init__(cmd, print_output=True, collect_output=False)

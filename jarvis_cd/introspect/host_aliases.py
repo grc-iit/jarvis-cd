@@ -1,10 +1,13 @@
 from jarvis_cd.introspect.detect_networks import DetectNetworks
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.node import Node
+from jarvis_cd.exception import Error,ErrorCode
 
 class FindHostAliases(DetectNetworks):
-    def __init__(self, hosts):
+    def __init__(self, hosts, **kwargs):
         #Hosts
+        if hosts is None:
+            hosts = []
         if isinstance(hosts, list):
             self.hosts = hosts
         elif isinstance(hosts, str):
@@ -12,9 +15,9 @@ class FindHostAliases(DetectNetworks):
         elif isinstance(hosts, Hostfile):
             self.hosts = hosts.list()
         else:
-            raise Error(ErrorCode.INVALID_TYPE).format("SCPNode hosts", type(hosts))
+            raise Error(ErrorCode.INVALID_TYPE).format("Find host aliases hosts", type(hosts))
         self.host_aliases = ['localhost']
-        super().__init__(print_output=False)
+        super().__init__(print_output=False, **kwargs)
 
     def _Run(self):
         super()._Run()

@@ -6,8 +6,8 @@ from jarvis_cd.bootstrap.package import BootstrapConfig
 import sys,os
 
 class SSHSetup(BootstrapConfig):
-    def __init__(self):
-        super().__init__()
+    def _ProcessConfig(self):
+        super()._ProcessConfig()
         self.dst_key_dir = os.path.join('home', self.username, '.ssh')
         if "ssh_keys" in self.config and "primary" in self.config["ssh_keys"]:
             if "dst_key_dir" in self.config["ssh_keys"]["primary"] and self.config["ssh_keys"]["primary"]["dst_key_dir"] is not None:

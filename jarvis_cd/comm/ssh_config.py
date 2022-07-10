@@ -22,7 +22,7 @@ class SSHConfig(YAMLConfig):
         if 'HOSTS' in self.config and 'SSH' in self.config:
             self.all_hosts = Hostfile().Load(self.config['HOSTS'])
             self.ssh_info = self.config['SSH']
-            self.ssh_info['host_aliases'] = FindHostAliases('Get Aliases', self.all_hosts).Run().GetAliases()
+            self.ssh_info['host_aliases'] = FindHostAliases(self.all_hosts).Run().GetAliases()
             self.host_aliases = self.ssh_info['host_aliases']
 
         if self.ssh_info is not None and 'key' in self.ssh_info and 'key_dir' in self.ssh_info:
