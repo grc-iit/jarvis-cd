@@ -24,7 +24,8 @@ class ExecNode(ParallelNode):
             raise Error(ErrorCode.INVALID_CMD_LIST).format(cmds)
 
         #If this is a list of nodes, convert to a python program
-        cmds = [ cmd._ToShellCmd() for cmd in cmds]
+        if self.is_nodelist:
+            cmds = [ cmd._ToShellCmd() for cmd in cmds]
 
         #Store command list
         self.cmds = cmds
