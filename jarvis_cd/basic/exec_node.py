@@ -32,6 +32,8 @@ class ExecNode(ParallelNode):
 
     def _Run(self):
         if self.do_ssh:
-            SSHExecNode(self.cmds, **self.kwargs)
+            print("Do SSH?")
+            SSHExecNode(self.cmds, **self.kwargs).Run()
         else:
-            LocalExecNode(self.cmds, **self.kwargs)
+            print("Do Local?")
+            LocalExecNode(self.cmds, **self.kwargs).Run()

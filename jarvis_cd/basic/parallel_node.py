@@ -58,7 +58,7 @@ class ParallelNode(Node):
         self.sudo = sudo
         self.username = username
         self.port = int(port)
-        self.do_ssh = len(self.hosts) == 0
+        self.do_ssh = len(self.hosts) != 0
         self.shell = shell
         self.host_aliases = host_aliases
         self.affinity = affinity

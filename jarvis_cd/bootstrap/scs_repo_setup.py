@@ -12,8 +12,8 @@ class SCSRepoSetup(Package):
                 branch=self.config['scs_repo']['branch'], commit=self.config['scs_repo']['commit'],
                 collect_output=False, print_output=True).Run()
         ExecNode(f'spack repo add {scs_repo_root}').Run()
-        ModifyEnvNode('add env var', self.bashni, f"export SCS_REPO", ModifyEnvNodeOps.REMOVE).Run()
-        ModifyEnvNode('add env var', self.bashni, f"export SCS_REPO={scs_repo_root}", ModifyEnvNodeOps.APPEND).Run()
+        ModifyEnvNode(self.bashni, f"export SCS_REPO", ModifyEnvNodeOps.REMOVE).Run()
+        ModifyEnvNode(self.bashni, f"export SCS_REPO={scs_repo_root}", ModifyEnvNodeOps.APPEND).Run()
 
     def _LocalUpdate(self):
         scs_repo_root = os.environ['SCS_REPO']
@@ -24,4 +24,4 @@ class SCSRepoSetup(Package):
     def _LocalUninstall(self):
         scs_repo_root = os.environ['SCS_REPO']
         shutil.rmtree(scs_repo_root)
-        ModifyEnvNode('rm env var', self.bashni, f"export SCS_REPO", ModifyEnvNodeOps.REMOVE).Run()
+        ModifyEnvNode(self.bashni, f"export SCS_REPO", ModifyEnvNodeOps.REMOVE).Run()

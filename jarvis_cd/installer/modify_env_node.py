@@ -1,6 +1,7 @@
 from jarvis_cd.node import Node
 from enum import Enum
 import re
+import os
 
 class ModifyEnvNodeOps(Enum):
     PREPEND = 'prepend'
@@ -9,13 +10,13 @@ class ModifyEnvNodeOps(Enum):
 
 class ModifyEnvNode(Node):
     def __init__(self, path, info, op, print_output=True, collect_output=False):
-        super.__init__(print_output=print_output, collect_output=collect_output)
+        super().__init__(print_output=print_output, collect_output=collect_output)
         self.path = path
         self.info = info
         self.op = op
 
     def _Run(self):
-        if self.op == ModifyEnvNodeOps.PREPEND or self.op == ModifyEnvNodeOps.APPEND:
+        if self.op == ModifyEnvNodeOps.APPEND:
             self._Insert(self.info)
         else:
             self._Remove(self.info)
@@ -27,14 +28,18 @@ class ModifyEnvNode(Node):
             cmds = [cmds]
         cmds = [f"{cmd}\n" for cmd in cmds]
         cmd = ''.join(cmds)
-        with open(self.path, 'r') as fp:
-            text = fp.read()
-            text = cmd + text
+        text = ""
+        if os.path.exists(self.path):
+            with open(self.path, 'r') as fp:
+                text = fp.read()
+        text = cmd + text
         with open(self.path, 'w') as fp:
             fp.write(text)
 
     def _Remove(self, regexs):
         if regexs is None:
+            return
+        if not os.path.exists(self.path):
             return
         if isinstance(regexs, str):
             regexs = [regexs]
