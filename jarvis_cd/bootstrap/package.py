@@ -2,12 +2,30 @@
 from jarvis_cd.basic.exec_node import ExecNode
 from abc import ABC, abstractmethod
 from jarvis_cd.comm.ssh_config import SSHConfig
+from jarvis_cd.introspect.check_command import CheckCommandNode
 from enum import Enum
 import os
 
 class BootstrapConfig(SSHConfig):
     def DefaultConfigPath(self, conf_type='remote'):
         return os.path.join(self.jarvis_root, 'jarvis_cd', 'bootstrap', 'conf', f'{conf_type}.yaml')
+
+    def Scaffold(self, conf_type='local'):
+        #Check if jarvis already installed
+        if 'JARVIS_ROOT' in os.environ:
+            self.config['jarvis_cd']['path'] = os.environ['JARVIS_ROOT']
+
+        #Check if spack already installed
+        node = CheckCommandNode('spack').Run()
+        if node.Exists():
+            self.config['spack']['path'] = node.Path()
+
+        #Check if scsrepo already installed
+        if 'SCS_REPO' in os.environ:
+            self.config['scs_repo']['path'] = os.environ['SCS_REPO']
+
+        #Persist configuration
+        super().Scaffold(conf_type)
 
     def _ProcessConfig(self):
         super()._ProcessConfig()
@@ -39,7 +57,7 @@ class Package(BootstrapConfig):
         super().__init__()
         self.operation = operation
         self.bashrc = f"{os.environ['HOME']}/.bashrc"
-        self.bashni = f"{os.environ['HOME']}/.bashni"
+        self.jarvis_env = f"{os.environ['HOME']}/.bashni"
         self.package_name = package_name
 
     def Run(self):

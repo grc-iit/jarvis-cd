@@ -1,7 +1,7 @@
 from jarvis_cd.node import Node
 from enum import Enum
 import re
-import os
+import os,sys
 
 class ModifyEnvNodeOps(Enum):
     PREPEND = 'prepend'
@@ -26,13 +26,15 @@ class ModifyEnvNode(Node):
             return
         if isinstance(cmds, str):
             cmds = [cmds]
-        cmds = [f"{cmd}\n" for cmd in cmds]
-        cmd = ''.join(cmds)
-        text = ""
+        cmd = '\n'.join(cmds)
+        text = ''
         if os.path.exists(self.path):
             with open(self.path, 'r') as fp:
                 text = fp.read()
-        text = cmd + text
+        if len(text):
+            text += '\n' + cmd
+        else:
+            text = cmd
         with open(self.path, 'w') as fp:
             fp.write(text)
 
@@ -44,7 +46,7 @@ class ModifyEnvNode(Node):
         if isinstance(regexs, str):
             regexs = [regexs]
         with open(self.path, 'r') as fp:
-            lines = fp.readlines()
+            lines = fp.read().splitlines()
             for line in lines:
                 for regex in regexs:
                     if re.match(regex, line):

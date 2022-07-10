@@ -55,10 +55,13 @@ if __name__ == '__main__':
         if len(sys.argv) == 4:
             package_name = sys.argv[3]
         if package_name == 'jarvis' or package_name == 'all':
+            print(f"{sub_op} jarvis")
             node = JarvisSetup(sub_op, package_name).SetConfig(config).Run()
         if package_name == 'spack' or package_name == 'all':
+            print(f"{sub_op} spack")
             node = SpackSetup(sub_op, package_name).SetConfig(config).Run()
         if package_name == 'scs_repo' or package_name == 'all':
+            print(f"{sub_op} scs_repo")
             node = SCSRepoSetup(sub_op, package_name).SetConfig(config).Run()
     else:
         print(f"Invalid operation: {op}")

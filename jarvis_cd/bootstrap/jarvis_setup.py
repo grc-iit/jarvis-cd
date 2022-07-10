@@ -16,7 +16,7 @@ class JarvisSetup(Package):
             f"{jarvis_root}/dependencies.sh",
             f"export PYTHONPATH={jarvis_root}",
             f"cd {self.config['jarvis_cd']['path']}",
-            f"./bin/jarvis-bootstrap deps local_install jarvis"
+            f"./bin/jarvis-bootstrap deps local_install all"
         ]
         ExecNode(cmds, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
@@ -24,12 +24,12 @@ class JarvisSetup(Package):
         jarvis_root = self.config['jarvis_cd']['path']
 
         #Ensure that the variables aren't already being set
-        ModifyEnvNode(self.bashni, f"export JARVIS_ROOT", ModifyEnvNodeOps.REMOVE).Run()
-        ModifyEnvNode(self.bashni, f"export PYTHONPATH", ModifyEnvNodeOps.REMOVE).Run()
+        ModifyEnvNode(self.jarvis_env, f"export JARVIS_ROOT", ModifyEnvNodeOps.REMOVE).Run()
+        ModifyEnvNode(self.jarvis_env, f"export PYTHONPATH", ModifyEnvNodeOps.REMOVE).Run()
 
         #Set the variables to their proper values
-        ModifyEnvNode(self.bashni, f"export JARVIS_ROOT={jarvis_root}", ModifyEnvNodeOps.APPEND).Run()
-        ModifyEnvNode(self.bashni, f"export PYTHONPATH=`sudo -u {self.username} $JARVIS_ROOT/bin/jarvis-py-paths`:$PYTHONPATH", ModifyEnvNodeOps.APPEND).Run()
+        ModifyEnvNode(self.jarvis_env, f"export JARVIS_ROOT={jarvis_root}", ModifyEnvNodeOps.APPEND).Run()
+        ModifyEnvNode(self.jarvis_env, f"export PYTHONPATH=`sudo -u {self.username} $JARVIS_ROOT/bin/jarvis-py-paths`:$PYTHONPATH", ModifyEnvNodeOps.APPEND).Run()
 
     def _LocalUpdate(self):
         jarvis_root = os.environ['JARVIS_ROOT']
@@ -41,5 +41,5 @@ class JarvisSetup(Package):
     def _LocalUninstall(self):
         jarvis_root = os.environ['JARVIS_ROOT']
         shutil.rmtree(jarvis_root)
-        ModifyEnvNode(self.bashni, f"export JARVIS_ROOT", ModifyEnvNodeOps.REMOVE).Run()
-        ModifyEnvNode(self.bashni, f"export PYTHONPATH", ModifyEnvNodeOps.REMOVE).Run()
+        ModifyEnvNode(self.jarvis_env, f"export JARVIS_ROOT", ModifyEnvNodeOps.REMOVE).Run()
+        ModifyEnvNode(self.jarvis_env, f"export PYTHONPATH", ModifyEnvNodeOps.REMOVE).Run()
