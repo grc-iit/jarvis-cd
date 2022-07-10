@@ -7,13 +7,13 @@ import shutil
 class SpackSetup(Package):
     def _LocalInstall(self):
         spack_root = self.config['spack']['path']
-        GitNode(**self.config['spack'], method=GitOps.CLONE, collect_output=False, print_output=True).Run()
+        GitNode(**self.config['spack'], method=GitOps.CLONE, collect_output=False).Run()
         ModifyEnvNode(self.jarvis_env, f". {spack_root}", ModifyEnvNodeOps.REMOVE).Run()
         ModifyEnvNode(self.jarvis_env, f". {spack_root}/share/spack/setup-env.sh", ModifyEnvNodeOps.APPEND).Run()
 
     def _LocalUpdate(self):
         spack_root = os.environ['SPACK_ROOT']
-        GitNode(**self.config['spack'], method=GitOps.UPDATE, collect_output=False, print_output=True).Run()
+        GitNode(**self.config['spack'], method=GitOps.UPDATE, collect_output=False).Run()
 
     def _LocalUninstall(self):
         spack_root = os.environ['SPACK_ROOT']
