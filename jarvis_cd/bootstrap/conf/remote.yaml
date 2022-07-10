@@ -10,18 +10,18 @@ ssh_keys:
     key: id_rsa
     key_dir: ${HOME}/.ssh
     dst_key_dir: /home/cc/.ssh
-dep_prefix: ${HOME}
+jarvis_cd:
+  repo: https://github.com/lukemartinlogan/jarvis-cd
+  branch: development
+  commit: null
+  path: $PWD
 spack:
   repo: https://github.com/spack/spack
   branch: releases/v0.18
   commit: null
-jarvis_cd:
-  repo: https://github.com/lukemartinlogan/jarvis-cd
-  name: jarvis-cd
-  branch: development
-  commit: null
+  path: ${HOME}/spack
 scs_repo:
   repo: https://github.com/lukemartinlogan/scs-repo
-  name: scs-repo
   branch: main
   commit: null
+  path: ${HOME}/scs-repo
