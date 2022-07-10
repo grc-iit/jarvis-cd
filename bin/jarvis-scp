@@ -15,9 +15,9 @@ if __name__ == '__main__':
         source = sys.argv[1]
         destination = sys.argv[2]
     if len(sys.argv) == 4:
-        host_id = int(sys.argv[1])
+        host_id = int(sys.argv[3])
     if len(sys.argv) > 4:
-        print("USAGE: jarvis-ssh [source] [destination] [host-id]")
+        print("USAGE: jarvis-scp [source] [destination] [host-id]")
         exit(1)
     if conf.all_hosts is None:
         print("Hostfile undefined in jarvis_conf.yaml")

@@ -3,6 +3,7 @@ from gevent import joinall
 import sys, os
 from jarvis_cd.basic.parallel_node import ParallelNode
 from jarvis_cd.basic.mkdir_node import MkdirNode
+from jarvis_cd.basic.rm_node import RmNode
 from jarvis_cd.basic.ls_node import LsNode
 from jarvis_cd.node import Node
 from jarvis_cd.exception import Error, ErrorCode
@@ -81,11 +82,15 @@ class SCPNode(ParallelNode):
                 files[file] = dst_path
 
         #Create new remote directories
-        MkdirNode(list(dirs.values()), **self._GetParams(ParallelNode)).Run()
+        #MkdirNode(list(dirs.values()), **self._GetParams(ParallelNode)).Run()
+        RmNode(list(dirs.values()), **self._GetParams(ParallelNode)).Run()
 
         #Copy all files to the remote host
         for source,destination in files.items():
-            output = client.copy_file(source, destination, recurse=os.path.isdir(source))
+            output = client.copy_file(source, destination)
+            joinall(output, raise_error=True)
+        for source,destination in dirs.items():
+            output = client.copy_file(source, destination, recurse=True)
             joinall(output, raise_error=True)
 
     def _Run(self):
