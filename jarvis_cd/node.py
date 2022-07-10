@@ -29,12 +29,20 @@ class Node(ABC):
     def _Run(self):
         pass
 
+    def _GetParams(self, klass=None, func='__init__'):
+        if klass is None:
+            klass = self
+        func = getattr(klass, func)
+        params = list(func.__code__.co_varnames)
+        if 'self' in params:
+            params.remove('self')
+        return { param: getattr(self, param) for param in params }
+
     def _ToShellCmd(self):
         node_import = type(self).__module__
-        node_params = self.__init__.__code__.co_varnames
-        node_vals = [self.__dict__[f'self.{key}'] for key in node_params]
+        node_params = self._GetParams()
         node_type = type(self).__name__
-        param_str = ','.join([f"{key}={val}" for key,val in zip(node_params,node_vals)])
+        param_str = ','.join([f"{key}={val}" for key,val in node_params.items()])
         return f"python3 -c from {node_import} import {node_type}; {node_type}({param_str}).Run()"
 
     def Run(self):

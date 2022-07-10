@@ -14,8 +14,13 @@ class ExecNode(ParallelNode):
         self.kwargs = kwargs
 
         #Ensure cmds is a list
+        if cmds is None:
+            cmds = []
         if not isinstance(cmds,list):
             cmds = [cmds]
+        if len(cmds) == 0:
+            self.cmds = cmds
+            return
 
         #Ensure this is a list of either only nodes or only strings
         self.is_strlist = all([isinstance(cmd, str) for cmd in cmds])
@@ -31,6 +36,8 @@ class ExecNode(ParallelNode):
         self.cmds = cmds
 
     def _Run(self):
+        if len(self.cmds) == 0:
+            return
         if self.do_ssh:
             SSHExecNode(self.cmds, **self.kwargs).Run()
         else:

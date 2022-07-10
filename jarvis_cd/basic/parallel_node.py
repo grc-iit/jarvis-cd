@@ -66,3 +66,4 @@ class ParallelNode(Node):
         self.max_retries = max_retries
         self.exec_async = exec_async
         self.cwd = cwd
+        self.ssh_info = ssh_info

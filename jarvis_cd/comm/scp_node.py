@@ -2,11 +2,19 @@ from pssh.clients import ParallelSSHClient
 from gevent import joinall
 import sys, os
 from jarvis_cd.basic.parallel_node import ParallelNode
-
+from jarvis_cd.basic.mkdir_node import MkdirNode
+from jarvis_cd.basic.ls_node import LsNode
 from jarvis_cd.node import Node
 from jarvis_cd.exception import Error, ErrorCode
 
 sys.stderr = sys.__stderr__
+
+"""
+SCPNode has various concerns:
+    1. /home/cc/hi.txt -> /home/cc will result in error, since /home/cc is a directory. Must specify full path.
+    2. Pscp cannot recursively copy directories. Possibly only when directories pre-existed. Fixed.
+    3. /home/cc/hi.txt -> /home/cc/hi.txt will delete hi.txt if the same host executing SCP is also in the hostfile. Fixed.
+"""
 
 class SCPNode(ParallelNode):
     def __init__(self, sources, destination, **kwargs):
@@ -23,7 +31,7 @@ class SCPNode(ParallelNode):
         #Store destination
         self.destination = destination
 
-        #There's a bug in SCP which cannot copy a file to itself
+        #There's a bug in SCP which canot copy a file to itself
         for source in self.sources:
             src_file = os.path.normpath(source)
             dst_file = os.path.normpath(destination)
@@ -41,10 +49,42 @@ class SCPNode(ParallelNode):
     def _exec_scp(self):
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password,
                                    port=self.port)
+
+        #Expand all directories
+        dirs = {}
+        files = {}
         for source in self.sources:
-            destination = self.destination
-            if len(self.sources) > 1:
-                destination = os.path.join(self.destination, os.path.basename(source))
+            #source is either a single file or a directory
+            is_dir = os.path.isdir(source)
+            source_files = [source]
+
+            #Create source dir -> destination command
+            if is_dir:
+                node = LsNode(source).Run()
+                source_files = node.GetFiles()
+                rel_path = os.path.relpath(source, source)
+                dst_path = os.path.join(self.destination, rel_path)
+                dirs[source] = dst_path
+
+            #Create source file -> destination command
+            for file in source_files:
+                #We are copying a directory to another directory. Override if exists
+                if is_dir:
+                    rel_path = os.path.relpath(file, source)
+                    dst_path = os.path.join(self.destination, rel_path)
+                #We are copying a set of files into "destination"
+                elif len(self.sources) > 1:
+                    dst_path = os.path.join(self.destination, os.path.basename(source))
+                #We are copying a single file into "destination"
+                else:
+                    dst_path = self.destination
+                files[file] = dst_path
+
+        #Create new remote directories
+        MkdirNode(list(dirs.values()), **self._GetParams(ParallelNode)).Run()
+
+        #Copy all files to the remote host
+        for source,destination in files.items():
             output = client.copy_file(source, destination, recurse=os.path.isdir(source))
             joinall(output, raise_error=True)
 
