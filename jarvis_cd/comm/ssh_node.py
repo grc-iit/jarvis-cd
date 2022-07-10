@@ -4,47 +4,23 @@ import os
 import getpass
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.basic.exec_node import ExecNode
+from jarvis_cd.comm.ssh_config import SSHArgs
 
 from jarvis_cd.node import Node
 from jarvis_cd.exception import Error, ErrorCode
 
 sys.stderr = sys.__stderr__
 
-class SSHNode(Node):
-    def __init__(self, name, hosts, cmds,
-                 username=None, pkey=None, password=None, port=22,
-                 sudo=False, print_output=True, collect_output=True, do_ssh=True, exec_async=False, shell=True,
-                 ssh_info=None):
+class SSHNode(Node,SSHArgs):
+    def __init__(self, name, cmds,
+                 hosts=None, username=None, pkey=None, password=None, port=22,
+                 sudo=False, shell=True, host_aliases=None, ssh_info=None,
+                 exec_async=False, print_output=True, collect_output=True):
         super().__init__(name, print_output, collect_output)
+        self._ProcessArgs(hosts=hosts, username=username, pkey=pkey, password=password, port=port,
+                          sudo=sudo, shell=shell, host_aliases=host_aliases, ssh_info=ssh_info)
 
-        #Make sure hosts in proper format
-        if isinstance(hosts, list):
-            self.hosts=hosts
-        elif isinstance(hosts, str):
-            self.hosts=[hosts]
-        elif isinstance(hosts, Hostfile):
-            self.hosts = hosts.list()
-        else:
-            raise Error(ErrorCode.INVALID_TYPE).format("SSHNode hosts", type(hosts))
-
-        #Make sure username is set
-        if username is None:
-            username = getpass.getuser()
-
-        #Prioritize ssh_info structure
-        if ssh_info is not None:
-            if 'username' in ssh_info:
-                username = ssh_info['username']
-            if 'key' in ssh_info and 'key_dir' in ssh_info:
-                pkey = os.path.join(ssh_info['key_dir'], ssh_info['key'])
-            if 'port' in ssh_info:
-                port = ssh_info['port']
-            if 'sudo' in ssh_info:
-                sudo = ssh_info['sudo']
-            if 'shell' in ssh_info:
-                shell = ssh_info['shell']
-
-        #Make sure commands is a list
+        #Make sure commands are a list
         if isinstance(cmds, list):
             self.cmds=cmds
         elif isinstance(cmds, str):
@@ -52,24 +28,7 @@ class SSHNode(Node):
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SSHNode cmds", type(cmds))
 
-        #Fill in defaults for username, password, and pkey
-        if username is None:
-            username = getpass.getuser()
-        if password is None and pkey is None:
-            pkey = f"{os.environ['HOME']}/.ssh/id_rsa"
-
-        #Do not execute SSH if only localhost
-        if len(self.hosts) == 0:
-            do_ssh = False
-
-        self.pkey = pkey
-        self.password = password
-        self.sudo=sudo
-        self.username=username
-        self.port = int(port)
-        self.do_ssh = do_ssh
         self.exec_async = exec_async
-        self.shell = shell
 
     def _exec_ssh(self, cmd):
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)

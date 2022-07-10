@@ -15,7 +15,7 @@ from jarvis_cd.bootstrap.scs_repo_setup import SCSRepoSetup
 from jarvis_cd.bootstrap.spack_setup import SpackSetup
 from jarvis_cd.bootstrap.ssh_setup import SSHSetup
 from jarvis_cd.bootstrap.jarvis_setup import JarvisSetup
-from jarvis_cd.bootstrap.config import BootstrapConfig
+from jarvis_cd.bootstrap.package import BootstrapConfig
 
 def help():
     print("Usage: jarvis-bootstrap [main_op] [sub_op]")
@@ -36,7 +36,7 @@ if __name__ == '__main__':
         exit(0)
 
     # Get configuration file
-    conf = BootstrapConfig().LoadConfig()
+    config = BootstrapConfig().LoadConfig()
 
     # Second-level args
     if op == 'scaffold':
@@ -45,18 +45,21 @@ if __name__ == '__main__':
         else:
             help()
             exit(1)
-        conf.Scaffold(sub_op)
+        config.Scaffold(sub_op)
     elif op == 'setup_ssh':
-        SSHSetup(conf.Get()).Run()
+        SSHSetup().SetConfig(config).Run()
     elif op == 'deps':
         if len(sys.argv) >= 3:
             sub_op = sys.argv[2]
-        else:
-            help()
-            exit(1)
-        JarvisSetup(conf.Get(), sub_op).Run()
-        SpackSetup(conf.Get(), sub_op).Run()
-        SCSRepoSetup(conf.Get(), sub_op).Run()
+        package_name = 'all'
+        if len(sys.argv) == 4:
+            package_name = sys.argv[3]
+        if package_name == 'jarvis' or package_name == 'all':
+            node = JarvisSetup(sub_op, package_name).SetConfig(config).Run()
+        if package_name == 'spack' or package_name == 'all':
+            node = SpackSetup(sub_op, package_name).SetConfig(config).Run()
+        if package_name == 'scs_repo' or package_name == 'all':
+            node = SCSRepoSetup(sub_op, package_name).SetConfig(config).Run()
     else:
         print(f"Invalid operation: {op}")
         help()

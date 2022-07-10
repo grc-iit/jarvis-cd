@@ -2,6 +2,7 @@
 from jarvis_cd.comm.ssh_node import SSHNode
 from abc import ABC, abstractmethod
 from jarvis_cd.comm.ssh_config import SSHConfig
+from enum import Enum
 import os
 
 class BootstrapConfig(SSHConfig):
@@ -10,11 +11,16 @@ class BootstrapConfig(SSHConfig):
 
     def _ProcessConfig(self):
         super()._ProcessConfig()
+
+        self.key_name = 'id_rsa'
         self.key_dir = os.path.join(os.environ["HOME"], ".ssh")
+        self.dst_key_dir = self.key_dir
         self.ssh_keys = {}
+
         if "ssh_keys" in self.config:
             self.ssh_keys = self.config["ssh_keys"]
-        self.ssh_keys['primary'] = self.config['SSH']
+        if 'SSH' in self.config:
+            self.ssh_keys['primary'] = self.config['SSH']
         self.key_dir, self.key_name, self.dst_key_dir = self._GetKeyInfo('primary')
 
     def _GetKeyInfo(self, key_entry):
@@ -30,6 +36,7 @@ class BootstrapConfig(SSHConfig):
 
 class Package(BootstrapConfig):
     def __init__(self, operation, package_name):
+        super().__init__()
         self.operation = operation
         self.bashrc = f"{os.environ['HOME']}/.bashrc"
         self.bashni = f"{os.environ['HOME']}/.bashni"
@@ -50,13 +57,13 @@ class Package(BootstrapConfig):
             self._LocalUninstall()
 
     def Install(self):
-        SSHNode('pssh', f"jarvis-bootstrap deps local_install {self.package_name}", ssh_info=self.ssh_info).Run()
+        SSHNode('pssh', f"jarvis-bootstrap deps local_install {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def Update(self):
-        SSHNode('pssh', f"jarvis-bootstrap deps local_update {self.package_name}", ssh_info=self.ssh_info).Run()
+        SSHNode('pssh', f"jarvis-bootstrap deps local_update {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def Uninstall(self):
-        SSHNode('pssh', f"jarvis-bootstrap deps local_uninstall {self.package_name}", ssh_info=self.ssh_info).Run()
+        SSHNode('pssh', f"jarvis-bootstrap deps local_uninstall {self.package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     @abstractmethod
     def _LocalInstall(self):

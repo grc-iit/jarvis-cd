@@ -50,8 +50,12 @@ class YAMLConfig(ABC):
                 yaml.dump(conf, new_fp)
 
     def SetConfig(self, config):
-        self.config = config
+        if isinstance(config, YAMLConfig):
+            self.config = config.config
+        else:
+            self.config = config
         self._ProcessConfig()
+        return self
 
     def _ExpandPath(self, path):
         return os.path.expandvars(path)

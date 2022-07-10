@@ -10,16 +10,18 @@ import shutil
 
 class JarvisSetup(Package):
     def Install(self):
-        jarvis_root = self.config['jarvis']['path']
-        SCPNode('copy jarvis', self.config['jarvis']['path'], self.config['jarvis']['path'], ssh_info=self.ssh_info).Run()
-        SSHNode('jarvis deps', f"./{jarvis_root}/dependencies.sh").Run()
-        SSHNode('install jarvis', f"cd {self.config['jarvs']['path']}; ./bin/jarvis-bootstrap deps local_install jarvis").Run()
+        jarvis_root = self.config['jarvis_cd']['path']
+        SCPNode('copy jarvis', self.config['jarvis_cd']['path'], self.config['jarvis_cd']['path'], hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        cmds = [
+            f"./{jarvis_root}/dependencies.sh",
+            f"export PYTHONPATH={jarvis_root}",
+            f"cd {self.config['jarvs']['path']}",
+            f"./bin/jarvis-bootstrap deps local_install jarvis"
+        ]
+        SSHNode('install jarvis', cmds, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def _LocalInstall(self):
-        jarvis_root = self.config['jarvis']['path']
-        GitNode('clone', self.config['jarvis']['repo'], jarvis_root, GitOps.CLONE,
-                branch=self.config['jarvis']['branch'], commit=self.config['jarvis']['commit']).Run()
-        LocalPipNode('install', jarvis_root).Run()
+        jarvis_root = self.config['jarvis_cd']['path']
 
         #Ensure that the variables aren't already being set
         ModifyEnvNode('jarvis_root', self.bashni, f"export JARVIS_ROOT", ModifyEnvNodeOps.REMOVE).Run()
@@ -31,8 +33,8 @@ class JarvisSetup(Package):
 
     def _LocalUpdate(self):
         jarvis_root = os.environ['JARVIS_ROOT']
-        GitNode('clone', self.config['jarvis']['repo'], jarvis_root, GitOps.UPDATE,
-                branch=self.config['jarvis']['branch'], commit=self.config['jarvis']['commit']).Run()
+        GitNode('clone', self.config['jarvis_cd']['repo'], jarvis_root, GitOps.UPDATE,
+                branch=self.config['jarvis_cd']['branch'], commit=self.config['jarvis_cd']['commit']).Run()
         ExecNode('deps', f"./{jarvis_root}/dependencies.sh").Run()
         LocalPipNode('install', jarvis_root).Run()
 
