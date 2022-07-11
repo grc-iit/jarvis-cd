@@ -6,10 +6,10 @@ import re
 class KillNode(Node):
     def __init__(self, program_regex):
         self.program_regex = program_regex
-        super().__init__(name)
+        super().__init__()
 
     def _Run(self):
-        node = ExecNode('Get Processes', 'ps -ef').Run()
+        node = ExecNode('ps -ef').Run()
         pids = []
         for line in node.output[0]['localhost']['stdout']:
             words = line.split()
