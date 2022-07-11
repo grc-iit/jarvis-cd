@@ -24,5 +24,7 @@ class GitNode(ExecNode):
             cmds.append(f"git switch {self.branch}")
         if self.commit is not None:
             cmds.append(f"git switch {self.commit}")
+        if self.method == GitOps.UPDATE:
+            cmds.append(f"git pull")
 
         super().__init__(cmds, **kwargs, shell=True)
