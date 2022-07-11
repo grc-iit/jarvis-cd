@@ -7,7 +7,7 @@ from enum import Enum
 import os
 
 class BootstrapConfig(SSHConfig):
-    def DefaultConfigPath(self, conf_type='remote'):
+    def DefaultConfigPath(self, conf_type='local'):
         return os.path.join(self.jarvis_root, 'jarvis_cd', 'bootstrap', 'conf', f'{conf_type}.yaml')
 
     def _Scaffold(self):
