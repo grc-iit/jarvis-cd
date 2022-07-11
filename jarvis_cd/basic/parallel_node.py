@@ -25,7 +25,7 @@ class ParallelNode(Node):
 
         # Make sure host_aliases is not None
         if host_aliases is None:
-            host_aliases = []
+            host_aliases = ['localhost']
 
         # Prioritize ssh_info structure
         if ssh_info is not None:
@@ -58,7 +58,6 @@ class ParallelNode(Node):
         self.sudo = sudo
         self.username = username
         self.port = int(port)
-        self.do_ssh = len(self.hosts) != 0
         self.shell = shell
         self.host_aliases = host_aliases
         self.affinity = affinity
@@ -67,3 +66,6 @@ class ParallelNode(Node):
         self.exec_async = exec_async
         self.cwd = cwd
         self.ssh_info = ssh_info
+
+        #Do SSH only if the host list contains more than host aliases
+        self.do_ssh = any(host not in host_aliases for host in self.hosts)

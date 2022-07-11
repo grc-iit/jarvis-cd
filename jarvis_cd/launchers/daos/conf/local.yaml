@@ -5,17 +5,13 @@ DAOS_ROOT: ${SCAFFOLD}/daos_install
 NAME: daos_server
 PORT: 10001
 SECURE: true
-HOSTS: ${SCAFFOLD}/hostfile.txt
-SSH:
-  port: 22
-  key: scs_chameleon_pass
-  key_dir: ${HOME}/.ssh
+HOSTS: ['localhost']
 CONF:
   SERVER: ${SCAFFOLD}/daos_server.yaml
   AGENT: ${SCAFFOLD}/daos_agent.yaml
   CONTROL: ${SCAFFOLD}/daos_control.yaml
 SERVER:
-  hosts: 2-4
+  hosts: 1
   provider: ofi+sockets
   telemetry_port: 9191
   control_log_file: ${SCAFFOLD}/daos_server.log
@@ -43,7 +39,7 @@ SERVER:
           bdev_size: 100
           bdev_list: [ '${SCAFFOLD}/file_test' ]
 AGENT:
-  hosts: 1-4
+  hosts: 1
   transport_config:
     ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
     cert: ${SCAFFOLD}/daosCA/certs/agent.crt

@@ -22,19 +22,22 @@ class YAMLConfig(ABC):
         return os.path.join(self.scaffold_dir, 'jarvis_conf.yaml')
 
     def LoadConfig(self):
+        self.is_scaffolded = True
         if self.config_path is None:
             if os.path.exists(self.ScaffoldConfigPath()):
                 self.config_path = self.ScaffoldConfigPath()
             else:
                 self.config_path = self.DefaultConfigPath()
+                self.is_scaffolded = False
         if not os.path.exists(self.config_path):
             raise Error(ErrorCode.INVALID_DEFAULT_CONFIG).format(self.launcher_name)
         with open(self.config_path, "r") as fp:
             self.config = yaml.load(fp, Loader=yaml.FullLoader)
-        if 'SCAFFOLD' in self.config:
+        if 'SCAFFOLD' in self.config and self.config['SCAFFOLD'] is not None:
             os.environ['SCAFFOLD'] = str(self.config['SCAFFOLD'])
         self.config = self._ExpandPaths()
-        self._ProcessConfig()
+        if self.is_scaffolded:
+            self._ProcessConfig()
         return self
 
     def Get(self):
@@ -47,9 +50,8 @@ class YAMLConfig(ABC):
             with open(new_conf_path, 'w') as new_fp:
                 self.config = yaml.load(old_fp, Loader=yaml.FullLoader)
                 self.config['SCAFFOLD'] = self.scaffold_dir
-                self._Scaffold()
-                self._ProcessConfig()
                 self.config = self._ExpandPaths()
+                self._Scaffold()
                 yaml.dump(self.config, new_fp)
 
     def SetConfig(self, config):

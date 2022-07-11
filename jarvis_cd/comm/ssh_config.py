@@ -22,8 +22,9 @@ class SSHConfig(YAMLConfig):
         self.all_hosts = None
         self.ssh_info = None
 
-        if 'HOSTS' in self.config and 'SSH' in self.config:
+        if 'HOSTS' in self.config:
             self.all_hosts = Hostfile().Load(self.config['HOSTS'])
+        if 'SSH' in self.config:
             self.ssh_info = self.config['SSH']
             self.ssh_info['host_aliases'] = FindHostAliases(self.all_hosts).Run().GetAliases()
             self.host_aliases = self.ssh_info['host_aliases']

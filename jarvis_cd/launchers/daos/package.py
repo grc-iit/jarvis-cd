@@ -1,7 +1,9 @@
 from jarvis_cd.basic.exec_node import ExecNode
-from jarvis_cd.comm.scp_node import SCPNode
+from jarvis_cd.basic.copy_node import CopyNode
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launchers.launcher import Launcher
+from jarvis_cd.basic.mkdir_node import MkdirNode
+from jarvis_cd.basic.rm_node import RmNode
 from jarvis_cd.basic.link_node import LinkNode
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.introspect.detect_networks import DetectNetworks
@@ -21,7 +23,7 @@ class Daos(Launcher):
 
     def _DefineInit(self):
         #Create SCAFFOLD on all nodes
-        ExecNode(f"mkdir -p {self.scaffold_dir}", hosts=self.server_hosts, ssh_info=self.ssh_info).Run()
+        MkdirNode(self.scaffold_dir, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
         #Create DAOS_ROOT sybmolic link
         LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
         #Generate security certificates
@@ -38,14 +40,14 @@ class Daos(Launcher):
         self._CreateControlConfig()
         #Copy the certificates+config to all servers
         to_copy = [
-            self.config['HOSTS'],
+            self.all_hosts.Path(),
             self.config['CONF']['AGENT'],
             self.config['CONF']['SERVER'],
             self.config['CONF']['CONTROL'],
             f"{self.scaffold_dir}/jarvis_conf.yaml",
             f"{self.scaffold_dir}/daosCA"
         ]
-        SCPNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        CopyNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
         #Start dummy DAOS server (on all server nodes)
         print("Starting DAOS server")
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
@@ -84,7 +86,7 @@ class Daos(Launcher):
                 f"--pool {container['pool']}",
                 f"--label {container['label']}"
             ]
-            ExecNode(f"mkdir -p {container['mount']}", hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
+            MkdirNode(container['mount'], hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
             create_container_cmd = " ".join(create_container_cmd)
             print(create_container_cmd)
             ExecNode(create_container_cmd).Run()

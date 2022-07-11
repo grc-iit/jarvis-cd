@@ -32,7 +32,7 @@ class SCPNode(ParallelNode):
         #Store destination
         self.destination = destination
 
-        #There's a bug in SCP which canot copy a file to itself
+        #Cannot copy a file to itself
         for source in self.sources:
             src_file = os.path.normpath(source)
             dst_file = os.path.normpath(destination)

@@ -3,7 +3,7 @@ from jarvis_cd.installer.modify_env_node import ModifyEnvNode, ModifyEnvNodeOps
 from jarvis_cd.installer.pip_node import LocalPipNode
 from jarvis_cd.bootstrap.package import Package
 from jarvis_cd.basic.exec_node import ExecNode
-from jarvis_cd.comm.scp_node import SCPNode
+from jarvis_cd.basic.copy_node import CopyNode
 import sys,os
 import shutil
 
@@ -12,7 +12,7 @@ class JarvisSetup(Package):
         jarvis_root = self.config['jarvis_cd']['path']
         jarvis_conf = os.path.join(jarvis_root, 'jarvis_conf.yaml')
         GitNode(**self.config['jarvis_cd'], method=GitOps.CLONE, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
-        SCPNode(jarvis_conf, jarvis_conf, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        CopyNode(jarvis_conf, jarvis_conf, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
         cmds = [
             f"chmod +x {jarvis_root}/dependencies.sh",
             f"{jarvis_root}/dependencies.sh",

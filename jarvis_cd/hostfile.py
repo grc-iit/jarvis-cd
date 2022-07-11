@@ -3,14 +3,14 @@ from jarvis_cd.exception import Error, ErrorCode
 
 class Hostfile:
     def __init__(self):
-        self.filename = None
         self.all_hosts = None
         self.hosts = None
+        self.path = None
 
-    def LoadHostfile(self, filename):
-        if not os.path.exists(filename): 
-            raise Error(ErrorCode.HOSTFILE_NOT_FOUND).format(filename)
-        a_file = open(filename, "r")
+    def LoadHostfile(self, path):
+        if not os.path.exists(path):
+            raise Error(ErrorCode.HOSTFILE_NOT_FOUND).format(path)
+        a_file = open(path, "r")
         list_of_lists = []
         for line in a_file:
             stripped_line = line.strip()
@@ -23,7 +23,7 @@ class Hostfile:
         a_file.close()
         self.all_hosts = list_of_lists
         self.hosts = self.all_hosts
-        self.filename = filename
+        self.path = path
         return self
 
     def SetHosts(self, hosts):
@@ -32,6 +32,8 @@ class Hostfile:
         return self
 
     def Load(self, hosts):
+        if hosts is None:
+            hosts = []
         if isinstance(hosts, str):
             self.LoadHostfile(hosts)
         else:
@@ -54,6 +56,9 @@ class Hostfile:
                 val = int(range[0])
                 hosts.hosts += [hosts.all_hosts[val-1]]
         return hosts
+
+    def Path(self):
+        return self.path
 
     def list(self):
         return self.hosts

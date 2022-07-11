@@ -1,6 +1,5 @@
 from jarvis_cd.basic.exec_node import ExecNode
-from jarvis_cd.basic.exec_node import ExecNode
-from jarvis_cd.comm.scp_node import SCPNode
+from jarvis_cd.basic.copy_node import CopyNode
 from jarvis_cd.comm.issh_node import InteractiveSSHNode
 from jarvis_cd.bootstrap.package import BootstrapConfig
 import sys,os
@@ -40,10 +39,10 @@ class SSHSetup(BootstrapConfig):
             src_priv_key = self._GetPrivateKey(key_dir, key_name)
             dst_pub_key = self._GetPublicKey(dst_key_dir, key_name)
             dst_priv_key = self._GetPrivateKey(dst_key_dir, key_name)
-            SCPNode(src_pub_key, dst_pub_key, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+            CopyNode(src_pub_key, dst_pub_key, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
             if os.path.exists(src_priv_key):
                 print(f"Copying {src_priv_key} to {dst_priv_key}")
-                SCPNode(src_priv_key, dst_priv_key, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+                CopyNode(src_priv_key, dst_priv_key, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def _SSHPermissionsCmd(self, key_location):
         commands = []

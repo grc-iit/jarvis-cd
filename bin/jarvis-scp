@@ -3,7 +3,7 @@
 #USAGE jarvis-scp [source] [destination] [host-id]
 
 from jarvis_cd.comm.ssh_config import SSHConfig
-from jarvis_cd.comm.scp_node import SCPNode
+from jarvis_cd.basic.copy_node import CopyNode
 import sys,os
 
 if __name__ == '__main__':
@@ -22,4 +22,4 @@ if __name__ == '__main__':
     if conf.all_hosts is None:
         print("Hostfile undefined in jarvis_conf.yaml")
         exit(1)
-    SCPNode(source, destination, hosts=conf.all_hosts[host_id], ssh_info=conf.ssh_info).Run()
+    CopyNode(source, destination, hosts=conf.all_hosts[host_id], ssh_info=conf.ssh_info).Run()
