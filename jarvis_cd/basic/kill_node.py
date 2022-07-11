@@ -9,7 +9,7 @@ class KillNode(Node):
         super().__init__()
 
     def _Run(self):
-        node = ExecNode('ps -ef').Run()
+        node = ExecNode('ps -ef', print_output=False).Run()
         pids = []
         for line in node.output[0]['localhost']['stdout']:
             words = line.split()
