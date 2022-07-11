@@ -9,10 +9,12 @@ class NodeExecNode(ParallelNode):
         #We ignore kwargs since we don't want to call SSH during _LocalRun
         self.cmd = self._ToShellCmd(ignore_params=['kwargs'])
         self.kwargs = kwargs
+        self.kwargs['print_output'] = False
 
     def _Run(self):
         if self.do_ssh:
-            ExecNode(self.cmd, **self.kwargs).Run()
+            node = ExecNode(self.cmd, **self.kwargs).Run()
+            self.output = node.GetOutput()
         else:
             self._LocalRun()
 
