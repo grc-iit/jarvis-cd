@@ -23,9 +23,9 @@ class Daos(Launcher):
 
     def _DefineInit(self):
         #Create SCAFFOLD on all nodes
-        MkdirNode(self.scaffold_dir, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        MkdirNode(self.scaffold_dir, hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
         #Create DAOS_ROOT sybmolic link
-        LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
         #Generate security certificates
         gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
         ExecNode(gen_certificates_cmd).Run()
@@ -47,7 +47,7 @@ class Daos(Launcher):
             f"{self.scaffold_dir}/jarvis_conf.yaml",
             f"{self.scaffold_dir}/daosCA"
         ]
-        CopyNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        CopyNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
         #Start dummy DAOS server (on all server nodes)
         print("Starting DAOS server")
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
@@ -65,8 +65,7 @@ class Daos(Launcher):
         print(network_check_cmd)
         ExecNode(network_check_cmd, sudo=True, shell=True).Run()
         #Link SCAFFOLD to /var/run/daos_agent
-        link_cmd = f"ln -s {self.scaffold_dir} /var/run/daos_agent"
-        ExecNode(link_cmd, hosts=self.agent_hosts,sudo=True, ssh_info=self.ssh_info).Run()
+        LinkNode(self.scaffold_dir, '/var/run/daos_agent', hosts=self.agent_hosts, sudo=True, ssh_info=self.ssh_info).Run()
         #Create storage pools
         print("Create storage pools")
         for pool in self.config['POOLS']:

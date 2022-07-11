@@ -1,4 +1,5 @@
 SCAFFOLD: null
+SCAFFOLD_SHARED: false
 DAOS_SPACK:
   package_name: daos
 DAOS_ROOT: ${SCAFFOLD}/daos_install

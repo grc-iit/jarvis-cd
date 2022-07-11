@@ -20,10 +20,15 @@ class SSHConfig(YAMLConfig):
         self.port = 22
         self.host_aliases = None
         self.all_hosts = None
+        self.scaffold_hosts = None
         self.ssh_info = None
 
         if 'HOSTS' in self.config:
             self.all_hosts = Hostfile().Load(self.config['HOSTS'])
+            self.scaffold_hosts = self.all_hosts
+            if 'SCAFFOLD_SHARED' in self.config:
+                if self.config['SCAFFOLD_SHARED']:
+                    self.scaffold_hosts = Hostfile().Load(['localhost'])
         if 'SSH' in self.config:
             self.ssh_info = self.config['SSH']
             self.ssh_info['host_aliases'] = FindHostAliases(self.all_hosts).Run().GetAliases()
