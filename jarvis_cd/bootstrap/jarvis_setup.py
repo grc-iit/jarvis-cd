@@ -10,8 +10,9 @@ import shutil
 class JarvisSetup(Package):
     def Install(self):
         jarvis_root = self.config['jarvis_cd']['path']
+        jarvis_conf = os.path.join(jarvis_root, 'jarvis_config.yaml')
         GitNode(**self.config['jarvis_cd'], method=GitOps.CLONE, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
-        SCPNode(os.path.join(jarvis_root, 'jarvis_config'))
+        SCPNode(jarvis_conf, jarvis_conf, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
         cmds = [
             f"chmod +x {jarvis_root}/dependencies.sh",
             f"{jarvis_root}/dependencies.sh",
