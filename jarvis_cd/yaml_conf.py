@@ -48,6 +48,8 @@ class YAMLConfig(ABC):
                 self.config = yaml.load(old_fp, Loader=yaml.FullLoader)
                 self.config['SCAFFOLD'] = self.scaffold_dir
                 self._Scaffold()
+                self._ProcessConfig()
+                self.config = self._ExpandPaths()
                 yaml.dump(self.config, new_fp)
 
     def SetConfig(self, config):
