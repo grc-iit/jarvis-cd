@@ -41,9 +41,12 @@ class Node(ABC):
     def _GetParamStr(self, params):
         return ','.join([f"{key}=\"{val}\"" if isinstance(val, str) else f"{key}={val}" for key, val in params.items()])
 
-    def _ToShellCmd(self):
+    def _ToShellCmd(self, ignore_params=[]):
         node_import = type(self).__module__
         node_params = self._GetParams()
+        for param in ignore_params:
+            if param in node_params:
+                del node_params[param]
         if 'kwargs' in node_params:
             kwargs = node_params['kwargs']
             del node_params['kwargs']

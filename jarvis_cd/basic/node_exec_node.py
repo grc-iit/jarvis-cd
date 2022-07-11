@@ -6,7 +6,8 @@ from abc import ABC,abstractmethod
 class NodeExecNode(ParallelNode):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.cmd = self._ToShellCmd()
+        #We ignore kwargs since we don't want to call SSH during _LocalRun
+        self.cmd = self._ToShellCmd(ignore_params=['kwargs'])
         self.kwargs = kwargs
 
     def _Run(self):
