@@ -40,6 +40,9 @@ class SSHExecNode(ParallelNode):
     def _Run(self):
         if not self.do_ssh:
             return
+        if self.exec_async:
+            for i,cmd in enumerate(self.cmds):
+                self.cmds[i] += '  > /dev/null 2>&1 &'
         if self.sudo:
             self.cmds.insert(0, f"source /home/{self.username}/.bashrc")
         cmd = " ; ".join(self.cmds)
