@@ -39,6 +39,7 @@ class ExecNode(ParallelNode):
         if len(self.cmds) == 0:
             return
         if self.do_ssh:
-            SSHExecNode(self.cmds, **self.kwargs).Run()
+            node = SSHExecNode(self.cmds, **self.kwargs).Run()
         else:
-            LocalExecNode(self.cmds, **self.kwargs).Run()
+            node = LocalExecNode(self.cmds, **self.kwargs).Run()
+        self.output = node.output
