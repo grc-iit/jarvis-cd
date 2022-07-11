@@ -1,5 +1,6 @@
 import os
 from jarvis_cd.exception import Error, ErrorCode
+import re
 
 class Hostfile:
     def __init__(self):
@@ -10,18 +11,15 @@ class Hostfile:
     def LoadHostfile(self, path):
         if not os.path.exists(path):
             raise Error(ErrorCode.HOSTFILE_NOT_FOUND).format(path)
-        a_file = open(path, "r")
-        list_of_lists = []
-        for line in a_file:
-            stripped_line = line.strip()
-            line_list = stripped_line.split(sep=":")
-            if len(line_list) == 2:
-                for i in range(int(line_list[1])):
-                    list_of_lists.append(line_list[0])
-            else:
-                list_of_lists.append(line_list[0])
-        a_file.close()
-        self.all_hosts = list_of_lists
+        hosts = []
+        with open(path, 'r') as fp:
+            lines = fp.read().splitlines()
+            for line in lines:
+                grp = re.match('(.*)#*', line)
+                if grp:
+                    host = grp.group(1).strip()
+                    hosts.append(host)
+        self.all_hosts = hosts
         self.hosts = self.all_hosts
         self.path = path
         return self
