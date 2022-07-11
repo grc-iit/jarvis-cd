@@ -42,7 +42,7 @@ class Node(ABC):
         node_import = type(self).__module__
         node_params = self._GetParams()
         node_type = type(self).__name__
-        param_str = ','.join([f"{key}={val}" for key,val in node_params.items()])
+        param_str = ','.join([f"{key}=\"{val}\"" if isinstance(val,str) else f"{key}={val}" for key,val in node_params.items()])
         return f"python3 -c from {node_import} import {node_type}; {node_type}({param_str}).Run()"
 
     def Run(self):
