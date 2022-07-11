@@ -15,10 +15,9 @@ class Hostfile:
         with open(path, 'r') as fp:
             lines = fp.read().splitlines()
             for line in lines:
-                grp = re.match('(.*)#*', line)
-                if grp:
-                    host = grp.group(1).strip()
-                    hosts.append(host)
+                tokens = line.split('#')
+                host = tokens[0].strip()
+                hosts.append(host)
         self.all_hosts = hosts
         self.hosts = self.all_hosts
         self.path = path
