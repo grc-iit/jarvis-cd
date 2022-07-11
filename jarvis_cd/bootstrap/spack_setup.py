@@ -13,7 +13,7 @@ class SpackSetup(Package):
 
     def _LocalUpdate(self):
         spack_root = os.environ['SPACK_ROOT']
-        GitNode(**self.config['spack'], path=spack_root, method=GitOps.UPDATE, collect_output=False).Run()
+        GitNode(**self.config['spack'], method=GitOps.UPDATE, collect_output=False).Run()
 
     def _LocalUninstall(self):
         spack_root = os.environ['SPACK_ROOT']
