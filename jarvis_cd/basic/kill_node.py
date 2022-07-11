@@ -1,22 +1,28 @@
 
 from jarvis_cd.node import Node
 from jarvis_cd.basic.exec_node import ExecNode
+from jarvis_cd.basic.node_exec_node import NodeExecNode
 import re
 
-class KillNode(Node):
-    def __init__(self, program_regex):
+class KillNode(NodeExecNode):
+    def __init__(self, program_regex, **kwargs):
+        if not isinstance(program_regex, list):
+            program_regex = [program_regex]
         self.program_regex = program_regex
-        super().__init__()
+        self.kwargs = kwargs
+        super().__init__(**kwargs)
 
-    def _Run(self):
+    def _LocalRun(self):
         node = ExecNode('ps -ef', print_output=False).Run()
         pids = []
         for line in node.output[0]['localhost']['stdout']:
             words = line.split()
             if len(words) <= 7:
                 continue
-            cmd = " ".join(words[7:])
-            if re.match(self.program_regex, cmd):
+            #Split the command into tokens and check if each token matches a regex
+            cmd = words[7:]
+            cmd_matches = all([re.match(regex, cmd_token) is not None for regex,cmd_token in zip(self.program_regex,cmd)])
+            if cmd_matches:
                 pids.append(int(words[1]))
         if len(pids) > 0:
             for pid in pids:

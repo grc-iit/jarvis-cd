@@ -38,12 +38,22 @@ class Node(ABC):
             params.remove('self')
         return { param: getattr(self, param) for param in params }
 
+    def _GetParamStr(self, params):
+        return ','.join([f"{key}=\"{val}\"" if isinstance(val, str) else f"{key}={val}" for key, val in params.items()])
+
     def _ToShellCmd(self):
         node_import = type(self).__module__
         node_params = self._GetParams()
+        if 'kwargs' in node_params:
+            kwargs = node_params['kwargs']
+            del node_params['kwargs']
+            node_params.update(kwargs)
         node_type = type(self).__name__
-        param_str = ','.join([f"{key}=\"{val}\"" if isinstance(val,str) else f"{key}={val}" for key,val in node_params.items()])
-        return f"python3 -c from {node_import} import {node_type}; {node_type}({param_str}).Run()"
+        param_str = self._GetParamStr(node_params)
+        node_import = f"from {node_import} import {node_type}"
+        node_run = f"{node_type}({param_str}).Run()"
+        cmd = f"python3 -c \"{node_import}\n{node_run}\""
+        return cmd
 
     def Run(self):
         self._Run()

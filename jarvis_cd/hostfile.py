@@ -81,3 +81,9 @@ class Hostfile:
 
     def __getitem__(self, idx):
         return self.hosts[idx]
+
+    def __str__(self):
+        return str(self.all_hosts)
+
+    def __repr__(self):
+        return str(self)
