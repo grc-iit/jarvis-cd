@@ -17,6 +17,8 @@ class Hostfile:
             for line in lines:
                 tokens = line.split('#')
                 host = tokens[0].strip()
+                if len(host) == 0:
+                    continue
                 hosts.append(host)
         self.all_hosts = hosts
         self.hosts = self.all_hosts
