@@ -7,4 +7,5 @@ if __name__ == '__main__':
     if len(sys.argv) < 2:
         print("USAGE: jarvis-kill [regex]")
         exit(1)
+    print(f"Calling kill {sys.argv[1]}")
     KillNode(sys.argv[1]).Run()
