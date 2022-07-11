@@ -51,7 +51,6 @@ class ModifyEnvNode(Node):
                 for regex in regexs:
                     if re.match(regex, line):
                         lines.remove(line)
-                        break
         with open(self.path, 'w') as fp:
             text = '\n'.join(lines)
             fp.write(text)
