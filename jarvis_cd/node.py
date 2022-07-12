@@ -75,7 +75,7 @@ class Node(ABC):
         return { param: getattr(self, param) for param in params }
 
     def _GetParamStr(self, params):
-        return ','.join([f"{key}=\"{val}\"" if isinstance(val, str) else f"{key}={val}" for key, val in params.items()])
+        return ','.join([f"{key}=\'{val}\'" if isinstance(val, str) else f"{key}={val}" for key, val in params.items()])
 
     def _ToShellCmd(self, ignore_params=[], set_params={}):
         node_import = type(self).__module__

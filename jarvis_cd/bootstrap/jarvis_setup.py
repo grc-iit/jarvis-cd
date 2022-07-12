@@ -24,7 +24,7 @@ class JarvisSetup(Package):
 
     def _LocalInstall(self):
         jarvis_root = self.config['jarvis_cd']['path']
-        LocalPipNode(jarvis_root).Run()
+        LocalPipNode(jarvis_root, print_fancy=False).Run()
 
         #Ensure that the variables aren't already being set
         ModifyEnvNode(self.jarvis_env, f"export JARVIS_ROOT", ModifyEnvNodeOps.REMOVE).Run()
@@ -36,7 +36,7 @@ class JarvisSetup(Package):
 
     def _LocalUpdate(self):
         jarvis_root = os.environ['JARVIS_ROOT']
-        GitNode(**self.config['jarvis_cd'], method=GitOps.UPDATE).Run()
+        GitNode(**self.config['jarvis_cd'], method=GitOps.UPDATE, print_fancy=False).Run()
         LocalPipNode(jarvis_root).Run()
 
     def _LocalUninstall(self):

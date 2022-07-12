@@ -10,6 +10,7 @@ class NodeExecNode(ParallelNode):
         self.cmd = self._ToShellCmd(ignore_params=['kwargs'], set_params={'print_fancy': False})
         self.kwargs = kwargs
         self.kwargs['print_output'] = False
+        self.kwargs['shell'] = True
 
     def _Run(self):
         if self.do_ssh:
