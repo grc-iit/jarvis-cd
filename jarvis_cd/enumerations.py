@@ -28,6 +28,10 @@ class Color:
     UNDERLINE = '\033[4m'
     END = '\033[0m'
 
+class OutputStream(Enum):
+    STDOUT = 'stdout'
+    STDERR = 'stderr'
+
 class LogLevel(Enum):
     DEBUG=str(logging.DEBUG)
     INFO=str(logging.INFO)

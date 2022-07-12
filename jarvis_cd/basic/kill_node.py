@@ -2,6 +2,7 @@
 from jarvis_cd.node import Node
 from jarvis_cd.basic.exec_node import ExecNode
 from jarvis_cd.basic.node_exec_node import NodeExecNode
+from jarvis_cd.enumerations import Color, OutputStream
 import re
 
 class KillNode(NodeExecNode):
@@ -15,7 +16,7 @@ class KillNode(NodeExecNode):
     def _LocalRun(self):
         node = ExecNode('ps -ef', print_output=False).Run()
         pids = []
-        for line in node.output[0]['localhost']['stdout']:
+        for line in self.GetLocalStdout():
             words = line.split()
             if len(words) <= 7:
                 continue
@@ -27,6 +28,6 @@ class KillNode(NodeExecNode):
         if len(pids) > 0:
             for pid in pids:
                 ExecNode(f"kill -9 {pid}", sudo=True).Run()
-                self.output[0]['localhost']['stdout'].append(f"Killing {pid}")
+                self.AddOutput(f"Killing {pid}", stream=OutputStream.STDOUT)
         else:
-            self.output[0]['localhost']['stdout'].append(f"No PIDs to kill")
+            self.AddOutput(f"No PIDs to kill", stream=OutputStream.STDOUT)

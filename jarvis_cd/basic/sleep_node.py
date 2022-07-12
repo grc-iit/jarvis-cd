@@ -1,6 +1,6 @@
 import time
-
 from jarvis_cd.node import Node
+from jarvis_cd.enumerations import Color, OutputStream
 
 
 class SleepNode(Node):
@@ -10,12 +10,7 @@ class SleepNode(Node):
 
     def _Run(self):
         time.sleep(self.timer)
-        self.output = {
-            'localhost': {
-                'stdout': ["Sleep for {} seconds".format(self.timer)],
-                'stderr': []
-            }
-        }
+        self.AddOutput(f"Sleep for {self.timer} seconds", stream=OutputStream.STDOUT)
         return self
 
     def __str__(self):

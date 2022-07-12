@@ -42,4 +42,4 @@ class ExecNode(ParallelNode):
             node = SSHExecNode(self.cmds, **self.kwargs).Run()
         else:
             node = LocalExecNode(self.cmds, **self.kwargs).Run()
-        self.output = node.output
+        self.output = node.GetOutput()

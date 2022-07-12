@@ -2,6 +2,7 @@ from pssh.clients import ParallelSSHClient
 import sys
 from jarvis_cd.basic.parallel_node import ParallelNode
 from jarvis_cd.exception import Error, ErrorCode
+from jarvis_cd.enumerations import Color, OutputStream
 
 sys.stderr = sys.__stderr__
 
@@ -28,13 +29,8 @@ class SSHExecNode(ParallelNode):
         nice_output = dict()
         for host_output in output:
             host = host_output.host
-            nice_output[host]={
-                'stdout':[],
-                'stderr':[]
-            }
-            nice_output[host]['stdout'] = list(host_output.stdout)
-            nice_output[host]['stderr'] = list(host_output.stderr)
-            nice_output[host]['stdout'].insert(0, cmd)
+            self.AddOutput(list(host_output.stdout), host=host, stream=OutputStream.STDOUT)
+            self.AddOutput(list(host_output.stderr), host=host, stream=OutputStream.STDERR)
         return [nice_output]
 
     def _Run(self):
@@ -46,7 +42,7 @@ class SSHExecNode(ParallelNode):
         if self.sudo:
             self.cmds.insert(0, f"source /home/{self.username}/.bashrc")
         cmd = " ; ".join(self.cmds)
-        self.output = self._exec_ssh(cmd)
+        self._exec_ssh(cmd)
         return self
 
     def __str__(self):

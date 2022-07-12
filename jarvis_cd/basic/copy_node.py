@@ -22,7 +22,7 @@ class CopyNode(ParallelNode):
     def _Run(self):
         if self.do_ssh:
             node = SCPNode(self.sources, self.destination, **self.kwargs).Run()
-            self.output = node.output
+            self.output = node.GetOutput()
         else:
             for source in self.sources:
                 src_file = os.path.normpath(source)

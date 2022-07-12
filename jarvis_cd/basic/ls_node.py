@@ -1,6 +1,7 @@
 #from jarvis_cd.basic.exec_node import ExecNode
 from jarvis_cd.node import Node
 import sys,os
+from jarvis_cd.enumerations import Color, OutputStream
 
 class LsNode(Node):
     def __init__(self, path, recurse=True, print_output=False, **kwargs):
@@ -12,8 +13,8 @@ class LsNode(Node):
         self.files = []
         self.dirs = []
         self._Walk(self.path)
-        self.output[0]['localhost']['stdout'] += self.files
-        self.output[0]['localhost']['stdout'] += self.dirs
+        self.AddOutput(self.files, stream=OutputStream.STDOUT)
+        self.AddOutput(self.dirs, stream=OutputStream.STDOUT)
 
     def _Walk(self, root):
         for root,dirs,files in os.walk(root, topdown=False):

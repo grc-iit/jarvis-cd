@@ -1,5 +1,6 @@
 import psutil
 from jarvis_cd.node import Node
+from jarvis_cd.enumerations import Color, OutputStream
 
 class DetectNetworks(Node):
     def __init__(self, print_output=True, collect_output=True):
@@ -7,8 +8,7 @@ class DetectNetworks(Node):
 
     def _Run(self):
         self.net_cards = psutil.net_if_addrs()
-        self.output[0]['localhost']['stdout'] = []
         for card,addrs in self.net_cards.items():
-            self.output[0]['localhost']['stdout'].append(str(card))
+            self.AddOutput(card, stream=OutputStream.STDOUT)
             for addr in addrs:
-                self.output[0]['localhost']['stdout'].append(f"  {addr.address}")
+                self.AddOutput(f"  {addr.address}", stream=OutputStream.STDOUT)

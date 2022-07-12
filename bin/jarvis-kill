@@ -3,11 +3,13 @@
 import sys,os
 from jarvis_cd.basic.kill_node import KillNode
 from jarvis_cd.comm.ssh_config import SSHConfig
+from jarvis_cd.basic.echo_node import EchoNode
+from jarvis_cd.enumerations import Color, OutputStream
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print("USAGE: jarvis-kill [regex_a] [regex_b] ...")
+        EchoNode("USAGE: jarvis-kill [regex_a] [regex_b] ...").Run()
         exit(1)
-    print(f"Calling kill {sys.argv[1:]}")
+    EchoNode(f"Calling kill {sys.argv[1:]}", color=Color.CYAN).Run()
     conf = SSHConfig().LoadConfig()
     KillNode(sys.argv[1:], hosts=conf.all_hosts, ssh_info=conf.ssh_info).Run()

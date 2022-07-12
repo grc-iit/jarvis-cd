@@ -3,6 +3,7 @@ import shlex
 import time
 import os,sys
 import asyncio
+from jarvis_cd.enumerations import Color, OutputStream
 
 from jarvis_cd.basic.parallel_node import ParallelNode
 
@@ -54,10 +55,8 @@ class LocalExecNode(ParallelNode):
     def _get_output(self):
         if self.collect_output:
             self.stdout, self.stderr = self.proc.communicate()
-            self.output = [{ "localhost": {
-                "stdout": [line.decode("utf-8") for line in self.stdout.splitlines()],
-                "stderr": [line.decode("utf-8") for line in self.stderr.splitlines()]
-            }}]
+            self.AddOutput([line.decode("utf-8") for line in self.stdout.splitlines()], stream=OutputStream.STDOUT)
+            self.AddOutput([line.decode("utf-8") for line in self.stderr.splitlines()], stream=OutputStream.STDERR)
 
     def _exec_cmds(self,commands):
         """
@@ -73,7 +72,6 @@ class LocalExecNode(ParallelNode):
             for i, command in enumerate(commands):
                 self._start_pipe_process(command, i==0)
         self._get_output()
-        return self.output
 
     def GetExitCode(self):
         if self.proc is not None:
@@ -83,7 +81,7 @@ class LocalExecNode(ParallelNode):
 
     def Kill(self):
         if self.proc is not None:
-            ExecNode(f"kill -9 {self.GetPid()}", collect_output=False).Run()
+            LocalExecNode(f"kill -9 {self.GetPid()}", collect_output=False).Run()
             self.proc.kill()
             return self.Wait()
 
@@ -94,11 +92,10 @@ class LocalExecNode(ParallelNode):
             return None
 
     async def _RunAsync(self):
-        self.output = []
         retries = 0
         while True:
             time.sleep(self.sleep_period_ms / 1000)
-            self.output = self._exec_cmds(self.cmds)
+            self._exec_cmds(self.cmds)
             if self.GetExitCode() == 0 or retries == self.max_retries:
                 break
             retries += 1

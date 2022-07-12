@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from jarvis_cd.enumerations import Color
+from jarvis_cd.enumerations import Color, OutputStream
 import inspect
 
 class Node(ABC):
@@ -7,23 +7,45 @@ class Node(ABC):
         self.print_output = print_output
         self.name = name
         self.collect_output = collect_output
-        self.output = [{ "localhost": {
-            "stdout": [""],
-            "stderr": [""]
-        }}]
+        self.output = { "localhost": {
+            OutputStream.STDOUT: [[], []],
+            OutputStream.STDERR: [[], []]
+        }}
 
     def Print(self):
-        #For each command
-        for host_outputs in self.output:
-            #Print all host outputs
-            for host,outputs in host_outputs.items():
-                for line in outputs['stdout']:
-                    print("[INFO] {host} {line}".format(host=host, line=line))
-                for line in outputs['stderr']:
-                    print(Color.RED + "[ERROR] {host} {line}".format(host=host, line=line)+ Color.END)
+        stdout_fmt = "[OUT] {host} {line}"
+        stderr_fmt = "[ERR] {host} {line}"
+        for host,outputs in self.output.items():
+            for line,color in zip(outputs[OutputStream.STDOUT][0], outputs[OutputStream.STDOUT][1]):
+                print(color + stdout_fmt.format(host=host, line=line) + Color.END)
+            for line,color in zip(outputs[OutputStream.STDERR][0], outputs[OutputStream.STDERR][1]):
+                print(color + stderr_fmt.format(host=host, line=line) + Color.END)
 
-    def GetOutput(self):
-        return self.output
+    def AddOutput(self, outputs, host='localhost', stream=OutputStream.STDOUT, color=None):
+        if isinstance(outputs, str):
+            outputs = outputs.splitlines()
+        if color is None and stream == OutputStream.STDOUT:
+            color = Color.GREEN
+        if color is None and stream == OutputStream.STDERR:
+            color = Color.RED
+        self.output[host][stream][0] += outputs
+        self.output[host][stream][1] += [color]*len(outputs)
+
+    def GetOutput(self, host=None, stream=None):
+        if host is None:
+            return self.output
+        elif stream is None:
+            stdout = [(OutputStream.STDOUT, line) for line in self.output[host][OutputStream.STDOUT][0]]
+            stderr = [(OutputStream.STDERR, line) for line in self.output[host][OutputStream.STDERR][0]]
+            return stdout + stderr
+        else:
+            return self.output[host][stream][0]
+    def GetLocalStdout(self):
+        return self.GetOutput(host='localhost', stream=OutputStream.STDOUT)
+    def GetLocalStderr(self):
+        return self.GetOutput(host='localhost', stream=OutputStream.STDERR)
+    def GetLocalOutput(self):
+        return self.GetOutput(host='localhost', stream=None)
 
     @abstractmethod
     def _Run(self):
