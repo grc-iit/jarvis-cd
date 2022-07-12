@@ -28,8 +28,9 @@ class Daos(Launcher):
         #Create DAOS_ROOT sybmolic link
         LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
         #Generate security certificates
-        gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
-        ExecNode(gen_certificates_cmd).Run()
+        if self.config['SECURE']:
+            gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
+            ExecNode(gen_certificates_cmd).Run()
         #View network ifaces
         EchoNode("Detect Network Interfaces").Run()
         DetectNetworks().Run()
@@ -137,7 +138,7 @@ class Daos(Launcher):
     def _CreateServerConfig(self):
         server_config = self.config.copy()['SERVER']
         del server_config['hosts']
-        server_config['transport_config']['allow_insecure'] = self.config['SECURE']
+        server_config['transport_config']['allow_insecure'] = not self.config['SECURE']
         server_config['port'] = self.config['PORT']
         server_config['name'] = self.config['NAME']
         server_config['access_points'] = self.server_hosts.list()
@@ -147,7 +148,7 @@ class Daos(Launcher):
     def _CreateAgentConfig(self):
         agent_config = self.config.copy()['AGENT']
         del agent_config['hosts']
-        agent_config['transport_config']['allow_insecure'] = self.config['SECURE']
+        agent_config['transport_config']['allow_insecure'] = not self.config['SECURE']
         agent_config['port'] = self.config['PORT']
         agent_config['name'] = self.config['NAME']
         agent_config['access_points'] = self.agent_hosts.list()
@@ -157,7 +158,7 @@ class Daos(Launcher):
     def _CreateControlConfig(self):
         control_config = self.config.copy()['CONTROL']
         del control_config['hosts']
-        control_config['transport_config']['allow_insecure'] = self.config['SECURE']
+        control_config['transport_config']['allow_insecure'] = not self.config['SECURE']
         control_config['port'] = self.config['PORT']
         control_config['name'] = self.config['NAME']
         control_config['hostlist'] = self.control_hosts.list()

@@ -5,7 +5,7 @@ DAOS_SPACK:
 DAOS_ROOT: ${SCAFFOLD}/daos_install
 NAME: daos_server
 PORT: 10001
-SECURE: true
+SECURE: false
 HOSTS: ${SCAFFOLD}/hostfile.txt
 SSH:
   port: 22
