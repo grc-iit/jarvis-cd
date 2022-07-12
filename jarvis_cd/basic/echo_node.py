@@ -13,3 +13,16 @@ class EchoNode(Node):
 
     def __str__(self):
         return "EchoNode {}".format(self.name)
+
+class ErrorNode(Node):
+    def __init__(self, message, color=None):
+        super().__init__(print_output=True)
+        self.message = message
+        self.color = color
+
+    def _Run(self):
+        self.AddOutput(self.message,  color=self.color, stream=OutputStream.STDERR)
+        return self
+
+    def __str__(self):
+        return "EchoNode {}".format(self.name)
