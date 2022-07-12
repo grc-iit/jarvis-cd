@@ -97,11 +97,11 @@ class Daos(Launcher):
         #Start DAOS server
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         EchoNode(server_start_cmd).Run()
-        #ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+        ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
         #Start client
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
         EchoNode(agent_start_cmd).Run()
-        #ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+        ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
         #Mount containers on clients
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
@@ -115,7 +115,7 @@ class Daos(Launcher):
                 mount_cmd = " ".join(mount_cmd)
                 cmds = [mkdir_cmd, mount_cmd]
                 EchoNode(mount_cmd).Run()
-                #ExecNode(mount_cmd, hosts=self.agent_hosts).Run()
+                ExecNode(mount_cmd, hosts=self.agent_hosts).Run()
 
     def _DefineClean(self):
         pass
@@ -127,7 +127,7 @@ class Daos(Launcher):
                 umount_cmd = f"fusermount3 -u {container['mount']}"
                 ExecNode(umount_cmd, hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
         #Politefully stop servers
-        server_stop_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg system stop -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
+        server_stop_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg system stop -o {self.config['CONF']['CONTROL']} -d {self.config['SCAFFOLD']}"
         ExecNode(server_stop_cmd, sudo=True).Run()
         #Kill anything else DAOS spawns
         KillNode('.*daos.*', hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
