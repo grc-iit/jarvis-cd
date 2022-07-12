@@ -12,6 +12,7 @@ from jarvis_cd.basic.kill_node import KillNode
 from jarvis_cd.basic.echo_node import EchoNode
 from jarvis_cd.fs.fs import UnmountFS
 import yaml
+import sys,os
 
 class Daos(Launcher):
     def __init__(self, config_path=None, args=None):
@@ -125,8 +126,11 @@ class Daos(Launcher):
             self.config['CONF']['CONTROL'],
             f"{self.scaffold_dir}/daosCA",
             self.config['SERVER']['control_log_file'],
+            self.config['AGENT']['log_file'],
+            os.path.join(self.scaffold_dir, 'daos_agent.sock'),
+            os.path.join(self.scaffold_dir, 'daos_server.sock')
         ]
-        RmNode(to_rm, hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
+        RmNode(to_rm, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
