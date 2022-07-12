@@ -133,7 +133,7 @@ class Daos(Launcher):
         RmNode(to_rm, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
         for engine in self.config['SERVER']['engines']:
-            for storage in engine['STORAGE']:
+            for storage in engine['storage']:
                 for key,mount in storage.items():
                     if 'mount' in key:
                         UnmountFS(mount, hosts=self.server_hosts, ssh_info=self.ssh_info).Run()
