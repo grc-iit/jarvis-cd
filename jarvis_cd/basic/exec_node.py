@@ -12,6 +12,7 @@ class ExecNode(ParallelNode):
     def __init__(self, cmds, **kwargs):
         super().__init__(**kwargs)
         self.kwargs = kwargs
+        self.kwargs['print_output'] = False
 
         #Ensure cmds is a list
         if cmds is None:

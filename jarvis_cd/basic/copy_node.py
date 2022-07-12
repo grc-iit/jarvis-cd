@@ -16,8 +16,10 @@ class CopyNode(ParallelNode):
 
         self.sources = [source for source in sources if source is not None]
         self.destination = destination
-        self.kwargs = kwargs
+
         super().__init__(**kwargs)
+        self.kwargs = kwargs
+        self.kwargs['print_output'] = False
 
     def _Run(self):
         if self.do_ssh:
