@@ -2,8 +2,8 @@ from jarvis_cd.node import Node
 from jarvis_cd.enumerations import Color, OutputStream
 
 class EchoNode(Node):
-    def __init__(self, message, color=None):
-        super().__init__(print_output=True)
+    def __init__(self, message, color=None, **kwargs):
+        super().__init__(print_output=True, **kwargs)
         self.message = message
         self.color = color
 
@@ -15,8 +15,8 @@ class EchoNode(Node):
         return "EchoNode {}".format(self.name)
 
 class ErrorNode(Node):
-    def __init__(self, message, color=None):
-        super().__init__(print_output=True)
+    def __init__(self, message, color=None, **kwargs):
+        super().__init__(print_output=True, **kwargs)
         self.message = message
         self.color = color
 

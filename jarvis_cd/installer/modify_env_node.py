@@ -9,8 +9,8 @@ class ModifyEnvNodeOps(Enum):
     REMOVE = 'remove'
 
 class ModifyEnvNode(Node):
-    def __init__(self, path, info, op, print_output=True, collect_output=False):
-        super().__init__(print_output=print_output, collect_output=collect_output)
+    def __init__(self, path, info, op, **kwargs):
+        super().__init__(**kwargs)
         self.path = path
         self.info = info
         self.op = op

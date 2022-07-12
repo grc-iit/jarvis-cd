@@ -4,8 +4,8 @@ from jarvis_cd.enumerations import Color, OutputStream
 
 
 class SleepNode(Node):
-    def __init__(self,  timer, print_output=False):
-        super().__init__(print_output)
+    def __init__(self,  timer, **kwargs):
+        super().__init__(**kwargs)
         self.timer = timer
 
     def _Run(self):
