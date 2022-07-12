@@ -48,7 +48,7 @@ class Daos(Launcher):
             self.config['CONF']['SERVER'],
             self.config['CONF']['CONTROL'],
             f"{self.scaffold_dir}/jarvis_conf.yaml",
-            f"{self.scaffold_dir}/daosCA"
+            f"{self.scaffold_dir}/daosCA" if self.config['SECURE'] else None
         ]
         CopyNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
         #Start dummy DAOS server (on all server nodes)
