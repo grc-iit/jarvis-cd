@@ -18,7 +18,7 @@ class BootstrapConfig(SSHConfig):
         #Check if spack already installed
         node = CheckCommandNode('spack').Run()
         if node.Exists():
-            self.config['spack']['path'] = node.Path()
+            self.config['spack']['path'] = os.environ['SPACK_ROOT']
 
         #Check if scsrepo already installed
         if 'SCS_REPO' in os.environ:
