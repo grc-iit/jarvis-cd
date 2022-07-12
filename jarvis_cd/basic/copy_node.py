@@ -12,7 +12,7 @@ class CopyNode(ParallelNode):
         elif isinstance(sources, str):
             sources = [sources]
         else:
-            raise Error(ErrorCode.INVALID_TYPE).format("SCPNode source paths", type(sources))
+            raise Error(ErrorCode.INVALID_TYPE).format(obj="SCPNode source paths", t=type(sources))
 
         self.sources = [source for source in sources if source is not None]
         self.destination = destination

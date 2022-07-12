@@ -8,8 +8,8 @@ class ParallelNode(Node):
     def __init__(self, hosts=None, username=None, pkey=None, password=None, port=22,
                  sudo=False, shell=True, host_aliases=None, ssh_info=None,
                  affinity=None, sleep_period_ms=100, max_retries=0, cwd=None,
-                 exec_async=False, print_output=True, collect_output=True):
-        super().__init__(print_output=print_output, collect_output=collect_output)
+                 exec_async=False, **kwargs):
+        super().__init__(**kwargs)
 
         # Make sure hosts in proper format
         if hosts is None:

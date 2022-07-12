@@ -1,25 +1,38 @@
 from abc import ABC, abstractmethod
 from jarvis_cd.enumerations import Color, OutputStream
 import inspect
+import sys
 
 class Node(ABC):
-    def __init__(self, print_output=True, collect_output=True, name=None):
+    def __init__(self, print_output=True, collect_output=True, print_fancy=True, name=None):
         self.print_output = print_output
         self.name = name
         self.collect_output = collect_output
-        self.output = { "localhost": {
+        self.print_fancy = print_fancy
+        self.output = {}
+        self.AddHost('localhost')
+
+    def Print(self):
+        if self.print_fancy:
+            for host,outputs in self.output.items():
+                for line,color in zip(outputs[OutputStream.STDOUT][0], outputs[OutputStream.STDOUT][1]):
+                    print(color + "[OUT] {host} {line}".format(host=host, line=line) + Color.END)
+                for line,color in zip(outputs[OutputStream.STDERR][0], outputs[OutputStream.STDERR][1]):
+                    print(color + "[ERR] {host} {line}".format(host=host, line=line) + Color.END)
+        else:
+            for host,outputs in self.output.items():
+                for line,color in zip(outputs[OutputStream.STDOUT][0], outputs[OutputStream.STDOUT][1]):
+                    print(color + line + Color.END)
+                for line,color in zip(outputs[OutputStream.STDERR][0], outputs[OutputStream.STDERR][1]):
+                    print(color + line + Color.END, file=sys.stderr)
+
+    def AddHost(self, host):
+        if host in self.output:
+            return
+        self.output = {host: {
             OutputStream.STDOUT: [[], []],
             OutputStream.STDERR: [[], []]
         }}
-
-    def Print(self):
-        stdout_fmt = "[OUT] {host} {line}"
-        stderr_fmt = "[ERR] {host} {line}"
-        for host,outputs in self.output.items():
-            for line,color in zip(outputs[OutputStream.STDOUT][0], outputs[OutputStream.STDOUT][1]):
-                print(color + stdout_fmt.format(host=host, line=line) + Color.END)
-            for line,color in zip(outputs[OutputStream.STDERR][0], outputs[OutputStream.STDERR][1]):
-                print(color + stderr_fmt.format(host=host, line=line) + Color.END)
 
     def AddOutput(self, outputs, host='localhost', stream=OutputStream.STDOUT, color=None):
         if isinstance(outputs, str):
@@ -28,6 +41,7 @@ class Node(ABC):
             color = Color.GREEN
         if color is None and stream == OutputStream.STDERR:
             color = Color.RED
+        self.AddHost(host)
         self.output[host][stream][0] += outputs
         self.output[host][stream][1] += [color]*len(outputs)
 
@@ -63,12 +77,13 @@ class Node(ABC):
     def _GetParamStr(self, params):
         return ','.join([f"{key}=\"{val}\"" if isinstance(val, str) else f"{key}={val}" for key, val in params.items()])
 
-    def _ToShellCmd(self, ignore_params=[]):
+    def _ToShellCmd(self, ignore_params=[], set_params={}):
         node_import = type(self).__module__
         node_params = self._GetParams()
         for param in ignore_params:
             if param in node_params:
                 del node_params[param]
+        node_params.update(set_params)
         if 'kwargs' in node_params:
             kwargs = node_params['kwargs']
             del node_params['kwargs']

@@ -7,7 +7,7 @@ class NodeExecNode(ParallelNode):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         #We ignore kwargs since we don't want to call SSH during _LocalRun
-        self.cmd = self._ToShellCmd(ignore_params=['kwargs'])
+        self.cmd = self._ToShellCmd(ignore_params=['kwargs'], set_params={'print_fancy': False})
         self.kwargs = kwargs
         self.kwargs['print_output'] = False
 

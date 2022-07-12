@@ -29,7 +29,7 @@ class ErrorCode:
     SUCCESS = {"id": 0, "msg": "SUCCESSFUL"}
 
     #General error code
-    NOT_IMPLEMENTED = {"id": 1, "msg": "{} is not implemented"}
+    NOT_IMPLEMENTED = {"id": 1, "msg": "{func} is not implemented"}
     #Specific error code
     CONFIG_REQUIRED = {"id": 1000, "msg": "Config is required. Check sample {}"}
     INVALID_SECTION = {"id": 1001, "msg": "Section {} is not recognized. Check sample {}"}
@@ -37,8 +37,8 @@ class ErrorCode:
     INVALID_DEFAULT_CONFIG = {"id": 1003, "msg": "The module {} does not have a default configuration."}
     NOT_INSTALLED = {"id": 1004, "msg": "{} environment variable has not been set."}
     CONFIG_NOT_FOUND = {"id": 1005, "msg": "Config at {} does not exist."}
-    HOSTFILE_NOT_FOUND = {"id": 1006, "msg": "Hostfile at {} does not exist."}
-    TOO_MANY_HOSTS_CHOSEN = {"id": 1007, "msg": "Hostfile at {} does not contain {} hosts, only {}."}
-    INVALID_TYPE = {"id": 1008, "msg": "{}: Has invalid type {}."}
+    HOSTFILE_NOT_FOUND = {"id": 1006, "msg": "Hostfile at {path} does not exist."}
+    TOO_MANY_HOSTS_CHOSEN = {"id": 1007, "msg": "Hostfile at {path} does not contain {num_hosts} hosts, only {max_hosts}."}
+    INVALID_TYPE = {"id": 1008, "msg": "{obj}: Has invalid type {t}."}
     INVALID_CMD_LIST = {"id": 1009, "msg": "ExecNode command list has a mix of both strings and nodes. {}"}
     #Orange FS error code
