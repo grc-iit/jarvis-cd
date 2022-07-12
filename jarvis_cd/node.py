@@ -117,5 +117,4 @@ class Node(ABC):
         node_import = f"from {node_import} import {node_type}"
         node_run = f"{node_type}({param_str}).Run()"
         cmd = f"jarvis-exec \"{node_import}\n{node_run}\""
-        exit()
         return cmd
