@@ -92,7 +92,7 @@ class Node(ABC):
         param_str = self._GetParamStr(node_params)
         node_import = f"from {node_import} import {node_type}"
         node_run = f"{node_type}({param_str}).Run()"
-        cmd = f"python3 -c \"{node_import}\n{node_run}\""
+        cmd = f"jarvis-exec \"{node_import}\n{node_run}\""
         return cmd
 
     def Run(self):
