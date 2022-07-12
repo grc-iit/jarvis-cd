@@ -15,7 +15,7 @@ class KillNode(NodeExecNode):
     def _LocalRun(self):
         node = ExecNode('ps -ef', print_output=False).Run()
         pids = []
-        for line in self.GetLocalStdout():
+        for line in node.GetLocalStdout():
             words = line.split()
             if len(words) <= 7:
                 continue
