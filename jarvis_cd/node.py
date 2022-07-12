@@ -29,10 +29,10 @@ class Node(ABC):
     def AddHost(self, host):
         if host in self.output:
             return
-        self.output = {host: {
+        self.output[host] = {
             OutputStream.STDOUT: [[], []],
             OutputStream.STDERR: [[], []]
-        }}
+        }
 
     def AddOutput(self, outputs, host='localhost', stream=OutputStream.STDOUT, color=None):
         if isinstance(outputs, str):
