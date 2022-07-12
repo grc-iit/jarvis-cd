@@ -99,9 +99,10 @@ class Node(ABC):
         if ignore_base is None and len(override) == 0:
             return self.class_params[klass]
         args = self.class_params[klass].copy()
-        ignore_params = self.GetClassParams(klass=ignore_base)
-        for param_name in ignore_params.keys():
-            del args[param_name]
+        if ignore_base is not None:
+            ignore_params = self.GetClassParams(klass=ignore_base)
+            for param_name in ignore_params.keys():
+                del args[param_name]
         args.update(override)
         return args
 
