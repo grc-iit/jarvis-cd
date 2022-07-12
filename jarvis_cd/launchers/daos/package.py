@@ -10,6 +10,7 @@ from jarvis_cd.introspect.detect_networks import DetectNetworks
 from jarvis_cd.basic.sleep_node import SleepNode
 from jarvis_cd.basic.kill_node import KillNode
 from jarvis_cd.basic.echo_node import EchoNode
+from jarvis_cd.fs.fs import UnmountFS
 import yaml
 
 class Daos(Launcher):
@@ -118,7 +119,20 @@ class Daos(Launcher):
                 ExecNode(mount_cmd, hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
 
     def _DefineClean(self):
-        pass
+        to_rm = [
+            self.config['CONF']['AGENT'],
+            self.config['CONF']['SERVER'],
+            self.config['CONF']['CONTROL'],
+            f"{self.scaffold_dir}/daosCA",
+            self.config['SERVER']['control_log_file'],
+        ]
+        RmNode(to_rm, hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
+
+        for container in self.config['CONTAINERS']:
+            if 'mount' in container and container['mount'] is not None:
+                UnmountFS(container['mount'], hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
+                RmNode(container['mount'], hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
+
 
     def _DefineStop(self):
         #Unmount containers
