@@ -115,7 +115,7 @@ class Daos(Launcher):
                 mount_cmd = " ".join(mount_cmd)
                 cmds = [mkdir_cmd, mount_cmd]
                 EchoNode(mount_cmd).Run()
-                ExecNode(mount_cmd, hosts=self.agent_hosts).Run()
+                ExecNode(mount_cmd, hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
 
     def _DefineClean(self):
         pass
