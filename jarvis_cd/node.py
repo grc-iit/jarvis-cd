@@ -10,7 +10,18 @@ class Node(ABC):
         self.collect_output = collect_output
         self.print_fancy = print_fancy
         self.output = {}
+        self.kwargs = {}
         self.AddHost('localhost')
+
+    @abstractmethod
+    def _Run(self):
+        pass
+
+    def Run(self):
+        self._Run()
+        if self.print_output:
+            self.Print()
+        return self
 
     def Print(self):
         if self.print_fancy:
@@ -61,45 +72,60 @@ class Node(ABC):
     def GetLocalOutput(self):
         return self.GetOutput(host='localhost', stream=None)
 
-    @abstractmethod
-    def _Run(self):
-        pass
+    def _SetKwargs(self, klass, kwargs, **override):
+        self.kwargs[self] = kwargs
+        self.kwargs[klass] = kwargs.copy()
+        self.kwargs[klass].update(override)
 
-    def _GetParams(self, klass=None, func='__init__'):
+    def _FindKwargsAuto(self, klass, args):
+        if not isinstance(klass, Node):
+            return
+        func = getattr(klass, '__init__')
+        param_names = list(func.__code__.co_varnames)
+        if 'kwargs' not in param_names:
+            return
+        for param_name in param_names:
+            args[param_name] = getattr(self, param_name)
+        for base in klass.__bases__:
+            self._FindKwargsAuto(base, args)
+
+    def _GetKwargs(self, klass=None):
         if klass is None:
             klass = self
-        func = getattr(klass, func)
+        if klass not in self.kwargs:
+            kwargs = {}
+            self._FindKwargsAuto(klass, kwargs)
+            self._SetKwargs(klass, kwargs)
+        kwargs = self.kwargs[klass]
+        kwargs = { param: getattr(self, param) for param in kwargs }
+        return kwargs
+
+    def _GetParams(self, **override):
+        func = getattr(self, '__init__')
         params = list(func.__code__.co_varnames)
         if 'self' in params:
             params.remove('self')
-        return { param: getattr(self, param) for param in params }
+        if 'kwargs' in params:
+            params.remove('kwargs')
+        node_params = { param: getattr(self, param) for param in params }
+        kwargs = self._GetKwargs()
+        if kwargs is not None:
+            node_params.update(kwargs)
+        node_params.update(override)
+        return node_params
 
     def _GetParamStr(self, params):
         return ','.join([f"{key}=\'{val}\'" if isinstance(val, str) else f"{key}={val}" for key, val in params.items()])
 
     def _ToShellCmd(self, ignore_params=[], set_params={}):
         node_import = type(self).__module__
-        node_params = self._GetParams()
+        node_params = self._GetParams(**set_params)
         for param in ignore_params:
             if param in node_params:
                 del node_params[param]
-        node_params.update(set_params)
-        if 'kwargs' in node_params:
-            kwargs = node_params['kwargs']
-            del node_params['kwargs']
-            node_params.update(kwargs)
         node_type = type(self).__name__
         param_str = self._GetParamStr(node_params)
         node_import = f"from {node_import} import {node_type}"
         node_run = f"{node_type}({param_str}).Run()"
         cmd = f"jarvis-exec \"{node_import}\n{node_run}\""
         return cmd
-
-    def Run(self):
-        self._Run()
-        if self.print_output:
-            self.Print()
-        return self
-
-    def __str__(self):
-        return self.name

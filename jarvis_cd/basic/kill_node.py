@@ -7,11 +7,10 @@ import re
 
 class KillNode(NodeExecNode):
     def __init__(self, program_regex, **kwargs):
+        super().__init__(**kwargs)
         if not isinstance(program_regex, list):
             program_regex = [program_regex]
         self.program_regex = program_regex
-        super().__init__(**kwargs)
-        self.kwargs = kwargs
 
     def _LocalRun(self):
         node = ExecNode('ps -ef', print_output=False).Run()

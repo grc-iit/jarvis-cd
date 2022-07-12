@@ -4,6 +4,18 @@ from jarvis_cd.node import Node
 import sys,os
 import getpass
 
+"""
+Aargs = {'a': 2, 'b': 3}
+
+class A:
+    def __init__(self, a, b):
+        pass
+
+class B:
+    def __init__(self, **Aargs):
+        pass
+"""
+
 class ParallelNode(Node):
     def __init__(self, hosts=None, username=None, pkey=None, password=None, port=22,
                  sudo=False, shell=True, host_aliases=None, ssh_info=None,

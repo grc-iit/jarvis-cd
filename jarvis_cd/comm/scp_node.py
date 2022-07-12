@@ -20,6 +20,7 @@ SCPNode has various concerns:
 class SCPNode(ParallelNode):
     def __init__(self, sources, destination, **kwargs):
         super().__init__(**kwargs)
+        self._SetKwargs(ParallelNode, kwargs)
 
         #Make sure the sources is a list
         if isinstance(sources, list):
@@ -83,8 +84,7 @@ class SCPNode(ParallelNode):
                 files[file] = dst_path
 
         #Create new remote directories
-        #MkdirNode(list(dirs.values()), **self._GetParams(ParallelNode)).Run()
-        RmNode(list(dirs.values()), **self._GetParams(ParallelNode)).Run()
+        RmNode(list(dirs.values()), **self._GetKwargs(ParallelNode)).Run()
 
         #Copy all files to the remote host
         for source,destination in files.items():

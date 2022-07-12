@@ -11,8 +11,7 @@ sys.stderr = sys.__stderr__
 class ExecNode(ParallelNode):
     def __init__(self, cmds, **kwargs):
         super().__init__(**kwargs)
-        self.kwargs = kwargs
-        self.kwargs['print_output'] = False
+        self._SetKwargs(ParallelNode, kwargs, print_output=False)
 
         #Ensure cmds is a list
         if cmds is None:
@@ -40,7 +39,7 @@ class ExecNode(ParallelNode):
         if len(self.cmds) == 0:
             return
         if self.do_ssh:
-            node = SSHExecNode(self.cmds, **self.kwargs).Run()
+            node = SSHExecNode(self.cmds, **self._GetKwargs(ParallelNode)).Run()
         else:
-            node = LocalExecNode(self.cmds, **self.kwargs).Run()
+            node = LocalExecNode(self.cmds, **self._GetKwargs(ParallelNode)).Run()
         self.output = node.GetOutput()

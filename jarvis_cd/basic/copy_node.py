@@ -6,6 +6,9 @@ import shutil, os, sys
 
 class CopyNode(ParallelNode):
     def __init__(self, sources, destination, **kwargs):
+        super().__init__(**kwargs)
+        self._SetKwargs(ParallelNode, kwargs, print_output=False)
+
         # Make sure the sources is a list
         if isinstance(sources, list):
             sources = sources
@@ -17,13 +20,9 @@ class CopyNode(ParallelNode):
         self.sources = [source for source in sources if source is not None]
         self.destination = destination
 
-        super().__init__(**kwargs)
-        self.kwargs = kwargs
-        self.kwargs['print_output'] = False
-
     def _Run(self):
         if self.do_ssh:
-            node = SCPNode(self.sources, self.destination, **self.kwargs).Run()
+            node = SCPNode(self.sources, self.destination, **self._GetKwargs(ParallelNode)).Run()
             self.output = node.GetOutput()
         else:
             for source in self.sources:
