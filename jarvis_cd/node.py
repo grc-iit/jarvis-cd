@@ -106,9 +106,6 @@ class Node(ABC):
         args.update(override)
         return args
 
-    def GetBaseClassParams(self, ignore_base=None, **override):
-        return self.GetClassParams(type(self).__bases__[0], ignore_base=ignore_base, **override)
-
     def _GetParamStr(self, params):
         return ','.join([f"{key}=\'{val}\'" if isinstance(val, str) else f"{key}={val}" for key, val in params.items()])
 

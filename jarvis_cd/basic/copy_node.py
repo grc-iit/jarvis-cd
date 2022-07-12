@@ -21,7 +21,7 @@ class CopyNode(ParallelNode):
 
     def _Run(self):
         if self.do_ssh:
-            node = SCPNode(self.sources, self.destination, **self.GetBaseClassParams(print_output=False)).Run()
+            node = SCPNode(self.sources, self.destination, **self.GetClassParams(CopyNode, print_output=False)).Run()
             self.output = node.GetOutput()
         else:
             for source in self.sources:

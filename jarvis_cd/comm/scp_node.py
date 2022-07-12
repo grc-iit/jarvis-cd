@@ -83,7 +83,7 @@ class SCPNode(ParallelNode):
                 files[file] = dst_path
 
         #Create new remote directories
-        RmNode(list(dirs.values()), **self.GetBaseClassParams()).Run()
+        RmNode(list(dirs.values()), **self.GetClassParams(ParallelNode)).Run()
 
         #Copy all files to the remote host
         for source,destination in files.items():
