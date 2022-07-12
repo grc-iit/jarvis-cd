@@ -137,7 +137,7 @@ class Daos(Launcher):
                 for key,mount in storage.items():
                     if 'mount' in key:
                         UnmountFS(mount, hosts=self.server_hosts, ssh_info=self.ssh_info).Run()
-                        RmNode(mount, hosts=self.server_hosts, ssh_info=self.ssh_info)
+                        RmNode(mount, hosts=self.server_hosts, ssh_info=self.ssh_info).Run()
 
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
