@@ -109,7 +109,6 @@ class Daos(Launcher):
         #Mount containers on clients
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
-                mkdir_cmd = f"mkdir -p {container['mount']}"
                 mount_cmd = [
                     f"{self.config['DAOS_ROOT']}/bin/dfuse",
                     f"--pool {container['pool']}",
@@ -117,9 +116,11 @@ class Daos(Launcher):
                     f"-m {container['mount']}"
                 ]
                 mount_cmd = " ".join(mount_cmd)
-                cmds = [mkdir_cmd, mount_cmd]
+
+                #DAOS bug: can't execute this command in parallel
                 EchoNode(mount_cmd).Run()
-                ExecNode(mount_cmd, hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
+                for host in self.agent_hosts:
+                    ExecNode(mount_cmd, hosts=host, ssh_info=self.ssh_info).Run()
 
     def _DefineClean(self):
         to_rm = [
