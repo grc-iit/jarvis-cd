@@ -100,10 +100,12 @@ class Daos(Launcher):
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         EchoNode(server_start_cmd).Run()
         ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+        SleepNode(3).Run()
         #Start client
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
         EchoNode(agent_start_cmd).Run()
         ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+        SleepNode(3).Run()
         #Mount containers on clients
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
