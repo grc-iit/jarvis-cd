@@ -4,5 +4,4 @@ import os,sys
 
 if __name__ == '__main__':
     cmd = sys.argv[1]
-    print(cmd)
     exec(cmd)

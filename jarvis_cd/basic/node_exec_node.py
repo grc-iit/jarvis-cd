@@ -14,7 +14,7 @@ class NodeExecNode(ParallelNode):
             cmd = self._ToShellCmd(ignore_base=ParallelNode, set_params={'print_fancy': False})
             node = ExecNode(cmd, **self.GetClassParams(ParallelNode, print_output=False, shell=True)).Run()
             EchoNode(cmd).Run()
-            EchoNode(str(self.ssh_info)).Run()
+            #EchoNode(str(self.ssh_info)).Run()
             self.output = node.GetOutput()
         else:
             self._LocalRun()
