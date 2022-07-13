@@ -18,7 +18,8 @@ class Io500(Launcher):
         cmd.append(f"--dfs.pool={daos['pool']}")
         cmd.append(f"--dfs.cont={daos['container']}")
         cmd.append(f"--dfs.prefix={daos['mount']}")
-        cmd.append(f"--dfs.oclass=SX")
+        if oclass:
+            cmd.append(f"--dfs.oclass=SX")
         return ' '.join(cmd)
 
     def _DefineInit(self):
