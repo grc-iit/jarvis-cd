@@ -42,3 +42,6 @@ class ExecNode(ParallelNode):
         else:
             node = LocalExecNode(self.cmds, **self.GetClassParams(ParallelNode, print_output=False)).Run()
         self.output = node.GetOutput()
+
+    def GetCommands(self):
+        return self.cmds

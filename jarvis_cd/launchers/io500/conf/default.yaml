@@ -1,0 +1,17 @@
+HOSTS: ${SCAFFOLD}/hostfile.txt
+SSH:
+  port: 22
+  key: scs_chameleon_pass
+  key_dir: ${HOME}/.ssh
+GLOBAL:
+  datadir: ./datafiles
+  timestamp-datadir: TRUE
+  resultdir: ./results
+  timestamp-resultdir: TRUE
+  api: POSIX
+  drop-caches: FALSE
+  drop-caches-cmd: sudo -n bash -c "echo 3 > /proc/sys/vm/drop_caches"
+  io-buffers-on-gpu: FALSE
+  verbosity: 1
+  scc: TRUE
+  dataPacketType: timestamp
