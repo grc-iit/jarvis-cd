@@ -14,7 +14,7 @@ class MPINode(ExecNode):
         if hostfile is not None:
             mpirun.append(f"-f {hostfile}")
         mpirun.append(f"{cmd}")
-        mpirun = " ".join(self.mpirun)
+        mpirun = " ".join(mpirun)
         super().__init__(mpirun, **kwargs)
         self.nprocs = nprocs
         self.cmd = cmd
