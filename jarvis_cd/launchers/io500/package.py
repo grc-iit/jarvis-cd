@@ -5,6 +5,12 @@ from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.basic.mkdir_node import MkdirNode
 import configparser
 
+#POOL_ID: ab37a2ea-6412-4320-816f-cfaecd2b449a
+#CONTAINER_ID: ccc8ed1a-7a69-489b-8cbe-12644f052de1
+
+#Get POOL ID: dmg pool list --verbose -o daos_control.yaml
+#Get container ID: daos cont list io500_pool
+
 class Io500(Launcher):
     def __init__(self, config_path=None, args=None):
         super().__init__('io500', config_path, args)

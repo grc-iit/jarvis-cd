@@ -5,14 +5,16 @@ class MPINode(ExecNode):
     def __init__(self, cmd, nprocs, hosts=None, **kwargs):
         if isinstance(hosts, Hostfile):
             hostfile = hosts.Path()
-        if isinstance(hosts, str):
+        elif isinstance(hosts, str):
             hostfile = hosts
+        else:
+            hostfile = None
 
         mpirun = []
         mpirun.append('mpirun')
         mpirun.append(f"-n {nprocs}")
         if hostfile is not None:
-            mpirun.append(f"-f {hostfile}")
+            mpirun.append(f"--hostfile {hostfile}")
         mpirun.append(f"{cmd}")
         mpirun = " ".join(mpirun)
         super().__init__(mpirun, **kwargs)
