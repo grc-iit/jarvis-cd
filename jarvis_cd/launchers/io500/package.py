@@ -29,7 +29,7 @@ class Io500(Launcher):
         io500_ini = configparser.ConfigParser()
         io500_ini['DEBUG'] = self.config['DEBUG']
         io500_ini['GLOBAL'] = self.config['GLOBAL']
-        io500_ini['GLOBAL']['drop_caches_cmd'] = DropCaches().GetCommands()[0]
+        io500_ini['GLOBAL']['drop-caches-cmd'] = DropCaches().GetCommands()[0]
         io500_ini['ior-easy'] = self.config['ior-easy']
         io500_ini['ior-hard'] = self.config['ior-hard']
         io500_ini['mdtest-easy'] = self.config['mdtest-easy']
