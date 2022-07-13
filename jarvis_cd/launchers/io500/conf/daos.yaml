@@ -36,7 +36,6 @@ mdtest-easy:
 ior-hard:
   segmentCount:  10000000
 mdtest-hard:
-  API:  DFS --dfs.pool=$DAOS_POOL --dfs.cont=$DAOS_CONT --dfs.oclass=S1 --dfs.dir_oclass=SX --dfs.prefix=$DAOS_FUSE
   n:  10000000
 find:
   nproc:  1

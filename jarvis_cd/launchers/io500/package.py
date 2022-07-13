@@ -24,15 +24,16 @@ class Io500(Launcher):
 
     def _DefineInit(self):
         MkdirNode(self.scaffold_dir, hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
+        MkdirNode(self.config['IO500_ROOT'], hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
         LinkSpackage(self.config['IO500_SPACK'], self.config['IO500_ROOT'], hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
         io500_ini = configparser.ConfigParser()
         io500_ini['DEBUG'] = self.config['DEBUG']
         io500_ini['GLOBAL'] = self.config['GLOBAL']
+        io500_ini['GLOBAL']['drop_caches_cmd'] = DropCaches().GetCommands()[0]
         io500_ini['ior-easy'] = self.config['ior-easy']
         io500_ini['ior-hard'] = self.config['ior-hard']
         io500_ini['mdtest-easy'] = self.config['mdtest-easy']
         io500_ini['mdtest-hard'] = self.config['mdtest-hard']
-        io500_ini['drop_caches_cmd'] = DropCaches().GetCommands()[0]
         if 'DAOS' in self.config:
             io500_ini['ior-easy']['API'] = self._DFSApi(self.config['DAOS'])
             io500_ini['ior-hard']['API'] = self._DFSApi(self.config['DAOS'])
