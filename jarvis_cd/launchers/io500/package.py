@@ -7,7 +7,7 @@ import configparser
 
 class Io500(Launcher):
     def __init__(self, config_path=None, args=None):
-        super().__init__('daos', config_path, args)
+        super().__init__('io500', config_path, args)
 
     def _ProcessConfig(self):
         super()._ProcessConfig()
