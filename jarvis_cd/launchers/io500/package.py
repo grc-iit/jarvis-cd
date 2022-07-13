@@ -5,7 +5,7 @@ from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.basic.mkdir_node import MkdirNode
 import configparser
 
-class IO500(Launcher):
+class Io500(Launcher):
     def __init__(self, config_path=None, args=None):
         super().__init__('daos', config_path, args)
 
