@@ -39,7 +39,6 @@ class LocalExecNode(ParallelNode):
                              cwd=self.cwd)
         if self.affinity is not None:
             os.sched_setaffinity(self.GetPid(), self.affinity)
-        return self.proc
 
     def _start_bash_processes(self, commands):
         commands = " ; ".join(commands)
@@ -54,12 +53,6 @@ class LocalExecNode(ParallelNode):
         if self.affinity is not None:
             os.sched_setaffinity(self.GetPid(), self.affinity)
 
-    def _get_output(self):
-        if self.collect_output and not self.exec_async:
-            self.stdout, self.stderr = self.proc.communicate()
-            self.AddOutput([line.decode("utf-8") for line in self.stdout.splitlines()], stream=OutputStream.STDOUT)
-            self.AddOutput([line.decode("utf-8") for line in self.stderr.splitlines()], stream=OutputStream.STDERR)
-
     def _exec_cmds(self,commands):
         """
         Executes a command on Shell and returns stdout and stderr from the command.
@@ -73,7 +66,6 @@ class LocalExecNode(ParallelNode):
         else:
             for i, command in enumerate(commands):
                 self._start_pipe_process(command, i==0)
-        self._get_output()
 
     def GetExitCode(self):
         if self.proc is not None:
@@ -87,6 +79,10 @@ class LocalExecNode(ParallelNode):
             self.proc.kill()
 
     def Wait(self):
+        self.stdout, self.stderr = self.proc.communicate()
+        if self.collect_output:
+            self.AddOutput([line.decode("utf-8") for line in self.stdout.splitlines()], stream=OutputStream.STDOUT)
+            self.AddOutput([line.decode("utf-8") for line in self.stderr.splitlines()], stream=OutputStream.STDERR)
         self.proc.wait()
 
     def GetPid(self):
@@ -104,6 +100,8 @@ class LocalExecNode(ParallelNode):
                 break
             retries += 1
             print(f"Retrying {self.cmds}")
+        if not self.exec_async:
+            self.Wait()
 
     def __str__(self):
         return "LocalExecNode {}".format(self.name)
