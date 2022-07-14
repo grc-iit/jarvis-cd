@@ -5,8 +5,8 @@ from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.basic.mkdir_node import MkdirNode
 import configparser
 
-#POOL_ID: ab37a2ea-6412-4320-816f-cfaecd2b449a
-#CONTAINER_ID: ccc8ed1a-7a69-489b-8cbe-12644f052de1
+#POOL_ID: 564cf1ad-959e-4e52-9707-290b48d7e728
+#CONTAINER_ID: 29866e67-baac-4886-8e76-ce0eb6659b95
 
 #Get POOL ID: dmg pool list --verbose -o daos_control.yaml
 #Get container ID: daos cont list io500_pool

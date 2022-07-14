@@ -62,7 +62,7 @@ class Daos(Launcher):
         EchoNode("Formatting DAOS storage").Run()
         storage_format_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg storage format --force -o {self.config['CONF']['CONTROL']}"
         EchoNode(storage_format_cmd)
-        ExecNode(storage_format_cmd, hosts=self.server_hosts, sudo=True, ssh_info=self.ssh_info).Run()
+        ExecNode(storage_format_cmd, sudo=True).Run()
         #Get networking options
         EchoNode("Scanning networks").Run()
         network_check_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} network scan -p all"
