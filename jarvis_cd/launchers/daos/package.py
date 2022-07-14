@@ -57,7 +57,7 @@ class Daos(Launcher):
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         EchoNode(server_start_cmd).Run()
         ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
-        SleepNode(6).Run()
+        SleepNode(3).Run()
         #Format storage
         EchoNode("Formatting DAOS storage").Run()
         storage_format_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg storage format --force -o {self.config['CONF']['CONTROL']}"
@@ -97,15 +97,30 @@ class Daos(Launcher):
 
     def _DefineStart(self):
         #Start DAOS server
-        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
-        EchoNode(server_start_cmd).Run()
-        ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
-        SleepNode(3).Run()
+        if 'TRY_SOLO' in self.config and self.config['TRY_SOLO']:
+            for host in self.server_hosts:
+                server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
+                EchoNode(server_start_cmd).Run()
+                ExecNode(server_start_cmd, hosts=host, sudo=True, exec_async=True,
+                         ssh_info=self.ssh_info).Run()
+                SleepNode(3).Run()
+        else:
+            server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
+            EchoNode(server_start_cmd).Run()
+            ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+            SleepNode(3).Run()
         #Start client
-        agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
-        EchoNode(agent_start_cmd).Run()
-        ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
-        SleepNode(3).Run()
+        if 'TRY_SOLO' in self.config and self.config['TRY_SOLO']:
+            for host in self.agent_hosts:
+                agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
+                EchoNode(agent_start_cmd).Run()
+                ExecNode(agent_start_cmd, hosts=host, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+                SleepNode(3).Run()
+        else:
+            agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
+            EchoNode(agent_start_cmd).Run()
+            ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+            SleepNode(3).Run()
         #Mount containers on clients
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
@@ -117,10 +132,19 @@ class Daos(Launcher):
                 ]
                 mount_cmd = " ".join(mount_cmd)
 
-                #DAOS bug: can't execute this command in parallel
-                EchoNode(mount_cmd).Run()
-                for host in self.agent_hosts:
-                    ExecNode(mount_cmd, hosts=host, ssh_info=self.ssh_info).Run()
+                #DAOS bug: can't execute this command in parallel.
+                #Must wait for each dfuse connection, one at a time, to FULLY complete.
+
+                if 'TRY_SOLO' in self.config and self.config['TRY_SOLO']:
+                    EchoNode(mount_cmd).Run()
+                    ExecNode(mount_cmd, hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
+                else:
+                    for host in self.agent_hosts:
+                        EchoNode(f"Mounting on {host}").Run()
+                        EchoNode(mount_cmd).Run()
+                        ExecNode(mount_cmd, hosts=host, ssh_info=self.ssh_info).Run()
+                        EchoNode("Waiting 2 seconds").Run()
+                        SleepNode(1).Run()
 
     def _DefineClean(self):
         to_rm = [

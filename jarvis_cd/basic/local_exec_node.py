@@ -37,7 +37,7 @@ class LocalExecNode(ParallelNode):
                              stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE,
                              cwd=self.cwd)
-        if self.affinity:
+        if self.affinity is not None:
             os.sched_setaffinity(self.GetPid(), self.affinity)
         return self.proc
 
@@ -51,9 +51,11 @@ class LocalExecNode(ParallelNode):
                                          stderr=subprocess.PIPE,
                                          cwd=self.cwd,
                                          shell=True)
+        if self.affinity is not None:
+            os.sched_setaffinity(self.GetPid(), self.affinity)
 
     def _get_output(self):
-        if self.collect_output:
+        if self.collect_output and not self.exec_async:
             self.stdout, self.stderr = self.proc.communicate()
             self.AddOutput([line.decode("utf-8") for line in self.stdout.splitlines()], stream=OutputStream.STDOUT)
             self.AddOutput([line.decode("utf-8") for line in self.stderr.splitlines()], stream=OutputStream.STDERR)
@@ -91,7 +93,7 @@ class LocalExecNode(ParallelNode):
         else:
             return None
 
-    async def _RunAsync(self):
+    def _Run(self):
         retries = 0
         while True:
             time.sleep(self.sleep_period_ms / 1000)
@@ -101,24 +103,6 @@ class LocalExecNode(ParallelNode):
             retries += 1
             print(f"Retrying {self.cmds}")
         self.proc.wait()
-
-    def RunAsync(self):
-        self.loop = asyncio.get_event_loop()
-        self.future = self.loop.create_task(self._RunAsync())
-        return self
-
-    def Wait(self):
-        if self.loop is not None and self.future is not None:
-            self.loop.run_until_complete(self.future)
-            self.loop = None
-            self.future = None
-        return self
-
-    def _Run(self):
-        self.RunAsync()
-        if not self.exec_async:
-            self.Wait()
-        return self
 
     def __str__(self):
         return "LocalExecNode {}".format(self.name)

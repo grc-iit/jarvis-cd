@@ -2,7 +2,6 @@ import time
 from jarvis_cd.node import Node
 from jarvis_cd.enumerations import Color, OutputStream
 
-
 class SleepNode(Node):
     def __init__(self,  timer, **kwargs):
         super().__init__(**kwargs)
