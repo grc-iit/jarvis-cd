@@ -30,29 +30,21 @@ class Orangefs(Launcher):
 
     def _DefineInit(self):
         # generate PFS Gen config
-        pvfs_gen_cmd = "{binary} --quiet " \
-                    "--protocol {protocol} " \
-                    "--tcpport {port} " \
-                    "--dist-name {dist_name} " \
-                    "--dist-params strip_size:{strip_size} "\
-                    "--ioservers {data_servers} "\
-                    "--metaservers {meta_servers} "\
-                    "--storage {data_dir} "\
-                    "--metadata {meta_dir} "\
-                    "--logfile {log_file} "\
-                    "{conf_file}".format(binary=self.pvfs_genconfig,
-                                                            protocol=self.config['SERVER']['PVFS2_PROTOCOL'],
-                                                            port=self.config['SERVER']['PVFS2_PORT'],
-                                                            dist_name=self.config['SERVER']['PVFS2_DISTRIBUTION_NAME'],
-                                                            strip_size=self.config['SERVER']['PVFS2_STRIP_SIZE'],
-                                                            data_servers=self.server_data_hosts.to_str(sep=','),
-                                                            meta_servers=self.server_meta_hosts.to_str(sep=','),
-                                                            data_dir=os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],"data"),
-                                                            meta_dir=os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],"meta"),
-                                                            log_file=os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],"orangefs.log"),
-                                                            conf_file=self.pfs_conf_scp)
-        pfs_genconfig_node = ExecNode("generate pfs conf",pvfs_gen_cmd)
-        pfs_genconfig_node.Run()
+        pvfs_gen_cmd = []
+        pvfs_gen_cmd.append(f"{self.pvfs_genconfig}")
+        pvfs_gen_cmd.append(f"--quiet")
+        pvfs_gen_cmd.append(f"--protocol {self.config['SERVER']['PVFS2_PROTOCOL']}")
+        pvfs_gen_cmd.append(f"--tcpport {self.config['SERVER']['PVFS2_PORT']}")
+        pvfs_gen_cmd.append(f"--dist-name {self.config['SERVER']['PVFS2_DISTRIBUTION_NAME']}")
+        pvfs_gen_cmd.append(f"--dist-params strip_size: {self.config['SERVER']['PVFS2_STRIP_SIZE']}")
+        pvfs_gen_cmd.append(f"--ioservers {self.server_data_hosts.to_str(sep=',')}")
+        pvfs_gen_cmd.append(f"--metaservers {self.server_meta_hosts.to_str(sep=',')}")
+        pvfs_gen_cmd.append(f"--storage {os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],'data')}")
+        pvfs_gen_cmd.append(f"--metadata {os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],'meta')}")
+        pvfs_gen_cmd.append(f"--logfile {os.path.join(self.config['SERVER']['SERVER_LOCAL_STORAGE_DIR'],'orangefs.log')}")
+        pvfs_gen_cmd.append(self.pfs_conf_scp)
+        pvfs_gen_cmd = " ".join(pvfs_gen_cmd)
+        ExecNode(pvfs_gen_cmd).Run()
 
         # set pvfstab on clients
         for i,client in self.client_hosts.enumerate():

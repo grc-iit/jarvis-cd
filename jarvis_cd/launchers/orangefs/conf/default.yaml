@@ -1,4 +1,6 @@
 SCAFFOLD: null
+HOSTS:
+
 COMMON:
     ORANGEFS_INSTALL_DIR: "/opt/ohpc/pub/orangefs"
 SERVER:
