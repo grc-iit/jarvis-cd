@@ -85,7 +85,9 @@ class LocalExecNode(ParallelNode):
         if self.proc is not None:
             LocalExecNode(f"kill -9 {self.GetPid()}", collect_output=False).Run()
             self.proc.kill()
-            return self.Wait()
+
+    def Wait(self):
+        self.proc.wait()
 
     def GetPid(self):
         if self.proc is not None:
@@ -102,7 +104,6 @@ class LocalExecNode(ParallelNode):
                 break
             retries += 1
             print(f"Retrying {self.cmds}")
-        self.proc.wait()
 
     def __str__(self):
         return "LocalExecNode {}".format(self.name)
