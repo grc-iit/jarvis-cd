@@ -2,7 +2,6 @@ from jarvis_cd.launcher.launcher import Launcher
 from jarvis_cd.fs.link_node import LinkNode
 from jarvis_cd.jarvis_manager import JarvisManager
 import os
-import shutil
 
 class Repo(Launcher):
     def Add(self, dir=None):

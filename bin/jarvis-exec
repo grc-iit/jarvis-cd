@@ -1,7 +1,0 @@
-#!/usr/bin/env python3
-
-import os,sys
-
-if __name__ == '__main__':
-    cmd = sys.argv[1]
-    exec(cmd)

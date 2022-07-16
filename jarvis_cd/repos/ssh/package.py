@@ -1,5 +1,8 @@
 from jarvis_cd.shell.exec_node import ExecNode
 from jarvis_cd.shell.copy_node import CopyNode
+from jarvis_cd.fs.rm_node import RmNode
+from jarvis_cd.fs.mkdir_node import MkdirNode
+from jarvis_cd.shell.kill_node import KillNode
 from jarvis_cd.comm.issh_node import InteractiveSSHNode
 from jarvis_cd.launcher.launcher import Launcher
 import os
@@ -12,24 +15,36 @@ class Ssh(Launcher):
             if "dst_key_dir" in self.config["ssh_keys"]["primary"] and self.config["ssh_keys"]["primary"]["dst_key_dir"] is not None:
                 self.dst_key_dir = self.config["ssh_keys"]["primary"]["dst_key_dir"]
 
-    def Copy(self, source, destination):
-        CopyNode(source, destination, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
-
-    def _CopyArgs(self, parser):
-        parser.add_argument('source', metavar='path', type=str, help="Source path")
-        parser.add_argument('destination', metavar='path', type=str, help="Destination path")
-
     def Shell(self, node_id):
         InteractiveSSHNode(self.all_hosts.SelectHosts(node_id), self.ssh_info, only_init=True).Run()
-
     def _ShellArgs(self, parser):
         parser.add_argument('node_id', metavar='id', type=int, help="Node index in hostfile")
 
     def Exec(self, cmd):
         ExecNode(cmd, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
-
     def _ExecArgs(self, parser):
         parser.add_argument('cmd', metavar='command', type=str, help="The command to distribute")
+
+    def Copy(self, source, destination):
+        CopyNode(source, destination, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+    def _CopyArgs(self, parser):
+        parser.add_argument('source', metavar='path', type=str, help="Source path")
+        parser.add_argument('destination', metavar='path', type=str, help="Destination path")
+
+    def Rm(self, path):
+        RmNode(path, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+    def _RmArgs(self, parser):
+        parser.add_argument('path', metavar='path', type=str, help="The path to delete")
+
+    def Mkdir(self, path):
+        MkdirNode(path, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+    def _MkdirArgs(self, parser):
+        parser.add_argument('path', metavar='path', type=str, help="The path to delete")
+
+    def Kill(self, cmd_re):
+        KillNode(cmd_re, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+    def _KillArgs(self, parser):
+        parser.add_argument('cmd_re', metavar='regex', type=str, help='The regex of the process to kill')
 
     def Setup(self):
         self._TrustHosts()
