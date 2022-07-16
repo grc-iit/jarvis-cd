@@ -2,12 +2,12 @@
 
 #USAGE jarvis-scp [source] [destination] [host-id]
 
-from jarvis_cd.comm.ssh_config import SSHConfig
-from jarvis_cd.basic.copy_node import CopyNode
-import sys,os
+from jarvis_cd.comm.ssh_config import SSHConfigMixin
+from jarvis_cd.shell.copy_node import CopyNode
+import sys
 
 if __name__ == '__main__':
-    conf = SSHConfig().LoadConfig()
+    conf = SSHConfigMixin().LoadConfig()
     host_id = 0
     source = None
     destination=None

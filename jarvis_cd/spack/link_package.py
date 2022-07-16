@@ -1,5 +1,5 @@
 
-from jarvis_cd.basic.exec_node import ExecNode
+from jarvis_cd.shell.exec_node import ExecNode
 
 class LinkSpackage(ExecNode):
     def __init__(self, spack_query_dict, link_path, **kwargs):

@@ -29,7 +29,8 @@ class ErrorCode:
     SUCCESS = {"id": 0, "msg": "SUCCESSFUL"}
 
     #General error code
-    NOT_IMPLEMENTED = {"id": 1, "msg": "{func} is not implemented"}
+    NOT_IMPLEMENTED = {"id": 1, "msg": "{} is not implemented"}
+    LAUNCHER_NOT_FOUND = {"id": 2, "msg": "{} was not found"}
     #Specific error code
     CONFIG_REQUIRED = {"id": 1000, "msg": "Config is required. Check sample {}"}
     INVALID_SECTION = {"id": 1001, "msg": "Section {} is not recognized. Check sample {}"}

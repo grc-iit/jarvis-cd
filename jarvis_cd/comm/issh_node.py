@@ -1,8 +1,8 @@
 
-from jarvis_cd.basic.exec_node import ExecNode
+from jarvis_cd.shell.exec_node import ExecNode
 import getpass
-import sys, os
-from jarvis_cd.exception import Error, ErrorCode
+import os
+
 
 class InteractiveSSHNode(ExecNode):
     def __init__(self, host, ssh_info, only_init=False):

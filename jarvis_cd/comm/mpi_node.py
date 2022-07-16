@@ -1,4 +1,4 @@
-from jarvis_cd.basic.exec_node import ExecNode
+from jarvis_cd.shell.exec_node import ExecNode
 from jarvis_cd.hostfile import Hostfile
 
 class MPINode(ExecNode):

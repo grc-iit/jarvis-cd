@@ -1,32 +1,16 @@
 
-from jarvis_cd.basic.exec_node import ExecNode
-from abc import ABC, abstractmethod
-from jarvis_cd.comm.ssh_config import SSHConfig
+from jarvis_cd.shell.exec_node import ExecNode
+from abc import abstractmethod
+from jarvis_cd.comm.ssh_config import SSHConfigMixin
 from jarvis_cd.introspect.check_command import CheckCommandNode
-from enum import Enum
 import os
 
-class BootstrapConfig(SSHConfig):
+class BootstrapConfig(SSHConfigMixin):
     def DefaultConfigPath(self, conf_type='local'):
         return os.path.join(self.jarvis_root, 'jarvis_cd', 'bootstrap', 'conf', f'{conf_type}.yaml')
 
-    def _Scaffold(self):
-        #Check if jarvis already installed
-        if 'JARVIS_ROOT' in os.environ:
-            self.config['jarvis_cd']['path'] = os.environ['JARVIS_ROOT']
-
-        #Check if spack already installed
-        node = CheckCommandNode('spack').Run()
-        if node.Exists():
-            self.config['spack']['path'] = os.environ['SPACK_ROOT']
-
-        #Check if scsrepo already installed
-        if 'SCS_REPO' in os.environ:
-            self.config['scs_repo']['path'] = os.environ['SCS_REPO']
-
     def _ProcessConfig(self):
-        super()._ProcessConfig()
-
+        self._ProcessSSHConfig()
         self.key_name = 'id_rsa'
         self.key_dir = os.path.join(os.environ["HOME"], ".ssh")
         self.dst_key_dir = self.key_dir

@@ -2,12 +2,12 @@
 
 #USAGE jarvis-rm [path] [host-id]
 
-from jarvis_cd.comm.ssh_config import SSHConfig
-from jarvis_cd.basic.rm_node import RmNode
-import sys,os
+from jarvis_cd.comm.ssh_config import SSHConfigMixin
+from jarvis_cd.fs.rm_node import RmNode
+import sys
 
 if __name__ == '__main__':
-    conf = SSHConfig().LoadConfig()
+    conf = SSHConfigMixin().LoadConfig()
     host_id = 0
     path = None
     if len(sys.argv) >= 2:

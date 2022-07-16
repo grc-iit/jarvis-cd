@@ -10,7 +10,7 @@ setuptools.setup(
     version="0.0.1",
     author="Luke Logan",
     author_email="llogan@hawk.iit.edu",
-    description="Create launchers for applications",
+    description="Create launcher for applications",
     url="https://github.com/scs-lab/jarvis-cd",
     classifiers = [
         "Programming Language :: Python",

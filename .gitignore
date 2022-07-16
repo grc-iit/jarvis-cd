@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 .idea
 jarvis_conf.yaml
+jarvis_repos
 
 # C extensions
 *.so

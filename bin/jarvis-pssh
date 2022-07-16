@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 
-import sys,os
-from jarvis_cd.comm.ssh_config import SSHConfig
-from jarvis_cd.basic.exec_node import ExecNode
+import sys
+from jarvis_cd.comm.ssh_config import SSHConfigMixin
+from jarvis_cd.shell.exec_node import ExecNode
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
         print("USAGE: jarvis-pssh [command]")
         exit()
     op = sys.argv[1]
-    conf = SSHConfig().LoadConfig()
+    conf = SSHConfigMixin().LoadConfig()
     ExecNode(op, hosts=conf.all_hosts, ssh_info=conf.ssh_info).Run()
 

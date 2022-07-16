@@ -42,7 +42,8 @@ class Node(ABC):
             return
         self.output[host] = {
             OutputStream.STDOUT: [[], []],
-            OutputStream.STDERR: [[], []]
+            OutputStream.STDERR: [[], []],
+            OutputStream.STDNULL: [[], []]
         }
 
     def AddOutput(self, outputs, host='localhost', stream=OutputStream.STDOUT, color=None):
@@ -69,6 +70,8 @@ class Node(ABC):
         return self.GetOutput(host='localhost', stream=OutputStream.STDOUT)
     def GetLocalStderr(self):
         return self.GetOutput(host='localhost', stream=OutputStream.STDERR)
+    def GetLocalStdnull(self):
+        return self.GetOutpu(host='localhost', stream=OutputStream.STDNULL)
     def GetLocalOutput(self):
         return self.GetOutput(host='localhost', stream=None)
 

@@ -5,7 +5,7 @@ from jarvis_cd.exception import Error, ErrorCode
 import getpass
 import sys,os
 
-class SSHConfig(YAMLConfig):
+class SSHConfigMixin(YAMLConfig):
     def DefaultConfigPath(self, conf_type='default'):
         return os.path.join(self.jarvis_root, 'comm', 'conf', f"{conf_type}.yaml")
 
@@ -13,6 +13,9 @@ class SSHConfig(YAMLConfig):
         return
 
     def _ProcessConfig(self):
+        self._ProcessSSHConfig()
+
+    def _ProcessSSHConfig(self):
         self.public_key = None
         self.private_key = None
         self.username = getpass.getuser()

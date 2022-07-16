@@ -31,6 +31,7 @@ class Color:
 class OutputStream(Enum):
     STDOUT = 'stdout'
     STDERR = 'stderr'
+    STDNULL = 'stdnull'
 
 class LogLevel(Enum):
     DEBUG=str(logging.DEBUG)

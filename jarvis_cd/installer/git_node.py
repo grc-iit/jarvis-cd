@@ -1,8 +1,6 @@
-
-from jarvis_cd.node import Node
-from jarvis_cd.basic.exec_node import ExecNode
+from jarvis_cd.shell.exec_node import ExecNode
 from enum import Enum
-import sys,os
+
 
 class GitOps(Enum):
     CLONE='clone'

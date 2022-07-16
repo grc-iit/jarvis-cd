@@ -1,7 +1,7 @@
 
 from jarvis_cd.node import Node
-from jarvis_cd.basic.exec_node import ExecNode
-import sys,os
+from jarvis_cd.shell.exec_node import ExecNode
+import os
 
 class LocalPipNode(Node):
     def __init__(self, path, inplace=True, user=True, **kwargs):
