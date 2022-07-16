@@ -3,10 +3,7 @@ import setuptools
 setuptools.setup(
     name="jarvis_cd",
     packages=setuptools.find_packages(),
-    scripts=[
-        'bin/jarvis-bootstrap', 'bin/jarvis', 'bin/jarvis-pssh',
-        'bin/jarvis-kill', 'bin/jarvis-py-paths', 'bin/jarvis-ssh',
-        'bin/jarvis-scp', 'bin/jarvis-mkdir', 'bin/jarvis-rm', 'bin/jarvis-exec'],
+    scripts=['bin/jarvis'],
     version="0.0.1",
     author="Luke Logan",
     author_email="llogan@hawk.iit.edu",

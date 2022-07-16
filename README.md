@@ -7,7 +7,6 @@ Jarvis CD is a continuous deployment software.
 Jarvis requires the following:
 1. Python 3.6+
 2. Spack
-3. scs-repo
 
 dependencies.sh installs python.  
 jarvis-bootstrap installs spack, scs-repo, and jarvis. 
@@ -20,8 +19,8 @@ cd jarvis-cd
 PREFIX=${HOME} bash dependencies.sh
 source ~/.bashrc
 python3 -m pip install -e . --user -r requirements.txt
-jarvis-bootstrap scaffold local
-jarvis-bootstrap deps install
+jarvis deps scaffold local
+jarvis deps install all
 ```
 
 To customize the installation of dependencies, modify the conf.yaml produced by the scaffold command.

@@ -2,14 +2,7 @@ from jarvis_cd.shell.exec_node import ExecNode
 from jarvis_cd.shell.copy_node import CopyNode
 from jarvis_cd.comm.issh_node import InteractiveSSHNode
 from jarvis_cd.launcher.launcher import Launcher
-import argparse
 import os
-
-"""
-jarivs ssh setup
-jarvis ssh shell [node_id (opt)] #Interactive ssh into node
-jarvis ssh exec [cmd] #Execute a command
-"""
 
 class Ssh(Launcher):
     def _ProcessConfig(self):
@@ -19,19 +12,29 @@ class Ssh(Launcher):
             if "dst_key_dir" in self.config["ssh_keys"]["primary"] and self.config["ssh_keys"]["primary"]["dst_key_dir"] is not None:
                 self.dst_key_dir = self.config["ssh_keys"]["primary"]["dst_key_dir"]
 
+    def Copy(self, source, destination):
+        CopyNode(source, destination, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+
+    def _CopyArgs(self, parser):
+        parser.add_argument('source', metavar='path', type=str, help="Source path")
+        parser.add_argument('destination', metavar='path', type=str, help="Destination path")
+
     def Shell(self, node_id):
-        InteractiveSSHNode(self.all_hosts.SelectHost(), self.ssh_info, only_init=True).Run()
+        InteractiveSSHNode(self.all_hosts.SelectHosts(node_id), self.ssh_info, only_init=True).Run()
+
+    def _ShellArgs(self, parser):
+        parser.add_argument('node_id', metavar='id', type=int, help="Node index in hostfile")
 
     def Exec(self, cmd):
         ExecNode(cmd, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+
+    def _ExecArgs(self, parser):
+        parser.add_argument('cmd', metavar='command', type=str, help="The command to distribute")
 
     def Setup(self):
         self._TrustHosts()
         self._InstallKeys()
         self._SSHPermissions()
-
-    def _ShellArgs(self, parser):
-        parser.add_argument('-f', dest='node_id', metavar='id', type=int, help="Node index in hostfile")
 
     def _TrustHosts(self):
         # Ensure all self.all_hosts are trusted on this machine

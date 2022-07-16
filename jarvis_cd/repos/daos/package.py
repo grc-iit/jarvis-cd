@@ -14,9 +14,6 @@ import yaml
 import os
 
 class Daos(Application):
-    def __init__(self, config_path=None, args=None):
-        super().__init__('daos', config_path, args)
-
     def _ProcessConfig(self):
         super()._ProcessConfig()
         self.server_hosts = self.all_hosts.SelectHosts(self.config['SERVER']['hosts'])

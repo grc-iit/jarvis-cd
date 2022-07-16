@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 
 from jarvis_cd.jarvis_manager import JarvisManager
-from re import sub
 import argparse
 from jarvis_cd.exception import Error,ErrorCode
+from jarvis_cd.util.naming import ToCamelCase
 import sys
 
 def BasicArgs():
@@ -30,11 +30,6 @@ def BasicArgs():
 
     args = parser.parse_args(args)
     return args,other_args
-
-def ToCamelCase(string):
-    words = sub(r"(_|-)+", " ", string).split()
-    words = [word.capitalize() for word in words]
-    return "".join(words)
 
 if __name__ == '__main__':
     #Load the arguments
@@ -67,7 +62,6 @@ if __name__ == '__main__':
         launcher_argparse = getattr(launcher_instance, launcher_op_args)
         launcher_argparse(parser)
     launcher_args = vars(parser.parse_args(other_args))
-    print(launcher_args)
 
     #Call the operation
     launcher_instance.LoadConfig()

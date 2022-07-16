@@ -25,14 +25,14 @@ then
   PYTHON_NEEDED=0
 fi
 
-#Source bashni in bashrc at head of file
-if [[ `cat ${HOME}/.bashrc | grep "source ${HOME}/.bashni"` ]]
+#Source jarvis_env in bashrc at head of file
+if [[ `cat ${HOME}/.bashrc | grep "source ${PWD}/.jarvis_env"` ]]
 then
-  echo "Already sourcing ${HOME}/.bashni"
+  echo "Already sourcing ${PWD}/.jarvis_env"
 else
-  echo "Adding source ${HOME}/.bashni to bashrc"
-  sed -i.old "1s;^;source ${HOME}/.bashni\\n;" ${HOME}/.bashrc
-  touch ${HOME}/.bashni
+  echo "Adding source ${PWD}/.jarvis_env to bashrc"
+  sed -i.old "1s;^;source ${PWD}/.jarvis_env\\n;" ${HOME}/.bashrc
+  touch ${PWD}/.jarvis_env
 fi
 
 #chmod +x all jarvis binaries
@@ -59,11 +59,11 @@ then
   LIBRARY_PATH=${PYTHON_DIR}/lib:${PATH}
   CPATH=${PYTHON_DIR}/include:${PATH}
 
-  echo "export PATH=$PATH" >> ${HOME}/.bashni
-  echo "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> ${HOME}/.bashni
-  echo "export LIBRARY_PATH=$LIBRARY_PATH" >> ${HOME}/.bashni
-  echo "export CPATH=$CPATH" >> ${HOME}/.bashni
-  source ${HOME}/.bashni
+  echo "export PATH=$PATH" >> ${PWD}/.jarvis_env
+  echo "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> ${PWD}/.jarvis_env
+  echo "export LIBRARY_PATH=$LIBRARY_PATH" >> ${PWD}/.jarvis_env
+  echo "export CPATH=$CPATH" >> ${PWD}/.jarvis_env
+  source ${HOME}/.jarvis_env
 
   pip3 install --upgrade pip
 fi

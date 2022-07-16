@@ -5,6 +5,7 @@ __pycache__/
 .idea
 jarvis_conf.yaml
 jarvis_repos
+.jarvis_env
 
 # C extensions
 *.so

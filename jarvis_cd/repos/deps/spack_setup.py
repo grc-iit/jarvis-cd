@@ -1,17 +1,14 @@
 from jarvis_cd.installer.git_node import GitNode, GitOps
-from jarvis_cd.installer.modify_env_node import ModifyEnvNode, ModifyEnvNodeOps
-from jarvis_cd.bootstrap.package import Package
-import sys,os
+from jarvis_cd.installer.env_node import EnvNode, EnvNodeOps
+from jarvis_cd.installer.installer import Installer
 import shutil
 
-class SpackSetup(Package):
+class SpackSetup(Installer):
     def _LocalInstall(self):
         spack_root = self.config['spack']['path']
         GitNode(**self.config['spack'], method=GitOps.CLONE, collect_output=False, print_fancy=False).Run()
-        ModifyEnvNode(self.jarvis_env, f"export SPACK_ROOT", ModifyEnvNodeOps.REMOVE).Run()
-        ModifyEnvNode(self.jarvis_env, f".*spack/setup-env.sh", ModifyEnvNodeOps.REMOVE).Run()
-        ModifyEnvNode(self.jarvis_env, f"export SPACK_ROOT={spack_root}", ModifyEnvNodeOps.APPEND).Run()
-        ModifyEnvNode(self.jarvis_env, f". {spack_root}/share/spack/setup-env.sh", ModifyEnvNodeOps.APPEND).Run()
+        EnvNode(self.jarvis_env, f"export SPACK_ROOT={spack_root}", "export SPACK_ROOT", EnvNodeOps.SET).Run()
+        EnvNode(self.jarvis_env, f". {spack_root}/share/spack/setup-env.sh", "setup-env.sh", EnvNodeOps.SET).Run()
 
     def _LocalUpdate(self):
         GitNode(**self.config['spack'], method=GitOps.UPDATE, collect_output=False, print_fancy=False).Run()
@@ -19,5 +16,5 @@ class SpackSetup(Package):
     def _LocalUninstall(self):
         spack_root = self.config['spack']['path']
         shutil.rmtree(spack_root)
-        ModifyEnvNode(self.jarvis_env, f"export SPACK_ROOT", ModifyEnvNodeOps.REMOVE).Run()
-        ModifyEnvNode(self.jarvis_env, f".*spack/setup-env.sh", ModifyEnvNodeOps.REMOVE).Run()
+        EnvNode(self.jarvis_env, None, "export SPACK_ROOT", EnvNodeOps.REMOVE).Run()
+        EnvNode(self.jarvis_env, None, f".*spack/setup-env.sh", EnvNodeOps.REMOVE).Run()

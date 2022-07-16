@@ -2,8 +2,6 @@ from jarvis_cd.launcher.launcher import Launcher
 from abc import ABC,abstractmethod
 
 class Application(Launcher):
-    phases = ['init', 'start', 'stop', 'clean', 'status', 'restart', 'reset', 'destroy', 'setup']
-
     @abstractmethod
     def _DefineInit(self):
         pass
