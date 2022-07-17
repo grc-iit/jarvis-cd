@@ -24,3 +24,6 @@ class Launcher(SSHConfigMixin,YAMLCache):
         self.config = self._ExpandPaths()
         self._Scaffold()
         YAMLFile(new_conf_path).Save(self.config)
+
+    def _ScaffoldArgs(self, parser):
+        parser.add_argument('conf_type', metavar='type', help='the configuration file to load')

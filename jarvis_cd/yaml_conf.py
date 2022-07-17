@@ -1,12 +1,7 @@
-import yaml
 from abc import ABC, abstractmethod
 from jarvis_cd.jarvis_manager import JarvisManager
 from jarvis_cd.serialize.yaml_file import YAMLFile
-import pathlib
 import os
-import shutil
-import logging
-import shutil
 
 from jarvis_cd.exception import Error, ErrorCode
 
@@ -23,21 +18,13 @@ class YAMLConfig(ABC):
         return os.path.join(self.scaffold_dir, 'jarvis_conf.yaml')
 
     def LoadConfig(self):
-        self.is_scaffolded = True
-        if self.config_path is None:
-            if os.path.exists(self.ScaffoldConfigPath()):
-                self.config_path = self.ScaffoldConfigPath()
-            else:
-                self.config_path = self.DefaultConfigPath()
-                self.is_scaffolded = False
-        if not os.path.exists(self.config_path):
-            raise Error(ErrorCode.INVALID_DEFAULT_CONFIG).format()
+        if not os.path.exists(self.ScaffoldConfigPath()):
+            return
         self.config = YAMLFile(self.config_path).Load()
         if 'SCAFFOLD' in self.config and self.config['SCAFFOLD'] is not None:
             os.environ['SCAFFOLD'] = str(self.config['SCAFFOLD'])
         self.config = self._ExpandPaths()
-        if self.is_scaffolded:
-            self._ProcessConfig()
+        self._ProcessConfig()
         return self
 
     def Get(self):

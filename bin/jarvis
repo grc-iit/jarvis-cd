@@ -52,12 +52,9 @@ if __name__ == '__main__':
     launcher_op = getattr(launcher_class, launcher_op_name)
 
     #Get the arguments for the operation
-    launcher_class_args = f"_{launcher_class_name}Args"
     launcher_op_args = f"_{launcher_op_name}Args"
     parser = argparse.ArgumentParser(description=f"{launcher_class_name}: {launcher_op_name}")
-    if hasattr(launcher_instance, launcher_class_args):
-        launcher_argparse = getattr(launcher_instance, launcher_class_args)
-        launcher_argparse(parser)
+    parser.prog = f"{launcher_class_name}.{launcher_op_name}()"
     if hasattr(launcher_instance, launcher_op_args):
         launcher_argparse = getattr(launcher_instance, launcher_op_args)
         launcher_argparse(parser)

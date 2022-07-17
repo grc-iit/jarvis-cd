@@ -2,7 +2,7 @@ from jarvis_cd.launcher.application import Application
 from jarvis_cd.comm.mpi_node import MPINode
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.fs.mkdir_node import MkdirNode
-from jarvis_cd.repos.daos.package import Daos
+from builtin.daos.package import Daos
 import configparser
 from jarvis_cd.serialize.ini_file import IniFile
 import os

@@ -10,7 +10,6 @@ from jarvis_cd.basic.sleep_node import SleepNode
 from jarvis_cd.shell.kill_node import KillNode
 from jarvis_cd.basic.echo_node import EchoNode
 from jarvis_cd.fs.fs import UnmountFS
-import yaml
 import os
 
 class Daos(Application):
@@ -68,10 +67,6 @@ class Daos(Application):
         EchoNode("Create containers").Run()
         for container in self.config['CONTAINERS']:
             self._CreateContainer(container)
-        #Update jarvis cache
-        self._FindAllPools()
-        for pool in self.pools_by_label.keys():
-            self._FindAllContainersForPool(pool)
         #Stop daos servers
         self.Stop()
 
@@ -131,7 +126,6 @@ class Daos(Application):
             self.config['CONF']['AGENT'],
             self.config['CONF']['SERVER'],
             self.config['CONF']['CONTROL'],
-            self.GetCachePath(),
             f"{self.scaffold_dir}/daosCA",
             self.config['SERVER']['control_log_file'],
             self.config['AGENT']['log_file'],

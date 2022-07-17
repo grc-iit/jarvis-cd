@@ -1,13 +1,13 @@
 from jarvis_cd.installer.git_node import GitNode, GitOps
 from jarvis_cd.shell.exec_node import ExecNode
 from jarvis_cd.shell.copy_node import CopyNode
-from jarvis_cd.launcher.application import Application
+from jarvis_cd.launcher.launcher import Launcher
 from jarvis_cd.jarvis_manager import JarvisManager
 from jarvis_cd.introspect.check_command import CheckCommandNode
 from jarvis_cd.util.naming import ToCamelCase
 import os
 
-class Deps(Application):
+class Deps(Launcher):
     def _ProcessConfig(self):
         self.jarvis_env = os.path.join(JarvisManager.GetInstance().GetJarvisRoot(), '.jarvis_env')
 
@@ -44,24 +44,36 @@ class Deps(Application):
             ExecNode(cmds, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
         else:
             ExecNode(f"jarvis deps local-install {package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+    def _InstallArgs(self, package_name):
+        self._DepsArgs(package_name)
 
     def Update(self, package_name):
         ExecNode(f"jarvis deps local-update {package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+    def _UpdateArgs(self, package_name):
+        self._DepsArgs(package_name)
 
     def Uninstall(self, package_name):
         ExecNode(f"jarvis deps local-uninstall {package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+    def _UninstallArgs(self, package_name):
+        self._DepsArgs(package_name)
 
     def LocalInstall(self, package_name):
         klass = self._GetPackageClass(package_name)
         klass().LocalInstall()
+    def _LocalInstallArgs(self, package_name):
+        self._DepsArgs(package_name)
 
     def LocalUpdate(self, package_name):
         klass = self._GetPackageClass(package_name)
         klass().LocalUpdate()
+    def _LocalUpdate(self, package_name):
+        self._DepsArgs(package_name)
 
     def LocalUninstall(self, package_name):
         klass = self._GetPackageClass(package_name)
         klass().LocalUninstall()
+    def _LocalUninstall(self, package_name):
+        self._DepsArgs(package_name)
 
     def _GetPackageClass(self, package_name):
         class_name = ToCamelCase(package_name)

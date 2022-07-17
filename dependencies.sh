@@ -38,7 +38,7 @@ fi
 #chmod +x all jarvis binaries
 chmod +x bin/*
 mkdir jarvis_repos
-ln -s `pwd`/jarvis_cd/repos `pwd`/jarvis_repos/builtin
+ln -s `pwd`/builtin `pwd`/jarvis_repos/builtin
 
 #Install python if necessary
 if [[ $PYTHON_NEEDED -eq 1 ]]

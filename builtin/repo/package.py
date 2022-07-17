@@ -7,13 +7,13 @@ class Repo(Launcher):
     def Add(self, dir=None):
         if dir is None:
             dir = os.getcwd()
-        src_repo_path = os.path.join(dir, 'repos')
+        src_repo_path = os.path.join(dir, 'builtin')
         dst_repo_path = JarvisManager.GetInstance().NewLauncherPath(src_repo_path)
         LinkNode(src_repo_path, dst_repo_path, hosts=self.all_hosts, ssh_info=self.all_hosts).Run()
 
     def _AddArgs(self, parser):
         parser.add_argument('-D', dest='dir', type=str,
-            help='the path to a jarvis repo (contains a \"repos\" directory).')
+            help='the path to a jarvis repo (contains a \"builtin\" directory).')
 
     def Remove(self, repo_name):
         repo_path = JarvisManager.GetInstance().GetRepoPath(repo_name)
