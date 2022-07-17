@@ -11,7 +11,7 @@ class JarvisExecNode(ParallelNode):
     def _Run(self):
         if self.do_ssh:
             # We ignore kwargs since we don't want to call SSH during _LocalRun
-            cmd = self._ToShellCmd(ignore_base=ParallelNode, set_params={'print_fancy': False})
+            cmd = self._ToShellCmd(ignore_base=ParallelNode)
             node = ExecNode(cmd, **self.GetClassParams(ParallelNode, print_output=False, shell=True)).Run()
             EchoNode(cmd).Run()
             #EchoNode(str(self.ssh_info)).Run()
