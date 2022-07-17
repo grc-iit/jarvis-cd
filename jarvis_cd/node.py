@@ -120,10 +120,10 @@ class Node(ABC):
         param_str = self._GetParamStr(node_params)
         python_cmds = [
             f"from {node_import} import {node_type}",
-            f"from jarvis_cd.jarvis_manager import JarvisManager"
-            "JarvisManager.GetInstance().DisablePrintFancy()"
+            f"from jarvis_cd.jarvis_manager import JarvisManager",
+            "JarvisManager.GetInstance().DisablePrintFancy()",
             f"{node_type}({param_str}).Run()"
         ]
         python_cmd = '\n'.join(python_cmds)
-        cmd = f"jarvis-exec \"{python_cmd}\""
+        cmd = f"jarvis base exec \"{python_cmd}\""
         return cmd
