@@ -92,20 +92,8 @@ class Daos(Application):
                     f"-m {container['mount']}"
                 ]
                 mount_cmd = " ".join(mount_cmd)
-
-                #DAOS bug: can't execute this command in parallel.
-                #Must wait for each dfuse connection, one at a time, to FULLY complete.
-
-                if 'TRY_SOLO' in self.config and self.config['TRY_SOLO']:
-                    for host in self.agent_hosts:
-                        EchoNode(f"Mounting on {host}").Run()
-                        EchoNode(mount_cmd).Run()
-                        ExecNode(mount_cmd, hosts=host, ssh_info=self.ssh_info).Run()
-                        EchoNode("Waiting 2 seconds").Run()
-                        SleepNode(3).Run()
-                else:
-                    EchoNode(mount_cmd).Run()
-                    ExecNode(mount_cmd, hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
+                EchoNode(mount_cmd).Run()
+                ExecNode(mount_cmd, hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
 
     def _DefineClean(self):
         to_rm = [
