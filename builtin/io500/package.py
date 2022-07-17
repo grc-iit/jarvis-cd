@@ -2,6 +2,7 @@ from jarvis_cd.launcher.application import Application
 from jarvis_cd.comm.mpi_node import MPINode
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.fs.mkdir_node import MkdirNode
+from jarvis_cd.fs.rm_node import RmNode
 from builtin.daos.package import Daos
 import configparser
 from jarvis_cd.serialize.ini_file import IniFile
@@ -68,7 +69,12 @@ class Io500(Application):
         MPINode(f"{self.config['IO500_ROOT']}/bin/io500 {self.scaffold_dir}/io500.ini", self.config['MPI']['nprocs'], hosts=self.all_hosts).Run()
 
     def _DefineClean(self):
-        return
+        paths = [
+            f"{self.scaffold_dir}/datafiles",
+            f"{self.scaffold_dir}/io500_results",
+            f"{self.scaffold_dir}/io500.ini"
+        ]
+        RmNode(paths).Run()
 
     def _DefineStop(self):
         return
