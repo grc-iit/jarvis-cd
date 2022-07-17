@@ -10,6 +10,7 @@ from jarvis_cd.basic.sleep_node import SleepNode
 from jarvis_cd.shell.kill_node import KillNode
 from jarvis_cd.basic.echo_node import EchoNode
 from jarvis_cd.fs.fs import UnmountFS
+from jarvis_cd.serialize.yaml_file import YAMLFile
 import os
 
 class Daos(Application):
@@ -211,8 +212,7 @@ class Daos(Application):
         server_config['port'] = self.config['PORT']
         server_config['name'] = self.config['NAME']
         server_config['access_points'] = self.server_hosts.list()
-        with open(self.config['CONF']['SERVER'], 'w') as fp:
-            yaml.dump(server_config, fp)
+        YAMLFile(self.config['CONF']['SERVER']).Save(server_config)
 
     def _CreateAgentConfig(self):
         agent_config = self.config.copy()['AGENT']
@@ -221,8 +221,7 @@ class Daos(Application):
         agent_config['port'] = self.config['PORT']
         agent_config['name'] = self.config['NAME']
         agent_config['access_points'] = self.agent_hosts.list()
-        with open(self.config['CONF']['AGENT'], 'w') as fp:
-            yaml.dump(self.config['AGENT'], fp)
+        YAMLFile(self.config['CONF']['AGENT']).Save(agent_config)
 
     def _CreateControlConfig(self):
         control_config = self.config.copy()['CONTROL']
@@ -231,9 +230,7 @@ class Daos(Application):
         control_config['port'] = self.config['PORT']
         control_config['name'] = self.config['NAME']
         control_config['hostlist'] = self.control_hosts.list()
-        with open(self.config['CONF']['CONTROL'], 'w') as fp:
-            yaml.dump(control_config, fp)
-
+        YAMLFile(self.config['CONF']['CONTROL']).Save(control_config)
 
     def GetPoolUUID(self, pool_label):
         cmd = f"{self.config['DAOS_ROOT']}/bin/dmg pool list --verbose -o {self.config['CONF']['DAOS_CONTROL']}"
