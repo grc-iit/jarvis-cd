@@ -4,17 +4,27 @@ from jarvis_cd.installer.installer import Installer
 import shutil
 
 class SpackSetup(Installer):
-    def _LocalInstall(self):
+    def LocalInstall(self):
         spack_root = self.config['spack']['path']
-        GitNode(**self.config['spack'], method=GitOps.CLONE, collect_output=False, print_fancy=False).Run()
-        EnvNode(self.jarvis_env, f"export SPACK_ROOT={spack_root}", "export SPACK_ROOT", EnvNodeOps.SET).Run()
-        EnvNode(self.jarvis_env, f". {spack_root}/share/spack/setup-env.sh", "setup-env.sh", EnvNodeOps.SET).Run()
+        GitNode(**self.config['spack'], method=GitOps.CLONE).Run()
+        EnvNode(self.jarvis_env,
+                cmd=f"export SPACK_ROOT={spack_root}",
+                cmd_re="export SPACK_ROOT",
+                op=EnvNodeOps.SET).Run()
+        EnvNode(self.jarvis_env,
+                cmd=f". {spack_root}/share/spack/setup-env.sh",
+                cmd_re=".*setup-env.sh",
+                op=EnvNodeOps.SET).Run()
 
-    def _LocalUpdate(self):
-        GitNode(**self.config['spack'], method=GitOps.UPDATE, collect_output=False, print_fancy=False).Run()
+    def LocalUpdate(self):
+        GitNode(**self.config['spack'], method=GitOps.UPDATE).Run()
 
-    def _LocalUninstall(self):
+    def LocalUninstall(self):
         spack_root = self.config['spack']['path']
         shutil.rmtree(spack_root)
-        EnvNode(self.jarvis_env, None, "export SPACK_ROOT", EnvNodeOps.REMOVE).Run()
-        EnvNode(self.jarvis_env, None, f".*spack/setup-env.sh", EnvNodeOps.REMOVE).Run()
+        EnvNode(self.jarvis_env,
+                cmd_re="export SPACK_ROOT",
+                op=EnvNodeOps.REMOVE).Run()
+        EnvNode(self.jarvis_env,
+                cmd_re=f".*setup-env.sh",
+                op=EnvNodeOps.REMOVE).Run()

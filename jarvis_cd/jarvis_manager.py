@@ -17,7 +17,14 @@ class JarvisManager:
 
     def __init__(self):
         self.root = os.path.dirname(pathlib.Path(__file__).parent.resolve())
+        self.print_fancy = True
         sys.path.insert(0,self.root)
+
+    def DisableFancyPrint(self):
+        self.print_fancy = False
+
+    def EnableFancyPrint(self):
+        self.print_fancy = True
 
     def _LauncherPathTuple(self, module_name):
         module_name = ToSnakeCase(module_name)

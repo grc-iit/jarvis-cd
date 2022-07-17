@@ -8,7 +8,7 @@ class EnvNodeOps(Enum):
     REMOVE = 'remove'
 
 class EnvNode(Node):
-    def __init__(self, path, op, cmd, cmd_re, **kwargs):
+    def __init__(self, path, op, cmd=None, cmd_re=None, **kwargs):
         super().__init__(**kwargs)
         self.path = path
         self.op = op

@@ -10,7 +10,7 @@ class YAMLConfig(ABC):
         self.scaffold_dir = scaffold_dir
         if self.scaffold_dir is None:
             self.scaffold_dir = os.getcwd()
-        self.config_path = None
+        self.config_path = self.ScaffoldConfigPath()
         self.config = None
         self.jarvis_root = JarvisManager.GetInstance().GetJarvisRoot()
 
@@ -18,7 +18,7 @@ class YAMLConfig(ABC):
         return os.path.join(self.scaffold_dir, 'jarvis_conf.yaml')
 
     def LoadConfig(self):
-        if not os.path.exists(self.ScaffoldConfigPath()):
+        if not os.path.exists(self.config_path):
             return
         self.config = YAMLFile(self.config_path).Load()
         if 'SCAFFOLD' in self.config and self.config['SCAFFOLD'] is not None:

@@ -9,6 +9,7 @@ import os
 
 class Deps(Launcher):
     def _ProcessConfig(self):
+        super()._ProcessConfig()
         self.jarvis_env = os.path.join(JarvisManager.GetInstance().GetJarvisRoot(), '.jarvis_env')
 
     def _Scaffold(self):
@@ -57,26 +58,37 @@ class Deps(Launcher):
     def _UninstallArgs(self, package_name):
         self._DepsArgs(package_name)
 
+    def _PackageSet(self, package_name):
+        if package_name != 'all':
+            return [package_name]
+        else:
+            return ['jarvis', 'scs_repo', 'spack']
+
     def LocalInstall(self, package_name):
-        klass = self._GetPackageClass(package_name)
-        klass().LocalInstall()
+        for package in self._PackageSet(package_name):
+            pkg = self._GetPackageInstance(package)
+            pkg.LocalInstall()
     def _LocalInstallArgs(self, package_name):
         self._DepsArgs(package_name)
 
     def LocalUpdate(self, package_name):
-        klass = self._GetPackageClass(package_name)
-        klass().LocalUpdate()
+        for package in self._PackageSet(package_name):
+            pkg = self._GetPackageInstance(package)
+            pkg.LocalUpdate()
     def _LocalUpdate(self, package_name):
         self._DepsArgs(package_name)
 
     def LocalUninstall(self, package_name):
-        klass = self._GetPackageClass(package_name)
-        klass().LocalUninstall()
+        for package in self._PackageSet(package_name):
+            pkg = self._GetPackageInstance(package)
+            pkg.LocalUninstall()
     def _LocalUninstall(self, package_name):
         self._DepsArgs(package_name)
 
-    def _GetPackageClass(self, package_name):
-        class_name = ToCamelCase(package_name)
-        module = __import__(f"jarvis_cd.repos.deps.{package_name}_setup", fromlist=[class_name])
+    def _GetPackageInstance(self, package_name):
+        JarvisManager.GetInstance().DisableFancyPrint()
+        module_name = f"{package_name}_setup"
+        class_name = ToCamelCase(module_name)
+        module = __import__(f"jarvis_repos.builtin.deps.{module_name}", fromlist=[class_name])
         klass = getattr(module, class_name)
-        return klass
+        return klass(self.config, self.jarvis_env)

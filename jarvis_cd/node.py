@@ -1,14 +1,15 @@
 from abc import ABC, abstractmethod
 from jarvis_cd.enumerations import Color, OutputStream
-import inspect
+from jarvis_cd.jarvis_manager import JarvisManager
 import sys
 
 class Node(ABC):
-    def __init__(self, print_output=True, collect_output=True, print_fancy=True, name=None):
+    def __init__(self, print_output=True, collect_output=True, name=None):
         self.print_output = print_output
         self.name = name
         self.collect_output = collect_output
-        self.print_fancy = print_fancy
+        self.print_fancy = JarvisManager.GetInstance().print_fancy
+
         self.output = {}
         self.class_params = {}
         self.AddHost('localhost')
@@ -117,7 +118,12 @@ class Node(ABC):
         node_params = self.GetClassParams(ignore_base=ignore_base, **set_params)
         node_type = type(self).__name__
         param_str = self._GetParamStr(node_params)
-        node_import = f"from {node_import} import {node_type}"
-        node_run = f"{node_type}({param_str}).Run()"
-        cmd = f"jarvis-exec \"{node_import}\n{node_run}\""
+        python_cmds = [
+            f"from {node_import} import {node_type}",
+            f"from jarvis_cd.jarvis_manager import JarvisManager"
+            "JarvisManager.GetInstance().DisablePrintFancy()"
+            f"{node_type}({param_str}).Run()"
+        ]
+        python_cmd = '\n'.join(python_cmds)
+        cmd = f"jarvis-exec \"{python_cmd}\""
         return cmd
