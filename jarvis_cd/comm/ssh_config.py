@@ -29,15 +29,12 @@ class SSHConfigMixin(YAMLConfig):
         if 'HOSTS' in self.config:
             self.all_hosts = Hostfile().Load(self.config['HOSTS'])
             self.scaffold_hosts = self.all_hosts
-            if 'SCAFFOLD_SHARED' in self.config:
-                if self.config['SCAFFOLD_SHARED']:
-                    self.scaffold_hosts = Hostfile().Load(['localhost'])
+            if 'SCAFFOLD_SHARED' in self.config and self.config['SCAFFOLD_SHARED']:
+                self.scaffold_hosts = Hostfile().Load(['localhost'])
         if 'SSH' in self.config:
             self.ssh_info = self.config['SSH']
             self.ssh_info['host_aliases'] = FindHostAliases(self.all_hosts).Run().GetAliases()
             self.host_aliases = self.ssh_info['host_aliases']
-
-
 
     def _GetPublicKey(self, key_dir, key_name):
         return GetPublicKey(key_dir, key_name)

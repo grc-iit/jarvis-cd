@@ -1,16 +1,16 @@
-from jarvis_cd.node import Node
-#from jarvis_cd.shell.jarvis_exec_node import JarvisExecNode
+#from jarvis_cd.node import Node
+from jarvis_cd.shell.jarvis_exec_node import JarvisExecNode
 from jarvis_cd.comm.ssh_config import GetPublicKey, GetPrivateKey
 import os
 import re
 
-class ToOpenSSHConfig(Node):
-    def __init__(self, hosts, ssh_info, **kwargs):
+class ToOpenSSHConfig(JarvisExecNode):
+    def __init__(self, register_hosts, ssh_info, **kwargs):
         super().__init__(**kwargs)
-        self.hosts = hosts
+        self.register_hosts = register_hosts
         self.ssh_info = ssh_info
 
-    def _Run(self):
+    def _LocalRun(self):
         #OpenSSH config
         ossh_config_path = os.path.join(os.environ['HOME'], '.ssh', 'config')
         text = ''
@@ -39,9 +39,8 @@ class ToOpenSSHConfig(Node):
             value = words[1]
             ossh_config[host][key] = value
 
-        #Modify/create entry for ips
-
-        for host in self.hosts:
+        #Modify/create entry for hosts
+        for host in self.register_hosts:
             if host not in ossh_config:
                 ossh_config[host] = {}
             if 'port' in self.ssh_info:

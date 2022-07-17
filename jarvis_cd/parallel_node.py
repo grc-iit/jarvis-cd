@@ -48,9 +48,6 @@ class ParallelNode(Node):
                     host_aliases.append(ssh_info['host_aliases'])
 
         # Fill in defaults for username, password, and pkey
-        if username is None:
-            username = getpass.getuser()
-
         self.pkey = pkey
         self.password = password
         self.sudo = sudo

@@ -66,11 +66,13 @@ class Ssh(Launcher):
     def _KillArgs(self, parser):
         parser.add_argument('cmd_re', metavar='regex', type=str, help='The regex of the process to kill')
 
-    def Setup(self):
+    def Setup(self, rr=False):
         self._TrustHosts()
-        self._ModifySSHConfig()
+        self._ModifySSHConfig(rr)
         self._InstallKeys()
         self._SSHPermissions()
+    def _SetupArgs(self, parser):
+        parser.add_argument('-rr', metavar='bool', type=bool, help='whether or not to modify ssh config on all nodes')
 
     def _TrustHosts(self):
         # Ensure all self.all_hosts are trusted on this machine
@@ -106,8 +108,11 @@ class Ssh(Launcher):
                 print(f"Copying {src_priv_key} to {dst_priv_key}")
                 CopyNode(src_priv_key, dst_priv_key, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
-    def _ModifySSHConfig(self):
-        ToOpenSSHConfig(hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+    def _ModifySSHConfig(self, rr):
+        hosts = None
+        if rr:
+            hosts = self.all_hosts
+        ToOpenSSHConfig(hosts=hosts, register_hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def _SSHPermissionsCmd(self, key_location):
         commands = []

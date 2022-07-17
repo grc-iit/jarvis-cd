@@ -24,9 +24,9 @@ class Io500(Application):
         return ' '.join(cmd)
 
     def _DefineInit(self):
-        MkdirNode(self.scaffold_dir, hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
-        MkdirNode(self.config['IO500_ROOT'], hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
-        LinkSpackage(self.config['IO500_SPACK'], self.config['IO500_ROOT'], hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
+        MkdirNode(self.scaffold_dir, hosts=self.scaffold_hosts).Run()
+        MkdirNode(self.config['IO500_ROOT'], hosts=self.scaffold_hosts).Run()
+        LinkSpackage(self.config['IO500_SPACK'], self.config['IO500_ROOT'], hosts=self.scaffold_hosts).Run()
 
         #Create io500 sections
         io500_ini = configparser.ConfigParser()
