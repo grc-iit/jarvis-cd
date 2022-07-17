@@ -66,9 +66,12 @@ class Ssh(Launcher):
     def _KillArgs(self, parser):
         parser.add_argument('cmd_re', metavar='regex', type=str, help='The regex of the process to kill')
 
-    def Setup(self, rr=False):
+    def ModifyConfig(self):
+        CopyNode(self.scaffold_dir, self.scaffold_dir, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        ToOpenSSHConfig(hosts=self.all_hosts, register_hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+
+    def Setup(self):
         self._TrustHosts()
-        self._ModifySSHConfig(rr)
         self._InstallKeys()
         self._SSHPermissions()
     def _SetupArgs(self, parser):
@@ -80,13 +83,6 @@ class Ssh(Launcher):
         for host in self.all_hosts:
             InteractiveSSHNode(host, self.ssh_info, only_init=True).Run()
 
-    def _ModifySSHConfig(self, rr=False):
-        hosts = None
-        if rr:
-            hosts = self.all_hosts
-        if rr:
-            CopyNode(self.scaffold_dir, self.scaffold_dir, hosts=hosts, ssh_info=self.ssh_info).Run()
-        ToOpenSSHConfig(hosts=hosts, register_hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def _InstallKeys(self):
         print("Install SSH keys")
