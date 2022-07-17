@@ -37,9 +37,14 @@ fi
 
 #chmod +x all jarvis binaries
 chmod +x bin/*
+
+#Create jarvis repos directory
 mkdir jarvis_repos
 rm `pwd`/jarvis_repos/builtin
 ln -s `pwd`/builtin `pwd`/jarvis_repos/builtin
+
+#Create repo env directory
+mkdir -p ${PWD}/jarvis_envs/${USER}
 
 #Install python if necessary
 if [[ $PYTHON_NEEDED -eq 1 ]]

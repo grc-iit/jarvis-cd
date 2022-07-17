@@ -11,6 +11,8 @@ class Launcher(SSHConfigMixin,YAMLCache):
         super().__init__(scaffold_dir)
         self.nodes = None
         self.cache = self.LoadCache()
+        self.jarvis_root = JarvisManager().GetJarvisRoot()
+        self.jarvis_env = os.path.join(self.jarvis_root, '.jarvis_env')
 
     def DefaultConfigPath(self, conf_type='default'):
         launcher_path = os.path.dirname(inspect.getfile(self.__class__))

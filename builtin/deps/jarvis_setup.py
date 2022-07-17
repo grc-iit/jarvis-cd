@@ -20,6 +20,10 @@ class JarvisSetup(Installer):
                 "export PYTHONPATH=`sudo -u {self.username} $JARVIS_ROOT/bin/jarvis-py-paths`:$PYTHONPATH",
                 "export PYTHONPATH",
                 EnvNodeOps.SET).Run()
+        EnvNode(self.jarvis_env,
+                cmd=f"for FILE in `ls ${{JARVIS_ROOT}}/jarvis_envs/{os.environ['USER']}`; do source $FILE; done",
+                cmd_re="for FILE in",
+                op=EnvNodeOps.SET).Run()
 
     def LocalUpdate(self):
         jarvis_root = os.environ['JARVIS_ROOT']
@@ -34,4 +38,7 @@ class JarvisSetup(Installer):
                 op=EnvNodeOps.REMOVE).Run()
         EnvNode(self.jarvis_env,
                 cmd_re=f"export PYTHONPATH",
+                op=EnvNodeOps.REMOVE).Run()
+        EnvNode(self.jarvis_env,
+                cmd_re=f"for FILE in",
                 op=EnvNodeOps.REMOVE).Run()

@@ -5,9 +5,6 @@ from jarvis_cd.basic.echo_node import EchoNode
 from abc import abstractmethod
 
 class JarvisExecNode(ParallelNode):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
     def _Run(self):
         if self.do_ssh:
             # We ignore kwargs since we don't want to call SSH during _LocalRun

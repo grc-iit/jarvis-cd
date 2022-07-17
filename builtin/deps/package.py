@@ -8,11 +8,6 @@ from jarvis_cd.util.naming import ToCamelCase
 import os
 
 class Deps(Launcher):
-    def _ProcessConfig(self):
-        super()._ProcessConfig()
-        self.jarvis_env = os.path.join(JarvisManager.GetInstance().GetJarvisRoot(), '.jarvis_env')
-        self.jarvis_root = JarvisManager.GetInstance().GetJarvisRoot()
-
     def _Scaffold(self):
         #Check if jarvis already installed
         if 'JARVIS_ROOT' in os.environ:

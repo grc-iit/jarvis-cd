@@ -3,6 +3,7 @@ from jarvis_cd.comm.mpi_node import MPINode
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.fs.mkdir_node import MkdirNode
 from jarvis_cd.fs.rm_node import RmNode
+from jarvis_cd.installer.env_node import EnvNode, EnvNodeOps
 from builtin.daos.package import Daos
 import configparser
 from jarvis_cd.serialize.ini_file import IniFile
@@ -75,6 +76,12 @@ class Io500(Application):
             f"{self.scaffold_dir}/io500.ini"
         ]
         RmNode(paths).Run()
+
+        EnvNode(self.jarvis_env,
+                cmd_re=f"spack load {self.config['IO500_SPACK']}",
+                op=EnvNodeOps.REMOVE,
+                hosts=self.all_hosts).Run()
+
 
     def _DefineStop(self):
         return
