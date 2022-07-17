@@ -36,11 +36,10 @@ class Deps(Launcher):
             GitNode(**self.config['jarvis_cd'], method=GitOps.CLONE, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
             CopyNode(jarvis_conf, jarvis_conf, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
             cmds = [
+                f"cd {jarvis_root}",
                 f"chmod +x {jarvis_root}/dependencies.sh",
                 f"{jarvis_root}/dependencies.sh",
                 f"export PYTHONPATH={jarvis_root}",
-                f"cd {jarvis_root}",
-                f"echo {jarvis_root}",
                 f"./bin/jarvis deps local-install {package_name}"
             ]
             ExecNode(cmds, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
