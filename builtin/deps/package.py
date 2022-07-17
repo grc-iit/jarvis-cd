@@ -76,14 +76,14 @@ class Deps(Launcher):
         for package in self._PackageSet(package_name):
             pkg = self._GetPackageInstance(package)
             pkg.LocalUpdate()
-    def _LocalUpdate(self, package_name):
+    def _LocalUpdateArgs(self, package_name):
         self._DepsArgs(package_name)
 
     def LocalUninstall(self, package_name):
         for package in self._PackageSet(package_name):
             pkg = self._GetPackageInstance(package)
             pkg.LocalUninstall()
-    def _LocalUninstall(self, package_name):
+    def _LocalUninstallArgs(self, package_name):
         self._DepsArgs(package_name)
 
     def _GetPackageInstance(self, package_name):
