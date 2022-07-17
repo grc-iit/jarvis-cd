@@ -127,7 +127,7 @@ jarvis-bootstrap setup_ssh
 
 Connect to Chameleon using the following command:
 ```
-jarvis ssh shell 0
+jarvis ssh shell 1
 ```
 
 ### 5.3. Install Jarvis-CD on the Head Node

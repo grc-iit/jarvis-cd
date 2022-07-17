@@ -50,9 +50,14 @@ class Hostfile:
             if len(range) == 2:
                 min = int(range[0])
                 max = int(range[1])
+                if min > max or min < 1 or max > len(self.hosts):
+                    raise Error(ErrorCode.INVALID_HOST_RANGE).format(len(self.hosts), min, max)
                 hosts.hosts += hosts.all_hosts[min-1:max]
             else:
                 val = int(range[0])
+                if val < 1 or val > len(self.hosts):
+                    raise Error(ErrorCode.INVALID_HOST_ID).format(len(self.hosts), val)
+                val -= 1
                 hosts.hosts += [hosts.all_hosts[val-1]]
         return hosts
 

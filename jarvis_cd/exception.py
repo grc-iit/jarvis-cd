@@ -3,7 +3,6 @@ class Error(BaseException):
         self._error_code = error_code["id"]
         if child_error is None:
             self._error_message = error_code["msg"]
-            print(self._error_message)
         else:
             self._error_message = str(child_error) + "\n{}".format(error_code["msg"])
 
@@ -31,15 +30,27 @@ class ErrorCode:
     #General error code
     NOT_IMPLEMENTED = {"id": 1, "msg": "{} is not implemented"}
     LAUNCHER_NOT_FOUND = {"id": 2, "msg": "{} was not found"}
+
+    #Hostfile errors
+    HOSTFILE_NOT_FOUND = {"id": 1000, "msg": "Hostfile at {} does not exist."}
+    TOO_MANY_HOSTS_CHOSEN = {"id": 1001,
+                             "msg": "Hostfile at {} does not contain {} hosts, only {}."}
+    INVALID_HOST_ID = {
+        "id": 1002,
+        "msg": "Hostfile numbering starts at 1 and ends at {}. Selected host {}."
+    }
+    INVALID_HOST_RANGE = {
+        "id": 1003,
+        "msg": "Hostfile numbering starts at 1 and ends at {}. Selected host in range {} - {}."
+    }
+
     #Specific error code
-    CONFIG_REQUIRED = {"id": 1000, "msg": "Config is required. Check sample {}"}
-    INVALID_SECTION = {"id": 1001, "msg": "Section {} is not recognized. Check sample {}"}
-    INVALID_KEY = {"id": 1002, "msg": "Key {} is not recognized. Check sample {}"}
-    INVALID_DEFAULT_CONFIG = {"id": 1003, "msg": "The module {} does not have a default configuration."}
-    NOT_INSTALLED = {"id": 1004, "msg": "{} environment variable has not been set."}
-    CONFIG_NOT_FOUND = {"id": 1005, "msg": "Config at {} does not exist."}
-    HOSTFILE_NOT_FOUND = {"id": 1006, "msg": "Hostfile at {path} does not exist."}
-    TOO_MANY_HOSTS_CHOSEN = {"id": 1007, "msg": "Hostfile at {path} does not contain {num_hosts} hosts, only {max_hosts}."}
-    INVALID_TYPE = {"id": 1008, "msg": "{obj}: Has invalid type {t}."}
-    INVALID_CMD_LIST = {"id": 1009, "msg": "ExecNode command list has a mix of both strings and nodes. {}"}
+    CONFIG_REQUIRED = {"id": 2000, "msg": "Config is required. Check sample {}"}
+    INVALID_SECTION = {"id": 2001, "msg": "Section {} is not recognized. Check sample {}"}
+    INVALID_KEY = {"id": 2002, "msg": "Key {} is not recognized. Check sample {}"}
+    INVALID_DEFAULT_CONFIG = {"id": 2003, "msg": "The module {} does not have a default configuration."}
+    NOT_INSTALLED = {"id": 2004, "msg": "{} environment variable has not been set."}
+    CONFIG_NOT_FOUND = {"id": 2005, "msg": "Config at {} does not exist."}
+    INVALID_TYPE = {"id": 2008, "msg": "{}: Has invalid type {}."}
+    INVALID_CMD_LIST = {"id": 2009, "msg": "ExecNode command list has a mix of both strings and nodes. {}"}
     #Orange FS error code

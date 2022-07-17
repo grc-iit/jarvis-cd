@@ -1,11 +1,13 @@
 
 from jarvis_cd.shell.exec_node import ExecNode
+from jarvis_cd.hostfile import Hostfile
 import getpass
 import os
 
-
 class InteractiveSSHNode(ExecNode):
     def __init__(self, host, ssh_info, only_init=False):
+        if isinstance(host, Hostfile):
+            host = host.hosts[0]
         #Set default values
         self.username = getpass.getuser()
         self.pkey = None
@@ -30,4 +32,5 @@ class InteractiveSSHNode(ExecNode):
             cmd = f"ssh -i {self.pkey} -p {self.port} {self.username}@{self.host} {self.cmd}"
         else:
             cmd = f"ssh -p {self.port} {self.username}@{self.host} {self.cmd}"
-        super().__init__(cmd, print_output=True, collect_output=False, print_fancy=False)
+        print(cmd)
+        super().__init__(cmd, print_output=True, collect_output=False)

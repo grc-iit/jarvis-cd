@@ -16,7 +16,7 @@ class Ssh(Launcher):
                 self.dst_key_dir = self.config["ssh_keys"]["primary"]["dst_key_dir"]
 
     def Shell(self, node_id):
-        InteractiveSSHNode(self.all_hosts.SelectHosts(node_id), self.ssh_info, only_init=True).Run()
+        InteractiveSSHNode(self.all_hosts.SelectHosts(node_id), self.ssh_info).Run()
     def _ShellArgs(self, parser):
         parser.add_argument('node_id', metavar='id', type=int, help="Node index in hostfile")
 
