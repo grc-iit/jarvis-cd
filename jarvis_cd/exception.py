@@ -53,4 +53,8 @@ class ErrorCode:
     CONFIG_NOT_FOUND = {"id": 2005, "msg": "Config at {} does not exist."}
     INVALID_TYPE = {"id": 2008, "msg": "{}: Has invalid type {}."}
     INVALID_CMD_LIST = {"id": 2009, "msg": "ExecNode command list has a mix of both strings and nodes. {}"}
+
+    #SSH setup error codes
+    NO_SSH_CONFIG = {"id": 2500, "msg": "Did not provide an SSH config YAML"}
+
     #Orange FS error code

@@ -12,7 +12,7 @@ class ToOpenSSHConfig(Node):
 
     def _Run(self):
         #OpenSSH config
-        ossh_config_path = os.path.join(os.environ['HOME'], '.ssh', 'ssh_config')
+        ossh_config_path = os.path.join(os.environ['HOME'], '.ssh', 'config')
         text = ''
         if os.path.exists(ossh_config_path):
             with open(ossh_config_path, 'r') as fp:
@@ -47,7 +47,7 @@ class ToOpenSSHConfig(Node):
             if 'port' in self.ssh_info:
                 ossh_config[host]['Port'] = self.ssh_info['port']
             if 'username' in self.ssh_info:
-                ossh_config[host]['Username'] = self.ssh_info['username']
+                ossh_config[host]['User'] = self.ssh_info['username']
             if 'key' in self.ssh_info:
                 ossh_config[host]['IdentityFile'] = GetPrivateKey(self.ssh_info['key_dir'], self.ssh_info['key'])
 

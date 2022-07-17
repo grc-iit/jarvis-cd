@@ -6,18 +6,32 @@ from jarvis_cd.shell.kill_node import KillNode
 from jarvis_cd.comm.issh_node import InteractiveSSHNode
 from jarvis_cd.launcher.launcher import Launcher
 from jarvis_cd.comm.to_openssh_config import ToOpenSSHConfig
+from jarvis_cd.exception import Error, ErrorCode
 import os
 
 class Ssh(Launcher):
     def _ProcessConfig(self):
         super()._ProcessConfig()
-        self.dst_key_dir = os.path.join('home', self.username, '.ssh')
-        self.ssh_keys = {}
-        if 'SSH' in self.config:
-            self.ssh_keys['primary'] = self.config['SSH']
+        if self.ssh_info is None:
+            raise Error(ErrorCode.NO_SSH_CONFIG).format()
+
+        self.dst_key_dir = os.path.join('home', self.ssh_info['username'], '.ssh')
+        self.ssh_keys = { 'primary': self.ssh_info }
         if "ssh_keys" in self.config:
            self.ssh_keys.update(self.config['ssh_keys'])
 
+        self.username = None
+        self.port = None
+        self.private_key = None
+        self.public_key = None
+
+        if 'key' in self.ssh_info and 'key_dir' in self.ssh_info:
+            self.public_key = self._GetPublicKey(self.ssh_info['key_dir'], self.ssh_info['key'])
+            self.private_key = self._GetPublicKey(self.ssh_info['key_dir'], self.ssh_info['key'])
+        if 'port' in self.ssh_info:
+            self.port = self.ssh_info['port']
+        if 'username' in self.ssh_info:
+            self.username = self.ssh_info['username']
 
     def Shell(self, node_id):
         InteractiveSSHNode(self.all_hosts.SelectHosts(node_id), self.ssh_info).Run()
@@ -52,8 +66,8 @@ class Ssh(Launcher):
 
     def Setup(self):
         self._TrustHosts()
-        self._InstallKeys()
         self._ModifySSHConfig()
+        self._InstallKeys()
         self._SSHPermissions()
 
     def _TrustHosts(self):
@@ -66,10 +80,17 @@ class Ssh(Launcher):
         print("Install SSH keys")
         # Ensure pubkey trusted on all nodes
         for host in self.all_hosts:
-            copy_id_cmd = f"ssh-copy-id -f -i {self.public_key} -p {self.port} {self.username}@{host}"
+            copy_id_cmd = [
+                f"ssh-copy-id -f",
+                f"-i {self.public_key}" if self.public_key is not None else None,
+                f"-p {self.port}" if self.port is not None else None,
+                f"{self.username}@{host}" if self.username is not None else host
+            ]
+            copy_id_cmd = [tok for tok in copy_id_cmd if tok is not None]
+            copy_id_cmd = " ".join(copy_id_cmd)
             ExecNode(copy_id_cmd).Run()
         # Create SSH directory on all nodes
-        ExecNode(f'mkdir {self.dst_key_dir}', hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        MkdirNode(self.dst_key_dir, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
         # Copy all keys:
         for key_entry in self.ssh_keys.keys():
@@ -95,7 +116,7 @@ class Ssh(Launcher):
             commands += [
                 f'chmod 700 {key_dir}',
                 f'chmod 600 {key_dir}/authorized_keys',
-                f'chmod 644 {key_dir}/known_self.all_hosts',
+                f'chmod 644 {key_dir}/known_hosts',
                 f'chmod 600 {key_dir}/config',
                 f'chmod 644 {self._GetPublicKey(key_dir, key_name)}',
                 f'chmod 600 {self._GetPrivateKey(key_dir, key_name)}'
@@ -109,12 +130,7 @@ class Ssh(Launcher):
         ExecNode(dst_cmd, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def _GetKeyInfo(self, key_entry):
-        key_dir = os.path.join(os.environ["HOME"], ".ssh")
-        key_name = 'id_rsa'
-        dst_key_dir = os.path.join("home", self.username, ".ssh")
-        if key_entry in self.ssh_keys:
-            key_dir = self.ssh_keys[key_entry]["key_dir"]
-            key_name = self.ssh_keys[key_entry]["key"]
-            if 'dst_key_dir' in self.ssh_keys[key_entry]:
-                dst_key_dir = self.ssh_keys[key_entry]["dst_key_dir"]
+        key_dir = self.ssh_keys[key_entry]["key_dir"]
+        key_name = self.ssh_keys[key_entry]["key"]
+        dst_key_dir = self.ssh_keys[key_entry]["dst_key_dir"]
         return key_dir,key_name,dst_key_dir

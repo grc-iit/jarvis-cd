@@ -20,6 +20,7 @@ class ExecNode(ParallelNode):
         if len(cmds) == 0:
             self.cmds = cmds
             return
+        cmds = [cmd for cmd in cmds if cmd is not None]
 
         #Ensure this is a list of either only nodes or only strings
         self.is_strlist = all([isinstance(cmd, str) for cmd in cmds])

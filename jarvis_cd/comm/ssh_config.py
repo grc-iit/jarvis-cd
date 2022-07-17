@@ -22,12 +22,6 @@ class SSHConfigMixin(YAMLConfig):
         self._ProcessSSHConfig()
 
     def _ProcessSSHConfig(self):
-        self.public_key = None
-        self.private_key = None
-        self.username = getpass.getuser()
-        self.password = None
-        self.port = 22
-        self.host_aliases = None
         self.all_hosts = None
         self.scaffold_hosts = None
         self.ssh_info = None
@@ -43,9 +37,7 @@ class SSHConfigMixin(YAMLConfig):
             self.ssh_info['host_aliases'] = FindHostAliases(self.all_hosts).Run().GetAliases()
             self.host_aliases = self.ssh_info['host_aliases']
 
-        if self.ssh_info is not None and 'key' in self.ssh_info and 'key_dir' in self.ssh_info:
-            self.public_key = self._GetPublicKey(self.ssh_info['key_dir'], self.ssh_info['key'])
-            self.private_key = self._GetPublicKey(self.ssh_info['key_dir'], self.ssh_info['key'])
+
 
     def _GetPublicKey(self, key_dir, key_name):
         return GetPublicKey(key_dir, key_name)
