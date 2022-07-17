@@ -2,12 +2,8 @@ HOSTS: ${SCAFFOLD}/hostfile.txt
 IO500_SPACK:
   package_name: daos-io500
 IO500_ROOT: ${SCAFFOLD}/io500_install
-SSH:
-  port: 22
-  key: scs_chameleon_pass
-  key_dir: ${HOME}/.ssh
 MPI:
-  nprocs: 16
+  nprocs: 72
 DAOS:
   pool: io500_pool
   container: io500_container
@@ -25,17 +21,17 @@ GLOBAL:
   scc: TRUE
   dataPacketType: timestamp
 DEBUG:
-  stonewall-time: 300
+  stonewall-time: 5
 ior-easy:
   transferSize:  1m
-  blockSize:  1000000m
+  blockSize:  16m
   filePerProc:  FALSE
   uniqueDir:  FALSE
 mdtest-easy:
-  n:  10000000
+  n:  1000
 ior-hard:
-  segmentCount:  10000000
+  segmentCount:  1000
 mdtest-hard:
-  n:  10000000
+  n:  1000
 find:
   nproc:  1

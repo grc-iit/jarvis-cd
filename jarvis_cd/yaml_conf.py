@@ -20,7 +20,7 @@ class YAMLConfig(ABC):
     def LoadConfig(self):
         if not os.path.exists(self.config_path):
             self.is_scaffolded = False
-            return
+            return self
         self.is_scaffolded = True
         self.config = YAMLFile(self.config_path).Load()
         if 'SCAFFOLD' in self.config and self.config['SCAFFOLD'] is not None:

@@ -7,10 +7,6 @@ NAME: daos_server
 PORT: 10001
 SECURE: false
 HOSTS: ${SCAFFOLD}/hostfile.txt
-SSH:
-  port: 22
-  key: scs_chameleon_pass
-  key_dir: ${HOME}/.ssh
 CONF:
   SERVER: ${SCAFFOLD}/daos_server.yaml
   AGENT: ${SCAFFOLD}/daos_agent.yaml

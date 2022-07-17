@@ -8,12 +8,9 @@ from jarvis_cd.serialize.ini_file import IniFile
 import os
 
 class Io500(Application):
-    def __init__(self, config_path=None, args=None):
-        super().__init__('io500', config_path, args)
-
     def _ProcessConfig(self):
         super()._ProcessConfig()
-        self.daos = Daos(config_path=self.config['DAOS']['scaffold'])
+        self.daos = Daos(scaffold_dir=self.config['DAOS']['scaffold']).LoadConfig()
 
     def _DFSApi(self, pool_uuid, container_uuid, mount, oclass=True):
         cmd = []
