@@ -11,6 +11,7 @@ class Deps(Launcher):
     def _ProcessConfig(self):
         super()._ProcessConfig()
         self.jarvis_env = os.path.join(JarvisManager.GetInstance().GetJarvisRoot(), '.jarvis_env')
+        self.jarvis_root = JarvisManager.GetInstance().GetJarvisRoot()
 
     def _Scaffold(self):
         #Check if jarvis already installed
@@ -44,17 +45,17 @@ class Deps(Launcher):
             ]
             ExecNode(cmds, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
         else:
-            ExecNode(f"jarvis deps local-install {package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+            ExecNode(f"jarvis deps local-install {package_name} -C {self.jarvis_root}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
     def _InstallArgs(self, package_name):
         self._DepsArgs(package_name)
 
     def Update(self, package_name):
-        ExecNode(f"jarvis deps local-update {package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        ExecNode(f"jarvis deps local-update {package_name} -C {self.jarvis_root}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
     def _UpdateArgs(self, package_name):
         self._DepsArgs(package_name)
 
     def Uninstall(self, package_name):
-        ExecNode(f"jarvis deps local-uninstall {package_name}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        ExecNode(f"jarvis deps local-uninstall {package_name} -C {self.jarvis_root}", hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
     def _UninstallArgs(self, package_name):
         self._DepsArgs(package_name)
 

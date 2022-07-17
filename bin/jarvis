@@ -43,13 +43,22 @@ if __name__ == '__main__':
     if launcher_class is None:
         raise Error(ErrorCode.LAUNCHER_NOT_FOUND).format(launcher_module_name)
 
-    #Create the launcher class
+    #Create the launcher instance and load configuration
     scaffold_dir = args.scaffold
     launcher_instance = launcher_class(scaffold_dir)
+    launcher_instance.LoadConfig()
 
     #Load the launcher operation
     launcher_op_name = ToCamelCase(str(args.operation))
     launcher_op = getattr(launcher_class, launcher_op_name)
+
+    #Make sure that jarvis is being called from a scaffolded directory
+    if not launcher_instance.is_scaffolded and launcher_op_name != 'Scaffold':
+        print(f"No configuration file found when calling {launcher_class_name}.{launcher_op_name}.")
+        print("Are you cd'd into a directory that contains a jarvis_conf.yaml?")
+        print("Alternatively, did you provide the correct path to -C?")
+        print(f"jarvis_conf.yaml is produced after calling jarvis {launcher_class_name} scaffold")
+        exit(1)
 
     #Get the arguments for the operation
     launcher_op_args = f"_{launcher_op_name}Args"
@@ -61,5 +70,4 @@ if __name__ == '__main__':
     launcher_args = vars(parser.parse_args(other_args))
 
     #Call the operation
-    launcher_instance.LoadConfig()
     result = launcher_op(launcher_instance, **launcher_args)
