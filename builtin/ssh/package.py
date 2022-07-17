@@ -72,13 +72,21 @@ class Ssh(Launcher):
         self._InstallKeys()
         self._SSHPermissions()
     def _SetupArgs(self, parser):
-        parser.add_argument('-rr', metavar='bool', type=bool, help='whether or not to modify ssh config on all nodes')
+        parser.add_argument('-rr', metavar='bool', type=bool, default=False, help='whether or not to modify ssh config on all nodes')
 
     def _TrustHosts(self):
         # Ensure all self.all_hosts are trusted on this machine
         print("Add all hosts to known_hosts")
         for host in self.all_hosts:
             InteractiveSSHNode(host, self.ssh_info, only_init=True).Run()
+
+    def _ModifySSHConfig(self, rr=False):
+        hosts = None
+        if rr:
+            hosts = self.all_hosts
+        if rr:
+            CopyNode(self.scaffold_dir, self.scaffold_dir, hosts=hosts, ssh_info=self.ssh_info).Run()
+        ToOpenSSHConfig(hosts=hosts, register_hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def _InstallKeys(self):
         print("Install SSH keys")
@@ -107,12 +115,6 @@ class Ssh(Launcher):
             if os.path.exists(src_priv_key):
                 print(f"Copying {src_priv_key} to {dst_priv_key}")
                 CopyNode(src_priv_key, dst_priv_key, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
-
-    def _ModifySSHConfig(self, rr):
-        hosts = None
-        if rr:
-            hosts = self.all_hosts
-        ToOpenSSHConfig(hosts=hosts, register_hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def _SSHPermissionsCmd(self, key_location):
         commands = []
