@@ -12,19 +12,21 @@ import os
 class Ssh(Launcher):
     def _ProcessConfig(self):
         super()._ProcessConfig()
-        if self.ssh_info is None:
-            raise Error(ErrorCode.NO_SSH_CONFIG).format()
-
-        self.dst_key_dir = os.path.join('home', self.ssh_info['username'], '.ssh')
-        self.ssh_keys = { 'primary': self.ssh_info }
-        if "ssh_keys" in self.config:
-           self.ssh_keys.update(self.config['ssh_keys'])
-
         self.username = None
         self.port = None
         self.private_key = None
         self.public_key = None
+        self.ssh_keys = None
 
+        if self.ssh_info is None:
+            return
+
+        self.ssh_keys = {'primary': self.ssh_info}
+        if "ssh_keys" in self.config:
+            self.ssh_keys.update(self.config['ssh_keys'])
+
+        if 'username' in self.ssh_info:
+            self.dst_key_dir = os.path.join('home', self.ssh_info['username'], '.ssh')
         if 'key' in self.ssh_info and 'key_dir' in self.ssh_info:
             self.public_key = self._GetPublicKey(self.ssh_info['key_dir'], self.ssh_info['key'])
             self.private_key = self._GetPublicKey(self.ssh_info['key_dir'], self.ssh_info['key'])
