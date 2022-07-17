@@ -66,12 +66,16 @@ class Ssh(Launcher):
     def _KillArgs(self, parser):
         parser.add_argument('cmd_re', metavar='regex', type=str, help='The regex of the process to kill')
 
-    def ModifyConfig(self):
-        CopyNode(self.scaffold_dir, self.scaffold_dir, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
-        ToOpenSSHConfig(hosts=self.all_hosts, register_hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+    def ModifyConfig(self, rr=False):
+        hosts = None
+        if rr:
+            hosts = self.all_hosts
+            CopyNode(self.scaffold_dir, self.scaffold_dir, hosts=hosts, ssh_info=self.ssh_info).Run()
+        ToOpenSSHConfig(hosts=hosts, register_hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def Setup(self):
         self._TrustHosts()
+        self.ModifyConfig(False)
         self._InstallKeys()
         self._SSHPermissions()
     def _SetupArgs(self, parser):
