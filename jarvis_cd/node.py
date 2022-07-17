@@ -121,9 +121,9 @@ class Node(ABC):
         python_cmds = [
             f"from {node_import} import {node_type}",
             f"from jarvis_cd.jarvis_manager import JarvisManager",
-            "JarvisManager.GetInstance().DisablePrintFancy()",
+            "JarvisManager.GetInstance().DisableFancyPrint()",
             f"{node_type}({param_str}).Run()"
         ]
         python_cmd = '\n'.join(python_cmds)
-        cmd = f"jarvis base exec \"{python_cmd}\""
+        cmd = f"python3 -c \"{python_cmd}\" -C $JARVIS_ROOT"
         return cmd
