@@ -9,10 +9,10 @@ class InteractiveSSHNode(ExecNode):
         if isinstance(host, Hostfile):
             host = host.hosts[0]
         #Set default values
-        self.username = getpass.getuser()
+        self.username = None
         self.pkey = None
         self.password = None
-        self.port = 22
+        self.port = None
         self.host = host
         self.only_init = only_init
         self.cmd = ''
@@ -20,17 +20,21 @@ class InteractiveSSHNode(ExecNode):
             self.cmd = 'echo'
 
         #Prioritize SSH info struct
-        if 'username' in ssh_info:
-            self.username = ssh_info['username']
-        if 'key' in ssh_info and 'key_dir' in ssh_info:
-            self.pkey = os.path.join(ssh_info['key_dir'], ssh_info['key'])
-        if 'port' in ssh_info:
-            self.port = ssh_info['port']
+        if ssh_info:
+            if 'username' in ssh_info:
+                self.username = ssh_info['username']
+            if 'key' in ssh_info and 'key_dir' in ssh_info:
+                self.pkey = os.path.join(ssh_info['key_dir'], ssh_info['key'])
+            if 'port' in ssh_info:
+                self.port = ssh_info['port']
 
-        #Build SSH command
-        if self.pkey:
-            cmd = f"ssh -i {self.pkey} -p {self.port} {self.username}@{self.host} {self.cmd}"
-        else:
-            cmd = f"ssh -p {self.port} {self.username}@{self.host} {self.cmd}"
-        print(cmd)
-        super().__init__(cmd, print_output=True, collect_output=False)
+        ssh_cmd = [
+            f"ssh",
+            f"-i {self.pkey}" if self.pkey is not None else None,
+            f"-p {self.port}" if self.port is not None else None,
+            f"{self.username}@{host}" if self.username is not None else host,
+            self.cmd
+        ]
+        ssh_cmd = [tok for tok in ssh_cmd if tok is not None]
+        ssh_cmd = " ".join(ssh_cmd)
+        super().__init__(ssh_cmd, print_output=True, collect_output=False)
