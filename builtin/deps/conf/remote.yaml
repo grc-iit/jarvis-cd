@@ -1,4 +1,4 @@
-HOSTS: hostfile.txt
+HOSTS: ${SCAFFOLD}/hostfile.txt
 SSH:
   username: cc
   port: 22

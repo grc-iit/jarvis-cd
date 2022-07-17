@@ -22,7 +22,7 @@ def BasicArgs():
     #Add -C to the basic argparse if it exists
     for i, param in enumerate(other_args):
         if param == '-C':
-            scaffold_dir = sys.argv[i+1]
+            scaffold_dir = other_args[i+1]
             args += ['-C', scaffold_dir]
             other_args.remove('-C')
             other_args.remove(scaffold_dir)
