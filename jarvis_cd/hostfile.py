@@ -57,7 +57,6 @@ class Hostfile:
                 val = int(range[0])
                 if val < 1 or val > len(self.hosts):
                     raise Error(ErrorCode.INVALID_HOST_ID).format(len(self.hosts), val)
-                val -= 1
                 hosts.hosts += [hosts.all_hosts[val-1]]
         return hosts
 

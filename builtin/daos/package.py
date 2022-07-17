@@ -73,30 +73,15 @@ class Daos(Application):
 
     def _DefineStart(self):
         #Start DAOS server
-        if 'TRY_SOLO' in self.config and self.config['TRY_SOLO']:
-            for host in self.server_hosts:
-                server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
-                EchoNode(server_start_cmd).Run()
-                ExecNode(server_start_cmd, hosts=host, sudo=True, exec_async=True,
-                         ssh_info=self.ssh_info).Run()
-                SleepNode(3).Run()
-        else:
-            server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
-            EchoNode(server_start_cmd).Run()
-            ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
-            SleepNode(3).Run()
+        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
+        EchoNode(server_start_cmd).Run()
+        ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+        SleepNode(3).Run()
         #Start client
-        if 'TRY_SOLO' in self.config and self.config['TRY_SOLO']:
-            for host in self.agent_hosts:
-                agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
-                EchoNode(agent_start_cmd).Run()
-                ExecNode(agent_start_cmd, hosts=host, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
-                SleepNode(3).Run()
-        else:
-            agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
-            EchoNode(agent_start_cmd).Run()
-            ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
-            SleepNode(3).Run()
+        agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
+        EchoNode(agent_start_cmd).Run()
+        ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+        SleepNode(3).Run()
         #Mount containers on clients
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
