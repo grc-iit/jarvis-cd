@@ -50,8 +50,8 @@ jarvis [launcher] [operation] --conf /path/to/conf
 cd ${HOME}
 mkdir daos_example
 cd daos_example
-#Create the jarvis configuration file
-jarvis daos scaffold
+#Create the jarvis configuration file (there are multiple to choose from)
+jarvis daos scaffold []
 #Initialize the directories/conf files required for launching server processes
 jarvis daos init
 #Starts an already-initialized service
@@ -70,8 +70,8 @@ jarvis daos reset
 
 To run these commands outside of the scaffold directory:
 ```bash
-jarvis daos scaffold --dir ${HOME}/daos_example
-jarvis daos init --dir ${HOME}/daos_example
+jarvis daos scaffold -C ${HOME}/daos_example
+jarvis daos init -C ${HOME}/daos_example
 ...
 ``` 
 
@@ -99,7 +99,7 @@ The following command will create a YAML file (conf.yaml) in the directory cc:
 ```bash
 mkdir cc
 cd cc
-jarvis-bootstrap scaffold remote
+jarvis ssh scaffold remote
 ```
 
 Modify conf.yaml to reflect your allocation and SSH keys:
@@ -127,7 +127,7 @@ jarvis-bootstrap setup_ssh
 
 Connect to Chameleon using the following command:
 ```
-jarvis-bootstrap ssh
+jarvis ssh shell 0
 ```
 
 ### 5.3. Install Jarvis-CD on the Head Node
@@ -139,7 +139,7 @@ Install jarvis on the head node using the steps above in Sections 1-2.
 ```bash
 mkdir cc
 cd cc
-jarvis-bootstrap scaffold remote
+jarvis deps scaffold remote
 touch hosts.txt
 ```
 
@@ -152,36 +152,37 @@ Create a "hostfile" which contains a list of all ip addresses to connect to:
 
 Modify conf.yaml again to reflect your allocation and SSH keys:
 ```yaml
-username: cc
-ssh_hosts: hostfile.txt
-ssh_port: 22
+HOSTS: hostfile.txt
+SSH:
+  username: cc
+  key: scs_chameleon_pass
+  key_dir: ${HOME}/.ssh
 ssh_keys:
-  primary:
-    key: scs_chameleon_pass
-    key_dir: ${HOME}/.ssh
   github:
     key_name: id_rsa
     key_dir: ${HOME}/.ssh
 ```
 
-This will setup SSH to all nodes in the "hostfile"
+This will bootstrap ssh between the host node and all other nodes.
 ```bash
-jarvis-bootstrap setup_ssh
+jarvis ssh setup
 ```
 
 ### 5.5. Install Jarvis-CD and its Dependencies on All Other Nodes
 
 The following commands will install/update/uninstall Jarvis on all machines listed in hostfile.txt.
 ```
-jarvis-bootstrap deps install
-jarvis-bootstrap deps update
-jarvis-bootstrap deps uninstall 
+jarvis deps install all
+jarvis deps update all
+jarvis deps uninstall all
 ```
+
+NOTE: don't run uninstall all if you don't want to remove your spack installation!!!
 
 ### 5.6. Install Storage System using Spack
 
 The following command is a distributed wrapper around spack, and will perform a parallel install
 of DAOS in all nodes specified in hostfile.txt.
 ```
-jarvis-pssh "spack install daos"
+jarvis ssh exec "spack install daos"
 ```
