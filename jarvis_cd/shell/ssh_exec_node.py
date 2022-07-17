@@ -25,7 +25,7 @@ class SSHExecNode(ParallelNode):
 
     def _exec_ssh(self, cmd):
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password, port=self.port)
-        output = client.run_command(cmd, sudo=self.sudo, use_pty=not self.exec_async)
+        output = client.run_command(cmd, sudo=self.sudo)
         nice_output = dict()
         for host_output in output:
             host = host_output.host
