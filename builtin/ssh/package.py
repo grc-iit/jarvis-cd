@@ -71,7 +71,7 @@ class Ssh(Launcher):
         if rr:
             hosts = self.all_hosts
             CopyNode(self.scaffold_dir, self.scaffold_dir, hosts=hosts, ssh_info=self.ssh_info).Run()
-        ToOpenSSHConfig(hosts=hosts, register_hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        ToOpenSSHConfig(register_hosts=self.all_hosts, register_ssh=self.ssh_info, hosts=hosts, ssh_info=self.ssh_info).Run()
     def _ModifyConfigArgs(self, parser):
         parser.add_argument('-rr', metavar='bool', type=bool, default=True,
                             help='whether or not to modify ssh config on all nodes')

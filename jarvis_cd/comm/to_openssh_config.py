@@ -5,9 +5,10 @@ import os
 import re
 
 class ToOpenSSHConfig(JarvisExecNode):
-    def __init__(self, register_hosts, **kwargs):
+    def __init__(self, register_hosts, register_ssh, **kwargs):
         super().__init__(**kwargs)
         self.register_hosts = register_hosts
+        self.register_ssh = register_ssh
 
     def _LocalRun(self):
         #OpenSSH config
@@ -42,12 +43,12 @@ class ToOpenSSHConfig(JarvisExecNode):
         for host in self.register_hosts:
             if host not in ossh_config:
                 ossh_config[host] = {}
-            if 'port' in self.ssh_info:
-                ossh_config[host]['Port'] = self.ssh_info['port']
-            if 'username' in self.ssh_info:
-                ossh_config[host]['User'] = self.ssh_info['username']
-            if 'key' in self.ssh_info:
-                ossh_config[host]['IdentityFile'] = GetPrivateKey(self.ssh_info['key_dir'], self.ssh_info['key'])
+            if 'port' in self.register_ssh:
+                ossh_config[host]['Port'] = self.register_ssh['port']
+            if 'username' in self.register_ssh:
+                ossh_config[host]['User'] = self.register_ssh['username']
+            if 'key' in self.register_ssh:
+                ossh_config[host]['IdentityFile'] = GetPrivateKey(self.register_ssh['key_dir'], self.register_ssh['key'])
 
         #Create updated text
         text = ""
