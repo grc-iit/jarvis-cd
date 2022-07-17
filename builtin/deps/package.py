@@ -39,7 +39,8 @@ class Deps(Launcher):
                 f"chmod +x {jarvis_root}/dependencies.sh",
                 f"{jarvis_root}/dependencies.sh",
                 f"export PYTHONPATH={jarvis_root}",
-                f"cd {self.config['jarvis_cd']['path']}",
+                f"cd {jarvis_root}",
+                f"echo {jarvis_root}",
                 f"./bin/jarvis deps local-install {package_name}"
             ]
             ExecNode(cmds, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
