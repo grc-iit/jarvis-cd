@@ -5,10 +5,9 @@ import os
 import re
 
 class ToOpenSSHConfig(JarvisExecNode):
-    def __init__(self, register_hosts, ssh_info, **kwargs):
+    def __init__(self, register_hosts, **kwargs):
         super().__init__(**kwargs)
         self.register_hosts = register_hosts
-        self.ssh_info = ssh_info
 
     def _LocalRun(self):
         #OpenSSH config
