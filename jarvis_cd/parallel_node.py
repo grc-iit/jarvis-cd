@@ -50,8 +50,6 @@ class ParallelNode(Node):
         # Fill in defaults for username, password, and pkey
         if username is None:
             username = getpass.getuser()
-        if password is None and pkey is None:
-            pkey = f"{os.environ['HOME']}/.ssh/id_rsa"
 
         self.pkey = pkey
         self.password = password

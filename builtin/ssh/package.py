@@ -5,15 +5,19 @@ from jarvis_cd.fs.mkdir_node import MkdirNode
 from jarvis_cd.shell.kill_node import KillNode
 from jarvis_cd.comm.issh_node import InteractiveSSHNode
 from jarvis_cd.launcher.launcher import Launcher
+from jarvis_cd.comm.to_openssh_config import ToOpenSSHConfig
 import os
 
 class Ssh(Launcher):
     def _ProcessConfig(self):
         super()._ProcessConfig()
         self.dst_key_dir = os.path.join('home', self.username, '.ssh')
-        if "ssh_keys" in self.config and "primary" in self.config["ssh_keys"]:
-            if "dst_key_dir" in self.config["ssh_keys"]["primary"] and self.config["ssh_keys"]["primary"]["dst_key_dir"] is not None:
-                self.dst_key_dir = self.config["ssh_keys"]["primary"]["dst_key_dir"]
+        self.ssh_keys = {}
+        if 'SSH' in self.config:
+            self.ssh_keys['primary'] = self.config['SSH']
+        if "ssh_keys" in self.config:
+           self.ssh_keys.update(self.config['ssh_keys'])
+
 
     def Shell(self, node_id):
         InteractiveSSHNode(self.all_hosts.SelectHosts(node_id), self.ssh_info).Run()
@@ -49,6 +53,7 @@ class Ssh(Launcher):
     def Setup(self):
         self._TrustHosts()
         self._InstallKeys()
+        self._ModifySSHConfig()
         self._SSHPermissions()
 
     def _TrustHosts(self):
@@ -77,6 +82,9 @@ class Ssh(Launcher):
             if os.path.exists(src_priv_key):
                 print(f"Copying {src_priv_key} to {dst_priv_key}")
                 CopyNode(src_priv_key, dst_priv_key, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+
+    def _ModifySSHConfig(self):
+        ToOpenSSHConfig(hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
 
     def _SSHPermissionsCmd(self, key_location):
         commands = []

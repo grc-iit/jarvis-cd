@@ -5,6 +5,12 @@ from jarvis_cd.exception import Error, ErrorCode
 import getpass
 import sys,os
 
+def GetPublicKey(key_dir, key_name):
+    return os.path.join(key_dir, f"{key_name}.pub")
+
+def GetPrivateKey(key_dir, key_name):
+        return os.path.join(key_dir, key_name)
+
 class SSHConfigMixin(YAMLConfig):
     def DefaultConfigPath(self, conf_type='default'):
         return os.path.join(self.jarvis_root, 'comm', 'conf', f"{conf_type}.yaml")
@@ -42,7 +48,7 @@ class SSHConfigMixin(YAMLConfig):
             self.private_key = self._GetPublicKey(self.ssh_info['key_dir'], self.ssh_info['key'])
 
     def _GetPublicKey(self, key_dir, key_name):
-        return f'{key_dir}/{key_name}.pub'
+        return GetPublicKey(key_dir, key_name)
 
     def _GetPrivateKey(self, key_dir, key_name):
-        return f'{key_dir}/{key_name}'
+        return GetPrivateKey(key_dir, key_name)
