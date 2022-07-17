@@ -66,20 +66,22 @@ class Ssh(Launcher):
     def _KillArgs(self, parser):
         parser.add_argument('cmd_re', metavar='regex', type=str, help='The regex of the process to kill')
 
-    def ModifyConfig(self, rr=False):
+    def ModifyConfig(self, rr=True):
         hosts = None
         if rr:
             hosts = self.all_hosts
             CopyNode(self.scaffold_dir, self.scaffold_dir, hosts=hosts, ssh_info=self.ssh_info).Run()
         ToOpenSSHConfig(hosts=hosts, register_hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+    def _ModifyConfigArgs(self, parser):
+        parser.add_argument('-rr', metavar='bool', type=bool, default=True,
+                            help='whether or not to modify ssh config on all nodes')
 
     def Setup(self):
         self._TrustHosts()
         self.ModifyConfig(False)
         self._InstallKeys()
         self._SSHPermissions()
-    def _SetupArgs(self, parser):
-        parser.add_argument('-rr', metavar='bool', type=bool, default=False, help='whether or not to modify ssh config on all nodes')
+
 
     def _TrustHosts(self):
         # Ensure all self.all_hosts are trusted on this machine
