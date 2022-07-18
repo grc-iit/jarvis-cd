@@ -1,5 +1,4 @@
 from jarvis_cd.launcher.launcher import Launcher
-from jarvis_cd.shell.copy_node import CopyNode
 from abc import ABC,abstractmethod
 
 class Application(Launcher):
@@ -38,6 +37,7 @@ class Application(Launcher):
 
     def Clean(self):
         self._DefineClean()
+        self.RmEnv()
 
     def Status(self):
         self._DefineStatus()
