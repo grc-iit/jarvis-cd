@@ -19,7 +19,6 @@ GLOBAL:
   io-buffers-on-gpu: FALSE
   verbosity: 1
   scc: TRUE
-  dataPacketType: timestamp
 DEBUG:
   stonewall-time: 5
 ior-easy:
