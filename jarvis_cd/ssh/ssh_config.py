@@ -35,7 +35,8 @@ class SSHConfigMixin(YAMLConfig):
             if 'JARVIS_SHARED' in os.environ and bool(int(os.environ['JARVIS_SHARED'])):
                 self.jarvis_hosts = Hostfile().Load(['localhost'])
         if 'SSH' in self.config:
-            self.ssh_info = self.config['SSH']
+            self.ssh_info.update(self.config['SSH'])
+        if len(self.ssh_info):
             self.ssh_info['host_aliases'] = FindHostAliases(self.all_hosts).Run().GetAliases()
             self.host_aliases = self.ssh_info['host_aliases']
         JarvisManager.GetInstance().SetSSHInfo(self.ssh_info)
