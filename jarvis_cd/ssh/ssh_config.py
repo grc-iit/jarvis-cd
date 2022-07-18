@@ -2,15 +2,11 @@ from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.yaml_conf import YAMLConfig
 from jarvis_cd.introspect.host_aliases import FindHostAliases
 from jarvis_cd.jarvis_manager import JarvisManager
+from jarvis_cd.ssh.openssh.openssh_config import FromOpenSSHConfig
+from jarvis_cd.ssh.openssh.util import GetPublicKey,GetPrivateKey
 from jarvis_cd.exception import Error, ErrorCode
 import getpass
 import sys,os
-
-def GetPublicKey(key_dir, key_name):
-    return os.path.join(key_dir, f"{key_name}.pub")
-
-def GetPrivateKey(key_dir, key_name):
-        return os.path.join(key_dir, key_name)
 
 class SSHConfigMixin(YAMLConfig):
     def DefaultConfigPath(self, conf_type='default'):
@@ -26,7 +22,7 @@ class SSHConfigMixin(YAMLConfig):
         self.all_hosts = None
         self.scaffold_hosts = None
         self.jarvis_hosts = None
-        self.ssh_info = None
+        self.ssh_info = FromOpenSSHConfig(self.all_hosts).GetConfig()
         self.jarvis_shared = False
         self.scaffold_shared = False
 
