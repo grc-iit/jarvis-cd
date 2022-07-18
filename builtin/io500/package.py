@@ -67,7 +67,8 @@ class Io500(Application):
         ]
 
     def _DefineStart(self):
-        MPINode(f"{self.config['IO500_ROOT']}/bin/io500 {self.scaffold_dir}/io500.ini", self.config['MPI']['nprocs'], hosts=self.all_hosts).Run()
+        MPINode(f"{self.config['IO500_ROOT']}/bin/io500 {self.scaffold_dir}/io500.ini",
+                self.config['MPI']['nprocs'], hosts=self.all_hosts, collect_output=False).Run()
 
     def _DefineClean(self):
         paths = [
