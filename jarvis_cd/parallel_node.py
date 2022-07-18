@@ -31,5 +31,3 @@ class ParallelNode(Node,SSHInfoMixin):
         self.exec_async = exec_async
         self.cwd = cwd
 
-        #Do SSH only if the host list contains more than host aliases
-

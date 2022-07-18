@@ -36,4 +36,5 @@ class SSHInfoMixin:
         self.port = port
         self.ssh_info = ssh_info
         self.host_aliases = host_aliases
+        # Do SSH only if the host list contains more than host aliases
         self.do_ssh = any(host not in host_aliases for host in self.hosts)
