@@ -1,35 +1,22 @@
 
 from jarvis_cd.shell.exec_node import ExecNode
 from jarvis_cd.hostfile import Hostfile
-from jarvis_cd.jarvis_manager import JarvisManager
+from jarvis_cd.ssh.ssh_info_mixin import SSHInfoMixin
 import getpass
 import os
 
-class InteractiveSSHNode(ExecNode):
+class InteractiveSSHNode(ExecNode,SSHInfoMixin):
     def __init__(self, host, only_init=False):
         if isinstance(host, Hostfile):
             host = host.hosts[0]
         #Set default values
-        self.username = None
-        self.pkey = None
-        self.password = None
-        self.port = None
         self.host = host
         self.only_init = only_init
         self.cmd = ''
         if self.only_init:
             self.cmd = 'echo'
 
-        #Prioritize SSH info struct
-        ssh_info = JarvisManager.GetInstance().GetSSHInfo()
-        if ssh_info:
-            if 'username' in ssh_info:
-                self.username = ssh_info['username']
-            if 'key' in ssh_info and 'key_dir' in ssh_info:
-                self.pkey = os.path.join(ssh_info['key_dir'], ssh_info['key'])
-            if 'port' in ssh_info:
-                self.port = ssh_info['port']
-
+        self._ProcessSSHInfo()
         ssh_cmd = [
             f"ssh",
             f"-i {self.pkey}" if self.pkey is not None else None,
