@@ -1,6 +1,6 @@
 #from jarvis_cd.node import Node
 from jarvis_cd.shell.jarvis_exec_node import JarvisExecNode
-from jarvis_cd.comm.ssh_config import GetPublicKey, GetPrivateKey
+from jarvis_cd.ssh.ssh_config import GetPrivateKey
 import os
 import re
 

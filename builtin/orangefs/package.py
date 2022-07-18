@@ -4,7 +4,6 @@ from jarvis_cd.launchers import Launcher
 import os
 import socket
 
-from jarvis_cd.shell.scp_node import SCPNode
 from jarvis_cd.basic.sleep_node import SleepNode
 from jarvis_cd.shell.exec_node import ExecNode
 

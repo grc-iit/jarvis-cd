@@ -1,5 +1,5 @@
 from jarvis_cd.launcher.application import Application
-from jarvis_cd.comm.mpi_node import MPINode
+from jarvis_cd.mpi.mpi_node import MPINode
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.fs.mkdir_node import MkdirNode
 from jarvis_cd.fs.rm_node import RmNode

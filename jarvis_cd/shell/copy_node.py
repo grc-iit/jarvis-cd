@@ -1,6 +1,6 @@
 
 from jarvis_cd.parallel_node import ParallelNode
-from jarvis_cd.shell.scp_node import SCPNode
+from jarvis_cd.ssh.openssh.scp_node import SCPNode
 from jarvis_cd.exception import Error,ErrorCode
 import shutil, os
 

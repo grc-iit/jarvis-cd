@@ -1,5 +1,4 @@
-from abc import abstractmethod
-from jarvis_cd.comm.ssh_config import SSHConfigMixin
+from jarvis_cd.ssh.ssh_config import SSHConfigMixin
 from jarvis_cd.yaml_cache import YAMLCache
 from jarvis_cd.serialize.yaml_file import YAMLFile
 from jarvis_cd.jarvis_manager import JarvisManager

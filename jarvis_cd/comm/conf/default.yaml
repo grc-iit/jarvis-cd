@@ -1,6 +1,0 @@
-HOSTS: ${SCAFFOLD}/hostfile.txt
-SSH:
-  port: 22
-  key: scs_chameleon_pass
-  key_dir: ${HOME}/.ssh
-  sudo: false

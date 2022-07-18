@@ -3,10 +3,9 @@ from jarvis_cd.shell.copy_node import CopyNode
 from jarvis_cd.fs.rm_node import RmNode
 from jarvis_cd.fs.mkdir_node import MkdirNode
 from jarvis_cd.shell.kill_node import KillNode
-from jarvis_cd.comm.issh_node import InteractiveSSHNode
+from jarvis_cd.ssh.openssh.issh_node import InteractiveSSHNode
 from jarvis_cd.launcher.launcher import Launcher
-from jarvis_cd.comm.to_openssh_config import ToOpenSSHConfig
-from jarvis_cd.exception import Error, ErrorCode
+from jarvis_cd.ssh.openssh.to_openssh_config import ToOpenSSHConfig
 import os
 
 class Ssh(Launcher):

@@ -5,13 +5,14 @@ from jarvis_cd.parallel_node import ParallelNode
 from jarvis_cd.fs.rm_node import RmNode
 from jarvis_cd.fs.ls_node import LsNode
 from jarvis_cd.exception import Error, ErrorCode
+from jarvis_cd.shell.local_exec_node import LocalExecNode
 
 sys.stderr = sys.__stderr__
 
 """
 SCPNode has various concerns:
     1. /home/cc/hi.txt -> /home/cc will result in error, since /home/cc is a directory. Must specify full path.
-    2. Pscp cannot recursively copy directories if directory already exists on destination. Fixed.
+    2. Pscp (pssh.clients) cannot recursively copy directories if directory already exists on destination. Fixed.
     3. /home/cc/hi.txt -> /home/cc/hi.txt will delete hi.txt if the same host executing SCP is also in the hostfile. Fixed.
 """
 
@@ -45,7 +46,7 @@ class SCPNode(ParallelNode):
                         self.hosts.remove(alias)
                 break
 
-    def _exec_scp(self):
+    def _exec_scp_py(self):
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password,
                                    port=self.port)
 
@@ -90,6 +91,28 @@ class SCPNode(ParallelNode):
         for source,destination in dirs.items():
             output = client.copy_file(source, destination, recurse=True)
             joinall(output, raise_error=True)
+
+    def _exec_scp(self):
+        nodes = []
+        for source in self.sources:
+            for host in self.hosts:
+                scp_cmd = [
+                    f"echo {self.password} | " if self.password else None,
+                    f"scp",
+                    f"-P {self.port}" if self.port is not None else None,
+                    f"-i {self.pkey}" if self.pkey is not None else None,
+                    f"-r" if os.path.isdir(source) else None,
+                    source,
+                    f"{self.username}@{host}:{self.destination}" if self.username is not None else f"{host}:{self.destination}",
+                ]
+                scp_cmd = [cmd for cmd in scp_cmd if cmd is not None]
+                scp_cmd = " ".join(scp_cmd)
+                node = LocalExecNode([scp_cmd], exec_async=True, shell=True).Run()
+                nodes.append((host, node))
+
+        for host,node in nodes:
+            node.Wait()
+            self.CopyOutput(node, host)
 
     def _Run(self):
         if self.do_ssh:
