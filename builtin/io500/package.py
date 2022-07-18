@@ -60,7 +60,10 @@ class Io500(Application):
 
         #Create io500 environment file
         self.env = [
-            f"spack load {self.config['IO500_SPACK']['package_name']}"
+            f"spack load {self.config['IO500_SPACK']['package_name']}",
+            f"export DAOS_POOL={pool_uuid}",
+            f"export DAOS_CONT={container_uuid}",
+            f"export DAOS_FUSE={mount}",
         ]
 
     def _DefineStart(self):
