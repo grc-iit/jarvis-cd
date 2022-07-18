@@ -50,7 +50,6 @@ class SSHExecNode(ParallelNode):
             ]
             ssh_cmd = [cmd for cmd in ssh_cmd if cmd is not None]
             ssh_cmd = " ".join(ssh_cmd)
-            print(ssh_cmd)
             node = LocalExecNode([ssh_cmd], exec_async=True, shell=True).Run()
             nodes.append((host, node))
 
