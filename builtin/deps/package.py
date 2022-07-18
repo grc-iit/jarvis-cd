@@ -33,12 +33,12 @@ class Deps(Launcher):
                 hostfile = self.config['HOSTS']
             else:
                 hostfile = None
-            GitNode(**self.config['jarvis_cd'], method=GitOps.CLONE, hosts=self.all_hosts).Run()
+            GitNode(**self.config['jarvis_cd'], method=GitOps.CLONE, hosts=self.scaffold_hosts).Run()
             files = [
                 jarvis_conf,
                 hostfile
             ]
-            CopyNode(files, jarvis_conf, hosts=self.all_hosts).Run()
+            CopyNode(files, self.scaffold_dir, hosts=self.scaffold_hosts).Run()
             cmds = [
                 f"cd {jarvis_root}",
                 f"chmod +x {jarvis_root}/dependencies.sh",
@@ -46,9 +46,9 @@ class Deps(Launcher):
                 f"export PYTHONPATH={jarvis_root}",
                 f"./bin/jarvis deps local-install {package_name}"
             ]
-            ExecNode(cmds, hosts=self.all_hosts, shell=True).Run()
+            ExecNode(cmds, hosts=self.scaffold_hosts, shell=True).Run()
         else:
-            ExecNode(f"jarvis deps local-install {package_name} -C {self.jarvis_root}", hosts=self.all_hosts).Run()
+            ExecNode(f"jarvis deps local-install {package_name} -C {self.jarvis_root}", hosts=self.scaffold_hosts).Run()
     def _InstallArgs(self, package_name):
         self._DepsArgs(package_name)
 
