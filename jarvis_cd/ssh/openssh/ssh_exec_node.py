@@ -46,7 +46,7 @@ class SSHExecNode(ParallelNode):
                 f"-i {self.pkey}" if self.pkey is not None else None,
                 f"-p {self.port}" if self.port is not None else None,
                 f"{self.username}@{host}" if self.username is not None else host,
-                cmd
+                f"\"cmd\""
             ]
             ssh_cmd = [cmd for cmd in ssh_cmd if cmd is not None]
             ssh_cmd = " ".join(ssh_cmd)

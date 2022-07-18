@@ -117,7 +117,6 @@ class Daos(Application):
 
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
-                UnmountFS(container['mount'], hosts=self.agent_hosts).Run()
                 RmNode(container['mount'], hosts=self.agent_hosts, sudo=True).Run()
 
     def _DefineStop(self):
