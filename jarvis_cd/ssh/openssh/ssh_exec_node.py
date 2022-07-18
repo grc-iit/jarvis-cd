@@ -67,9 +67,9 @@ class SSHExecNode(ParallelNode):
             self.cmds.insert(0, f"source /home/{getpass.getuser()}/.bashrc")
         cmd = " ; ".join(self.cmds)
         if self.sudo:
-            cmd = f"sudo bash -c \"{cmd}\""
+            cmd = f"sudo bash \"{cmd}\""
         else:
-            cmd = f"bash -c \"{cmd}\""
+            cmd = f"bash \"{cmd}\""
         self._exec_ssh(cmd)
         return self
 
