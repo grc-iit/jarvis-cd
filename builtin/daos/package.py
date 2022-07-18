@@ -206,7 +206,7 @@ class Daos(Application):
         YAMLFile(self.config['CONF']['CONTROL']).Save(control_config)
 
     def GetPoolUUID(self, pool_label):
-        cmd = f"{self.config['DAOS_ROOT']}/bin/dmg pool list --verbose -o {self.config['CONF']['DAOS_CONTROL']}"
+        cmd = f"{self.config['DAOS_ROOT']}/bin/dmg pool list --verbose -o {self.config['CONF']['CONTROL']}"
         node = ExecNode(cmd).Run()
         for line in node.GetLocalStdout():
             words = line.split()
@@ -221,8 +221,8 @@ class Daos(Application):
         node = ExecNode(cmd).Run()
         for line in node.GetLocalStdout():
             words = line.split()
-            cur_container_label = words[0]
+            cur_container_label = words[1]
             if cur_container_label == container_label:
-                container_uuid = words[1]
+                container_uuid = words[0]
                 return container_uuid
         return None

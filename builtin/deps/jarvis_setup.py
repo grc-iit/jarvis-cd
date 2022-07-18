@@ -26,7 +26,7 @@ class JarvisSetup(Installer):
                 "export PYTHONPATH",
                 EnvNodeOps.SET).Run()
         EnvNode(self.jarvis_env,
-                cmd=f"for FILE in `ls ${{JARVIS_ROOT}}/jarvis_envs/{os.environ['USER']}`; do source $FILE; done",
+                cmd=f"for FILE in `ls ${{JARVIS_ROOT}}/jarvis_envs/{os.environ['USER']}`; do source ${{JARVIS_ROOT}}/jarvis_envs/{os.environ['USER']}/$FILE; done",
                 cmd_re="for FILE in",
                 op=EnvNodeOps.SET).Run()
 
