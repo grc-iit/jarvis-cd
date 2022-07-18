@@ -9,12 +9,17 @@ import shutil
 class JarvisSetup(Installer):
     def LocalInstall(self):
         jarvis_root = self.config['jarvis_cd']['path']
+        jarvis_shared = self.config['jarvis_cd']['JARVIS_SHARED']
         LocalPipNode(jarvis_root).Run()
 
         #Set the variables to their proper values
         EnvNode(self.jarvis_env,
                 cmd=f"export JARVIS_ROOT={jarvis_root}",
                 cmd_re="export JARVIS_ROOT",
+                op=EnvNodeOps.SET).Run()
+        EnvNode(self.jarvis_env,
+                cmd=f"export JARVIS_SHARED={int(jarvis_shared)}",
+                cmd_re="export JARVIS_SHARED",
                 op=EnvNodeOps.SET).Run()
         EnvNode(self.jarvis_env,
                 "export PYTHONPATH=`sudo -u {self.username} $JARVIS_ROOT/bin/jarvis-py-paths`:$PYTHONPATH",
@@ -35,6 +40,9 @@ class JarvisSetup(Installer):
         shutil.rmtree(jarvis_root)
         EnvNode(self.jarvis_env,
                 cmd_re=f"export JARVIS_ROOT",
+                op=EnvNodeOps.REMOVE).Run()
+        EnvNode(self.jarvis_env,
+                cmd_re="export JARVIS_SHARED",
                 op=EnvNodeOps.REMOVE).Run()
         EnvNode(self.jarvis_env,
                 cmd_re=f"export PYTHONPATH",

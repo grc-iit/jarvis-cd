@@ -24,13 +24,21 @@ class SSHConfigMixin(YAMLConfig):
     def _ProcessSSHConfig(self):
         self.all_hosts = None
         self.scaffold_hosts = None
+        self.jarvis_hosts = None
         self.ssh_info = None
+        self.jarvis_shared = False
+        self.scaffold_shared = False
 
         if 'HOSTS' in self.config:
             self.all_hosts = Hostfile().Load(self.config['HOSTS'])
             self.scaffold_hosts = self.all_hosts
+            self.jarvis_hosts = self.all_hosts
             if 'SCAFFOLD_SHARED' in self.config and self.config['SCAFFOLD_SHARED']:
                 self.scaffold_hosts = Hostfile().Load(['localhost'])
+            if 'JARVIS_SHARED' in os.environ and os.environ['JARVIS_SHARED']:
+                self.jarvis_hosts = Hostfile().Load(['localhost'])
+            if 'JARVIS_SHARED' in self.config and self.config['JARVIS_SHARED']:
+                self.jarvis_hosts = Hostfile().Load(['localhost'])
         if 'SSH' in self.config:
             self.ssh_info = self.config['SSH']
             self.ssh_info['host_aliases'] = FindHostAliases(self.all_hosts).Run().GetAliases()

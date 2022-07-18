@@ -10,6 +10,8 @@ class EnvNodeOps(Enum):
 class EnvNode(Node):
     def __init__(self, path, op, cmd=None, cmd_re=None, **kwargs):
         super().__init__(**kwargs)
+        if cmd_re is None:
+            cmd_re = cmd
         self.path = path
         self.op = op
         self.cmd = cmd

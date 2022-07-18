@@ -1,10 +1,5 @@
 HOSTS: ${SCAFFOLD}/hostfile.txt
-SSH:
-  username: cc
-  port: 22
-  key: scs_chameleon_pass
-  key_dir: ${HOME}/.ssh
-  dst_key_dir: /home/cc/.ssh
+JARVIS_SHARED: false
 jarvis_cd:
   url: https://github.com/lukemartinlogan/jarvis-cd
   branch: development

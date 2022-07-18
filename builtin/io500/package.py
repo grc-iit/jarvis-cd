@@ -27,6 +27,10 @@ class Io500(Application):
     def _DefineInit(self):
         MkdirNode(self.scaffold_dir, hosts=self.scaffold_hosts).Run()
         MkdirNode(self.config['IO500_ROOT'], hosts=self.scaffold_hosts).Run()
+        EnvNode(self.GetEnv(),
+            cmd=f"spack load {self.config['IO500_SPACK']}",
+            op=EnvNodeOps.SET,
+            hosts=self.jarvis_hosts).Run()
         LinkSpackage(self.config['IO500_SPACK'], self.config['IO500_ROOT'], hosts=self.scaffold_hosts).Run()
 
         #Create io500 sections
@@ -73,14 +77,10 @@ class Io500(Application):
         paths = [
             f"{self.scaffold_dir}/datafiles",
             f"{self.scaffold_dir}/io500_results",
-            f"{self.scaffold_dir}/io500.ini"
+            f"{self.scaffold_dir}/io500.ini",
+            self.GetEnv()
         ]
         RmNode(paths).Run()
-
-        EnvNode(self.jarvis_env,
-                cmd_re=f"spack load {self.config['IO500_SPACK']}",
-                op=EnvNodeOps.REMOVE,
-                hosts=self.all_hosts).Run()
 
 
     def _DefineStop(self):

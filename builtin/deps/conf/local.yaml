@@ -1,3 +1,4 @@
+JARVIS_SHARED: true
 jarvis_cd:
   url: https://github.com/lukemartinlogan/jarvis-cd
   branch: development

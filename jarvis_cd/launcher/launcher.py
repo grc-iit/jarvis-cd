@@ -5,6 +5,9 @@ from jarvis_cd.serialize.yaml_file import YAMLFile
 from jarvis_cd.jarvis_manager import JarvisManager
 import os
 import inspect
+import random
+import datetime
+import time
 
 class Launcher(SSHConfigMixin,YAMLCache):
     def __init__(self, scaffold_dir):
@@ -14,6 +17,11 @@ class Launcher(SSHConfigMixin,YAMLCache):
         self.jarvis_root = JarvisManager().GetJarvisRoot()
         self.jarvis_env = os.path.join(self.jarvis_root, '.jarvis_env')
 
+    def GetEnv(self):
+        class_name = type(self).__name__
+        filename = f"{class_name}-{self.config['Z_UUID']}"
+        return os.path.join(self.jarvis_root, 'jarvis_envs', os.environ['USER'], filename)
+
     def DefaultConfigPath(self, conf_type='default'):
         launcher_path = os.path.dirname(inspect.getfile(self.__class__))
         return os.path.join(launcher_path, 'conf', f'{conf_type}.yaml')
@@ -22,6 +30,13 @@ class Launcher(SSHConfigMixin,YAMLCache):
         old_conf_path = self.DefaultConfigPath(conf_type)
         new_conf_path = self.ScaffoldConfigPath()
         self.config = YAMLFile(old_conf_path).Load()
+
+        nonce = str(random.randrange(0,2**64))
+        date = str(datetime.datetime.now())
+        t = str(time.process_time())
+        config_uuid = hash(nonce + date + t)
+
+        self.config['Z_UUID'] = config_uuid
         self.config['SCAFFOLD'] = self.scaffold_dir
         self.config = self._ExpandPaths()
         self._Scaffold()
