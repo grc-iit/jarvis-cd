@@ -2,6 +2,7 @@ from jarvis_cd.launcher.application import Application
 from jarvis_cd.mpi.mpi_node import MPINode
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.fs.mkdir_node import MkdirNode
+from jarvis_cd.shell.copy_node import CopyNode
 from jarvis_cd.fs.rm_node import RmNode
 from jarvis_cd.installer.env_node import EnvNode, EnvNodeOps
 from builtin.daos.package import Daos
@@ -28,9 +29,9 @@ class Io500(Application):
         MkdirNode(self.scaffold_dir, hosts=self.scaffold_hosts).Run()
         MkdirNode(self.config['IO500_ROOT'], hosts=self.scaffold_hosts).Run()
         EnvNode(self.GetEnv(),
-            cmd=f"spack load {self.config['IO500_SPACK']}",
-            op=EnvNodeOps.SET,
-            hosts=self.jarvis_hosts).Run()
+            cmd=f"spack load {self.config['IO500_SPACK']['package_name']}",
+            op=EnvNodeOps.SET).Run()
+        CopyNode(self.GetEnv(), self.GetEnv(), hosts=self.jarvis_hosts).Run()
         LinkSpackage(self.config['IO500_SPACK'], self.config['IO500_ROOT'], hosts=self.scaffold_hosts).Run()
 
         #Create io500 sections
@@ -77,10 +78,10 @@ class Io500(Application):
         paths = [
             f"{self.scaffold_dir}/datafiles",
             f"{self.scaffold_dir}/io500_results",
-            f"{self.scaffold_dir}/io500.ini",
-            self.GetEnv()
+            f"{self.scaffold_dir}/io500.ini"
         ]
         RmNode(paths).Run()
+        RmNode(self.GetEnv(), hosts=self.jarvis_hosts)
 
 
     def _DefineStop(self):
