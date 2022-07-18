@@ -50,7 +50,7 @@ class SSHExecNode(ParallelNode):
             ]
             ssh_cmd = [cmd for cmd in ssh_cmd if cmd is not None]
             ssh_cmd = " ".join(ssh_cmd)
-            node = LocalExecNode([ssh_cmd], exec_async=True, shell=True).Run()
+            node = LocalExecNode([ssh_cmd], exec_async=True, shell=True, print_output=False).Run()
             nodes.append((host, node))
 
         for host,node in nodes:
@@ -66,7 +66,7 @@ class SSHExecNode(ParallelNode):
         if self.sudo:
             self.cmds.insert(0, f"source /home/{getpass.getuser()}/.bashrc")
         cmd = "\n".join(self.cmds)
-        cmd = f"bash <<EOF\n{cmd}\nEOF\n"
+        cmd = f"bash <<EOF\n{cmd}\nEOF"
         if self.sudo:
             cmd = f"sudo -S {cmd}"
         self._exec_ssh(cmd)
