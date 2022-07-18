@@ -38,7 +38,7 @@ class Deps(Launcher):
                 f"export PYTHONPATH={jarvis_root}",
                 f"./bin/jarvis deps local-install {package_name}"
             ]
-            ExecNode(cmds, hosts=self.all_hosts).Run()
+            ExecNode(cmds, hosts=self.all_hosts, shell=True).Run()
         else:
             ExecNode(f"jarvis deps local-install {package_name} -C {self.jarvis_root}", hosts=self.all_hosts).Run()
     def _InstallArgs(self, package_name):
