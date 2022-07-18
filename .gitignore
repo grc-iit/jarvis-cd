@@ -7,6 +7,7 @@ jarvis_conf.yaml
 jarvis_repos
 jarvis_envs
 .jarvis_env
+hostfile.txt
 
 # C extensions
 *.so

@@ -29,8 +29,16 @@ class Deps(Launcher):
         if package_name == 'jarvis' or package_name == 'all':
             jarvis_root = self.config['jarvis_cd']['path']
             jarvis_conf = os.path.join(jarvis_root, 'jarvis_conf.yaml')
+            if 'HOSTS' in self.config and isinstance(self.config['HOSTS'], str):
+                hostfile = self.config['HOSTS']
+            else:
+                hostfile = None
             GitNode(**self.config['jarvis_cd'], method=GitOps.CLONE, hosts=self.all_hosts).Run()
-            CopyNode(jarvis_conf, jarvis_conf, hosts=self.all_hosts).Run()
+            files = [
+                jarvis_conf,
+                hostfile
+            ]
+            CopyNode(files, jarvis_conf, hosts=self.all_hosts).Run()
             cmds = [
                 f"cd {jarvis_root}",
                 f"chmod +x {jarvis_root}/dependencies.sh",
