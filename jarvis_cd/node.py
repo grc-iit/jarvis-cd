@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from jarvis_cd.enumerations import Color, OutputStream
 from jarvis_cd.jarvis_manager import JarvisManager
 import sys
+import inspect
 
 class Node(ABC):
     def __init__(self, print_output=True, collect_output=True, name=None):
@@ -83,15 +84,13 @@ class Node(ABC):
         if not issubclass(klass, Node):
             return
         func = getattr(klass, '__init__')
-        param_names = list(func.__code__.co_varnames)
+        param_names = list(inspect.signature(func).parameters.keys())
         for param_name in param_names:
             if param_name == 'kwargs':
                 continue
             if param_name == 'self':
                 continue
             args[param_name] = getattr(self, param_name)
-        print('---------------------')
-        print(f"Params for {klass}: {param_names}")
         for base in klass.__bases__:
             self._FindClassParams(base, args)
 
