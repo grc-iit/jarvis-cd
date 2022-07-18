@@ -48,6 +48,10 @@ class Node(ABC):
             OutputStream.STDNULL: [[], []]
         }
 
+    def CopyOutput(self, node, host):
+        self.AddHost(host)
+        self.output[host].update(node.output['localhost'])
+
     def AddOutput(self, outputs, host='localhost', stream=OutputStream.STDOUT, color=None):
         if isinstance(outputs, str):
             outputs = outputs.splitlines()

@@ -3,7 +3,7 @@ from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.node import Node
 from jarvis_cd.jarvis_manager import JarvisManager
 import sys,os
-import getpass
+
 
 class ParallelNode(Node):
     def __init__(self, hosts=None, affinity=None, sleep_period_ms=100, max_retries=0, cwd=None, shell=False, sudo=False,
