@@ -68,6 +68,8 @@ class SSHExecNode(ParallelNode):
         cmd = " ; ".join(self.cmds)
         if self.sudo:
             cmd = f"sudo bash -c \"{cmd}\""
+        else:
+            cmd = f"bash -c \"{cmd}\""
         self._exec_ssh(cmd)
         return self
 
