@@ -36,9 +36,7 @@ class SSHConfigMixin(YAMLConfig):
             self.jarvis_hosts = self.all_hosts
             if 'SCAFFOLD_SHARED' in self.config and self.config['SCAFFOLD_SHARED']:
                 self.scaffold_hosts = Hostfile().Load(['localhost'])
-            if 'JARVIS_SHARED' in os.environ and os.environ['JARVIS_SHARED']:
-                self.jarvis_hosts = Hostfile().Load(['localhost'])
-            if 'JARVIS_SHARED' in self.config and self.config['JARVIS_SHARED']:
+            if 'JARVIS_SHARED' in os.environ and bool(int(os.environ['JARVIS_SHARED'])):
                 self.jarvis_hosts = Hostfile().Load(['localhost'])
         if 'SSH' in self.config:
             self.ssh_info = self.config['SSH']
