@@ -150,23 +150,14 @@ touch hostfile.txt
 jarvis deps local-install all
 ```
 
-### 5.4 Setup SSH between the Head Node and All Others
-
-```bash
-mkdir cc
-cd cc
-jarvis deps scaffold remote
-touch hosts.txt
-```
-
-Create a "hostfile" which contains a list of all ip addresses to connect to:
+Edit "hostfile" to have a line-by-line list of all host ip addresses:
 ```text
 [ip-addr-1]
 [ip-addr-2]
 ...
 ```
 
-Modify conf.yaml again to reflect your allocation and SSH keys:
+Modify jarvis_conf.yaml to reflect your allocation and SSH keys:
 ```yaml
 HOSTS: hostfile.txt
 SSH:

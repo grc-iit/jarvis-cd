@@ -1,4 +1,5 @@
 from jarvis_cd.node import Node
+from jarvis_cd.shell.jarvis_exec_node import JarvisExecNode
 from enum import Enum
 import re
 import os,sys
@@ -7,7 +8,7 @@ class EnvNodeOps(Enum):
     SET = 'set'
     REMOVE = 'remove'
 
-class EnvNode(Node):
+class EnvNode(JarvisExecNode):
     def __init__(self, path, op, cmd=None, cmd_re=None, **kwargs):
         super().__init__(**kwargs)
         if cmd_re is None:
@@ -17,7 +18,7 @@ class EnvNode(Node):
         self.cmd = cmd
         self.cmd_re = cmd_re
 
-    def _Run(self):
+    def _LocalRun(self):
         #Load the shell file text
         text = ''
         if os.path.exists(self.path):
