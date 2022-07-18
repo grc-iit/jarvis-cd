@@ -1,13 +1,12 @@
 from jarvis_cd.exception import Error, ErrorCode
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.node import Node
+from jarvis_cd.jarvis_manager import JarvisManager
 import sys,os
 import getpass
 
 class ParallelNode(Node):
-    def __init__(self, hosts=None, username=None, pkey=None, password=None, port=22,
-                 sudo=False, shell=True, host_aliases=None, ssh_info=None,
-                 affinity=None, sleep_period_ms=100, max_retries=0, cwd=None,
+    def __init__(self, hosts=None, affinity=None, sleep_period_ms=100, max_retries=0, cwd=None, shell=False, sudo=False,
                  exec_async=False, **kwargs):
         super().__init__(**kwargs)
 
@@ -23,9 +22,13 @@ class ParallelNode(Node):
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SSHExecNode hosts", type(hosts))
 
-        # Make sure host_aliases is not None
-        if host_aliases is None:
-            host_aliases = ['localhost']
+        username = None
+        pkey = None
+        password = None
+        port = None
+
+        ssh_info = JarvisManager.GetInstance().GetSSHInfo()
+        host_aliases = ['localhost']
 
         # Prioritize ssh_info structure
         if ssh_info is not None:
@@ -34,13 +37,9 @@ class ParallelNode(Node):
             if 'key' in ssh_info and 'key_dir' in ssh_info:
                 pkey = os.path.join(ssh_info['key_dir'], ssh_info['key'])
             if 'password' in ssh_info:
-                password = password
+                password = ssh_info['password']
             if 'port' in ssh_info:
-                port = ssh_info['port']
-            if 'sudo' in ssh_info:
-                sudo = ssh_info['sudo']
-            if 'shell' in ssh_info:
-                shell = ssh_info['shell']
+                port = int(ssh_info['port'])
             if 'host_aliases' in ssh_info:
                 if isinstance(ssh_info['host_aliases'], list):
                     host_aliases += ssh_info['host_aliases']
@@ -52,7 +51,7 @@ class ParallelNode(Node):
         self.password = password
         self.sudo = sudo
         self.username = username
-        self.port = int(port)
+        self.port = port
         self.shell = shell
         self.host_aliases = host_aliases
         self.affinity = affinity

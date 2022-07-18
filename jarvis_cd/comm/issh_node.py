@@ -1,11 +1,12 @@
 
 from jarvis_cd.shell.exec_node import ExecNode
 from jarvis_cd.hostfile import Hostfile
+from jarvis_cd.jarvis_manager import JarvisManager
 import getpass
 import os
 
 class InteractiveSSHNode(ExecNode):
-    def __init__(self, host, ssh_info, only_init=False):
+    def __init__(self, host, only_init=False):
         if isinstance(host, Hostfile):
             host = host.hosts[0]
         #Set default values
@@ -20,6 +21,7 @@ class InteractiveSSHNode(ExecNode):
             self.cmd = 'echo'
 
         #Prioritize SSH info struct
+        ssh_info = JarvisManager.GetInstance().GetSSHInfo()
         if ssh_info:
             if 'username' in ssh_info:
                 self.username = ssh_info['username']

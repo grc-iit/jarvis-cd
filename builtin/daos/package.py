@@ -23,9 +23,9 @@ class Daos(Application):
 
     def _DefineInit(self):
         #Create SCAFFOLD on all nodes
-        MkdirNode(self.scaffold_dir, hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
+        MkdirNode(self.scaffold_dir, hosts=self.scaffold_hosts).Run()
         #Create DAOS_ROOT sybmolic link
-        LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
+        LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.scaffold_hosts).Run()
         #Generate security certificates
         if self.config['SECURE']:
             self._CreateCertificates()
@@ -47,7 +47,7 @@ class Daos(Application):
             f"{self.scaffold_dir}/jarvis_conf.yaml",
             f"{self.scaffold_dir}/daosCA" if self.config['SECURE'] else None
         ]
-        CopyNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.scaffold_hosts, ssh_info=self.ssh_info).Run()
+        CopyNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.scaffold_hosts).Run()
         #Start dummy DAOS server (on all server nodes)
         self._StartServers()
         #Format storage
@@ -57,7 +57,7 @@ class Daos(Application):
         EchoNode("Scanning networks").Run()
         self._ScanNetworks()
         #Link SCAFFOLD to /var/run/daos_agent
-        LinkNode(self.scaffold_dir, '/var/run/daos_agent', hosts=self.agent_hosts, sudo=True, ssh_info=self.ssh_info).Run()
+        LinkNode(self.scaffold_dir, '/var/run/daos_agent', hosts=self.agent_hosts, sudo=True).Run()
         #Create storage pools
         EchoNode("Create storage pools").Run()
         for pool in self.config['POOLS']:
@@ -75,12 +75,12 @@ class Daos(Application):
         #Start DAOS server
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         EchoNode(server_start_cmd).Run()
-        ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+        ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True).Run()
         SleepNode(3).Run()
         #Start client
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
         EchoNode(agent_start_cmd).Run()
-        ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+        ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True).Run()
         SleepNode(3).Run()
         #Mount containers on clients
         for container in self.config['CONTAINERS']:
@@ -93,7 +93,7 @@ class Daos(Application):
                 ]
                 mount_cmd = " ".join(mount_cmd)
                 EchoNode(mount_cmd).Run()
-                ExecNode(mount_cmd, hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
+                ExecNode(mount_cmd, hosts=self.agent_hosts).Run()
 
     def _DefineClean(self):
         to_rm = [
@@ -106,31 +106,31 @@ class Daos(Application):
             os.path.join(self.scaffold_dir, 'daos_agent.sock'),
             os.path.join(self.scaffold_dir, 'daos_server.sock')
         ]
-        RmNode(to_rm, hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        RmNode(to_rm, hosts=self.all_hosts).Run()
 
         for engine in self.config['SERVER']['engines']:
             for storage in engine['storage']:
                 for key,mount in storage.items():
                     if 'mount' in key:
-                        UnmountFS(mount, hosts=self.server_hosts, ssh_info=self.ssh_info).Run()
-                        RmNode(mount, hosts=self.server_hosts, ssh_info=self.ssh_info, sudo=True).Run()
+                        UnmountFS(mount, hosts=self.server_hosts).Run()
+                        RmNode(mount, hosts=self.server_hosts, sudo=True).Run()
 
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
-                UnmountFS(container['mount'], hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
-                RmNode(container['mount'], hosts=self.agent_hosts, ssh_info=self.ssh_info, sudo=True).Run()
+                UnmountFS(container['mount'], hosts=self.agent_hosts).Run()
+                RmNode(container['mount'], hosts=self.agent_hosts, sudo=True).Run()
 
     def _DefineStop(self):
         #Unmount containers
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
                 umount_cmd = f"fusermount3 -u {container['mount']}"
-                ExecNode(umount_cmd, hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
+                ExecNode(umount_cmd, hosts=self.agent_hosts).Run()
         #Politefully stop servers
         server_stop_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg system stop -o {self.config['CONF']['CONTROL']} -d {self.config['SCAFFOLD']}"
         ExecNode(server_stop_cmd, sudo=True).Run()
         #Kill anything else DAOS spawns
-        KillNode('.*daos.*', hosts=self.all_hosts, ssh_info=self.ssh_info).Run()
+        KillNode('.*daos.*', hosts=self.all_hosts).Run()
 
     def _DefineStatus(self):
         pass
@@ -139,13 +139,13 @@ class Daos(Application):
         EchoNode("Starting DAOS server").Run()
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
         EchoNode(server_start_cmd).Run()
-        ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+        ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True).Run()
         SleepNode(3).Run()
 
     def _StartAgents(self):
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
         EchoNode(agent_start_cmd).Run()
-        ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True, ssh_info=self.ssh_info).Run()
+        ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True).Run()
 
     def _CreateCertificates(self):
         gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
@@ -173,7 +173,7 @@ class Daos(Application):
             f"--pool {container_info['pool']}",
             f"--label {container_info['label']}"
         ]
-        MkdirNode(container_info['mount'], hosts=self.agent_hosts, ssh_info=self.ssh_info).Run()
+        MkdirNode(container_info['mount'], hosts=self.agent_hosts).Run()
         create_container_cmd = " ".join(create_container_cmd)
         EchoNode(create_container_cmd).Run()
         ExecNode(create_container_cmd).Run()

@@ -9,7 +9,7 @@ class Repo(Launcher):
             dir = os.getcwd()
         src_repo_path = os.path.join(dir, 'builtin')
         dst_repo_path = JarvisManager.GetInstance().NewLauncherPath(src_repo_path)
-        LinkNode(src_repo_path, dst_repo_path, hosts=self.all_hosts, ssh_info=self.all_hosts).Run()
+        LinkNode(src_repo_path, dst_repo_path, hosts=self.all_hosts).Run()
 
     def _AddArgs(self, parser):
         parser.add_argument('-D', dest='dir', type=str,

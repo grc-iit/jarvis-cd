@@ -90,6 +90,8 @@ class Node(ABC):
             if param_name == 'self':
                 continue
             args[param_name] = getattr(self, param_name)
+        print('---------------------')
+        print(f"Params for {klass}: {param_names}")
         for base in klass.__bases__:
             self._FindClassParams(base, args)
 

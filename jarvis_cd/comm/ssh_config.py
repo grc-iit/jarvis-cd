@@ -1,6 +1,7 @@
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.yaml_conf import YAMLConfig
 from jarvis_cd.introspect.host_aliases import FindHostAliases
+from jarvis_cd.jarvis_manager import JarvisManager
 from jarvis_cd.exception import Error, ErrorCode
 import getpass
 import sys,os
@@ -43,6 +44,7 @@ class SSHConfigMixin(YAMLConfig):
             self.ssh_info = self.config['SSH']
             self.ssh_info['host_aliases'] = FindHostAliases(self.all_hosts).Run().GetAliases()
             self.host_aliases = self.ssh_info['host_aliases']
+        JarvisManager.GetInstance().SetSSHInfo(self.ssh_info)
 
     def _GetPublicKey(self, key_dir, key_name):
         return GetPublicKey(key_dir, key_name)

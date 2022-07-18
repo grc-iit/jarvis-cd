@@ -18,6 +18,7 @@ class JarvisManager:
     def __init__(self):
         self.root = os.path.dirname(pathlib.Path(__file__).parent.resolve())
         self.print_fancy = True
+        self.ssh_info = None
         sys.path.insert(0,self.root)
 
     def DisableFancyPrint(self):
@@ -25,6 +26,13 @@ class JarvisManager:
 
     def EnableFancyPrint(self):
         self.print_fancy = True
+
+    def SetSSHInfo(self, ssh_info):
+        self.ssh_info = ssh_info
+
+    def GetSSHInfo(self):
+        return self.ssh_info
+
 
     def _LauncherPathTuple(self, module_name):
         module_name = ToSnakeCase(module_name)
