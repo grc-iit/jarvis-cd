@@ -5,7 +5,7 @@ from jarvis_cd.fs.mkdir_node import MkdirNode
 from jarvis_cd.shell.kill_node import KillNode
 from jarvis_cd.ssh.openssh.issh_node import InteractiveSSHNode
 from jarvis_cd.launcher.launcher import Launcher
-from jarvis_cd.ssh.openssh.to_openssh_config import ToOpenSSHConfig
+from jarvis_cd.ssh.openssh.openssh_config import ToOpenSSHConfig
 import os
 
 class Ssh(Launcher):
