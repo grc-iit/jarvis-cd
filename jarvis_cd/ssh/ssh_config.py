@@ -22,7 +22,7 @@ class SSHConfigMixin(YAMLConfig):
         self.all_hosts = None
         self.scaffold_hosts = None
         self.jarvis_hosts = None
-        self.ssh_info = FromOpenSSHConfig(self.all_hosts).GetConfig()
+        self.ssh_info = FromOpenSSHConfig(self.all_hosts).Run().GetConfig()
         self.jarvis_shared = False
         self.scaffold_shared = False
 
