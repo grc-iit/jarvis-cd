@@ -1,7 +1,7 @@
 from jarvis_cd.serialize.yaml_file import YAMLFile
 import os
 
-class YAMLCache:
+class YAMLCacheMixin:
     def ScaffoldCachePath(self):
         return os.path.join(self.scaffold_dir, 'jarvis_cache.yaml')
 
@@ -11,4 +11,6 @@ class YAMLCache:
         return YAMLFile(self.ScaffoldCachePath()).Load()
 
     def SaveCache(self):
+        if self.cache is None:
+            return
         YAMLFile(self.ScaffoldCachePath()).Save(self.cache)

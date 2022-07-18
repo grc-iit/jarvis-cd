@@ -2,7 +2,7 @@ from jarvis_cd.launcher.application import Application
 from jarvis_cd.mpi.mpi_node import MPINode
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.fs.mkdir_node import MkdirNode
-from jarvis_cd.shell.copy_node import CopyNode
+
 from jarvis_cd.fs.rm_node import RmNode
 from jarvis_cd.installer.env_node import EnvNode, EnvNodeOps
 from builtin.daos.package import Daos
@@ -28,10 +28,6 @@ class Io500(Application):
     def _DefineInit(self):
         MkdirNode(self.scaffold_dir, hosts=self.scaffold_hosts).Run()
         MkdirNode(self.config['IO500_ROOT'], hosts=self.scaffold_hosts).Run()
-        EnvNode(self.GetEnv(),
-            cmd=f"spack load {self.config['IO500_SPACK']['package_name']}",
-            op=EnvNodeOps.SET).Run()
-        CopyNode(self.GetEnv(), self.GetEnv(), hosts=self.jarvis_hosts).Run()
         LinkSpackage(self.config['IO500_SPACK'], self.config['IO500_ROOT'], hosts=self.scaffold_hosts).Run()
 
         #Create io500 sections
@@ -62,16 +58,12 @@ class Io500(Application):
         #Create io500 configuration
         IniFile(f"{self.scaffold_dir}/io500.ini").Save(io500_ini)
 
-        #Create Jarvis Cache file
-        self.cache = {
-            'pool': pool_uuid,
-            'container': container_uuid
-        }
+        #Create io500 environment file
+        self.env = [
+            f"spack load {self.config['IO500_SPACK']['package_name']}"
+        ]
 
     def _DefineStart(self):
-        os.environ['DAOS_POOL'] = self.cache['pool']
-        os.environ['DAOS_CONT'] = self.cache['container']
-        os.environ['DAOS_FUSE'] = self.config['DAOS']['mount']
         MPINode(f"{self.config['IO500_ROOT']}/bin/io500 {self.scaffold_dir}/io500.ini", self.config['MPI']['nprocs'], hosts=self.all_hosts).Run()
 
     def _DefineClean(self):
@@ -81,7 +73,6 @@ class Io500(Application):
             f"{self.scaffold_dir}/io500.ini"
         ]
         RmNode(paths).Run()
-        RmNode(self.GetEnv(), hosts=self.jarvis_hosts)
 
 
     def _DefineStop(self):

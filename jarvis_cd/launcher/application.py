@@ -1,4 +1,5 @@
 from jarvis_cd.launcher.launcher import Launcher
+from jarvis_cd.shell.copy_node import CopyNode
 from abc import ABC,abstractmethod
 
 class Application(Launcher):
@@ -24,11 +25,13 @@ class Application(Launcher):
 
     def Init(self):
         self._DefineInit()
-        if self.cache is not None:
-            self.SaveCache()
+        self.SaveCache()
+        self.SaveEnv()
 
     def Start(self):
+        self.LoadEnv()
         self._DefineStart()
+        self.UnloadEnv()
 
     def Stop(self):
         self._DefineStop()

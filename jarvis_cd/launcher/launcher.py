@@ -1,5 +1,6 @@
 from jarvis_cd.ssh.ssh_config import SSHConfigMixin
-from jarvis_cd.yaml_cache import YAMLCache
+from jarvis_cd.yaml_cache import YAMLCacheMixin
+from jarvis_cd.basic_env import BasicEnvMixin
 from jarvis_cd.serialize.yaml_file import YAMLFile
 from jarvis_cd.jarvis_manager import JarvisManager
 import os
@@ -8,18 +9,14 @@ import random
 import datetime
 import time
 
-class Launcher(SSHConfigMixin,YAMLCache):
+class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
     def __init__(self, scaffold_dir):
         super().__init__(scaffold_dir)
         self.nodes = None
         self.cache = self.LoadCache()
+        self.env = None
         self.jarvis_root = JarvisManager().GetJarvisRoot()
         self.jarvis_env = os.path.join(self.jarvis_root, '.jarvis_env')
-
-    def GetEnv(self):
-        class_name = type(self).__name__
-        filename = f"{class_name}-{self.config['Z_UUID']}"
-        return os.path.join(self.jarvis_root, 'jarvis_envs', os.environ['USER'], filename)
 
     def DefaultConfigPath(self, conf_type='default'):
         launcher_path = os.path.dirname(inspect.getfile(self.__class__))
