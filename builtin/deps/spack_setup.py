@@ -2,6 +2,7 @@ from jarvis_cd.installer.git_node import GitNode, GitOps
 from jarvis_cd.installer.env_node import EnvNode, EnvNodeOps
 from jarvis_cd.installer.installer import Installer
 import shutil
+import os
 
 class SpackSetup(Installer):
     def LocalInstall(self):
@@ -15,6 +16,10 @@ class SpackSetup(Installer):
                 cmd=f". {spack_root}/share/spack/setup-env.sh",
                 cmd_re=".*setup-env.sh",
                 op=EnvNodeOps.SET).Run()
+        EnvNode(self.jarvis_env,
+                cmd=f"for FILE in `ls ${{JARVIS_ROOT}}/jarvis_envs/{os.environ['USER']}`; do source ${{JARVIS_ROOT}}/jarvis_envs/{os.environ['USER']}/$FILE; done",
+                cmd_re="for FILE in",
+                op=EnvNodeOps.SET).Run()
 
     def LocalUpdate(self):
         GitNode(**self.config['spack'], method=GitOps.UPDATE).Run()
@@ -27,4 +32,7 @@ class SpackSetup(Installer):
                 op=EnvNodeOps.REMOVE).Run()
         EnvNode(self.jarvis_env,
                 cmd_re=f".*setup-env.sh",
+                op=EnvNodeOps.REMOVE).Run()
+        EnvNode(self.jarvis_env,
+                cmd_re=f"for FILE in",
                 op=EnvNodeOps.REMOVE).Run()

@@ -72,6 +72,7 @@ class Deps(Launcher):
         for package in self._PackageSet(package_name):
             pkg = self._GetPackageInstance(package)
             pkg.LocalInstall()
+
     def _LocalInstallArgs(self, package_name):
         self._DepsArgs(package_name)
 
