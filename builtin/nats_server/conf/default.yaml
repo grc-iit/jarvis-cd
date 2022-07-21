@@ -4,5 +4,6 @@ NATS_SPACK:
   package_name: nats-server
 NATS_ROOT: ${SCAFFOLD}/nats_install
 HOSTS: ['localhost']
+NATS_HOST: 1
 PORT: 4222
 LOG_PATH: ${SCAFFOLD}/log.txt

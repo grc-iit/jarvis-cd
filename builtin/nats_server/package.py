@@ -9,6 +9,7 @@ from jarvis_cd.shell.kill_node import KillNode
 class NatsServer(Application):
     def _ProcessConfig(self):
         super()._ProcessConfig()
+        self.nats_host = self.all_hosts.SelectHosts(self.config['NATS_HOST'])
 
     def _DefineInit(self):
         #Create SCAFFOLD on all nodes
@@ -20,7 +21,7 @@ class NatsServer(Application):
         nats_start_cmd = [
             f"{self.config['NATS_ROOT']}/bin/nats-server",
             f"-p {self.config['PORT']}",
-            f"-a {self.all_hosts.list()[0]}",
+            f"-a {self.nats_host.list()[0]}",
             f"-DV",
             f"-l {self.config['LOG_PATH']}",
         ]
@@ -31,7 +32,7 @@ class NatsServer(Application):
         pass
 
     def _DefineStop(self):
-        KillNode('.*nats-server.*', hosts=self.all_hosts)
+        KillNode('.*nats-server.*', hosts=self.all_hosts).Run()
 
     def _DefineStatus(self):
         pass
