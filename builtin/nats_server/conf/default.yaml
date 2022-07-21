@@ -1,0 +1,8 @@
+SCAFFOLD: null
+SCAFFOLD_SHARED: true
+NATS_SPACK:
+  package_name: nats-server
+NATS_ROOT: ${SCAFFOLD}/nats_install
+HOSTS: ['localhost']
+PORT: 422
+LOG_PATH: ${SCAFFOLD}/log.txt
