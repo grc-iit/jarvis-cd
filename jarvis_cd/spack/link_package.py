@@ -6,5 +6,6 @@ class LinkSpackage(ExecNode):
         self.spack_query_dict = spack_query_dict
         package_name = self.spack_query_dict['package_name']
         spack_query = package_name
-        cmds = f"ln -s `spack find  --format \"{{prefix}}\" {spack_query}` {link_path}"
-        super().__init__(cmds, **kwargs)
+        cmd = f"ln -s `spack find  --format \"{{prefix}}\" {spack_query}` {link_path}"
+        kwargs['shell'] = True
+        super().__init__(cmd, **kwargs)

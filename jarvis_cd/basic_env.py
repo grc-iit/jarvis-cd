@@ -21,6 +21,8 @@ class BasicEnvMixin:
 
     def SaveEnv(self):
         env = self.env
+        if env is None:
+            return
         if isinstance(self.env, list):
             env = "\n".join(env)
         with open(self.GetLocalEnv(), 'w') as fp:
