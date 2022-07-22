@@ -17,15 +17,15 @@ class LabiosDriver(Application):
         test_cases = {
             'SIMPLE_WRITE': 0,
             'SIMPLE_READ': 1,
-            'CM1_BASE': 2,
-            'CM1_TABIOS': 3,
-            'MONTAGE_BASE': 4,
-            'MONTAGE_TABIOS': 5,
-            'HACC_BASE': 6,
-            'HACC_TABIOS': 7,
-            'KMEANS_BASE': 8,
-            'KMEANS_TABIOS': 9,
-            'STRESS_TEST': 10,
+            'CM1_BASE': 6,
+            'CM1_TABIOS': 7,
+            'MONTAGE_BASE': 8,
+            'MONTAGE_TABIOS': 9,
+            'HACC_BASE': 10,
+            'HACC_TABIOS': 11,
+            'KMEANS_BASE': 12,
+            'KMEANS_TABIOS': 13,
+            'STRESS_TEST': 14,
         }
         self.test_case = test_cases[self.config['TEST_CASE']]
 
