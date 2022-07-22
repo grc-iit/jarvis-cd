@@ -17,6 +17,7 @@ class MPINode(ExecNode):
             mpirun.append(f"--hostfile {hostfile}")
         mpirun.append(f"{cmd}")
         mpirun = " ".join(mpirun)
+        print(mpirun)
         super().__init__(mpirun, **kwargs)
         self.nprocs = nprocs
         self.cmd = cmd
