@@ -22,10 +22,12 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
         launcher_path = os.path.dirname(inspect.getfile(self.__class__))
         return os.path.join(launcher_path, 'conf', f'{conf_type}.yaml')
 
-    def Scaffold(self, conf_type='default'):
+    def Scaffold(self, conf_type='default', config=None):
         old_conf_path = self.DefaultConfigPath(conf_type)
         new_conf_path = self.ScaffoldConfigPath()
-        self.config = YAMLFile(old_conf_path).Load()
+        if config is None:
+            config = YAMLFile(old_conf_path).Load()
+        self.config = config
 
         nonce = str(random.randrange(0,2**64))
         date = str(datetime.datetime.now())

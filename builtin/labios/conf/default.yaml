@@ -1,0 +1,56 @@
+SCAFFOLD: null
+SCAFFOLD_SHARED: true
+HOSTS: ['localhost']
+LABIOS:
+  WORKER_PATH: ${HOME}/test
+  PFS_PATH: ${HOME}/pfs
+  ASSIGNMENT_POLICY: RANDOM
+  TS_NUM_WORKER_THREADS: 8
+  CONF: ${SCAFFOLD}/labios_conf.yaml
+WORKER:
+  NPROCS: 1
+  HOSTS: 1
+WORKER_MANAGER:
+  NPROCS: 1
+  HOSTS: 1
+TASK_SCHEDULER:
+  NPROCS: 1
+  HOSTS: 1
+SERVER:
+  NPROCS: 1
+  HOSTS: 1
+CLIENT:
+  NPROCS: 1
+  HOSTS: 1
+MEMCACHED:
+  MEMCACHED_SPACK:
+    package_name: memcached
+NATS:
+  NATS_SPACK:
+    package_name: nats-server
+MEMCACHED_CLIENT:
+  SCAFFOLD: ${SCAFFOLD}/memcached_client
+  HOSTS: 1
+  PORT: 11211
+  LOG_PATH: ${SCAFFOLD}/memcached_client/log.txt
+  MEMCACHED_ROOT: ${SCAFFOLD}/memcached_client/memcached_install
+  MAX_ITEM_SIZE: 4m
+MEMCACHED_SERVER:
+  SCAFFOLD: ${SCAFFOLD}/memcached_server
+  MEMCACHED_ROOT: ${SCAFFOLD}/memcached_server/memcached_install
+  HOSTS: 1
+  PORT: 11212
+  LOG_PATH: ${SCAFFOLD}/memcached_server/log.txt
+  MAX_ITEM_SIZE: 4m
+NATS_CLIENT:
+  SCAFFOLD: ${SCAFFOLD}/nats_client
+  NATS_ROOT: ${SCAFFOLD}/nats_client/nats_install
+  HOSTS: 1
+  PORT: 4222
+  LOG_PATH: ${SCAFFOLD}/nats_client/log.txt
+NATS_SERVER:
+  SCAFFOLD: ${SCAFFOLD}/nats_server
+  NATS_ROOT: ${SCAFFOLD}/nats_server/nats_install
+  HOSTS: 1
+  PORT: 4223
+  LOG_PATH: ${SCAFFOLD}/nats_server/log.txt
