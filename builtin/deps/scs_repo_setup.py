@@ -10,7 +10,7 @@ class ScsRepoSetup(Installer):
     def LocalInstall(self):
         scs_repo_root = self.config['scs_repo']['path']
         GitNode(**self.config['scs_repo'], method=GitOps.CLONE).Run()
-        ExecNode(f'spack repo add {scs_repo_root}').Run()
+        ExecNode(f"{os.environ['SPACK_ROOT']}/bin/spack repo add {scs_repo_root}").Run()
         EnvNode(self.jarvis_env,
                 cmd=f"export SCS_REPO={scs_repo_root}",
                 cmd_re=f"export SCS_REPO",

@@ -18,7 +18,7 @@ The following commands will install jarvis locally.
 cd jarvis-cd
 PREFIX=${HOME} bash dependencies.sh
 source ~/.bashrc
-python3 -m pip install -e . --user -r requirements.txt
+pip3 install -e . --user -r requirements.txt
 jarvis deps scaffold local
 jarvis deps local-install all
 ```
