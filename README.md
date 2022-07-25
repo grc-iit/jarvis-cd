@@ -21,6 +21,7 @@ source ~/.bashrc
 pip3 install -e . --user -r requirements.txt
 jarvis deps scaffold local
 jarvis deps local-install all
+source ~/.bashrc
 ```
 
 To customize the installation of dependencies, modify the conf.yaml produced by the scaffold command.
