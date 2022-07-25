@@ -9,6 +9,7 @@ import inspect
 import random
 import datetime
 import time
+import inspect
 
 class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
     def __init__(self, scaffold_dir):
@@ -18,6 +19,7 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
         self.env = None
         self.jarvis_root = JarvisManager().GetJarvisRoot()
         self.jarvis_env = os.path.join(self.jarvis_root, '.jarvis_env')
+        self.package_root = os.path.dirname(inspect.getfile(self.__class__))
         envbash.load_envbash(self.jarvis_env)
 
     def DefaultConfigPath(self, conf_type='default'):

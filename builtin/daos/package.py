@@ -11,6 +11,8 @@ from jarvis_cd.shell.kill_node import KillNode
 from jarvis_cd.basic.echo_node import EchoNode
 from jarvis_cd.fs.fs import UnmountFS
 from jarvis_cd.serialize.yaml_file import YAMLFile
+from jarvis_cd.installer.git_node import GitNode,GitOps
+from jarvis_cd.installer.patch_node import PatchNode
 import os
 
 class Daos(Application):
@@ -20,6 +22,27 @@ class Daos(Application):
         self.agent_hosts = self.all_hosts.SelectHosts(self.config['AGENT']['hosts'])
         self.control_hosts = self.all_hosts.SelectHosts(self.config['CONTROL']['hosts'])
         self.pools_by_label = {}
+
+    def Install(self, sys):
+        url = 'https://github.com/daos-stack/daos.git'
+        branch = 'release/2.0'
+        GitNode(url, "/tmp/daos", GitOps.CLONE, branch=branch, hosts=self.all_hosts).Run()
+        if sys == 'ubuntu20':
+            ExecNode(f"bash /tmp/daos/utils/scripts/install-ubuntu20.sh", hosts=self.all_hosts, sudo=True, shell=True).Run()
+        elif sys == 'centos8':
+            PatchNode(os.path.join(self.package_root, "patches", "centos8_deps.patch"), "/tmp/daos", hosts=self.all_hosts).Run()
+            ExecNode(f"bash /tmp/daos/utils/scripts/install-el8.sh", hosts=self.all_hosts, sudo=True, shell=True).Run()
+        elif sys == 'centos7':
+            ExecNode(f"bash /tmp/daos/utils/scripts/install-centos7.sh", hosts=self.all_hosts, sudo=True, shell=True).Run()
+        elif sys == 'leap15':
+            ExecNode(f"bash /tmp/daos/utils/scripts/install-leap15.sh", hosts=self.all_hosts, sudo=True, shell=True).Run()
+        else:
+            print("Requires variant OS")
+            exit()
+        ExecNode(f"spack install daos", hosts=self.all_hosts).Run()
+
+    def _InstallArgs(self, parser):
+        parser.add_argument('--sys', metavar='os', default='centos8', help='OS for installing dependencies (centos8,centos7,ubuntu20,leap15)')
 
     def _DefineInit(self):
         #Create SCAFFOLD on all nodes
