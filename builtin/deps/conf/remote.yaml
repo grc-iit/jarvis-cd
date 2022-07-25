@@ -1,5 +1,13 @@
-HOSTS: ${SCAFFOLD}/hostfile.txt
 JARVIS_SHARED: false
+HOSTS: ${SCAFFOLD}/hostfile.txt
+SSH:
+  username: cc
+  key: scs_chameleon_pass
+  key_dir: ${HOME}/.ssh
+ssh_keys:
+  github:
+    key_name: id_rsa
+    key_dir: ${HOME}/.ssh
 jarvis_cd:
   url: https://github.com/lukemartinlogan/jarvis-cd
   branch: development

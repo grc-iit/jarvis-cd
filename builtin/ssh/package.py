@@ -25,7 +25,7 @@ class Ssh(Launcher):
             self.ssh_keys.update(self.config['ssh_keys'])
 
         if 'username' in self.ssh_info:
-            self.dst_key_dir = os.path.join('home', self.ssh_info['username'], '.ssh')
+            self.home_ssh_dir = os.path.join('home', self.ssh_info['username'], '.ssh')
         if 'key' in self.ssh_info and 'key_dir' in self.ssh_info:
             self.public_key = self._GetPublicKey(self.ssh_info['key_dir'], self.ssh_info['key'])
             self.private_key = self._GetPublicKey(self.ssh_info['key_dir'], self.ssh_info['key'])
@@ -103,7 +103,7 @@ class Ssh(Launcher):
             copy_id_cmd = " ".join(copy_id_cmd)
             ExecNode(copy_id_cmd).Run()
         # Create SSH directory on all nodes
-        MkdirNode(self.dst_key_dir, hosts=self.all_hosts).Run()
+        MkdirNode(self.home_ssh_dir, hosts=self.all_hosts).Run()
 
         # Copy all keys:
         for key_entry in self.ssh_keys.keys():
@@ -142,5 +142,7 @@ class Ssh(Launcher):
     def _GetKeyInfo(self, key_entry):
         key_dir = self.ssh_keys[key_entry]["key_dir"]
         key_name = self.ssh_keys[key_entry]["key"]
-        dst_key_dir = self.ssh_keys[key_entry]["dst_key_dir"]
+        dst_key_dir = key_dir
+        if "dst_key_dir" in self.ssh_keys[key_entry]:
+            dst_key_dir = self.ssh_keys[key_entry]["dst_key_dir"]
         return key_dir,key_name,dst_key_dir
