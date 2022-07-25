@@ -32,8 +32,8 @@ then
 else
   echo "Adding source ${PWD}/.jarvis_env to bashrc"
   sed -i.old "1s;^;source ${PWD}/.jarvis_env\\n;" ${HOME}/.bashrc
-  touch ${PWD}/.jarvis_env
 fi
+touch ${PWD}/.jarvis_env
 
 #chmod +x all jarvis binaries
 chmod +x bin/*
