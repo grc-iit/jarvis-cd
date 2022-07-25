@@ -4,6 +4,7 @@ from jarvis_cd.basic_env import BasicEnvMixin
 from jarvis_cd.serialize.yaml_file import YAMLFile
 from jarvis_cd.jarvis_manager import JarvisManager
 import os
+import envbash
 import inspect
 import random
 import datetime
@@ -17,6 +18,7 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
         self.env = None
         self.jarvis_root = JarvisManager().GetJarvisRoot()
         self.jarvis_env = os.path.join(self.jarvis_root, '.jarvis_env')
+        envbash.load_envbash(self.jarvis_env)
 
     def DefaultConfigPath(self, conf_type='default'):
         launcher_path = os.path.dirname(inspect.getfile(self.__class__))

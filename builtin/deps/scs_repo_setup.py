@@ -5,6 +5,7 @@ from jarvis_cd.installer.installer import Installer
 import os
 import shutil
 
+
 class ScsRepoSetup(Installer):
     def LocalInstall(self):
         scs_repo_root = self.config['scs_repo']['path']
