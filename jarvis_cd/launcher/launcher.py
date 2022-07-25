@@ -1,4 +1,4 @@
-from jarvis_cd.ssh.ssh_config import SSHConfigMixin
+from jarvis_cd.ssh.ssh_config_mixin import SSHConfigMixin
 from jarvis_cd.yaml_cache import YAMLCacheMixin
 from jarvis_cd.basic_env import BasicEnvMixin
 from jarvis_cd.serialize.yaml_file import YAMLFile

@@ -14,26 +14,12 @@ import os
 class LabiosDriver(Application):
     def _ProcessConfig(self):
         super()._ProcessConfig()
-        test_cases = {
-            'SIMPLE_WRITE': 0,
-            'SIMPLE_READ': 1,
-            'CM1_BASE': 6,
-            'CM1_TABIOS': 7,
-            'MONTAGE_BASE': 8,
-            'MONTAGE_TABIOS': 9,
-            'HACC_BASE': 10,
-            'HACC_TABIOS': 11,
-            'KMEANS_BASE': 12,
-            'KMEANS_TABIOS': 13,
-            'STRESS_TEST': 14,
-        }
-        self.test_case = test_cases[self.config['TEST_CASE']]
 
     def _DefineInit(self):
         pass
 
     def _DefineStart(self):
-        MPINode(f"labios_driver {self.config['LABIOS_CONF']} {self.test_case}",
+        MPINode(f"labios_cm1_base {self.config['LABIOS_CONF']} {self.config['FILENAME']} {self.config['ITERATIONS']}",
                 self.config['NPROCS'],
                 hosts=self.all_hosts).Run()
 

@@ -11,8 +11,8 @@ spack install daos sys=ubuntu20
 ### CentOS 8 Prep:
 TODO, add patch to automate this
 ```
-sudo dnf --disablerepo '*' --enablerepo=extras swap centos-linux-repos centos-stream-repos
-sudo dnf distro-sync
+sudo dnf -y --disablerepo '*' --enablerepo=extras swap centos-linux-repos centos-stream-repos
+sudo dnf -y distro-sync
 sudo yum install epel-release
 sudo yum config-manager --set-enabled powertools
 pip3 install scons pyelftools
