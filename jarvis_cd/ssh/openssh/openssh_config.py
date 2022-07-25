@@ -111,7 +111,7 @@ class FromOpenSSHConfig(Node):
             return
 
         #Get the information from the first listed host
-        if 'Port' in oss_config[host]:
+        if 'Port' in ossh_config[host]:
             self.ssh_config['port'] = ossh_config[host]['Port']
         if 'User' in ossh_config[host]:
             self.ssh_config['username'] = ossh_config[host]['User']
