@@ -43,7 +43,7 @@ class Deps(Launcher):
                 f"cd {jarvis_root}",
                 f"chmod +x {jarvis_root}/dependencies.sh",
                 f"{jarvis_root}/dependencies.sh",
-                f"source ~/.bashrc"
+                f"source ~/.bashrc",
                 f"pip3 install -e . --user -r requirements.txt",
                 f"./bin/jarvis deps local-install {package_name}"
             ]
