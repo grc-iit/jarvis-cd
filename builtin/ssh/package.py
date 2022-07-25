@@ -87,8 +87,7 @@ class Ssh(Launcher):
         # Ensure all self.all_hosts are trusted on this machine
         print("Add all hosts to known_hosts")
         for host in self.all_hosts:
-            InteractiveSSHNode(host, self.ssh_info, only_init=True).Run()
-
+            InteractiveSSHNode(host, only_init=True).Run()
 
     def _InstallKeys(self):
         print("Install SSH keys")
