@@ -6,7 +6,7 @@ SSH:
   key_dir: ${HOME}/.ssh
 ssh_keys:
   github:
-    key_name: id_rsa
+    key: id_rsa
     key_dir: ${HOME}/.ssh
 jarvis_cd:
   url: https://github.com/lukemartinlogan/jarvis-cd

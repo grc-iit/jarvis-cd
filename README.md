@@ -167,7 +167,7 @@ SSH:
   key_dir: ${HOME}/.ssh
 ssh_keys:
   github:
-    key_name: id_rsa
+    key: id_rsa
     key_dir: ${HOME}/.ssh
 ```
 
