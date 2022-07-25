@@ -10,7 +10,6 @@ class JarvisSetup(Installer):
     def LocalInstall(self):
         jarvis_root = self.config['jarvis_cd']['path']
         jarvis_shared = self.config['JARVIS_SHARED']
-        LocalPipNode(jarvis_root).Run()
 
         #Set the variables to their proper values
         EnvNode(self.jarvis_env,
