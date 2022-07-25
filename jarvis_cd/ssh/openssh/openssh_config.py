@@ -111,9 +111,12 @@ class FromOpenSSHConfig(Node):
             return
 
         #Get the information from the first listed host
-        self.ssh_config['port'] = ossh_config[host]['Port']
-        self.ssh_config['username'] = ossh_config[host]['User']
-        self.ssh_config['key'] = ossh_config[host]['IdentityFile']
+        if 'Port' in oss_config[host]:
+            self.ssh_config['port'] = ossh_config[host]['Port']
+        if 'User' in ossh_config[host]:
+            self.ssh_config['username'] = ossh_config[host]['User']
+        if 'IdentityFile' in ossh_config[host]:
+            self.ssh_config['key'] = ossh_config[host]['IdentityFile']
 
     def GetConfig(self):
         return self.ssh_config
