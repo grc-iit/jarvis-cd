@@ -33,12 +33,3 @@ class JarvisSetup(Installer):
     def LocalUninstall(self):
         jarvis_root = os.environ['JARVIS_ROOT']
         shutil.rmtree(jarvis_root)
-        EnvNode(self.jarvis_env,
-                cmd_re=f"export JARVIS_ROOT",
-                op=EnvNodeOps.REMOVE).Run()
-        EnvNode(self.jarvis_env,
-                cmd_re="export JARVIS_SHARED",
-                op=EnvNodeOps.REMOVE).Run()
-        EnvNode(self.jarvis_env,
-                cmd_re=f"export PYTHONPATH",
-                op=EnvNodeOps.REMOVE).Run()
