@@ -39,10 +39,11 @@ class Ssh(Launcher):
     def _ShellArgs(self, parser):
         parser.add_argument('node_id', metavar='id', type=int, help="Node index in hostfile")
 
-    def Exec(self, cmd):
-        ExecNode(cmd, hosts=self.all_hosts).Run()
+    def Exec(self, cmd, sudo):
+        ExecNode(cmd, hosts=self.all_hosts, sudo=sudo).Run()
     def _ExecArgs(self, parser):
         parser.add_argument('cmd', metavar='command', type=str, help="The command to distribute")
+        parser.add_argument('--sudo', metavar='command', type=bool, default=False, help="Whether or not to use sudo")
 
     def Copy(self, source, destination):
         CopyNode(source, destination, hosts=self.all_hosts).Run()

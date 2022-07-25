@@ -66,7 +66,7 @@ class Deps(Launcher):
         if package_name != 'all':
             return [package_name]
         else:
-            return ['jarvis', 'scs_repo', 'spack']
+            return ['jarvis', 'spack', 'scs_repo']
 
     def LocalInstall(self, package_name):
         for package in self._PackageSet(package_name):

@@ -27,16 +27,16 @@ To customize the installation of dependencies, modify the conf.yaml produced by 
 ```yaml
 JARVIS_SHARED: true
 jarvis_cd:
-  repo: https://github.com/lukemartinlogan/jarvis-cd.installer
-  branch: develop
+  repo: https://github.com/lukemartinlogan/jarvis-cd.git
+  branch: development
   commit: null
   path: ${HOME}/jarvis-cd
 spack:
-  repo: https://github.com/spack/spack.installer
+  repo: https://github.com/spack/spack.git
   branch: releases/v0.18
   commit: null
 scs_repo:
-  repo: https://github.com/lukemartinlogan/scs-repo.installer
+  repo: https://github.com/lukemartinlogan/scs-repo.git
   name: scs-repo
   branch: master
   commit: null
