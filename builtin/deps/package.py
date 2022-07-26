@@ -85,7 +85,7 @@ class Deps(Launcher):
         self._DepsArgs(package_name)
 
     def LocalUninstall(self, package_name):
-        for package in self._PackageSet(package_name):
+        for package in self._PackageSet(package_name).reverse():
             pkg = self._GetPackageInstance(package)
             pkg.LocalUninstall()
     def _LocalUninstallArgs(self, package_name):
