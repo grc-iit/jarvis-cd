@@ -25,7 +25,7 @@ class Deps(Launcher):
     def _DepsArgs(self, parser):
         parser.add_argument('package_name', metavar='pkg', type=str, help="name of package to install")
 
-    def Install(self, package_name):
+    def Install(self, package_name, do_python):
         if package_name == 'jarvis' or package_name == 'all':
             jarvis_root = self.config['jarvis_cd']['path']
             jarvis_conf = os.path.join(jarvis_root, 'jarvis_conf.yaml')
@@ -42,7 +42,7 @@ class Deps(Launcher):
             cmds = [
                 f"cd {jarvis_root}",
                 f"chmod +x {jarvis_root}/dependencies.sh",
-                f"{jarvis_root}/dependencies.sh",
+                f"{jarvis_root}/dependencies.sh" if not do_python else f"DO_PYTHON=1 {jarvis_root}/dependencies.sh",
                 f"source ~/.bashrc",
                 f"pip3 install -e . --user -r requirements.txt",
                 f"./bin/jarvis deps local-install {package_name}"
@@ -52,6 +52,7 @@ class Deps(Launcher):
             ExecNode(f"jarvis deps local-install {package_name} -C {self.jarvis_root}", hosts=self.scaffold_hosts).Run()
     def _InstallArgs(self, package_name):
         self._DepsArgs(package_name)
+        parser.add_argument('--do_python', action='store_true', help='Whether or not to install python as dependency')
 
     def Update(self, package_name):
         ExecNode(f"jarvis deps local-update {package_name} -C {self.jarvis_root}", hosts=self.all_hosts).Run()

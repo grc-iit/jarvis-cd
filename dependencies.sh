@@ -1,28 +1,29 @@
 #!/bin/bash
 
-#zlib, zlib-devel, make, cmake, openssl-devel
-
 ####VARIABLES
 #PREFIX: the place where to install dependencies
 if [[ -z "${PREFIX}" ]]; then
-  PREFIX=${HOME}
+  PREFIX=`pwd`
 fi
 
 #Create the directory used to house all dependencies
 mkdir -p $PREFIX
 
-#Detect python version
-PYTHON_NEEDED=1
-if command -v python3
-then
-  PYTHON_VERSION=`python3 --version`
-  [[ $PYTHON_VERSION =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]]
-  PYTHON_MAJOR=${BASH_REMATCH[1]}
-  PYTHON_MINOR=${BASH_REMATCH[2]}
-fi
-if [[ $PYTHON_MAJOR -ge 3 && $PYTHON_MINOR -ge 6 ]]
-then
-  PYTHON_NEEDED=0
+#Determine whether or not to install python3.6
+if [[ $DO_PYTHON ]]; then
+else
+  DO_PYTHON=1
+  if command -v python3
+  then
+    PYTHON_VERSION=`python3 --version`
+    [[ $PYTHON_VERSION =~ ([0-9]+)\.([0-9]+)\.([0-9]+) ]]
+    PYTHON_MAJOR=${BASH_REMATCH[1]}
+    PYTHON_MINOR=${BASH_REMATCH[2]}
+  fi
+  if [[ $PYTHON_MAJOR -ge 3 && $PYTHON_MINOR -ge 6 ]]
+  then
+    DO_PYTHON=0
+  fi
 fi
 
 #Source jarvis_env in bashrc at head of file
@@ -47,8 +48,9 @@ ln -s `pwd`/builtin `pwd`/jarvis_repos/builtin
 mkdir -p ${PWD}/jarvis_envs/${USER}
 
 #Install python if necessary
-if [[ $PYTHON_NEEDED -eq 1 ]]
+if [[ DO_PYTHON -eq 1 ]]
 then
+  exit
   PYTHON_DIR=${PREFIX}/python3.6
   echo "Installing Python 3.6"
   mkdir -p ${PYTHON_DIR}/src
