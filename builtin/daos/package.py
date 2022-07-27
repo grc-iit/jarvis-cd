@@ -28,14 +28,14 @@ class Daos(Application):
         branch = 'release/2.0'
         GitNode(url, "/tmp/daos", GitOps.CLONE, branch=branch, hosts=self.all_hosts).Run()
         if sys == 'ubuntu20':
-            ExecNode(f"bash /tmp/daos/utils/scripts/install-ubuntu20.sh", hosts=self.all_hosts, sudo=True, shell=True).Run()
+            ExecNode(f"bash /tmp/daos/utils/scripts/install-ubuntu20.sh", hosts=self.all_hosts, shell=True).Run()
         elif sys == 'centos8':
             PatchNode(os.path.join(self.package_root, "patches", "centos8_deps.patch"), "/tmp/daos", hosts=self.all_hosts).Run()
-            ExecNode(f"bash /tmp/daos/utils/scripts/install-el8.sh", hosts=self.all_hosts, sudo=True, shell=True).Run()
+            ExecNode(f"bash /tmp/daos/utils/scripts/install-el8.sh", hosts=self.all_hosts, shell=True).Run()
         elif sys == 'centos7':
-            ExecNode(f"bash /tmp/daos/utils/scripts/install-centos7.sh", hosts=self.all_hosts, sudo=True, shell=True).Run()
+            ExecNode(f"bash /tmp/daos/utils/scripts/install-centos7.sh", hosts=self.all_hosts, shell=True).Run()
         elif sys == 'leap15':
-            ExecNode(f"bash /tmp/daos/utils/scripts/install-leap15.sh", hosts=self.all_hosts, sudo=True, shell=True).Run()
+            ExecNode(f"bash /tmp/daos/utils/scripts/install-leap15.sh", hosts=self.all_hosts, shell=True).Run()
         else:
             print("Requires variant OS")
             exit()
