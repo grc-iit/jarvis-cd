@@ -39,7 +39,7 @@ class Daos(Application):
         else:
             print("Requires variant OS")
             exit()
-        ExecNode(f"spack install daos", hosts=self.all_hosts).Run()
+        ExecNode(f"spack install daos", hosts=self.jarvis_hosts).Run()
 
     def _InstallArgs(self, parser):
         parser.add_argument('--sys', metavar='os', default='centos8', help='OS for installing dependencies (centos8,centos7,ubuntu20,leap15)')
