@@ -11,7 +11,7 @@ class LocalPipNode(Node):
         self.user = user
 
     def _Run(self):
-        cmd = ['pip3', 'install']
+        cmd = ['python3 -m pip', 'install']
         if self.inplace:
             cmd.append('-e')
         cmd.append(f"{self.path}")

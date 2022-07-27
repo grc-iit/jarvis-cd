@@ -15,7 +15,7 @@ sudo dnf --disablerepo '*' --enablerepo=extras swap centos-linux-repos centos-st
 sudo dnf distro-sync
 sudo yum install epel-release
 sudo yum config-manager --set-enabled powertools
-pip3 install scons pyelftools
+python3 -m pip install scons pyelftools
 ```
 
 ## Deploy

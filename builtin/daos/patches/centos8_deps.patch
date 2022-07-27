@@ -10,7 +10,7 @@ index 0f65cf605..f207fd95d 100755
 +sudo dnf -y distro-sync
 +sudo yum -y install epel-release
 +sudo yum config-manager --set-enabled powertools
-+pip3 install scons pyelftools
++python3 -m pip install scons pyelftools
 +
  dnf -y upgrade && \
  dnf -y install \

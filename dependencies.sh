@@ -92,4 +92,4 @@ EOF
 fi
 
 #Ensure that pip is upgraded
-pip3 install --upgrade pip --user
+python3 -m pip install --upgrade pip --user

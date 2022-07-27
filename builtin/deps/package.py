@@ -44,7 +44,7 @@ class Deps(Launcher):
                 f"chmod +x {jarvis_root}/dependencies.sh",
                 f"{jarvis_root}/dependencies.sh" if not do_python else f"DO_PYTHON=1 {jarvis_root}/dependencies.sh",
                 f"source ~/.bashrc",
-                f"pip3 install -e . --user -r requirements.txt",
+                f"python3 -m pip install -e . --user -r requirements.txt",
                 f"./bin/jarvis deps local-install {package_name}"
             ]
             ExecNode(cmds, hosts=self.scaffold_hosts, shell=True).Run()
