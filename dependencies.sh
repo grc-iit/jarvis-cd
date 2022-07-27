@@ -37,21 +37,12 @@ else
 fi
 
 #Source jarvis_env in bashrc at head of file
-if [[ `cat ${HOME}/.bashrc | grep "${PWD}/.jarvis_env"` ]]
+if [[ `cat ${HOME}/.bashrc | grep "source ${PWD}/.jarvis_env"` ]]
 then
   echo "Already sourcing ${PWD}/.jarvis_env in bashrc"
 else
   echo "Adding source ${PWD}/.jarvis_env to bashrc"
   sed -i.old "1s;^;source ${PWD}/.jarvis_env\\n;" ${HOME}/.bashrc
-fi
-
-#Source bashrc in bash_profile at head of file
-if [[ `cat ${HOME}/.bash_profile | grep "~/.bashrc"` ]]
-then
-  echo "Already sourcing ~/.bashrc in bash_profile"
-else
-  echo "Adding source ~/.bashrc to bash_profile"
-  sed -i.old "1s;^;source ~/.bashrc\\n;" ${HOME}/.bash_profile
 fi
 
 #Create jarvis_env
