@@ -7,8 +7,11 @@ if [[ -z "${PREFIX}" ]]; then
   PREFIX=${JARVIS_ROOT}
 fi
 
-#Ensure that bashrc exists
+#Ensure that bashrc and bash_profile exists
 if [[ ! -f ${HOME}/.bashrc ]]; then
+   cp /etc/skel/.bashrc ~/
+fi
+if [[ ! -f ${HOME}/.bash_profile ]]; then
    cp /etc/skel/.bashrc ~/
 fi
 
@@ -36,11 +39,22 @@ fi
 #Source jarvis_env in bashrc at head of file
 if [[ `cat ${HOME}/.bashrc | grep "source ${PWD}/.jarvis_env"` ]]
 then
-  echo "Already sourcing ${PWD}/.jarvis_env"
+  echo "Already sourcing ${PWD}/.jarvis_env in bashrc"
 else
   echo "Adding source ${PWD}/.jarvis_env to bashrc"
   sed -i.old "1s;^;source ${PWD}/.jarvis_env\\n;" ${HOME}/.bashrc
 fi
+
+#Source jarvis_env in bash_profile at head of file
+if [[ `cat ${HOME}/.bash_profile | grep "source ${PWD}/.jarvis_env"` ]]
+then
+  echo "Already sourcing ${PWD}/.jarvis_env in bash_profile"
+else
+  echo "Adding source ${PWD}/.jarvis_env to bash_profile"
+  sed -i.old "1s;^;source ${PWD}/.jarvis_env\\n;" ${HOME}/.bashrc
+fi
+
+#Create jarvis_env
 touch ${PWD}/.jarvis_env
 
 #chmod +x all jarvis binaries
