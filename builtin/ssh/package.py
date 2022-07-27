@@ -79,16 +79,9 @@ class Ssh(Launcher):
         parser.add_argument('--rr', action='store_true', help='whether or not to modify ssh config on all nodes')
 
     def Setup(self):
-        self._TrustHosts()
         self._InstallKeys()
         self.ModifyConfig(False)
         self._SSHPermissions()
-
-    def _TrustHosts(self):
-        # Ensure all self.all_hosts are trusted on this machine
-        print("Add all hosts to known_hosts")
-        for host in self.all_hosts:
-            InteractiveSSHNode(host, only_init=True).Run()
 
     def _InstallKeys(self):
         print("Install SSH keys")
