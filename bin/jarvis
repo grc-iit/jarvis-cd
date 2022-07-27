@@ -1,46 +1,74 @@
 #!/usr/bin/env python3
 
-"""
-jarvis_cd [launcher] [operation] [conf.ini]
-"""
-
 from jarvis_cd.jarvis_manager import JarvisManager
-from jarvis_cd.argument_parser import ArgumentParser
-from jarvis_cd.launcher import LauncherConfig
-import sys,os
-import logging
+import argparse
+from jarvis_cd.exception import Error,ErrorCode
+from jarvis_cd.util.naming import ToCamelCase
+import sys
+
+def BasicArgs():
+    parser = argparse.ArgumentParser(description='Jarvis CD')
+    parser.add_argument("launcher", metavar='launcher', type=str,
+                             help="The launcher for a program")
+    parser.add_argument("operation", metavar='operation', type=str,
+                             help="Operation for the launcher (e.g., start)")
+    parser.add_argument("-C", dest='scaffold', metavar='directory', type=str,
+                        help="The directory containing all launcher configurations")
+
+    #Only check the first 3 params
+    args = sys.argv[1:3]
+    other_args = sys.argv[3:]
+
+    #Add -C to the basic argparse if it exists
+    for i, param in enumerate(other_args):
+        if param == '-C':
+            scaffold_dir = other_args[i+1]
+            args += ['-C', scaffold_dir]
+            other_args.remove('-C')
+            other_args.remove(scaffold_dir)
+            break
+
+    args = parser.parse_args(args)
+    return args,other_args
 
 if __name__ == '__main__':
     #Load the arguments
-    arguments = ArgumentParser.GetInstance()
+    args,other_args = BasicArgs()
     jarvis_manager = JarvisManager.GetInstance()
 
-    #Set the logging output
-    if arguments.args.log_path is None:
-        arguments.args.log_path = os.path.join(jarvis_manager.GetTmpDir(), 'jarvis.log')
-    logging.basicConfig(
-        filename=arguments.args.log_path,
-        level=int(arguments.args.log_level.value),
-        filemode='w',
-        format='[%(levelname)s] %(asctime)s :%(message)s')
-    logging.debug("Launcher {} and Operation {}".format(arguments.args.launcher, arguments.args.operation))
-
     #Load the Jarvis CD launcher module
-    launcher_module_name = arguments.args.launcher
-    launcher_class_name = arguments.args.launcher.capitalize()
+    launcher_module_name = str(args.launcher)
+    launcher_class_name = ToCamelCase(launcher_module_name)
     launcher_class = jarvis_manager.GetLauncherClass(launcher_module_name, launcher_class_name)
-    logging.info("Loaded class {}".format(launcher_class_name))
+    if launcher_class is None:
+        raise Error(ErrorCode.LAUNCHER_NOT_FOUND).format(launcher_module_name)
 
-    #Create the launcher class
-    launcher_config_path = arguments.args.config
-    launcher_instance = launcher_class(launcher_config_path, arguments.args)
-    logging.info("Created class {}".format(launcher_class_name))
+    #Create the launcher instance and load configuration
+    scaffold_dir = args.scaffold
+    launcher_instance = launcher_class(scaffold_dir)
 
     #Load the launcher operation
-    launcher_op_name = arguments.args.operation
-    launcher_op = getattr(launcher_class, str(arguments.args.operation).capitalize())
-    logging.info("Loaded operation {}".format(str(arguments.args.operation).capitalize()))
+    launcher_op_name = ToCamelCase(str(args.operation))
+    launcher_op = getattr(launcher_class, launcher_op_name)
 
-    #Call the launcher operation
-    result = launcher_op(launcher_instance)
-    logging.info("Finished execution", exc_info=True)
+    #Load configuration if not scaffolding
+    if launcher_op_name != 'Scaffold':
+        launcher_instance.LoadConfig()
+        if not launcher_instance.is_scaffolded:
+            print(f"No configuration file found when calling {launcher_class_name}.{launcher_op_name}.")
+            print("Are you cd'd into a directory that contains a jarvis_conf.yaml?")
+            print("Alternatively, did you provide the correct path to -C?")
+            print(f"jarvis_conf.yaml is produced after calling jarvis {launcher_class_name} scaffold")
+            exit(1)
+
+    #Get the arguments for the operation
+    launcher_op_args = f"_{launcher_op_name}Args"
+    parser = argparse.ArgumentParser(description=f"{launcher_class_name}: {launcher_op_name}")
+    parser.prog = f"{launcher_class_name}.{launcher_op_name}()"
+    if hasattr(launcher_instance, launcher_op_args):
+        launcher_argparse = getattr(launcher_instance, launcher_op_args)
+        launcher_argparse(parser)
+    launcher_args = vars(parser.parse_args(other_args))
+
+    #Call the operation
+    result = launcher_op(launcher_instance, **launcher_args)

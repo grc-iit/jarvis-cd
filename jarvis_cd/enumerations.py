@@ -11,6 +11,7 @@ class OperationType(Enum):
     DESTROY = 'destroy'
     RESET = 'reset'
     STATUS = 'status'
+    Scaffold = 'scaffold'
 
     def __str__(self):
         return self.value
@@ -26,6 +27,11 @@ class Color:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
     END = '\033[0m'
+
+class OutputStream(Enum):
+    STDOUT = 'stdout'
+    STDERR = 'stderr'
+    STDNULL = 'stdnull'
 
 class LogLevel(Enum):
     DEBUG=str(logging.DEBUG)

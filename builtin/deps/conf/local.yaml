@@ -1,0 +1,16 @@
+JARVIS_SHARED: true
+jarvis_cd:
+  url: https://github.com/lukemartinlogan/jarvis-cd
+  branch: development
+  commit: null
+  path: ${HOME}/jarvis-cd
+spack:
+  url: https://github.com/spack/spack
+  branch: releases/v0.18
+  commit: null
+  path: ${HOME}/spack
+scs_repo:
+  url: https://github.com/lukemartinlogan/scs-repo
+  branch: main
+  commit: null
+  path: ${HOME}/scs-repo

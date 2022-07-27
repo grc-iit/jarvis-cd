@@ -1,0 +1,17 @@
+diff --git a/utils/scripts/install-el8.sh b/utils/scripts/install-el8.sh
+index 0f65cf605..f207fd95d 100755
+--- a/utils/scripts/install-el8.sh
++++ b/utils/scripts/install-el8.sh
+@@ -10,6 +10,12 @@
+ 
+ set -e
+ 
++sudo dnf -y --disablerepo '*' --enablerepo=extras swap centos-linux-repos centos-stream-repos
++sudo dnf -y distro-sync
++sudo yum -y install epel-release
++sudo yum config-manager --set-enabled powertools
++pip3 install scons pyelftools
++
+ dnf -y upgrade && \
+ dnf -y install \
+     boost-python3-devel \

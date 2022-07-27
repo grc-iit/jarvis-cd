@@ -1,0 +1,5 @@
+HOSTS: ['localhost']
+NPROCS: 4
+LABIOS_CONF: ${HOME}/labios/labios_conf.yaml
+ITERATIONS: 4
+FILENAME: ${HOME}/test.txt

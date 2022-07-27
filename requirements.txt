@@ -1,3 +1,6 @@
 parallel-ssh>=2.0.0
 gevent>=1.5
 greenlet>=1.1.0
+pyyaml
+psutil
+envbash

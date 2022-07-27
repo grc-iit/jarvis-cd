@@ -1,8 +1,7 @@
-from jarvis_cd.exec_node import ExecNode
+from jarvis_cd.shell.exec_node import ExecNode
 
-ExecNode("test", "echo hi", collect_output=False).Run()
-ExecNode("test2",
-         [
+ExecNode("echo hi", collect_output=False).Run()
+ExecNode([
              "echo hi1",
              "echo hi2",
              "echo hi3"
@@ -11,7 +10,7 @@ ExecNode("test2",
 single_cmd = ExecNode("test", "echo hi4", print_output=True)
 single_cmd.Run()
 
-many_cmd = ExecNode("test2",
+many_cmd = ExecNode(
          [
              "echo hi5",
              "echo hi6",
