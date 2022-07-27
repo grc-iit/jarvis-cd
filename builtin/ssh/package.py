@@ -20,7 +20,8 @@ class Ssh(Launcher):
         if self.ssh_info is None:
             return
 
-        self.ssh_keys = self.config['SSH']
+        if 'SSH' in self.config:
+            self.ssh_keys = self.config['SSH']
 
         if 'username' in self.ssh_info:
             self.home_ssh_dir = os.path.join('home', self.ssh_info['username'], '.ssh')
