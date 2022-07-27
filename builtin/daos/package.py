@@ -155,7 +155,8 @@ class Daos(Application):
         KillNode('.*daos.*', hosts=self.all_hosts).Run()
 
     def _DefineStatus(self):
-        pass
+        cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o ${SCAFFOLD}/daos_control.yaml system query -v"
+        ExecNode(cmd, hosts=self.all_hosts).Run()
 
     def _StartServers(self):
         EchoNode("Starting DAOS server").Run()

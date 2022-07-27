@@ -20,15 +20,13 @@ class Ssh(Launcher):
         if self.ssh_info is None:
             return
 
-        self.ssh_keys = {'primary': self.ssh_info}
-        if "ssh_keys" in self.config:
-            self.ssh_keys.update(self.config['ssh_keys'])
+        self.ssh_keys = self.config['SSH']
 
         if 'username' in self.ssh_info:
             self.home_ssh_dir = os.path.join('home', self.ssh_info['username'], '.ssh')
         if 'key' in self.ssh_info and 'key_dir' in self.ssh_info:
             self.public_key = self._GetPublicKey(self.ssh_info['key_dir'], self.ssh_info['key'])
-            self.private_key = self._GetPublicKey(self.ssh_info['key_dir'], self.ssh_info['key'])
+            self.private_key = self._GetPrivateKey(self.ssh_info['key_dir'], self.ssh_info['key'])
         if 'port' in self.ssh_info:
             self.port = self.ssh_info['port']
         if 'username' in self.ssh_info:
@@ -43,7 +41,7 @@ class Ssh(Launcher):
         ExecNode(cmd, hosts=self.all_hosts, sudo=sudo).Run()
     def _ExecArgs(self, parser):
         parser.add_argument('cmd', metavar='command', type=str, help="The command to distribute")
-        parser.add_argument('--sudo', metavar='command', type=bool, default=False, help="Whether or not to use sudo")
+        parser.add_argument('--sudo', action='store_true', help="Whether or not to use sudo")
 
     def Copy(self, source, destination):
         CopyNode(source, destination, hosts=self.all_hosts).Run()
@@ -72,16 +70,19 @@ class Ssh(Launcher):
             hosts = self.all_hosts
             CopyNode(self.scaffold_dir, self.scaffold_dir, hosts=hosts).Run()
         ToOpenSSHConfig(register_hosts=self.all_hosts, register_ssh=self.ssh_info, hosts=hosts).Run()
+
+        for key,ssh_info in self.ssh_keys.items():
+            if key != 'primary':
+                ToOpenSSHConfig(register_hosts=[ssh_info['hostname']], register_ssh=ssh_info, hosts=hosts).Run()
+
     def _ModifyConfigArgs(self, parser):
-        parser.add_argument('-rr', metavar='bool', type=bool, default=True,
-                            help='whether or not to modify ssh config on all nodes')
+        parser.add_argument('--rr', action='store_true', help='whether or not to modify ssh config on all nodes')
 
     def Setup(self):
         self._TrustHosts()
         self.ModifyConfig(False)
         self._InstallKeys()
         self._SSHPermissions()
-
 
     def _TrustHosts(self):
         # Ensure all self.all_hosts are trusted on this machine

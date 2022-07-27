@@ -36,8 +36,8 @@ class SSHConfigMixin(YAMLConfig):
                 self.jarvis_hosts = Hostfile().Load(['localhost'])
 
         self.ssh_info = FromOpenSSHConfig(self.all_hosts).Run().GetConfig()
-        if 'SSH' in self.config:
-            self.ssh_info.update(self.config['SSH'])
+        if 'SSH' in self.config and 'primary' in self.config['SSH']:
+            self.ssh_info.update(self.config['SSH']['primary'])
         if len(self.ssh_info):
             self.ssh_info['host_aliases'] = FindHostAliases(self.all_hosts).Run().GetAliases()
             self.host_aliases = self.ssh_info['host_aliases']
