@@ -108,13 +108,14 @@ Modify jarvis_conf.yaml to reflect your allocation and SSH keys:
 ```yaml
 HOSTS: ${SCAFFOLD}/hostfile.txt
 SSH:
-  username: cc
-  port: 22
-  key: scs_chameleon_pass
-  key_dir: ${HOME}/.ssh
-  dst_key_dir: /home/cc/.ssh
-ssh_keys:
+  primary:
+    username: cc
+    port: 22
+    key: scs_chameleon_pass
+    key_dir: ${HOME}/.ssh
+    dst_key_dir: /home/cc/.ssh
   github:
+    hostname: 'github.com'
     key: id_rsa
     key_dir: ${HOME}/.ssh
     dst_key_dir: /home/cc/.ssh
@@ -160,15 +161,19 @@ Edit "hostfile" to have a line-by-line list of all host ip addresses:
 
 Modify jarvis_conf.yaml to reflect your allocation and SSH keys:
 ```yaml
-HOSTS: hostfile.txt
+HOSTS: ${SCAFFOLD}/hostfile.txt
 SSH:
-  username: cc
-  key: scs_chameleon_pass
-  key_dir: ${HOME}/.ssh
-ssh_keys:
+  primary:
+    username: cc
+    port: 22
+    key: scs_chameleon_pass
+    key_dir: ${HOME}/.ssh
+    dst_key_dir: /home/cc/.ssh
   github:
+    hostname: 'github.com'
     key: id_rsa
     key_dir: ${HOME}/.ssh
+    dst_key_dir: /home/cc/.ssh
 ```
 
 This will bootstrap ssh between the host node and all other nodes.
