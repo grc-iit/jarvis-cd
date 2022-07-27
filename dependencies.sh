@@ -1,9 +1,10 @@
 #!/bin/bash
 
 ####VARIABLES
+export JARVIS_ROOT=`pwd`
 #PREFIX: the place where to install dependencies
 if [[ -z "${PREFIX}" ]]; then
-  PREFIX=`pwd`
+  PREFIX=${JARVIS_ROOT}
 fi
 
 #Create the directory used to house all dependencies
@@ -58,7 +59,7 @@ then
   wget https://www.python.org/ftp/python/3.6.14/Python-3.6.14.tgz
   tar -xzf Python-3.6.14.tgz
   cd Python-3.6.14
-  ./configure --prefix=${PYTHON_DIR}
+  ./configure --prefix=${PYTHON_DIR} --enable-optimizations
   make -j8
   make install
 
@@ -67,11 +68,22 @@ then
   LIBRARY_PATH=${PYTHON_DIR}/lib:${PATH}
   CPATH=${PYTHON_DIR}/include:${PATH}
 
-  echo "export PATH=$PATH" >> ${PWD}/.jarvis_env
-  echo "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> ${PWD}/.jarvis_env
-  echo "export LIBRARY_PATH=$LIBRARY_PATH" >> ${PWD}/.jarvis_env
-  echo "export CPATH=$CPATH" >> ${PWD}/.jarvis_env
-  source ${HOME}/.jarvis_env
-
-  pip3 install --upgrade pip
+  echo "export PATH=$PATH" >> ${JARVIS_ROOT}/.jarvis_env
+  echo "export LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> ${JARVIS_ROOT}/.jarvis_env
+  echo "export LIBRARY_PATH=$LIBRARY_PATH" >> ${JARVIS_ROOT}/.jarvis_env
+  echo "export CPATH=$CPATH" >> ${JARVIS_ROOT}/.jarvis_env
+  source ${JARVIS_ROOT}/.jarvis_env
 fi
+
+#Ensure that python default repos are trusted
+if [[ ! -f "$HOME/.config/pip/pip.conf"  ]]
+cat <<EOF
+[global]
+trusted-host = pypi.python.org
+               pypi.org
+               files.pythonhosted.org
+EOF > $HOME/.config/pip/pip.conf
+fi
+
+#Ensure that pip is upgraded
+pip3 install --upgrade pip --user
