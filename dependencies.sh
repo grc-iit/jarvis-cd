@@ -59,7 +59,7 @@ then
   wget https://www.python.org/ftp/python/3.6.14/Python-3.6.14.tgz
   tar -xzf Python-3.6.14.tgz
   cd Python-3.6.14
-  ./configure --prefix=${PYTHON_DIR} --enable-optimizations
+  ./configure --prefix=${PYTHON_DIR} #--enable-optimizations
   make -j8
   make install
 

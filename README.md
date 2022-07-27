@@ -16,7 +16,7 @@ jarvis-bootstrap installs spack, scs-repo, and jarvis.
 The following commands will install jarvis locally.  
 ```bash
 cd jarvis-cd
-PREFIX=${HOME} bash dependencies.sh
+bash dependencies.sh
 source ~/.bashrc
 pip3 install -e . --user -r requirements.txt
 jarvis deps scaffold local
@@ -144,7 +144,7 @@ in parallel after the head node is set up.
 
 ```bash
 cd jarvis-cd
-PREFIX=${HOME} bash dependencies.sh
+bash dependencies.sh
 source ~/.bashrc
 python3 -m pip install -e . --user -r requirements.txt
 jarvis deps scaffold remote
