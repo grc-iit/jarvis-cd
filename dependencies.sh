@@ -12,7 +12,7 @@ if [[ ! -f ${HOME}/.bashrc ]]; then
    cp /etc/skel/.bashrc ~/
 fi
 if [[ ! -f ${HOME}/.bash_profile ]]; then
-   cp /etc/skel/.bashrc ~/
+   cp /etc/skel/.bash_profile ~/
 fi
 
 #Create the directory used to house all dependencies
