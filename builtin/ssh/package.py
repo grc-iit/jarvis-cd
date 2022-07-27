@@ -67,9 +67,9 @@ class Ssh(Launcher):
     def ModifyConfig(self, rr=True):
         hosts = None
         if rr:
-            hosts = self.all_hosts
+            hosts = self.scaffold_hosts
             CopyNode(self.scaffold_dir, self.scaffold_dir, hosts=hosts).Run()
-        ToOpenSSHConfig(register_hosts=self.all_hosts, register_ssh=self.ssh_info, hosts=hosts).Run()
+        ToOpenSSHConfig(register_hosts=self.scaffold_hosts, register_ssh=self.ssh_info, hosts=hosts).Run()
 
         for key,ssh_info in self.ssh_keys.items():
             if key != 'primary':
@@ -104,7 +104,7 @@ class Ssh(Launcher):
             copy_id_cmd = " ".join(copy_id_cmd)
             ExecNode(copy_id_cmd).Run()
         # Create SSH directory on all nodes
-        MkdirNode(self.home_ssh_dir, hosts=self.all_hosts).Run()
+        MkdirNode(self.home_ssh_dir, hosts=self.scaffold_hosts).Run()
 
         # Copy all keys:
         for key_entry in self.ssh_keys.keys():
@@ -113,10 +113,10 @@ class Ssh(Launcher):
             src_priv_key = self._GetPrivateKey(key_dir, key_name)
             dst_pub_key = self._GetPublicKey(dst_key_dir, key_name)
             dst_priv_key = self._GetPrivateKey(dst_key_dir, key_name)
-            CopyNode(src_pub_key, dst_pub_key, hosts=self.all_hosts).Run()
+            CopyNode(src_pub_key, dst_pub_key, hosts=self.scaffold_hosts).Run()
             if os.path.exists(src_priv_key):
                 print(f"Copying {src_priv_key} to {dst_priv_key}")
-                CopyNode(src_priv_key, dst_priv_key, hosts=self.all_hosts).Run()
+                CopyNode(src_priv_key, dst_priv_key, hosts=self.scaffold_hosts).Run()
 
     def _SSHPermissionsCmd(self, key_location):
         commands = []
@@ -138,7 +138,7 @@ class Ssh(Launcher):
         src_cmd = self._SSHPermissionsCmd('local')
         dst_cmd = self._SSHPermissionsCmd('remote')
         ExecNode(src_cmd, collect_output=False).Run()
-        ExecNode(dst_cmd, hosts=self.all_hosts).Run()
+        ExecNode(dst_cmd, hosts=self.scaffold_hosts).Run()
 
     def _GetKeyInfo(self, key_entry):
         key_dir = self.ssh_keys[key_entry]["key_dir"]
