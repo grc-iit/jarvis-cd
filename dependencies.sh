@@ -51,7 +51,6 @@ mkdir -p ${PWD}/jarvis_envs/${USER}
 #Install python if necessary
 if [[ $DO_PYTHON -eq 1 ]]
 then
-  exit
   PYTHON_DIR=${PREFIX}/python3.6
   echo "Installing Python 3.6"
   mkdir -p ${PYTHON_DIR}/src
