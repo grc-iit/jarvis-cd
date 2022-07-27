@@ -11,6 +11,7 @@ mkdir -p $PREFIX
 
 #Determine whether or not to install python3.6
 if [[ $DO_PYTHON ]]; then
+  echo "DO_PYTHON=$DO_PYTHON"
 else
   DO_PYTHON=1
   if command -v python3
