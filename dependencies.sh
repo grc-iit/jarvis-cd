@@ -49,7 +49,7 @@ ln -s `pwd`/builtin `pwd`/jarvis_repos/builtin
 mkdir -p ${PWD}/jarvis_envs/${USER}
 
 #Install python if necessary
-if [[ DO_PYTHON -eq 1 ]]
+if [[ $DO_PYTHON -eq 1 ]]
 then
   exit
   PYTHON_DIR=${PREFIX}/python3.6
