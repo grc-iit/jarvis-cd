@@ -80,8 +80,8 @@ class Ssh(Launcher):
 
     def Setup(self):
         self._TrustHosts()
-        self.ModifyConfig(False)
         self._InstallKeys()
+        self.ModifyConfig(False)
         self._SSHPermissions()
 
     def _TrustHosts(self):
