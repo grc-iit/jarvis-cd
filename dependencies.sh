@@ -76,13 +76,14 @@ then
 fi
 
 #Ensure that python default repos are trusted
-if [[ ! -f "$HOME/.config/pip/pip.conf"  ]]
-cat <<EOF
+if [[ ! -f "$HOME/.config/pip/pip.conf"  ]]; then
+mkdir -p $HOME/.config/pip
+cat << EOF > $HOME/.config/pip/pip.conf
 [global]
 trusted-host = pypi.python.org
                pypi.org
                files.pythonhosted.org
-EOF > $HOME/.config/pip/pip.conf
+EOF
 fi
 
 #Ensure that pip is upgraded
