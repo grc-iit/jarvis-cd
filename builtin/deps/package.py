@@ -50,19 +50,19 @@ class Deps(Launcher):
             ExecNode(cmds, hosts=self.scaffold_hosts, shell=True).Run()
         else:
             ExecNode(f"jarvis deps local-install {package_name} -C {self.jarvis_root}", hosts=self.scaffold_hosts).Run()
-    def _InstallArgs(self, package_name):
-        self._DepsArgs(package_name)
+    def _InstallArgs(self, parser):
+        self._DepsArgs(parser)
         parser.add_argument('--do_python', action='store_true', help='Whether or not to install python as dependency')
 
     def Update(self, package_name):
         ExecNode(f"jarvis deps local-update {package_name} -C {self.jarvis_root}", hosts=self.all_hosts).Run()
-    def _UpdateArgs(self, package_name):
-        self._DepsArgs(package_name)
+    def _UpdateArgs(self, parser):
+        self._DepsArgs(parser)
 
     def Uninstall(self, package_name):
         ExecNode(f"jarvis deps local-uninstall {package_name} -C {self.jarvis_root}", hosts=self.all_hosts).Run()
-    def _UninstallArgs(self, package_name):
-        self._DepsArgs(package_name)
+    def _UninstallArgs(self, parser):
+        self._DepsArgs(parser)
 
     def _PackageSet(self, package_name):
         if package_name != 'all':
@@ -75,22 +75,22 @@ class Deps(Launcher):
             pkg = self._GetPackageInstance(package)
             pkg.LocalInstall()
 
-    def _LocalInstallArgs(self, package_name):
-        self._DepsArgs(package_name)
+    def _LocalInstallArgs(self, parser):
+        self._DepsArgs(parser)
 
     def LocalUpdate(self, package_name):
         for package in self._PackageSet(package_name):
             pkg = self._GetPackageInstance(package)
             pkg.LocalUpdate()
-    def _LocalUpdateArgs(self, package_name):
-        self._DepsArgs(package_name)
+    def _LocalUpdateArgs(self, parser):
+        self._DepsArgs(parser)
 
     def LocalUninstall(self, package_name):
         for package in self._PackageSet(package_name).reverse():
             pkg = self._GetPackageInstance(package)
             pkg.LocalUninstall()
-    def _LocalUninstallArgs(self, package_name):
-        self._DepsArgs(package_name)
+    def _LocalUninstallArgs(self, parser):
+        self._DepsArgs(parser)
 
     def _GetPackageInstance(self, package_name):
         JarvisManager.GetInstance().DisableFancyPrint()
