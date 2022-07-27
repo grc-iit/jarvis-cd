@@ -55,12 +55,12 @@ class Deps(Launcher):
         parser.add_argument('--do_python', action='store_true', help='Whether or not to install python as dependency')
 
     def Update(self, package_name):
-        ExecNode(f"jarvis deps local-update {package_name} -C {self.jarvis_root}", hosts=self.all_hosts).Run()
+        ExecNode(f"jarvis deps local-update {package_name} -C {self.jarvis_root}", hosts=self.scaffold_hosts).Run()
     def _UpdateArgs(self, parser):
         self._DepsArgs(parser)
 
     def Uninstall(self, package_name):
-        ExecNode(f"jarvis deps local-uninstall {package_name} -C {self.jarvis_root}", hosts=self.all_hosts).Run()
+        ExecNode(f"jarvis deps local-uninstall {package_name} -C {self.jarvis_root}", hosts=self.scaffold_hosts).Run()
     def _UninstallArgs(self, parser):
         self._DepsArgs(parser)
 
