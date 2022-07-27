@@ -8,8 +8,7 @@ Jarvis requires the following:
 1. Python 3.6+
 2. Spack
 
-dependencies.sh installs python.  
-jarvis-bootstrap installs spack, scs-repo, and jarvis. 
+dependencies.sh installs python.  . 
 
 ## 2. Installing Jarvis Locally or on a PFS
 
