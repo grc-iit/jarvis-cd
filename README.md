@@ -47,13 +47,10 @@ Note, JARVIS_SHARED should not be changed from the value provided by scaffold.
 ## 3. Basic Commands
 
 ```bash
-jarvis [launcher] [operation] --conf /path/to/conf
+jarvis [launcher] [operation] -C [scaffold]
 #Create directory where configuration data should be stored
-cd ${HOME}
-mkdir daos_example
-cd daos_example
 #Create the jarvis configuration file (there are multiple to choose from)
-jarvis daos scaffold []
+jarvis daos scaffold
 #Initialize the directories/conf files required for launching server processes
 jarvis daos init
 #Starts an already-initialized service

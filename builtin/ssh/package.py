@@ -1,3 +1,4 @@
+from jarvis_cd.basic.echo_node import EchoNode
 from jarvis_cd.shell.exec_node import ExecNode
 from jarvis_cd.shell.copy_node import CopyNode
 from jarvis_cd.fs.rm_node import RmNode
@@ -107,9 +108,10 @@ class Ssh(Launcher):
             src_priv_key = self._GetPrivateKey(key_dir, key_name)
             dst_pub_key = self._GetPublicKey(dst_key_dir, key_name)
             dst_priv_key = self._GetPrivateKey(dst_key_dir, key_name)
+            EchoNode(f"Copying {src_pub_key} to {dst_pub_key} on {self.scaffold_hosts}").Run()
             CopyNode(src_pub_key, dst_pub_key, hosts=self.scaffold_hosts).Run()
             if os.path.exists(src_priv_key):
-                print(f"Copying {src_priv_key} to {dst_priv_key}")
+                EchoNode(f"Copying {src_priv_key} to {dst_priv_key} on {self.scaffold_hosts}").Run()
                 CopyNode(src_priv_key, dst_priv_key, hosts=self.scaffold_hosts).Run()
 
     def _SSHPermissionsCmd(self, key_location):
