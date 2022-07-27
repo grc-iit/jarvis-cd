@@ -7,6 +7,11 @@ if [[ -z "${PREFIX}" ]]; then
   PREFIX=${JARVIS_ROOT}
 fi
 
+#Ensure that bashrc exists
+if [[ ! -f ${HOME}/.bashrc ]]; then
+   cp /etc/skel/.bashrc ~/
+fi
+
 #Create the directory used to house all dependencies
 mkdir -p $PREFIX
 
