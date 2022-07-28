@@ -22,9 +22,12 @@ class Daos(Application):
         self.server_hosts = self.all_hosts.SelectHosts(self.config['SERVER']['hosts'])
         self.agent_hosts = self.all_hosts.SelectHosts(self.config['AGENT']['hosts'])
         self.control_hosts = self.all_hosts.SelectHosts(self.config['CONTROL']['hosts'])
-        self.daos_hosts = self.server_hosts
+        self.daos_all_hosts = self.all_hosts
         if 'DAOS_HOSTS' in self.config:
-            self.daos_hosts = Hostfile().LoadHostfile(self.config['DAOS_HOSTS'])
+            self.daos_all_hosts = Hostfile().LoadHostfile(self.config['DAOS_HOSTS'])
+            self.daos_server_hosts = self.daos_all_hosts.SelectHosts(self.config['SERVER']['hosts'])
+            self.daos_agent_hosts = self.daos_all_hosts.SelectHosts(self.config['AGENT']['hosts'])
+            self.daos_control_hosts = self.daos_all_hosts.SelectHosts(self.config['CONTROL']['hosts'])
         self.pools_by_label = {}
 
     def Install(self, sys):
@@ -215,7 +218,7 @@ class Daos(Application):
         server_config['transport_config']['allow_insecure'] = not self.config['SECURE']
         server_config['port'] = self.config['PORT']
         server_config['name'] = self.config['NAME']
-        server_config['access_points'] = self.daos_hosts.list()
+        server_config['access_points'] = self.daos_server_hosts.list()
         YAMLFile(self.config['CONF']['SERVER']).Save(server_config)
 
     def _CreateAgentConfig(self):
@@ -224,7 +227,7 @@ class Daos(Application):
         agent_config['transport_config']['allow_insecure'] = not self.config['SECURE']
         agent_config['port'] = self.config['PORT']
         agent_config['name'] = self.config['NAME']
-        agent_config['access_points'] = self.agent_hosts.list()
+        agent_config['access_points'] = self.daos_agent_hosts.list()
         YAMLFile(self.config['CONF']['AGENT']).Save(agent_config)
 
     def _CreateControlConfig(self):
@@ -233,7 +236,7 @@ class Daos(Application):
         control_config['transport_config']['allow_insecure'] = not self.config['SECURE']
         control_config['port'] = self.config['PORT']
         control_config['name'] = self.config['NAME']
-        control_config['hostlist'] = self.control_hosts.list()
+        control_config['hostlist'] = self.daos_control_hosts.list()
         YAMLFile(self.config['CONF']['CONTROL']).Save(control_config)
 
     def GetPoolUUID(self, pool_label):
