@@ -148,14 +148,14 @@ class Daos(Application):
             if 'mount' in container and container['mount'] is not None:
                 umount_cmd = f"fusermount3 -u {container['mount']}"
                 ExecNode(umount_cmd, hosts=self.agent_hosts).Run()
+        #Kill anything else DAOS spawns
+        KillNode('.*daos.*', hosts=self.all_hosts).Run()
         #Unmount SCM
         for engine in self.config['SERVER']['engines']:
             for storage in engine['storage']:
-                for key,mount in storage.items():
+                for key, mount in storage.items():
                     if 'mount' in key:
                         UnmountFS(mount, hosts=self.server_hosts).Run()
-        #Kill anything else DAOS spawns
-        KillNode('.*daos.*', hosts=self.all_hosts).Run()
 
     def _DefineStatus(self):
         cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o ${SCAFFOLD}/daos_control.yaml system query -v"
