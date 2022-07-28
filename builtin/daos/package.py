@@ -13,6 +13,7 @@ from jarvis_cd.fs.fs import UnmountFS
 from jarvis_cd.serialize.yaml_file import YAMLFile
 from jarvis_cd.installer.git_node import GitNode,GitOps
 from jarvis_cd.installer.patch_node import PatchNode
+from jarvis_cd.hostfile import Hostfile
 import os
 
 class Daos(Application):
