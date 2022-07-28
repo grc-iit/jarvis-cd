@@ -124,10 +124,8 @@ class Daos(Application):
             self.config['CONF']['SERVER'],
             self.config['CONF']['CONTROL'],
             f"{self.scaffold_dir}/daosCA",
-            self.config['SERVER']['control_log_file'],
-            self.config['AGENT']['log_file'],
-            os.path.join(self.scaffold_dir, 'daos_agent.sock'),
-            os.path.join(self.scaffold_dir, 'daos_server.sock')
+            os.path.join(self.scaffold_dir, '*.sock'),
+            os.path.join(self.scaffold_dir, '*.log')
         ]
         RmNode(to_rm, hosts=self.all_hosts).Run()
 
