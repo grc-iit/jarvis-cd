@@ -21,6 +21,9 @@ class Daos(Application):
         self.server_hosts = self.all_hosts.SelectHosts(self.config['SERVER']['hosts'])
         self.agent_hosts = self.all_hosts.SelectHosts(self.config['AGENT']['hosts'])
         self.control_hosts = self.all_hosts.SelectHosts(self.config['CONTROL']['hosts'])
+        self.daos_hosts = self.server_hosts
+        if 'DAOS_HOSTS' in self.config:
+            self.daos_hosts = Hostfile().LoadHostfile(self.config['DAOS_HOSTS'])
         self.pools_by_label = {}
 
     def Install(self, sys):
@@ -210,7 +213,7 @@ class Daos(Application):
         server_config['transport_config']['allow_insecure'] = not self.config['SECURE']
         server_config['port'] = self.config['PORT']
         server_config['name'] = self.config['NAME']
-        server_config['access_points'] = self.server_hosts.list()
+        server_config['access_points'] = self.daos_hosts.list()
         YAMLFile(self.config['CONF']['SERVER']).Save(server_config)
 
     def _CreateAgentConfig(self):
