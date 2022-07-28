@@ -70,7 +70,6 @@ class Daos(Application):
         self._CreateControlConfig()
         #Copy the certificates+config to all servers
         to_copy = [
-            self.daos_hosts.Path(),
             self.all_hosts.Path(),
             self.config['CONF']['AGENT'],
             self.config['CONF']['SERVER'],
