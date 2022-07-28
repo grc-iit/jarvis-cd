@@ -135,7 +135,6 @@ class Daos(Application):
             for storage in engine['storage']:
                 for key,mount in storage.items():
                     if 'mount' in key:
-                        UnmountFS(mount, hosts=self.server_hosts).Run()
                         RmNode(mount, hosts=self.server_hosts, sudo=True).Run()
 
         for container in self.config['CONTAINERS']:
@@ -143,14 +142,20 @@ class Daos(Application):
                 RmNode(container['mount'], hosts=self.agent_hosts, sudo=True).Run()
 
     def _DefineStop(self):
+        #Politefully stop servers
+        server_stop_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg system stop -o {self.config['CONF']['CONTROL']} -d {self.config['SCAFFOLD']}"
+        ExecNode(server_stop_cmd, sudo=True).Run()
         #Unmount containers
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
                 umount_cmd = f"fusermount3 -u {container['mount']}"
                 ExecNode(umount_cmd, hosts=self.agent_hosts).Run()
-        #Politefully stop servers
-        server_stop_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg system stop -o {self.config['CONF']['CONTROL']} -d {self.config['SCAFFOLD']}"
-        ExecNode(server_stop_cmd, sudo=True).Run()
+        #Unmount SCM
+        for engine in self.config['SERVER']['engines']:
+            for storage in engine['storage']:
+                for key,mount in storage.items():
+                    if 'mount' in key:
+                        UnmountFS(mount, hosts=self.server_hosts).Run()
         #Kill anything else DAOS spawns
         KillNode('.*daos.*', hosts=self.all_hosts).Run()
 
