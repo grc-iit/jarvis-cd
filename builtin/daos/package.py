@@ -80,12 +80,13 @@ class Daos(Application):
         CopyNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.scaffold_hosts).Run()
         #Start dummy DAOS server (on all server nodes)
         self._StartServers()
+        # Get networking options
+        EchoNode("Scanning networks").Run()
+        self._ScanNetworks()
+        iface = input('Get actual network interface')
         #Format storage
         EchoNode("Formatting DAOS storage").Run()
         self._FormatStorage()
-        #Get networking options
-        EchoNode("Scanning networks").Run()
-        self._ScanNetworks()
         #Link SCAFFOLD to /var/run/daos_agent
         LinkNode(self.scaffold_dir, '/var/run/daos_agent', hosts=self.agent_hosts, sudo=True).Run()
         #Create storage pools
