@@ -39,7 +39,9 @@ class SSHConfigMixin(YAMLConfig):
         if 'SSH' in self.config and 'primary' in self.config['SSH']:
             self.ssh_info.update(self.config['SSH']['primary'])
         if len(self.ssh_info):
-            self.ssh_info['host_aliases'] = FindHostAliases(self.all_hosts).Run().GetAliases()
+            if 'host_aliases' not in self.ssh_info:
+                self.ssh_info['host_aliases'] = []
+            self.ssh_info['host_aliases'] += FindHostAliases(self.all_hosts).Run().GetAliases()
             self.host_aliases = self.ssh_info['host_aliases']
         JarvisManager.GetInstance().SetSSHInfo(self.ssh_info)
 
