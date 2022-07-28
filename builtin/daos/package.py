@@ -166,7 +166,7 @@ class Daos(Application):
                         UnmountFS(mount, hosts=self.server_hosts).Run()
 
     def _DefineStatus(self):
-        cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o ${SCAFFOLD}/daos_control.yaml system query -v"
+        cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['SCAFFOLD']}/daos_control.yaml system query -v"
         ExecNode(cmd, hosts=self.all_hosts).Run()
 
     def _StartServers(self):
