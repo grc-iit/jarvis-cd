@@ -3,7 +3,7 @@ IO500_SPACK:
   package_name: daos-io500
 IO500_ROOT: ${SCAFFOLD}/io500_install
 MPI:
-  nprocs: 72
+  nprocs: 216
 DAOS:
   pool: io500_pool
   container: io500_container
@@ -20,7 +20,7 @@ GLOBAL:
   verbosity: 1
   scc: TRUE
 DEBUG:
-  stonewall-time: 5
+  stonewall-time: 300
 ior-easy:
   transferSize:  1m
   blockSize:  16m
