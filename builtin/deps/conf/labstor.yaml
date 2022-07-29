@@ -3,14 +3,14 @@ jarvis_cd:
   url: https://github.com/lukemartinlogan/jarvis-cd
   branch: vLabstor
   commit: null
-  path: ${PWD}/jarvis-cd
+  path: ${PWD}
 spack:
   url: https://github.com/spack/spack
   branch: releases/v0.18
   commit: null
-  path: ${PWD}/spack
+  path: ${HOME}/spack
 scs_repo:
   url: https://github.com/lukemartinlogan/scs-repo
   branch: main
   commit: null
-  path: ${PWD}/scs-repo
+  path: ${HOME}/scs-repo
