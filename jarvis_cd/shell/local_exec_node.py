@@ -68,7 +68,6 @@ class LocalExecNode(ParallelNode):
             commands = ' ; '.join(commands)
             if self.sudo:
                 commands = f"sudo -E bash -c \'{self._get_env_str()} ; source {os.environ['HOME']}/.bashrc ; {commands}\'"
-            print(commands)
             self._start_bash_processes(commands)
         else:
             if self.sudo:
