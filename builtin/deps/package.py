@@ -11,7 +11,8 @@ class Deps(Launcher):
     def _Scaffold(self):
         #Check if jarvis already installed
         if 'JARVIS_ROOT' in os.environ:
-            self.config['jarvis_cd']['path'] = os.environ['JARVIS_ROOT']
+            if os.path.exists(os.environ['JARVIS_ROOT']):
+                self.config['jarvis_cd']['path'] = os.environ['JARVIS_ROOT']
 
         #Check if spack already installed
         node = CheckCommandNode('spack').Run()
@@ -20,7 +21,8 @@ class Deps(Launcher):
 
         #Check if scsrepo already installed
         if 'SCS_REPO' in os.environ:
-            self.config['scs_repo']['path'] = os.environ['SCS_REPO']
+            if os.path.exists(os.environ['SCS_REPO']):
+                self.config['scs_repo']['path'] = os.environ['SCS_REPO']
 
     def _DepsArgs(self, parser):
         parser.add_argument('package_name', metavar='pkg', type=str, help="name of package to install")
