@@ -32,8 +32,8 @@ class Filebench(ExecNode):
                 self.result['ops/s'] = thrpt
                 self.result['num_reads'] = num_reads
                 self.result['num_writes'] = num_writes
-                self.results['mb/s'] = bw
-                self.results['cpu/op'] = cpu
-                self.results['ms'] = latency
+                self.result['mb/s'] = bw
+                self.result['cpu/op'] = cpu
+                self.result['ms'] = latency
 
         return self.result
