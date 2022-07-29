@@ -24,10 +24,14 @@ class ExecNode(ParallelNode):
         if len(self.cmds) == 0:
             return
         if self.do_ssh:
-            node = SSHExecNode(self.cmds, **self.GetClassParams(ParallelNode, print_output=False)).Run()
+            self.node = SSHExecNode(self.cmds, **self.GetClassParams(ParallelNode, print_output=False)).Run()
         else:
-            node = LocalExecNode(self.cmds, **self.GetClassParams(ParallelNode, print_output=False)).Run()
+            self.node = LocalExecNode(self.cmds, **self.GetClassParams(ParallelNode, print_output=False)).Run()
         self.output = node.GetOutput()
+
+    def Wait(self):
+        if self.exec_async and not self.do_ssh:
+            self.node.Wait()
 
     def GetCommands(self):
         return self.cmds
