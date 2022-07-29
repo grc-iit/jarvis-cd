@@ -49,7 +49,7 @@ Note, JARVIS_SHARED should not be changed from the value provided by scaffold.
 jarvis [launcher] [operation] -C [scaffold]
 #Create directory where configuration data should be stored
 #Create the jarvis configuration file (there are multiple to choose from)
-jarvis daos scaffold
+jarvis daos scaffold default
 #Initialize the directories/conf files required for launching server processes
 jarvis daos init
 #Starts an already-initialized service

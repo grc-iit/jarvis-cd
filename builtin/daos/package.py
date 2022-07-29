@@ -159,12 +159,6 @@ class Daos(Application):
                 ExecNode(umount_cmd, hosts=self.agent_hosts).Run()
         #Kill anything else DAOS spawns
         KillNode('.*daos.*', hosts=self.all_hosts).Run()
-        #Unmount SCM
-        # for engine in self.config['SERVER']['engines']:
-        #     for storage in engine['storage']:
-        #         for key, mount in storage.items():
-        #             if 'mount' in key:
-        #                 UnmountFS(mount, hosts=self.server_hosts).Run()
 
     def _DefineStatus(self):
         cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['SCAFFOLD']}/daos_control.yaml system query -v"

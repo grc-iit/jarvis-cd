@@ -1,0 +1,61 @@
+SCAFFOLD: null
+SCAFFOLD_SHARED: false
+DAOS_SPACK:
+  package_name: daos
+DAOS_ROOT: ${SCAFFOLD}/daos_install
+NAME: daos_server
+PORT: 10001
+SECURE: false
+HOSTS: ${SCAFFOLD}/hostfile.txt
+DAOS_HOSTS: ${SCAFFOLD}/daos_hosts.txt
+CONF:
+  SERVER: ${SCAFFOLD}/daos_server.yaml
+  AGENT: ${SCAFFOLD}/daos_agent.yaml
+  CONTROL: ${SCAFFOLD}/daos_control.yaml
+SERVER:
+  hosts: 1-3
+  provider: ofi+sockets
+  telemetry_port: 9191
+  control_log_file: ${SCAFFOLD}/daos_server.log
+  transport_config:
+    ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
+    cert: ${SCAFFOLD}/daosCA/certs/server.crt
+    client_cert_dir: ${SCAFFOLD}/daosCA/certs
+    key: ${SCAFFOLD}/daosCA/certs/server.key
+  engines:
+    -
+      targets: 1
+      first_core: 0
+      nr_xs_helpers: 0
+      fabric_iface: ens3
+      fabric_iface_port: 31416
+      log_file: ${SCAFFOLD}/daos_engine.0.log
+      env_vars:
+        - FI_SOCKETS_MAX_CONN_RETRY=1
+        - FI_SOCKETS_CONN_TIMEOUT=2000
+      storage:
+        - class: ram
+          scm_size: 100
+          scm_mount: '${SCAFFOLD}/scm_test'
+AGENT:
+  hosts: 1-3
+  transport_config:
+    ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
+    cert: ${SCAFFOLD}/daosCA/certs/agent.crt
+    key: ${SCAFFOLD}/daosCA/certs/agent.key
+  runtime_dir: ${SCAFFOLD}
+  log_file: ${SCAFFOLD}/daos_agent.log
+CONTROL:
+  hosts: 1-3
+  transport_config:
+    ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
+    cert: ${SCAFFOLD}/daosCA/certs/admin.crt
+    key: ${SCAFFOLD}/daosCA/certs/admin.key
+POOLS:
+  - label: io500_pool
+    size: 100G
+CONTAINERS:
+  - label: io500_container
+    pool: io500_pool
+    type: POSIX
+    mount: ${SCAFFOLD}/daos_mount
