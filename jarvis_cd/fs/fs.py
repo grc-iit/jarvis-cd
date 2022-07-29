@@ -45,11 +45,18 @@ class FIO(ExecNode):
         super().__init__(cmd, **kwargs)
 
     def GetRuntime(self):
-        for host, outputs in self.output.items():
-            for line in outputs['stdout']:
-                grp = re.match("\[OVERALL\], RunTime\(ms\), ([0-9]+)", line)
-                if grp:
-                    return float(grp.group(1))
+        for line in self.GetLocalStdout():
+            grp = re.match("\[OVERALL\], RunTime\(ms\), ([0-9]+)", line)
+            if grp:
+                return float(grp.group(1))
+
+class DisableVARandomization(ExecNode):
+    def __init__(self, **kwargs):
+        cmds = [
+            "echo 0 | sudo tee /proc/sys/kernel/randomize_va_space"
+        ]
+        kwargs['shell'] = True
+        super().__init__(cmds, **kwargs)
 
 class Filebench(ExecNode):
     def __init__(self, ini_path, **kwargs):
