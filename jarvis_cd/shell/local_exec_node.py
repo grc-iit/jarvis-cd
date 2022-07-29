@@ -40,7 +40,6 @@ class LocalExecNode(ParallelNode):
             os.sched_setaffinity(self.GetPid(), self.affinity)
 
     def _start_bash_processes(self, commands):
-        commands = " ; ".join(commands)
         if not self.collect_output:
             self.proc = subprocess.Popen(commands, cwd=self.cwd, shell=True)
         else:
@@ -52,17 +51,28 @@ class LocalExecNode(ParallelNode):
         if self.affinity is not None:
             os.sched_setaffinity(self.GetPid(), self.affinity)
 
+    def _get_env_str(self):
+        envs = ['PATH', 'LD_LIBRARY_PATH', 'LIBRARY_PATH', 'CPATH']
+        envs = [f"{key}={os.environ[key]}" for key in envs]
+        return " ".join(envs)
+
+
     def _exec_cmds(self,commands):
         """
         Executes a command on Shell and returns stdout and stderr from the command.
         :param commands: the string of the command to be executed
         :return: stdout: standard output of command , stderr  standard error of command
         """
-        if self.sudo:
-            commands = [f"sudo {command}" for command in commands]
+
         if self.shell:
+            commands = ' ; '.join(commands)
+            if self.sudo:
+                commands = f"sudo -E bash -c \'{self._get_env_str()} ; source {os.environ['HOME']}/.bashrc ; {commands}\'"
+            print(commands)
             self._start_bash_processes(commands)
         else:
+            if self.sudo:
+                commands = [f"sudo -E {command}" for command in commands]
             for i, command in enumerate(commands):
                 self._start_pipe_process(command, i==0)
 
