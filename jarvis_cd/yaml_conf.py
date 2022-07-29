@@ -37,6 +37,7 @@ class YAMLConfig(ABC):
             self.config = config.config
         else:
             self.config = config
+        self.config = self._ExpandPaths()
         self._ProcessConfig()
         return self
 
