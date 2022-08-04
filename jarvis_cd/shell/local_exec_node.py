@@ -53,7 +53,7 @@ class LocalExecNode(ParallelNode):
 
     def _get_env_str(self):
         envs = ['PATH', 'LD_LIBRARY_PATH', 'LIBRARY_PATH', 'CPATH']
-        envs = [f"{key}={os.environ[key]}" for key in envs]
+        envs = [f"{key}={os.environ[key]}" for key in envs if key in os.environ]
         return " ".join(envs)
 
 
