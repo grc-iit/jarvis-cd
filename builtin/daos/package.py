@@ -46,16 +46,17 @@ class Daos(Application):
         else:
             print("Requires variant OS")
             exit()
-        ExecNode(f"spack install daos", hosts=self.all_hosts).Run()
+        ExecNode(f"spack install daos", hosts=self.scaffold_hosts).Run()
 
     def _InstallArgs(self, parser):
         parser.add_argument('--sys', metavar='os', default='centos8', help='OS for installing dependencies (centos8,centos7,ubuntu20,leap15)')
 
     def _DefineInit(self):
         #Create SCAFFOLD on all nodes
-        MkdirNode(self.scaffold_dir, hosts=self.all_hosts).Run()
+        MkdirNode(self.scaffold_dir, hosts=self.scaffold_hosts).Run()
+        MkdirNode(self.per_node_dir, hosts=self.all_hosts).Run()
         #Create DAOS_ROOT sybmolic link
-        LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.all_hosts).Run()
+        LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.scaffold_hosts).Run()
         #Generate security certificates
         if self.config['SECURE']:
             self._CreateCertificates()
@@ -77,7 +78,7 @@ class Daos(Application):
             f"{self.scaffold_dir}/jarvis_conf.yaml",
             f"{self.scaffold_dir}/daosCA" if self.config['SECURE'] else None
         ]
-        CopyNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.all_hosts).Run()
+        CopyNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.scaffold_hosts).Run()
         #Start dummy DAOS server (on all server nodes)
         self._StartServers()
         # Get networking options
