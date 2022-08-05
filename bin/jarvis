@@ -14,7 +14,7 @@ def BasicArgs():
                              help="Operation for the launcher (e.g., start)")
     parser.add_argument("-C", dest='scaffold', metavar='directory', type=str,
                         help="The directory containing all launcher configurations")
-    parser.add_argument("-I", dest='id', metavar='pkg_id', type=str,
+    parser.add_argument("-I", dest='pkg_id', metavar='pkg_id', type=str,
                         help="The name of the package instance to search for")
 
     #Only check the first 3 params
@@ -60,7 +60,7 @@ if __name__ == '__main__':
 
     #Load configuration if not scaffolding
     if launcher_op_name != 'Scaffold':
-        launcher_instance.LoadConfig()
+        launcher_instance.LoadConfig(launcher_instance.ScaffoldConfigPath())
         if not launcher_instance.is_scaffolded:
             print(f"No configuration file found when calling {launcher_class_name}.{launcher_op_name}.")
             print("Are you cd'd into a directory that contains a jarvis_conf.yaml?")

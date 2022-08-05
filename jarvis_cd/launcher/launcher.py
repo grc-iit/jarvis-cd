@@ -17,7 +17,6 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
     def __init__(self, scaffold_dir=None, pkg_id=None):
         super().__init__()
         self.nodes = None
-        self.cache = self.LoadCache()
         self.env = None
         self.jarvis_manager = JarvisManager().GetInstance()
         self.jarvis_root = self.jarvis_manager.GetJarvisRoot()
@@ -71,6 +70,9 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
             self.scaffold_hosts = self.all_hosts
         else:
             self.scaffold_hosts = Hostfile().Load(['localhost'])
+
+        #Load the cache
+        self.cache = self.LoadCache()
 
 
     def DefaultConfigPath(self, conf_type='default'):

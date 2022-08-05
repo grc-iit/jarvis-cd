@@ -1,6 +1,8 @@
 from jarvis_cd.installer.git_node import GitNode, GitOps
 from jarvis_cd.shell.exec_node import ExecNode
 from jarvis_cd.shell.copy_node import CopyNode
+from jarvis_cd.fs.mkdir_node import MkdirNode
+from jarvis_cd.fs.fs import ChownFS
 from jarvis_cd.launcher.launcher import Launcher
 from jarvis_cd.jarvis_manager import JarvisManager
 from jarvis_cd.introspect.check_command import CheckCommandNode
@@ -31,16 +33,25 @@ class Deps(Launcher):
         if package_name == 'jarvis' or package_name == 'all':
             jarvis_root = self.config['jarvis_cd']['path']
             jarvis_conf = os.path.join(jarvis_root, 'jarvis_conf.yaml')
+            jarvis_shared = self.config['JARVIS_INSTANCES']['shared']
+            jarvis_per_node = self.config['JARVIS_INSTANCES']['per_node']
+
+            #Create the jarvis shared directory
+            MkdirNode(jarvis_shared).Run()
+            if not os.path.exists(jarvis_shared):
+                MkdirNode(jarvis_shared, sudo=True).Run()
+                ChownFS(jarvis_shared).Run()
+
             if 'HOSTS' in self.config and isinstance(self.config['HOSTS'], str):
                 hostfile = self.config['HOSTS']
             else:
                 hostfile = None
-            GitNode(**self.config['jarvis_cd'], method=GitOps.CLONE, hosts=self.all_hosts).Run()
+            GitNode(**self.config['jarvis_cd'], method=GitOps.CLONE, hosts=self.scaffold_hosts).Run()
             files = [
                 jarvis_conf,
                 hostfile
             ]
-            CopyNode(files, self.scaffold_dir, hosts=self.all_hosts).Run()
+            CopyNode(files, self.scaffold_dir, hosts=self.scaffold_hosts).Run()
             cmds = [
                 f"cd {jarvis_root}",
                 f"chmod +x {jarvis_root}/dependencies.sh",

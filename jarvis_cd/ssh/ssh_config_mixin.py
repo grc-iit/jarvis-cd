@@ -16,6 +16,7 @@ class SSHConfigMixin(YAMLConfig):
         self._ProcessSSHConfig()
 
     def _ProcessSSHConfig(self):
+        self.all_hosts = None
         self.ssh_info = {}
 
         if 'HOSTS' in self.config:
