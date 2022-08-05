@@ -1,4 +1,6 @@
-JARVIS_SHARED: true
+JARVIS_INSTANCES:
+  shared: null
+  per_node: null
 jarvis_cd:
   url: https://github.com/lukemartinlogan/jarvis-cd
   branch: vLabstor

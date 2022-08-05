@@ -1,4 +1,6 @@
-JARVIS_SHARED: true
+JARVIS_INSTANCES:
+  shared: ${HOME}/.jarvis
+  per_node: /mnt/${USER}/.jarvis
 jarvis_cd:
   url: https://github.com/lukemartinlogan/jarvis-cd
   branch: development

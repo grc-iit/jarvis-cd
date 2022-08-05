@@ -10,4 +10,4 @@ class Base(Launcher):
         parser.add_argument('cmd', metavar='command', type=str, help='The python code to execute')
 
     def UnloadEnv(self):
-        RmNode(os.path.join(self.GetUserEnv(), '*'), hosts=self.jarvis_hosts, shell=True).Run()
+        RmNode(os.path.join(self.GetUserEnv(), '*'), hosts=self.all_hosts, shell=True).Run()

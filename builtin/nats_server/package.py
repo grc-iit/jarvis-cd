@@ -13,9 +13,9 @@ class NatsServer(Application):
 
     def _DefineInit(self):
         #Create SCAFFOLD on all nodes
-        MkdirNode(self.scaffold_dir, hosts=self.scaffold_hosts).Run()
+        MkdirNode(self.scaffold_dir, hosts=self.all_hosts).Run()
         #Create link to NATS spackage
-        LinkSpackage(self.config['NATS_SPACK'], self.config['NATS_ROOT'], hosts=self.scaffold_hosts).Run()
+        LinkSpackage(self.config['NATS_SPACK'], self.config['NATS_ROOT'], hosts=self.all_hosts).Run()
 
     def _DefineStart(self):
         nats_start_cmd = [

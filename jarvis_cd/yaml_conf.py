@@ -6,18 +6,11 @@ import os
 from jarvis_cd.exception import Error, ErrorCode
 
 class YAMLConfig(ABC):
-    def __init__(self, scaffold_dir=None):
-        self.scaffold_dir = scaffold_dir
-        if self.scaffold_dir is None:
-            self.scaffold_dir = os.getcwd()
-        self.config_path = self.ScaffoldConfigPath()
+    def __init__(self):
         self.config = None
-        self.jarvis_root = JarvisManager.GetInstance().GetJarvisRoot()
 
-    def ScaffoldConfigPath(self):
-        return os.path.join(self.scaffold_dir, 'jarvis_conf.yaml')
-
-    def LoadConfig(self):
+    def LoadConfig(self, config_path):
+        self.config_path = config_path
         if not os.path.exists(self.config_path):
             self.is_scaffolded = False
             return self
@@ -62,14 +55,6 @@ class YAMLConfig(ABC):
 
     def _ExpandPaths(self):
         return self._ExpandVar(self.config)
-
-    @abstractmethod
-    def DefaultConfigPath(self, conf_type='default'):
-        pass
-
-    @abstractmethod
-    def _Scaffold(self):
-        pass
 
     @abstractmethod
     def _ProcessConfig(self):

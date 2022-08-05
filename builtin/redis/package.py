@@ -31,7 +31,7 @@ class Redis(Application):
         self.pools_by_label = {}
 
     def Install(self):
-        ExecNode(f"spack install redis", hosts=self.jarvis_hosts).Run()
+        ExecNode(f"spack install redis", hosts=self.all_hosts).Run()
 
     def _DefineInit(self):
         pass

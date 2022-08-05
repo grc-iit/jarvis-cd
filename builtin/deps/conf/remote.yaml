@@ -1,4 +1,6 @@
-JARVIS_SHARED: false
+JARVIS_INSTANCES:
+  shared: ${HOME}/.jarvis
+  per_node: /mnt/${USER}/.jarvis
 HOSTS: ${SCAFFOLD}/hostfile.txt
 SSH:
   primary:

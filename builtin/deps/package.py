@@ -35,12 +35,12 @@ class Deps(Launcher):
                 hostfile = self.config['HOSTS']
             else:
                 hostfile = None
-            GitNode(**self.config['jarvis_cd'], method=GitOps.CLONE, hosts=self.scaffold_hosts).Run()
+            GitNode(**self.config['jarvis_cd'], method=GitOps.CLONE, hosts=self.all_hosts).Run()
             files = [
                 jarvis_conf,
                 hostfile
             ]
-            CopyNode(files, self.scaffold_dir, hosts=self.scaffold_hosts).Run()
+            CopyNode(files, self.scaffold_dir, hosts=self.all_hosts).Run()
             cmds = [
                 f"cd {jarvis_root}",
                 f"chmod +x {jarvis_root}/dependencies.sh",
@@ -49,20 +49,20 @@ class Deps(Launcher):
                 f"python3 -m pip install -e . --user -r requirements.txt",
                 f"./bin/jarvis deps local-install {package_name}"
             ]
-            ExecNode(cmds, hosts=self.scaffold_hosts, shell=True).Run()
+            ExecNode(cmds, hosts=self.all_hosts, shell=True).Run()
         else:
-            ExecNode(f"jarvis deps local-install {package_name} -C {self.jarvis_root}", hosts=self.scaffold_hosts).Run()
+            ExecNode(f"jarvis deps local-install {package_name} -C {self.jarvis_root}", hosts=self.all_hosts).Run()
     def _InstallArgs(self, parser):
         self._DepsArgs(parser)
         parser.add_argument('--do_python', action='store_true', help='Whether or not to install python as dependency')
 
     def Update(self, package_name):
-        ExecNode(f"jarvis deps local-update {package_name} -C {self.jarvis_root}", hosts=self.scaffold_hosts).Run()
+        ExecNode(f"jarvis deps local-update {package_name} -C {self.jarvis_root}", hosts=self.all_hosts).Run()
     def _UpdateArgs(self, parser):
         self._DepsArgs(parser)
 
     def Uninstall(self, package_name):
-        ExecNode(f"jarvis deps local-uninstall {package_name} -C {self.jarvis_root}", hosts=self.scaffold_hosts).Run()
+        ExecNode(f"jarvis deps local-uninstall {package_name} -C {self.jarvis_root}", hosts=self.all_hosts).Run()
     def _UninstallArgs(self, parser):
         self._DepsArgs(parser)
 

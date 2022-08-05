@@ -4,7 +4,7 @@ from jarvis_cd.jarvis_manager import JarvisManager
 import argparse
 from jarvis_cd.exception import Error,ErrorCode
 from jarvis_cd.util.naming import ToCamelCase
-import sys
+import sys,os
 
 def BasicArgs():
     parser = argparse.ArgumentParser(description='Jarvis CD')
@@ -14,6 +14,8 @@ def BasicArgs():
                              help="Operation for the launcher (e.g., start)")
     parser.add_argument("-C", dest='scaffold', metavar='directory', type=str,
                         help="The directory containing all launcher configurations")
+    parser.add_argument("-I", dest='id', metavar='pkg_id', type=str,
+                        help="The name of the package instance to search for")
 
     #Only check the first 3 params
     args = sys.argv[1:3]
@@ -26,7 +28,11 @@ def BasicArgs():
             args += ['-C', scaffold_dir]
             other_args.remove('-C')
             other_args.remove(scaffold_dir)
-            break
+        elif param == '-I':
+            pkg_id = other_args[i+1]
+            args += ['-I', pkg_id]
+            other_args.remove('-I')
+            other_args.remove(pkg_id)
 
     args = parser.parse_args(args)
     return args,other_args
@@ -45,7 +51,8 @@ if __name__ == '__main__':
 
     #Create the launcher instance and load configuration
     scaffold_dir = args.scaffold
-    launcher_instance = launcher_class(scaffold_dir)
+    pkg_id = args.pkg_id
+    launcher_instance = launcher_class(scaffold_dir=scaffold_dir, pkg_id=pkg_id)
 
     #Load the launcher operation
     launcher_op_name = ToCamelCase(str(args.operation))
