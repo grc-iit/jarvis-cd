@@ -34,8 +34,7 @@ class Deps(Launcher):
             jarvis_root = self.config['jarvis_cd']['path']
             jarvis_conf = os.path.join(jarvis_root, 'jarvis_conf.yaml')
             jarvis_shared = self.config['JARVIS_INSTANCES']['shared']
-            jarvis_per_node = self.config['JARVIS_INSTANCES']['per_node']
-
+            
             #Create the jarvis shared directory
             MkdirNode(jarvis_shared).Run()
             if not os.path.exists(jarvis_shared):

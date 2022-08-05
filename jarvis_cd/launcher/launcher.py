@@ -41,9 +41,11 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
             self._PackagePathsFromScaffold(scaffold_dir)
 
         #Load the configuration file from the scaffold directory
-        if load_config:
+        if load_config and self.scaffold_dir is not None:
             self.LoadConfig(self.ScaffoldConfigPath())
             self._FindScaffoldHosts()
+        else:
+            raise Error(ErrorCode.CONFIG_NOT_FOUND).format(self.scaffold_dir)
 
         #Load the cache
         self.cache = self.LoadCache()
