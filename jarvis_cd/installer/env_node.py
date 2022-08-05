@@ -27,8 +27,7 @@ class EnvNode(Node):
 
         #Perform operation on content
         if self.op == EnvNodeOps.SET:
-            self._RemoveMem(lines)
-            self._AppendMem(lines)
+            self._SetMem(lines)
         elif self.op == EnvNodeOps.REMOVE:
             self._RemoveMem(lines)
 
@@ -42,5 +41,11 @@ class EnvNode(Node):
             if re.match(self.cmd_re, line):
                 lines.remove(line)
 
-    def _AppendMem(self, lines):
-        lines.append(self.cmd)
+    def _SetMem(self, lines):
+        got_set = False
+        for id,line in enumerate(lines):
+            if re.match(self.cmd_re, line):
+                lines[id] = self.cmd
+                got_set = True
+        if not got_set:
+            lines.append(self.cmd)
