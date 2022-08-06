@@ -31,6 +31,7 @@ class ErrorCode:
     NOT_IMPLEMENTED = {"id": 1, "msg": "{} is not implemented"}
     LAUNCHER_NOT_FOUND = {"id": 2, "msg": "{} was not found"}
     JARVIS_PKG_NOT_CONFIGURED = {"id": 3, "msg": "Jarvis package directories not configured during install."}
+    JARVIS_ROOT_NOT_CONFIGURED = {"id": 4, "msg": "Jarvis deps requires one of JARVIS_PATHS to be set"}
 
     #Hostfile errors
     HOSTFILE_NOT_FOUND = {"id": 1000, "msg": "Hostfile at {} does not exist."}

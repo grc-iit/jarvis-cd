@@ -26,8 +26,8 @@ source ~/.bashrc
 To customize the installation of dependencies, modify the conf.yaml produced by the scaffold command.
 ```yaml
 JARVIS_INSTANCES:
-  per_node: /mnt/${USER}/.jarvis
-  shared: /home/${USER}/.jarvis
+  per_node: /mnt/${USER}
+  shared: ${PWD}
 jarvis_cd:
   repo: https://github.com/lukemartinlogan/jarvis-cd.git
   branch: development
@@ -43,7 +43,7 @@ scs_repo:
   branch: master
   commit: null
 ```
-JARVIS_INSTANCES should point to two directories:
+JARVIS_PATHS should point to two directories:
 * **per-node**: a directory which is common across all nodes, but not located on a shared filesystem
 * **shared**: a directory stored on a shared filesystem across all hosts (this is optional)
 

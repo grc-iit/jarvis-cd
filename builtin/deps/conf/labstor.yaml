@@ -1,11 +1,10 @@
-JARVIS_INSTANCES:
+JARVIS_PATHS:
   shared: null
-  per_node: null
+  per_node: ${PWD}
 jarvis_cd:
   url: https://github.com/lukemartinlogan/jarvis-cd
   branch: vLabstor
   commit: null
-  path: ${PWD}
 spack:
   url: https://github.com/spack/spack
   branch: releases/v0.18

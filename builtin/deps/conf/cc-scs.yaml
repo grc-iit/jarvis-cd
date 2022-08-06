@@ -1,6 +1,6 @@
-JARVIS_INSTANCES:
-  shared: ${HOME}/.jarvis
-  per_node: /mnt/${USER}/.jarvis
+JARVIS_PATHS:
+  shared: null
+  per_node: ${PWD}
 HOSTS: ${SCAFFOLD}/hostfile.txt
 SSH:
   primary:
@@ -18,7 +18,6 @@ jarvis_cd:
   url: https://github.com/lukemartinlogan/jarvis-cd
   branch: development
   commit: null
-  path: ${HOME}/jarvis-cd
 spack:
   url: https://github.com/spack/spack
   branch: releases/v0.18

@@ -78,8 +78,8 @@ class JarvisManager:
     def GetPkgInstanceDir(self, shared=False):
         if shared:
             if 'JARVIS_SHARED_PKG_DIR' in os.environ:
-                return os.environ['JARVIS_SHARED_PKG_DIR']
+                return os.path.join(os.environ['JARVIS_SHARED_PKG_DIR'], 'jarvis_instances')
         else:
             if 'JARVIS_PER_NODE_PKG_DIR' in os.environ:
-                return os.environ['JARVIS_PER_NODE_PKG_DIR']
+                return os.path.join(os.environ['JARVIS_PER_NODE_PKG_DIR'], 'jarvis_instances')
         return None

@@ -10,27 +10,17 @@ import shutil
 
 class JarvisSetup(Installer):
     def LocalInstall(self):
-        jarvis_root = self.config['jarvis_cd']['path']
-        jarvis_shared = self.config['JARVIS_INSTANCES']['shared']
-        jarvis_per_node = self.config['JARVIS_INSTANCES']['per_node']
-
-        #Create the jarvis per node directory
-        MkdirNode(jarvis_per_node).Run()
-        if not os.path.exists(jarvis_per_node):
-            MkdirNode(jarvis_per_node, sudo=True).Run()
-            ChownFS(jarvis_per_node).Run()
-
         #Set the variables to their proper values
         EnvNode(self.jarvis_env,
-                cmd=f"export JARVIS_ROOT={jarvis_root}",
+                cmd=f"export JARVIS_ROOT={self.jarvis_root}",
                 cmd_re="export JARVIS_ROOT",
                 op=EnvNodeOps.SET).Run()
         EnvNode(self.jarvis_env,
-                cmd=f"export JARVIS_SHARED_PKG_DIR={jarvis_shared}",
+                cmd=f"export JARVIS_SHARED_PKG_DIR={self.jarvis_shared_pkg_dir}",
                 cmd_re="export JARVIS_SHARED_PKG_DIR",
                 op=EnvNodeOps.SET).Run()
         EnvNode(self.jarvis_env,
-                cmd=f"export JARVIS_PER_NODE_PKG_DIR={jarvis_per_node}",
+                cmd=f"export JARVIS_PER_NODE_PKG_DIR={self.jarvis_per_node_pkg_dir}",
                 cmd_re="export JARVIS_PER_NODE_PKG_DIR",
                 op=EnvNodeOps.SET).Run()
         EnvNode(self.jarvis_env,
