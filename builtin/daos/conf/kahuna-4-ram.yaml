@@ -5,7 +5,6 @@ NAME: daos_server
 PORT: 10001
 SECURE: false
 HOSTS: ${SCAFFOLD}/hostfile.txt
-DAOS_HOSTS: ${SCAFFOLD}/daos_hosts.txt
 CONF:
   SERVER: ${SCAFFOLD}/daos_server.yaml
   AGENT: ${SCAFFOLD}/daos_agent.yaml
