@@ -61,8 +61,9 @@ if __name__ == '__main__':
         if not launcher_instance.is_scaffolded:
             print(f"No configuration file found when calling {launcher_class_name}.{launcher_op_name}.")
             print("Are you cd'd into a directory that contains a jarvis_conf.yaml?")
-            print("Alternatively, did you provide the correct path to -C?")
-            print(f"jarvis_conf.yaml is produced after calling jarvis {launcher_class_name} scaffold")
+            print("Did you provide the correct path using -C?")
+            print("Did you provide a package name using -I?")
+            print(f"jarvis_conf.yaml is produced after calling jarvis {launcher_class_name} scaffold or jarvis {launcher_class_name} create")
             exit(1)
     elif launcher_class_name == 'Base':
         launcher_instance = launcher_class(scaffold_dir=os.environ['JARVIS_ROOT'], load_config=True)

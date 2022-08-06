@@ -76,7 +76,6 @@ class Ssh(Launcher):
         for key,ssh_info in self.ssh_keys.items():
             if key != 'primary':
                 ToOpenSSHConfig(register_hosts=[ssh_info['hostname']], register_ssh=ssh_info, hosts=hosts).Run()
-
     def _ModifyConfigArgs(self, parser):
         parser.add_argument('--rr', action='store_true', help='whether or not to modify ssh config on all nodes')
 

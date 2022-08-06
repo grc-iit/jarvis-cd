@@ -7,8 +7,7 @@ MPI:
 DAOS:
   pool: io500_pool
   container: io500_container
-  scaffold: ${HOME}/daos
-  mount: ${HOME}/daos-test/daos_mount
+  pkg_id: daos-test
 GLOBAL:
   timestamp-datadir: TRUE
   resultdir: ${SCAFFOLD}/io500_results

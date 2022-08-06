@@ -18,6 +18,7 @@ class SSHConfigMixin(YAMLConfig):
     def _ProcessSSHConfig(self):
         self.all_hosts = None
         self.ssh_info = {}
+        self.host_aliases = None
 
         if 'HOSTS' in self.config:
             self.all_hosts = Hostfile().Load(self.config['HOSTS'])

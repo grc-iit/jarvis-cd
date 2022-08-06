@@ -25,7 +25,9 @@ source ~/.bashrc
 
 To customize the installation of dependencies, modify the conf.yaml produced by the scaffold command.
 ```yaml
-JARVIS_SHARED: true
+JARVIS_INSTANCES:
+  per_node: /mnt/${USER}/.jarvis
+  shared: /home/${USER}/.jarvis
 jarvis_cd:
   repo: https://github.com/lukemartinlogan/jarvis-cd.git
   branch: development
@@ -41,15 +43,24 @@ scs_repo:
   branch: master
   commit: null
 ```
-Note, JARVIS_SHARED should not be changed from the value provided by scaffold.
+JARVIS_INSTANCES should point to two directories:
+* **per-node**: a directory which is common across all nodes, but not located on a shared filesystem
+* **shared**: a directory stored on a shared filesystem across all hosts (this is optional)
+
+Certain information, such as mount points, need to be stored per-node, whereas
+configuration files can be stored in a shared directory.
+
+Specifying a shared directory
+is optional, but specifying a per-node directory is not.
 
 ## 3. Basic Commands
 
 ```bash
-jarvis [launcher] [operation] -C [scaffold]
-#Create directory where configuration data should be stored
-#Create the jarvis configuration file (there are multiple to choose from)
-jarvis daos scaffold default
+jarvis [launcher] [operation] -C [scaffold] -I [pkg-id]
+#Create the jarvis launcher package instance (pkg-id: daos-example) 
+jarvis daos create daos-example default
+#Cd into the current launcher's directory
+cd `jarvis base cd daos-example`
 #Initialize the directories/conf files required for launching server processes
 jarvis daos init
 #Starts an already-initialized service

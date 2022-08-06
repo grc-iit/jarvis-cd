@@ -18,6 +18,8 @@ class YAMLConfig(ABC):
         self.config = YAMLFile(self.config_path).Load()
         if 'SCAFFOLD' in self.config and self.config['SCAFFOLD'] is not None:
             os.environ['SCAFFOLD'] = str(self.config['SCAFFOLD'])
+        if 'PER_NODE_DIR' in self.config and self.config['PER_NODE_DIR'] is not None:
+            os.environ['PER_NODE_DIR'] = str(self.config['PER_NODE_DIR'])
         self.config = self._ExpandPaths()
         self._ProcessConfig()
         return self

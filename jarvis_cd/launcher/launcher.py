@@ -121,6 +121,8 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
 
         self.config['Z_UUID'] = config_uuid
         self.config['SCAFFOLD'] = self.scaffold_dir
+        self.config['SHARED_DIR'] = self.shared_dir
+        self.config['PER_NODE_DIR'] = self.per_node_dir
         self.config = self._ExpandPaths()
         self._Scaffold()
         YAMLFile(new_conf_path).Save(self.config)
@@ -133,12 +135,10 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
             shared_dir = os.path.join(self.shared_dir, pkg_id)
             if not os.path.exists(shared_dir):
                 MkdirNode(shared_dir).Run()
-                print(os.path.listdir(shared_dir))
         if self.per_node_dir is not None:
             per_node_dir = os.path.join(self.per_node_dir, pkg_id)
             if not os.path.exists(per_node_dir):
                 MkdirNode(per_node_dir).Run()
-                print(os.path.listdir(per_node_dir))
         if not self.shared_exists and not self.per_node_exists:
             raise Error(ErrorCode.JARVIS_PKG_NOT_CONFIGURED).format()
         self.Scaffold(conf_type)

@@ -57,4 +57,4 @@ CONTAINERS:
   - label: io500_container
     pool: io500_pool
     type: POSIX
-    mount: ${SCAFFOLD}/daos_mount
+    mount: ${PER_NODE_DIR}/daos_mount
