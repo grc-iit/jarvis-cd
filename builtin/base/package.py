@@ -36,7 +36,7 @@ class Base(Launcher):
         self._PackagePathsFromID(pkg_id)
         if self.per_node_exists:
             print(self.per_node_dir)
-        return per_node_dir
+        return self.per_node_dir
     def _CdPerNodeArgs(self, parser):
         self._CdArgs(parser)
 
