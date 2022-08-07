@@ -33,10 +33,10 @@ SERVER:
       storage:
         - class: ram
           scm_size: 100
-          scm_mount: '${SCAFFOLD}/scm_test'
+          scm_mount: '${PER_NODE_DIR}/scm_test'
         - class: file
           bdev_size: 100
-          bdev_list: [ '${SCAFFOLD}/file_test' ]
+          bdev_list: [ '${PER_NODE_DIR}/file_test' ]
 AGENT:
   hosts: 1
   transport_config:

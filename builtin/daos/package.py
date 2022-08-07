@@ -50,7 +50,7 @@ class Daos(Application):
         MkdirNode(self.scaffold_dir, hosts=self.scaffold_hosts).Run()
         MkdirNode(self.per_node_dir, hosts=self.all_hosts).Run()
         #Create DAOS_ROOT sybmolic link
-        LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.scaffold_hosts).Run()
+        LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.all_hosts).Run()
         #Generate security certificates
         if self.config['SECURE']:
             self._CreateCertificates()
@@ -83,7 +83,8 @@ class Daos(Application):
         EchoNode("Formatting DAOS storage").Run()
         self._FormatStorage()
         #Link SCAFFOLD to /var/run/daos_agent
-        LinkNode(self.scaffold_dir, '/var/run/daos_agent', hosts=self.agent_hosts, sudo=True).Run()
+        RmNode('/var/run/daos_agent', hosts=self.agent_hosts, sudo=True).Run()
+        LinkNode(self.per_node_dir, '/var/run/daos_agent', hosts=self.agent_hosts, sudo=True).Run()
         #Create storage pools
         EchoNode("Create storage pools").Run()
         for pool in self.config['POOLS']:
