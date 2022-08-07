@@ -137,11 +137,11 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
     def Create(self, pkg_id, conf_type='default'):
         self._PackagePathsFromID(pkg_id)
         if self.shared_dir is not None:
-            if not os.path.exists(self.shared_dir):
-                MkdirNode(self.shared_dir).Run()
+            MkdirNode(self.shared_dir).Run()
+            self.shared_exists = True
         if self.per_node_dir is not None:
-            if not os.path.exists(self.per_node_dir):
-                MkdirNode(self.per_node_dir).Run()
+            MkdirNode(self.per_node_dir).Run()
+            self.per_node_exists = True
         if not self.shared_exists and not self.per_node_exists:
             raise Error(ErrorCode.JARVIS_PKG_NOT_CONFIGURED).format()
         self.Scaffold(conf_type)
