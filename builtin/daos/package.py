@@ -82,7 +82,7 @@ class Daos(Application):
         #Format storage
         EchoNode("Formatting DAOS storage").Run()
         self._FormatStorage()
-        #Link SCAFFOLD to /var/run/daos_agent
+        #Link PER_NODE_DIR to /var/run/daos_agent
         RmNode('/var/run/daos_agent', hosts=self.agent_hosts, sudo=True).Run()
         LinkNode(self.per_node_dir, '/var/run/daos_agent', hosts=self.agent_hosts, sudo=True).Run()
         #Create storage pools
@@ -100,7 +100,7 @@ class Daos(Application):
 
     def _DefineStart(self):
         #Start DAOS server
-        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
+        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['PER_NODE_DIR']}"
         EchoNode(server_start_cmd).Run()
         ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True).Run()
         SleepNode(3).Run()
@@ -162,7 +162,7 @@ class Daos(Application):
 
     def _StartServers(self):
         EchoNode("Starting DAOS server").Run()
-        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['SCAFFOLD']}"
+        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['PER_NODE_DIR']}"
         EchoNode(server_start_cmd).Run()
         ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True).Run()
         SleepNode(3).Run()
