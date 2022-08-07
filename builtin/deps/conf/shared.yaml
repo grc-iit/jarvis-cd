@@ -5,7 +5,6 @@ jarvis_cd:
   url: https://github.com/lukemartinlogan/jarvis-cd
   branch: development
   commit: null
-  path: ${PWD}
 spack:
   url: https://github.com/spack/spack
   branch: releases/v0.18
