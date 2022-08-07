@@ -1,7 +1,6 @@
 JARVIS_PATHS:
   shared: ${PWD}
   per_node: /mnt/${USER}
-HOSTS: ${SCAFFOLD}/hostfile.txt
 jarvis_cd:
   url: https://github.com/lukemartinlogan/jarvis-cd
   branch: development
