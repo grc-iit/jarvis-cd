@@ -34,9 +34,9 @@ class BasicEnvMixin:
     def LoadEnv(self):
         if not os.path.exists(self.GetLocalEnv()):
             return
-        CopyNode(self.GetLocalEnv(), self.GetEnv(), hosts=self.all_hosts).Run()
+        CopyNode(self.GetLocalEnv(), self.GetEnv(), hosts=self.jarvis_env_hosts).Run()
 
     def UnloadEnv(self):
         if not os.path.exists(self.GetLocalEnv()):
             return
-        RmNode(self.GetEnv(), hosts=self.all_hosts, shell=True).Run()
+        RmNode(self.GetEnv(), hosts=self.jarvis_env_hosts, shell=True).Run()

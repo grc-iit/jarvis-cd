@@ -25,6 +25,11 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
         self.jarvis_shared_pkg_dir = self.jarvis_manager.GetPkgInstanceDir(shared=True)
         self.jarvis_per_node_pkg_dir = self.jarvis_manager.GetPkgInstanceDir(shared=False)
         self.jarvis_env = os.path.join(self.jarvis_root, '.jarvis_env')
+        if self.jarvis_shared_pkg_dir is not None:
+            self.jarvis_env_hosts = None
+        else:
+            self.jarvis_env_hosts = self.all_hosts
+
         self.package_root = os.path.dirname(inspect.getfile(self.__class__))
         self.shared_dir = None
         self.shared_exists = False
