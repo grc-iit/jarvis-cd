@@ -46,20 +46,18 @@ class Deps(Launcher):
     def _DepsArgs(self, parser):
         parser.add_argument('package_name', metavar='pkg', type=str, help="name of package to install")
 
-    def Install(self, package_name, do_python):
+    def Install(self, package_name, do_python, sudo):
         if package_name == 'jarvis' or package_name == 'all':
             jarvis_conf = os.path.join(self.jarvis_root, 'jarvis_conf.yaml')
 
             #Create the jarvis shared directory
-            MkdirNode(self.jarvis_shared_pkg_dir).Run()
-            if not os.path.exists(self.jarvis_shared_pkg_dir):
-                MkdirNode(self.jarvis_shared_pkg_dir, sudo=True).Run()
+            MkdirNode(self.jarvis_shared_pkg_dir, sudo=sudo).Run()
+            if sudo:
                 ChownFS(self.jarvis_shared_pkg_dir).Run()
 
             #Create the jarvis per-node directory
-            MkdirNode(self.jarvis_per_node_pkg_dir, hosts=self.all_hosts).Run()
-            if not os.path.exists(self.jarvis_per_node_pkg_dir):
-                MkdirNode(self.jarvis_per_node_pkg_dir, hosts=self.all_hosts, sudo=True).Run()
+            MkdirNode(self.jarvis_per_node_pkg_dir, hosts=self.all_hosts, sudo=sudo).Run()
+            if sudo:
                 ChownFS(self.jarvis_per_node_pkg_dir, hosts=self.all_hosts).Run()
 
             if 'HOSTS' in self.config and isinstance(self.config['HOSTS'], str):
@@ -87,6 +85,7 @@ class Deps(Launcher):
     def _InstallArgs(self, parser):
         self._DepsArgs(parser)
         parser.add_argument('--do_python', action='store_true', help='Whether or not to install python as dependency')
+        parser.add_argument('--sudo', action='store_false', help='Whether or not to use sudo when creating jarvis directories')
 
     def Update(self, package_name):
         ExecNode(f"jarvis deps local-update {package_name} -C {self.jarvis_root}", hosts=self.jarvis_hosts).Run()

@@ -29,6 +29,7 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
             self.jarvis_env_hosts = None
         else:
             self.jarvis_env_hosts = self.all_hosts
+        envbash.load_envbash(self.jarvis_env)
 
         self.package_root = os.path.dirname(inspect.getfile(self.__class__))
         self.shared_dir = None
@@ -37,7 +38,6 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
         self.per_node_exists = False
         self.scaffold_dir = None
         self.scaffold_hosts = None
-        envbash.load_envbash(self.jarvis_env)
 
         #Get all paths for a package (if it exists)
         if pkg_id is not None:
