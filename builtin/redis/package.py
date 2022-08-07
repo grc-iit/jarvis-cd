@@ -22,12 +22,12 @@ class Redis(Application):
         self.server_hosts = self.all_hosts.SelectHosts(self.config['SERVER']['hosts'])
         self.agent_hosts = self.all_hosts.SelectHosts(self.config['AGENT']['hosts'])
         self.control_hosts = self.all_hosts.SelectHosts(self.config['CONTROL']['hosts'])
-        self.daos_all_hosts = self.all_hosts
+        self.all_hosts = self.all_hosts
         if 'DAOS_HOSTS' in self.config:
-            self.daos_all_hosts = Hostfile().LoadHostfile(self.config['DAOS_HOSTS'])
-        self.daos_server_hosts = self.daos_all_hosts.SelectHosts(self.config['SERVER']['hosts'])
-        self.daos_agent_hosts = self.daos_all_hosts.SelectHosts(self.config['AGENT']['hosts'])
-        self.daos_control_hosts = self.daos_all_hosts.SelectHosts(self.config['CONTROL']['hosts'])
+            self.all_hosts = Hostfile().LoadHostfile(self.config['DAOS_HOSTS'])
+        self.server_hosts = self.all_hosts.SelectHosts(self.config['SERVER']['hosts'])
+        self.agent_hosts = self.all_hosts.SelectHosts(self.config['AGENT']['hosts'])
+        self.control_hosts = self.all_hosts.SelectHosts(self.config['CONTROL']['hosts'])
         self.pools_by_label = {}
 
     def Install(self):
