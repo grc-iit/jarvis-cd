@@ -85,7 +85,7 @@ class Deps(Launcher):
     def _InstallArgs(self, parser):
         self._DepsArgs(parser)
         parser.add_argument('--do_python', action='store_true', help='Whether or not to install python as dependency')
-        parser.add_argument('--sudo', action='store_false', help='Whether or not to use sudo when creating jarvis directories')
+        parser.add_argument('--sudo', action='store_true', help='Whether or not to use sudo when creating jarvis directories')
 
     def Update(self, package_name):
         ExecNode(f"jarvis deps local-update {package_name} -C {self.jarvis_root}", hosts=self.jarvis_hosts).Run()
