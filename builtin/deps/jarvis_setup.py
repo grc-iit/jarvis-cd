@@ -16,11 +16,11 @@ class JarvisSetup(Installer):
                 cmd_re="export JARVIS_ROOT",
                 op=EnvNodeOps.SET).Run()
         EnvNode(self.jarvis_env,
-                cmd=f"export JARVIS_SHARED_PKG_DIR={self.jarvis_shared_pkg_dir}",
+                cmd=f"export JARVIS_SHARED_DIR={self.jarvis_shared_pkg_dir}",
                 cmd_re="export JARVIS_SHARED_PKG_DIR",
                 op=EnvNodeOps.SET).Run()
         EnvNode(self.jarvis_env,
-                cmd=f"export JARVIS_PER_NODE_PKG_DIR={self.jarvis_per_node_pkg_dir}",
+                cmd=f"export JARVIS_PER_NODE_DIR={self.jarvis_per_node_pkg_dir}",
                 cmd_re="export JARVIS_PER_NODE_PKG_DIR",
                 op=EnvNodeOps.SET).Run()
         EnvNode(self.jarvis_env,
