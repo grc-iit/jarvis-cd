@@ -72,7 +72,7 @@ class Daos(Application):
             f"{self.shared_dir}/jarvis_conf.yaml",
             f"{self.shared_dir}/daosCA" if self.config['SECURE'] else None
         ]
-        CopyNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.shared_hosts).Run()
+        CopyNode(to_copy, self.shared_dir, hosts=self.shared_hosts).Run()
         #Start dummy DAOS server (on all server nodes)
         self._StartServers()
         # Get networking options
@@ -142,7 +142,7 @@ class Daos(Application):
 
     def _DefineStop(self):
         #Politefully stop servers
-        server_stop_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg system stop -o {self.config['CONF']['CONTROL']} -d {self.config['SCAFFOLD']}"
+        server_stop_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg system stop -o {self.config['CONF']['CONTROL']} -d {self.per_node_dir}"
         ExecNode(server_stop_cmd, sudo=True).Run()
         #Unmount containers
         for container in self.config['CONTAINERS']:
@@ -153,12 +153,12 @@ class Daos(Application):
         KillNode('.*daos.*', hosts=self.all_hosts).Run()
 
     def _DefineStatus(self):
-        cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['SCAFFOLD']}/daos_control.yaml system query -v"
+        cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.shared_dir}/daos_control.yaml system query -v"
         ExecNode(cmd, hosts=self.all_hosts).Run()
 
     def _StartServers(self):
         EchoNode("Starting DAOS server").Run()
-        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.config['PER_NODE_DIR']}"
+        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.per_node_dir}"
         EchoNode(server_start_cmd).Run()
         ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True).Run()
         SleepNode(3).Run()
