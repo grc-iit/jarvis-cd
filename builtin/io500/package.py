@@ -29,23 +29,23 @@ class Io500(Application):
         MkdirNode(self.shared_dir, hosts=self.all_hosts).Run()
         LinkSpackage(self.config['IO500_SPACK'], self.config['IO500_ROOT'], hosts=self.all_hosts).Run()
 
+        #Get DAOS info
+        mount = self.daos.config['CONTAINERS'][0]['mount']
+        pool_label = self.config['DAOS']['pool']
+        container_label = self.config['DAOS']['container']
+        pool_uuid = self.daos.GetPoolUUID(pool_label)
+        container_uuid = self.daos.GetContainerUUID(pool_uuid, container_label)
+
         #Create io500 sections
         io500_ini = configparser.ConfigParser()
         io500_ini['DEBUG'] = self.config['DEBUG']
         io500_ini['GLOBAL'] = self.config['GLOBAL']
-        io500_ini['GLOBAL']['datadir'] = self.config['DAOS']['mount']
+        io500_ini['GLOBAL']['datadir'] = mount
         #io500_ini['GLOBAL']['drop-caches-cmd'] = DropCaches().GetCommands()[0]
         io500_ini['ior-easy'] = self.config['ior-easy']
         io500_ini['ior-hard'] = self.config['ior-hard']
         io500_ini['mdtest-easy'] = self.config['mdtest-easy']
         io500_ini['mdtest-hard'] = self.config['mdtest-hard']
-
-        #Get DAOS info
-        mount = self.config['DAOS']['mount']
-        pool_label = self.config['DAOS']['pool']
-        container_label = self.config['DAOS']['container']
-        pool_uuid = self.daos.GetPoolUUID(pool_label)
-        container_uuid = self.daos.GetContainerUUID(pool_uuid, container_label)
 
         #Add DAOS API to io500 config
         if 'DAOS' in self.config:
