@@ -13,7 +13,7 @@ import os
 class Io500(Application):
     def _ProcessConfig(self):
         super()._ProcessConfig()
-        self.daos = Daos(scaffold_dir=self.config['DAOS']['scaffold']).LoadConfig()
+        self.daos = Daos(pkg_id=self.config['DAOS']['pkg_id'])
 
     def _DFSApi(self, pool_uuid, container_uuid, mount, oclass=True):
         cmd = []
@@ -26,7 +26,7 @@ class Io500(Application):
         return ' '.join(cmd)
 
     def _DefineInit(self):
-        MkdirNode(self.scaffold_dir, hosts=self.all_hosts).Run()
+        MkdirNode(self.shared_dir, hosts=self.all_hosts).Run()
         LinkSpackage(self.config['IO500_SPACK'], self.config['IO500_ROOT'], hosts=self.all_hosts).Run()
 
         #Create io500 sections
@@ -55,7 +55,7 @@ class Io500(Application):
             io500_ini['mdtest-hard']['API'] = self._DFSApi(pool_uuid, container_uuid, mount, oclass=False)
 
         #Create io500 configuration
-        IniFile(f"{self.scaffold_dir}/io500.ini").Save(io500_ini)
+        IniFile(f"{self.shared_dir}/io500.ini").Save(io500_ini)
 
         #Create io500 environment file
         self.env = [
@@ -66,14 +66,14 @@ class Io500(Application):
         ]
 
     def _DefineStart(self):
-        MPINode(f"{self.config['IO500_ROOT']}/bin/io500 {self.scaffold_dir}/io500.ini",
+        MPINode(f"{self.config['IO500_ROOT']}/bin/io500 {self.shared_dir}/io500.ini",
                 self.config['MPI']['nprocs'], hosts=self.all_hosts, collect_output=False).Run()
 
     def _DefineClean(self):
         paths = [
-            f"{self.scaffold_dir}/datafiles",
-            f"{self.scaffold_dir}/io500_results",
-            f"{self.scaffold_dir}/io500.ini"
+            f"{self.shared_dir}/datafiles",
+            f"{self.shared_dir}/io500_results",
+            f"{self.shared_dir}/io500.ini"
         ]
         RmNode(paths).Run()
 

@@ -1,7 +1,7 @@
 JARVIS_PATHS:
   shared: null
   per_node: ${PWD}
-HOSTS: ${SCAFFOLD}/hostfile.txt
+HOSTS: ${SHARED_DIR}/hostfile.txt
 SSH:
   primary:
     username: cc

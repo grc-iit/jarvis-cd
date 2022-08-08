@@ -1,24 +1,24 @@
 DAOS_SPACK:
   package_name: daos
-DAOS_ROOT: ${SCAFFOLD}/daos_install
+DAOS_ROOT: ${SHARED_DIR}/daos_install
 NAME: daos_server
 PORT: 10001
 SECURE: false
-HOSTS: ${SCAFFOLD}/hostfile.txt
+HOSTS: ${SHARED_DIR}/hostfile.txt
 CONF:
-  SERVER: ${SCAFFOLD}/daos_server.yaml
-  AGENT: ${SCAFFOLD}/daos_agent.yaml
-  CONTROL: ${SCAFFOLD}/daos_control.yaml
+  SERVER: ${SHARED_DIR}/daos_server.yaml
+  AGENT: ${SHARED_DIR}/daos_agent.yaml
+  CONTROL: ${SHARED_DIR}/daos_control.yaml
 SERVER:
   hosts: 1-9
   provider: ofi+sockets
   telemetry_port: 9191
-  control_log_file: ${SCAFFOLD}/daos_server.log
+  control_log_file: ${SHARED_DIR}/daos_server.log
   transport_config:
-    ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
-    cert: ${SCAFFOLD}/daosCA/certs/server.crt
-    client_cert_dir: ${SCAFFOLD}/daosCA/certs
-    key: ${SCAFFOLD}/daosCA/certs/server.key
+    ca_cert: ${SHARED_DIR}/daosCA/certs/daosCA.crt
+    cert: ${SHARED_DIR}/daosCA/certs/server.crt
+    client_cert_dir: ${SHARED_DIR}/daosCA/certs
+    key: ${SHARED_DIR}/daosCA/certs/server.key
   engines:
     -
       targets: 1
@@ -26,28 +26,28 @@ SERVER:
       nr_xs_helpers: 0
       fabric_iface: ens3
       fabric_iface_port: 31416
-      log_file: ${SCAFFOLD}/daos_engine.0.log
+      log_file: ${SHARED_DIR}/daos_engine.0.log
       env_vars:
         - FI_SOCKETS_MAX_CONN_RETRY=1
         - FI_SOCKETS_CONN_TIMEOUT=2000
       storage:
         - class: ram
           scm_size: 80
-          scm_mount: '${SCAFFOLD}/scm_test'
+          scm_mount: '${SHARED_DIR}/scm_test'
 AGENT:
   hosts: 1-9
   transport_config:
-    ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
-    cert: ${SCAFFOLD}/daosCA/certs/agent.crt
-    key: ${SCAFFOLD}/daosCA/certs/agent.key
-  runtime_dir: ${SCAFFOLD}
-  log_file: ${SCAFFOLD}/daos_agent.log
+    ca_cert: ${SHARED_DIR}/daosCA/certs/daosCA.crt
+    cert: ${SHARED_DIR}/daosCA/certs/agent.crt
+    key: ${SHARED_DIR}/daosCA/certs/agent.key
+  runtime_dir: ${SHARED_DIR}
+  log_file: ${SHARED_DIR}/daos_agent.log
 CONTROL:
   hosts: 1-9
   transport_config:
-    ca_cert: ${SCAFFOLD}/daosCA/certs/daosCA.crt
-    cert: ${SCAFFOLD}/daosCA/certs/admin.crt
-    key: ${SCAFFOLD}/daosCA/certs/admin.key
+    ca_cert: ${SHARED_DIR}/daosCA/certs/daosCA.crt
+    cert: ${SHARED_DIR}/daosCA/certs/admin.crt
+    key: ${SHARED_DIR}/daosCA/certs/admin.key
 POOLS:
   - label: io500_pool
     size: 600G

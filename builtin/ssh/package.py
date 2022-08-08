@@ -70,7 +70,7 @@ class Ssh(Launcher):
         hosts = None
         if rr:
             hosts = self.all_hosts
-            CopyNode(self.scaffold_dir, self.scaffold_dir, hosts=hosts).Run()
+            CopyNode(self.shared_dir, self.shared_dir, hosts=hosts).Run()
         ToOpenSSHConfig(register_hosts=self.all_hosts, register_ssh=self.ssh_info, hosts=hosts).Run()
 
         for key,ssh_info in self.ssh_keys.items():

@@ -17,7 +17,7 @@ class Orangefs(Launcher):
         self.client_hosts = Hostfile().LoadHostfile(self.config['CLIENT']['CLIENT_HOST_FILE'])
 
         self.pvfs_genconfig = os.path.join(self.config["COMMON"]["ORANGEFS_INSTALL_DIR"], "bin", "pvfs2-genconfig")
-        self.pfs_conf = os.path.join(self.scaffold_dir,"pfs_{}.conf".format(len(self.server_data_hosts)))
+        self.pfs_conf = os.path.join(self.shared_dir,"pfs_{}.conf".format(len(self.server_data_hosts)))
         self.pfs_conf_scp = "{}_src".format(self.pfs_conf)
 
     def SetNumHosts(self, num_data_hosts, num_meta_hosts, num_client_hosts):

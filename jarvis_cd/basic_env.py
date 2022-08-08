@@ -17,7 +17,7 @@ class BasicEnvMixin:
 
     def GetLocalEnv(self):
         filename = self.GetEnvFilename()
-        return os.path.join(self.scaffold_dir, filename)
+        return os.path.join(self.shared_dir, filename)
 
     def SaveEnv(self):
         env = self.env

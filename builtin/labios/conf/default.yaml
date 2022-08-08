@@ -6,7 +6,7 @@ LABIOS:
   PFS_PATH: ${HOME}/pfs
   ASSIGNMENT_POLICY: RANDOM
   TS_NUM_WORKER_THREADS: 8
-  CONF: ${SCAFFOLD}/labios_conf.yaml
+  CONF: ${SHARED_DIR}/labios_conf.yaml
 WORKER:
   NPROCS: 1
   HOSTS: 1
@@ -29,28 +29,28 @@ NATS:
   NATS_SPACK:
     package_name: nats-server
 MEMCACHED_CLIENT:
-  SCAFFOLD: ${SCAFFOLD}/memcached_client
+  SCAFFOLD: ${SHARED_DIR}/memcached_client
   HOSTS: 1
   PORT: 11211
-  LOG_PATH: ${SCAFFOLD}/memcached_client/log.txt
-  MEMCACHED_ROOT: ${SCAFFOLD}/memcached_client/memcached_install
+  LOG_PATH: ${SHARED_DIR}/memcached_client/log.txt
+  MEMCACHED_ROOT: ${SHARED_DIR}/memcached_client/memcached_install
   MAX_ITEM_SIZE: 4m
 MEMCACHED_SERVER:
-  SCAFFOLD: ${SCAFFOLD}/memcached_server
-  MEMCACHED_ROOT: ${SCAFFOLD}/memcached_server/memcached_install
+  SCAFFOLD: ${SHARED_DIR}/memcached_server
+  MEMCACHED_ROOT: ${SHARED_DIR}/memcached_server/memcached_install
   HOSTS: 1
   PORT: 11212
-  LOG_PATH: ${SCAFFOLD}/memcached_server/log.txt
+  LOG_PATH: ${SHARED_DIR}/memcached_server/log.txt
   MAX_ITEM_SIZE: 4m
 NATS_CLIENT:
-  SCAFFOLD: ${SCAFFOLD}/nats_client
-  NATS_ROOT: ${SCAFFOLD}/nats_client/nats_install
+  SCAFFOLD: ${SHARED_DIR}/nats_client
+  NATS_ROOT: ${SHARED_DIR}/nats_client/nats_install
   HOSTS: 1
   PORT: 4222
-  LOG_PATH: ${SCAFFOLD}/nats_client/log.txt
+  LOG_PATH: ${SHARED_DIR}/nats_client/log.txt
 NATS_SERVER:
-  SCAFFOLD: ${SCAFFOLD}/nats_server
-  NATS_ROOT: ${SCAFFOLD}/nats_server/nats_install
+  SCAFFOLD: ${SHARED_DIR}/nats_server
+  NATS_ROOT: ${SHARED_DIR}/nats_server/nats_install
   HOSTS: 1
   PORT: 4223
-  LOG_PATH: ${SCAFFOLD}/nats_server/log.txt
+  LOG_PATH: ${SHARED_DIR}/nats_server/log.txt

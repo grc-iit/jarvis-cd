@@ -2,9 +2,9 @@ SCAFFOLD: null
 SCAFFOLD_SHARED: true
 MEMCACHED_SPACK:
   package_name: memcached
-MEMCACHED_ROOT: ${SCAFFOLD}/memcached_install
+MEMCACHED_ROOT: ${SHARED_DIR}/memcached_install
 HOSTS: ['localhost']
 MEMCACHED_HOST: 1
 PORT: 11211
-LOG_PATH: ${SCAFFOLD}/log.txt
+LOG_PATH: ${SHARED_DIR}/log.txt
 MAX_ITEM_SIZE: 4m

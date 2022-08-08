@@ -3,7 +3,7 @@ import os
 
 class YAMLCacheMixin:
     def ScaffoldCachePath(self):
-        return os.path.join(self.scaffold_dir, 'jarvis_cache.yaml')
+        return os.path.join(self.shared_dir, 'jarvis_cache.yaml')
 
     def LoadCache(self):
         if not os.path.exists(self.ScaffoldCachePath()):

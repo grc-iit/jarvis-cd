@@ -13,7 +13,7 @@ class NatsServer(Application):
 
     def _DefineInit(self):
         #Create SCAFFOLD on all nodes
-        MkdirNode(self.scaffold_dir, hosts=self.all_hosts).Run()
+        MkdirNode(self.shared_dir, hosts=self.all_hosts).Run()
         #Create link to NATS spackage
         LinkSpackage(self.config['NATS_SPACK'], self.config['NATS_ROOT'], hosts=self.all_hosts).Run()
 

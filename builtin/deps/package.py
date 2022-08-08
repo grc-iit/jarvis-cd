@@ -69,7 +69,7 @@ class Deps(Launcher):
                 jarvis_conf,
                 hostfile
             ]
-            CopyNode(files, self.scaffold_dir, hosts=self.jarvis_hosts).Run()
+            CopyNode(files, self.shared_dir, hosts=self.jarvis_hosts).Run()
             cmds = [
                 f"cd {self.jarvis_root}",
                 f"chmod +x {self.jarvis_root}/dependencies.sh",

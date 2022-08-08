@@ -5,17 +5,17 @@ BASIC:
     FSNAME: "lustrefs"
 MANAGEMENT_SERVER:
     STORAGE: "/dev/sdb"
-    MOUNT_POINT: "${SCAFFOLD}/lustre_mounts/mgt_mount"
+    MOUNT_POINT: "${SHARED_DIR}/lustre_mounts/mgt_mount"
     HOST: "10.0.2.15"
 METADATA_SERVER:
     STORAGE: "/dev/sdc"
-    MOUNT_POINT: "${SCAFFOLD}/lustre_mounts/mdt_mount"
+    MOUNT_POINT: "${SHARED_DIR}/lustre_mounts/mdt_mount"
     HOST: "10.0.2.15"
 OBJECT_STORAGE_SERVERS:
-    MOUNT_POINT_BASE: "${SCAFFOLD}/lustre_mounts/ost"
-    HOSTFILE: "${SCAFFOLD}/oss_hosts.txt"
+    MOUNT_POINT_BASE: "${SHARED_DIR}/lustre_mounts/ost"
+    HOSTFILE: "${SHARED_DIR}/oss_hosts.txt"
     OSTS:
         - "/dev/sdd"
 CLIENT:
-    MOUNT_POINT: "${SCAFFOLD}/lustre_mounts/client_mount"
-    HOSTFILE: "${SCAFFOLD}/client_hosts.txt"
+    MOUNT_POINT: "${SHARED_DIR}/lustre_mounts/client_mount"
+    HOSTFILE: "${SHARED_DIR}/client_hosts.txt"

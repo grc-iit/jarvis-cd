@@ -13,7 +13,7 @@ class Memcached(Application):
 
     def _DefineInit(self):
         #Create SCAFFOLD on all nodes
-        MkdirNode(self.scaffold_dir, hosts=self.all_hosts).Run()
+        MkdirNode(self.shared_dir, hosts=self.all_hosts).Run()
         #Create link to memcached spackage
         LinkSpackage(self.config['MEMCACHED_SPACK'], self.config['MEMCACHED_ROOT'], hosts=self.all_hosts).Run()
 

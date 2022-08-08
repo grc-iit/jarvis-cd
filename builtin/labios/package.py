@@ -30,7 +30,7 @@ class Labios(Application):
 
     def _DefineInit(self):
         #Create SCAFFOLD on all nodes
-        MkdirNode(self.scaffold_dir, hosts=self.all_hosts).Run()
+        MkdirNode(self.shared_dir, hosts=self.all_hosts).Run()
 
         #Mkdir all scaffold directories
         MkdirNode(self.config['MEMCACHED_CLIENT']['SCAFFOLD']).Run()

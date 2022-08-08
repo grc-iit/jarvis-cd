@@ -24,7 +24,7 @@ class Application(Launcher):
         pass
 
     def Init(self):
-        MkdirNode(self.scaffold_dir, hosts=self.all_hosts).Run()
+        MkdirNode(self.shared_dir, hosts=self.all_hosts).Run()
         self._DefineInit()
         self.SaveCache()
         self.SaveEnv()

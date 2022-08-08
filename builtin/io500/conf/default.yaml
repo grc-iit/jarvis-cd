@@ -1,4 +1,4 @@
-HOSTS: ${SCAFFOLD}/hostfile.txt
+HOSTS: ${SHARED_DIR}/hostfile.txt
 GLOBAL:
   datadir: ./datafiles
   timestamp-datadir: TRUE

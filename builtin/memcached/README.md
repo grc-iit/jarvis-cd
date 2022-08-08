@@ -40,13 +40,13 @@ jarvis daos start
 
 ```bash
 #Start DAOS server (per-node)
-sudo ${DAOS_ROOT}/bin/daos_server start -o ${SCAFFOLD}/daos_server.yaml -d ${SCAFFOLD}
+sudo ${DAOS_ROOT}/bin/daos_server start -o ${SHARED_DIR}/daos_server.yaml -d ${SHARED_DIR}
 #Start DAOS agents (per-node)
-sudo ${DAOS_ROOT}/bin/daos_agent start -o ${SCAFFOLD}/daos_agent.yaml -s ${SCAFFOLD}
+sudo ${DAOS_ROOT}/bin/daos_agent start -o ${SHARED_DIR}/daos_agent.yaml -s ${SHARED_DIR}
 #Format DAOS storage (per-node, init)
-sudo ${DAOS_ROOT}/bin/dmg storage format -o ${SCAFFOLD}/daos_control.yaml 
+sudo ${DAOS_ROOT}/bin/dmg storage format -o ${SHARED_DIR}/daos_control.yaml 
 #Check if DAOS has started (per-node)
-sudo ${DAOS_ROOT}/bin/dmg -o ${SCAFFOLD}/daos_control.yaml system query -v
+sudo ${DAOS_ROOT}/bin/dmg -o ${SHARED_DIR}/daos_control.yaml system query -v
 #Check status (per-node)
 cat "/tmp/daos_agent.log"
 ```

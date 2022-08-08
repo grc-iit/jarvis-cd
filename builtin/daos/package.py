@@ -40,14 +40,14 @@ class Daos(Application):
         else:
             print("Requires variant OS")
             exit()
-        ExecNode(f"spack install daos", hosts=self.scaffold_hosts).Run()
+        ExecNode(f"spack install daos", hosts=self.shared_hosts).Run()
 
     def _InstallArgs(self, parser):
         parser.add_argument('--sys', metavar='os', default='centos8', help='OS for installing dependencies (centos8,centos7,ubuntu20,leap15)')
 
     def _DefineInit(self):
         #Create SCAFFOLD on all nodes
-        MkdirNode(self.scaffold_dir, hosts=self.scaffold_hosts).Run()
+        MkdirNode(self.shared_dir, hosts=self.shared_hosts).Run()
         MkdirNode(self.per_node_dir, hosts=self.all_hosts).Run()
         #Create DAOS_ROOT sybmolic link
         LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.all_hosts).Run()
@@ -69,10 +69,10 @@ class Daos(Application):
             self.config['CONF']['AGENT'],
             self.config['CONF']['SERVER'],
             self.config['CONF']['CONTROL'],
-            f"{self.scaffold_dir}/jarvis_conf.yaml",
-            f"{self.scaffold_dir}/daosCA" if self.config['SECURE'] else None
+            f"{self.shared_dir}/jarvis_conf.yaml",
+            f"{self.shared_dir}/daosCA" if self.config['SECURE'] else None
         ]
-        CopyNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.scaffold_hosts).Run()
+        CopyNode(to_copy, f"{self.config['SCAFFOLD']}", hosts=self.shared_hosts).Run()
         #Start dummy DAOS server (on all server nodes)
         self._StartServers()
         # Get networking options
@@ -123,9 +123,9 @@ class Daos(Application):
             self.config['CONF']['AGENT'],
             self.config['CONF']['SERVER'],
             self.config['CONF']['CONTROL'],
-            f"{self.scaffold_dir}/daosCA",
-            os.path.join(self.scaffold_dir, '*.sock'),
-            os.path.join(self.scaffold_dir, '*.log')
+            f"{self.shared_dir}/daosCA",
+            os.path.join(self.shared_dir, '*.sock'),
+            os.path.join(self.shared_dir, '*.log')
         ]
         RmNode(to_rm, hosts=self.all_hosts).Run()
 
@@ -169,7 +169,7 @@ class Daos(Application):
         ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True).Run()
 
     def _CreateCertificates(self):
-        gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.scaffold_dir}"
+        gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.shared_dir}"
         ExecNode(gen_certificates_cmd).Run()
 
     def _FormatStorage(self):

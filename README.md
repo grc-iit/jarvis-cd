@@ -113,7 +113,7 @@ jarvis ssh scaffold remote
 
 Modify jarvis_conf.yaml to reflect your allocation and SSH keys:
 ```yaml
-HOSTS: ${SCAFFOLD}/hostfile.txt
+HOSTS: ${SHARED_DIR}/hostfile.txt
 SSH:
   primary:
     username: cc
@@ -168,7 +168,7 @@ Edit "hostfile" to have a line-by-line list of all host ip addresses:
 
 Modify jarvis_conf.yaml to reflect your allocation and SSH keys:
 ```yaml
-HOSTS: ${SCAFFOLD}/hostfile.txt
+HOSTS: ${SHARED_DIR}/hostfile.txt
 SSH:
   primary:
     username: cc
