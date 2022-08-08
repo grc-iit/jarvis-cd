@@ -17,11 +17,11 @@ class JarvisSetup(Installer):
                 op=EnvNodeOps.SET).Run()
         EnvNode(self.jarvis_env,
                 cmd=f"export JARVIS_SHARED_DIR={self.jarvis_shared_pkg_dir}",
-                cmd_re="export JARVIS_SHARED_PKG_DIR",
+                cmd_re="export JARVIS_SHARED_DIR",
                 op=EnvNodeOps.SET).Run()
         EnvNode(self.jarvis_env,
                 cmd=f"export JARVIS_PER_NODE_DIR={self.jarvis_per_node_pkg_dir}",
-                cmd_re="export JARVIS_PER_NODE_PKG_DIR",
+                cmd_re="export JARVIS_PER_NODE_DIR",
                 op=EnvNodeOps.SET).Run()
         EnvNode(self.jarvis_env,
                 "export PYTHONPATH=`sudo -u {self.username} $JARVIS_ROOT/bin/jarvis-py-paths`:$PYTHONPATH",
