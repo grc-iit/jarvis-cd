@@ -14,10 +14,10 @@ class Base(Launcher):
 
     def Cd(self, pkg_id):
         self._PackagePathsFromID(pkg_id)
-        if self.shared_exists:
+        if os.path.exists(self.shared_dir):
             print(self.shared_dir)
             return self.shared_dir
-        elif self.per_node_exists:
+        elif os.path.exists(self.per_node_dir):
             print(self.per_node_dir)
             return self.per_node_dir
         return None
@@ -26,7 +26,7 @@ class Base(Launcher):
 
     def CdShared(self, pkg_id):
         self._PackagePathsFromID(pkg_id)
-        if self.shared_exists:
+        if os.path.exists(self.shared_dir):
             print(self.shared_dir)
         return self.shared_dir
     def _CdSharedArgs(self, parser):
@@ -34,7 +34,7 @@ class Base(Launcher):
 
     def CdPerNode(self, pkg_id):
         self._PackagePathsFromID(pkg_id)
-        if self.per_node_exists:
+        if os.path.exists(self.per_node_dir):
             print(self.per_node_dir)
         return self.per_node_dir
     def _CdPerNodeArgs(self, parser):
