@@ -1,7 +1,6 @@
 from jarvis_cd.shell.copy_node import CopyNode
 from jarvis_cd.fs.rm_node import RmNode
 from jarvis_cd.shell.bash_env import BashEnv
-import Inher
 import os
 
 class BasicEnvMixin:
