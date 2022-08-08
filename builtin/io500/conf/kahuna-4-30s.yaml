@@ -3,7 +3,7 @@ IO500_SPACK:
   package_name: daos-io500
 IO500_ROOT: ${PER_NODE_DIR}/io500_install
 MPI:
-  nprocs: 72
+  nprocs: 144
 DAOS:
   pool: io500_pool
   container: io500_container
@@ -32,4 +32,4 @@ ior-hard:
 mdtest-hard:
   n:  1000000
 find:
-  nproc:  72
+  nproc:  144

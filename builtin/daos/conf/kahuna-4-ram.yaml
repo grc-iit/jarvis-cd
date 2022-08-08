@@ -32,7 +32,7 @@ SERVER:
         - FI_SOCKETS_CONN_TIMEOUT=2000
       storage:
         - class: ram
-          scm_size: 100
+          scm_size: 200
           scm_mount: '${PER_NODE_DIR}/scm_test'
 AGENT:
   hosts: 1-3
@@ -50,7 +50,7 @@ CONTROL:
     key: ${SHARED_DIR}/daosCA/certs/admin.key
 POOLS:
   - label: io500_pool
-    size: 250G
+    size: 500G
 CONTAINERS:
   - label: io500_container
     pool: io500_pool

@@ -180,7 +180,13 @@ class Daos(Application):
         ExecNode(network_check_cmd, sudo=True, shell=True).Run()
 
     def _CreatePool(self, pool_info):
-        create_pool_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} pool create -z {pool_info['size']} --label {pool_info['label']}"
+        create_pool_cmd = [
+            f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} pool create",
+            f"-z {pool_info['size']}"
+            f"--label {pool_info['label']}"
+            f"--nranks={len(self.server_hosts)}"
+        ]
+        create_pool_cmd = " ".join(create_pool_cmd)
         EchoNode(create_pool_cmd).Run()
         ExecNode(create_pool_cmd).Run()
 
