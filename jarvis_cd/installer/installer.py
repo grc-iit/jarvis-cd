@@ -1,5 +1,4 @@
 from abc import ABC,abstractmethod
-import envbash
 import os
 
 class Installer(ABC):
@@ -9,7 +8,6 @@ class Installer(ABC):
         self.jarvis_root = jarvis_root
         self.jarvis_shared = jarvis_shared
         self.jarvis_per_node = jarvis_per_node
-        envbash.load_envbash(self.jarvis_env)
 
     @abstractmethod
     def LocalInstall(self):

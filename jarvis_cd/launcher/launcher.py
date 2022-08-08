@@ -7,8 +7,8 @@ from jarvis_cd.jarvis_manager import JarvisManager
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.exception import Error,ErrorCode
 from jarvis_cd.fs.mkdir_node import MkdirNode
+from jarvis_cd.shell.bash_env import BashEnv
 import os
-import envbash
 import inspect
 import random
 import datetime
@@ -23,7 +23,7 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
         self.jarvis_shared_pkg_dir = self.jarvis_manager.GetPkgInstanceDir(shared=True)
         self.jarvis_per_node_pkg_dir = self.jarvis_manager.GetPkgInstanceDir(shared=False)
         self.jarvis_env = os.path.join(self.jarvis_root, '.jarvis_env')
-        envbash.load_envbash(self.jarvis_env)
+        BashEnv(self.jarvis_env).Run()
 
         self.package_root = os.path.dirname(inspect.getfile(self.__class__))
         self.per_node_dir = None
