@@ -22,7 +22,7 @@ DEBUG:
   stonewall-time: 30
 ior-easy:
   transferSize:  1m
-  blockSize:  100000m
+  blockSize:  20000m
   filePerProc:  FALSE
   uniqueDir:  FALSE
 mdtest-easy:
