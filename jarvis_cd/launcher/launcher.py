@@ -61,11 +61,11 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
             return
         # Some content needs to be stored per-node
         # Other content may be stored in a shared directory
-        if self.jarvis_per_node_pkg_dir is not None and pkg_id is not None:
-            self.shared_dir = os.path.join(self.jarvis_per_node_pkg_dir, pkg_id)
-            self.shared_exists = os.path.exists(self.shared_dir)
         if self.jarvis_shared_pkg_dir is not None and pkg_id is not None:
-            self.per_node_dir = os.path.join(self.jarvis_shared_pkg_dir, pkg_id)
+            self.shared_dir = os.path.join(self.jarvis_shared_pkg_dir, pkg_id)
+            self.shared_exists = os.path.exists(self.shared_dir)
+        if self.jarvis_per_node_pkg_dir is not None and pkg_id is not None:
+            self.per_node_dir = os.path.join(self.jarvis_per_node_pkg_dir, pkg_id)
             self.per_node_exists = os.path.exists(self.per_node_dir)
 
         if self.shared_exists:
