@@ -130,4 +130,4 @@ class Deps(Launcher):
         class_name = ToCamelCase(module_name)
         module = __import__(f"jarvis_repos.builtin.deps.{module_name}", fromlist=[class_name])
         klass = getattr(module, class_name)
-        return klass(self.config, self.jarvis_env, self.jarvis_root, self.jarvis_shared_pkg_dir, self.jarvis_per_node_pkg_dir)
+        return klass(self.config, self.jarvis_env, self.jarvis_root, self.jarvis_shared, self.jarvis_per_node)

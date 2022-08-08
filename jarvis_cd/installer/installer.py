@@ -3,12 +3,12 @@ import envbash
 import os
 
 class Installer(ABC):
-    def __init__(self, config, jarvis_env, jarvis_root, jarvis_shared_pkg_dir, jarvis_per_node_pkg_dir):
+    def __init__(self, config, jarvis_env, jarvis_root, jarvis_shared, jarvis_per_node):
         self.config = config
         self.jarvis_env = jarvis_env
         self.jarvis_root = jarvis_root
-        self.jarvis_shared_pkg_dir = jarvis_shared_pkg_dir
-        self.jarvis_per_node_pkg_dir = jarvis_per_node_pkg_dir
+        self.jarvis_shared = jarvis_shared
+        self.jarvis_per_node = jarvis_per_node
         envbash.load_envbash(self.jarvis_env)
 
     @abstractmethod
