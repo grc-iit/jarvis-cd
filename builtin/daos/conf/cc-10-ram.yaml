@@ -1,6 +1,6 @@
 DAOS_SPACK:
   package_name: daos
-DAOS_ROOT: ${SHARED_DIR}/daos_install
+DAOS_ROOT: ${PER_NODE_DIR}/daos_install
 NAME: daos_server
 PORT: 10001
 SECURE: false
@@ -13,7 +13,7 @@ SERVER:
   hosts: 1-9
   provider: ofi+sockets
   telemetry_port: 9191
-  control_log_file: ${SHARED_DIR}/daos_server.log
+  control_log_file: ${PER_NODE_DIR}/daos_server.log
   transport_config:
     ca_cert: ${SHARED_DIR}/daosCA/certs/daosCA.crt
     cert: ${SHARED_DIR}/daosCA/certs/server.crt
@@ -26,22 +26,22 @@ SERVER:
       nr_xs_helpers: 0
       fabric_iface: ens3
       fabric_iface_port: 31416
-      log_file: ${SHARED_DIR}/daos_engine.0.log
+      log_file: ${PER_NODE_DIR}/daos_engine.0.log
       env_vars:
         - FI_SOCKETS_MAX_CONN_RETRY=1
         - FI_SOCKETS_CONN_TIMEOUT=2000
       storage:
         - class: ram
-          scm_size: 80
-          scm_mount: '${SHARED_DIR}/scm_test'
+          scm_size: 100
+          scm_mount: '${PER_NODE_DIR}/scm_test'
 AGENT:
   hosts: 1-9
   transport_config:
     ca_cert: ${SHARED_DIR}/daosCA/certs/daosCA.crt
     cert: ${SHARED_DIR}/daosCA/certs/agent.crt
     key: ${SHARED_DIR}/daosCA/certs/agent.key
-  runtime_dir: ${SHARED_DIR}
-  log_file: ${SHARED_DIR}/daos_agent.log
+  runtime_dir: ${PER_NODE_DIR}
+  log_file: ${PER_NODE_DIR}/daos_agent.log
 CONTROL:
   hosts: 1-9
   transport_config:
@@ -50,7 +50,7 @@ CONTROL:
     key: ${SHARED_DIR}/daosCA/certs/admin.key
 POOLS:
   - label: io500_pool
-    size: 600G
+    size: 100G
 CONTAINERS:
   - label: io500_container
     pool: io500_pool

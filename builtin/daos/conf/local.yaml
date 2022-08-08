@@ -44,7 +44,7 @@ AGENT:
     cert: ${SHARED_DIR}/daosCA/certs/agent.crt
     key: ${SHARED_DIR}/daosCA/certs/agent.key
   runtime_dir: ${SHARED_DIR}
-  log_file: ${SHARED_DIR}/daos_agent.log
+  log_file: ${PER_NODE}/daos_agent.log
 CONTROL:
   hosts: 1
   transport_config:
