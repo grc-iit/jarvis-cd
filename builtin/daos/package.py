@@ -46,9 +46,6 @@ class Daos(Application):
         parser.add_argument('--sys', metavar='os', default='centos8', help='OS for installing dependencies (centos8,centos7,ubuntu20,leap15)')
 
     def _DefineInit(self):
-        #Create SCAFFOLD on all nodes
-        MkdirNode(self.shared_dir, hosts=self.shared_hosts).Run()
-        MkdirNode(self.per_node_dir, hosts=self.all_hosts).Run()
         #Create DAOS_ROOT sybmolic link
         LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.all_hosts).Run()
         #Generate security certificates

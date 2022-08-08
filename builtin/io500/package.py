@@ -26,7 +26,6 @@ class Io500(Application):
         return ' '.join(cmd)
 
     def _DefineInit(self):
-        MkdirNode(self.shared_dir, hosts=self.all_hosts).Run()
         LinkSpackage(self.config['IO500_SPACK'], self.config['IO500_ROOT'], hosts=self.all_hosts).Run()
 
         #Get DAOS info
