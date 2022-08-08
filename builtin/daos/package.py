@@ -54,7 +54,7 @@ class Daos(Application):
         #View network ifaces
         EchoNode("Detect Network Interfaces").Run()
         if 'fabric_iface' not in self.config['SERVER']['engines'][0] or self.config['SERVER']['engines']['fabric_iface'][0] is None:
-            if 'fabric_iface' not in self.config['SERVER']['engines'][0] or self.config['SERVER']['engines']['fabric_iface'][0] is None:
+            if 'fabric_ifaces' not in self.config['SERVER']['engines'][0] or self.config['SERVER']['engines']['fabric_ifaces'][0] is None:
                 DetectNetworks().Run()
                 iface = input('Initial Network Interface: ')
                 self.config['SERVER']['engines'][0]['fabric_iface'] = iface
