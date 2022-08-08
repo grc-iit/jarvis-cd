@@ -11,7 +11,6 @@ class BashEnv(ExecNode):
 
     def _Run(self):
         super()._Run()
-        print("HERE?")
         for line in self.GetLocalStdout():
             toks = line.split('=')
             if len(toks):
