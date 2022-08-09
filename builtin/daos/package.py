@@ -31,8 +31,14 @@ class Daos(Application):
         if sys == 'ubuntu20':
             ExecNode(f"bash /tmp/daos/utils/scripts/install-ubuntu20.sh", hosts=self.all_hosts, shell=True).Run()
         elif sys == 'centos8':
-            PatchNode(os.path.join(self.package_root, "patches", "centos8_deps.patch"), "/tmp/daos", hosts=self.all_hosts).Run()
-            ExecNode(f"bash /tmp/daos/utils/scripts/install-el8.sh", hosts=self.all_hosts, shell=True).Run()
+            ExecNode('wget -O /etc/yum.repos.d/daos-packages.repo https://packages.daos.io/v2.0/EL8/packages/x86_64/daos_packages.repo',
+                     hosts=self.all_hosts, sudo=True).Run()
+            ExecNode('rpm --import https://packages.daos.io/RPM-GPG-KEY',
+                     hosts=self.all_hosts, sudo=True).Run()
+            ExecNode('yum install -y epel-release daos-server daos-client',
+                     hosts=self.all_hosts, sudo=True).Run()
+            #PatchNode(os.path.join(self.package_root, "patches", "centos8_deps.patch"), "/tmp/daos", hosts=self.all_hosts).Run()
+            #ExecNode(f"bash /tmp/daos/utils/scripts/install-el8.sh", hosts=self.all_hosts, shell=True).Run()
         elif sys == 'centos7':
             ExecNode(f"bash /tmp/daos/utils/scripts/install-centos7.sh", hosts=self.all_hosts, shell=True).Run()
         elif sys == 'leap15':
@@ -47,7 +53,10 @@ class Daos(Application):
 
     def _DefineInit(self):
         #Create DAOS_ROOT sybmolic link
-        LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.all_hosts).Run()
+        if 'DAOS_SPACK' in self.config:
+            LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.all_hosts).Run()
+        else:
+            self.config['DAOS_ROOT'] = '/usr'
         #Generate security certificates
         if self.config['SECURE']:
             self._CreateCertificates()
