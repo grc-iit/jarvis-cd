@@ -3,9 +3,9 @@ import os
 
 class SSHInfoMixin:
     def _ProcessSSHInfo(self):
-        username = None
+        username = os.environ['USER']
         pkey = None
-        password = os.environ['USER']
+        password = None
         port = None
 
         ssh_info = JarvisManager.GetInstance().GetSSHInfo()
