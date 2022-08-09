@@ -185,8 +185,8 @@ class Daos(Application):
         create_pool_cmd = [
             f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} pool create",
             f"-z {pool_info['size']}",
-            f"--label {pool_info['label']}",
-            f"--nranks={len(self.server_hosts)}"
+            f"--label {pool_info['label']}"#,
+            #f"--nranks={len(self.server_hosts)}"
         ]
         create_pool_cmd = " ".join(create_pool_cmd)
         EchoNode(create_pool_cmd).Run()
