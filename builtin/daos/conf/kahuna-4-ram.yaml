@@ -20,8 +20,7 @@ SERVER:
     client_cert_dir: ${SHARED_DIR}/daosCA/certs
     key: ${SHARED_DIR}/daosCA/certs/server.key
   engines:
-    -
-      targets: 1
+    - targets: 1
       first_core: 0
       nr_xs_helpers: 0
       fabric_iface: ens3
