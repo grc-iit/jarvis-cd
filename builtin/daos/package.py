@@ -90,9 +90,6 @@ class Daos(Application):
         #Format storage
         EchoNode("Formatting DAOS storage").Run()
         self._FormatStorage()
-        #Link PER_NODE_DIR to /var/run/daos_agent
-        RmNode('/var/run/daos_agent', hosts=self.agent_hosts, sudo=True).Run()
-        LinkNode(self.per_node_dir, '/var/run/daos_agent', hosts=self.agent_hosts, sudo=True).Run()
         #Create storage pools
         EchoNode("Create storage pools").Run()
         for pool in self.config['POOLS']:
@@ -225,6 +222,7 @@ class Daos(Application):
     def _CreateAgentConfig(self):
         agent_config = self.config.copy()['AGENT']
         del agent_config['hosts']
+        agent_config['runtime_dir'] = self.config['SERVER']['socket_dir']
         agent_config['transport_config']['allow_insecure'] = not self.config['SECURE']
         agent_config['port'] = self.config['PORT']
         agent_config['name'] = self.config['NAME']

@@ -14,6 +14,7 @@ SERVER:
   provider: ofi+sockets
   telemetry_port: 9191
   control_log_file: ${PER_NODE_DIR}/daos_server.log
+  socket_dir: ${PER_NODE_DIR}
   transport_config:
     ca_cert: ${SHARED_DIR}/daosCA/certs/daosCA.crt
     cert: ${SHARED_DIR}/daosCA/certs/server.crt
