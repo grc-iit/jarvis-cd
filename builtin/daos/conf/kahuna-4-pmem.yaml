@@ -24,7 +24,7 @@ SERVER:
     - targets: 1
       first_core: 0
       nr_xs_helpers: 0
-      fabric_iface: ens3
+      fabric_iface: ib1
       fabric_iface_port: 31416
       log_file: ${PER_NODE_DIR}/daos_engine.0.log
       env_vars:
@@ -32,7 +32,7 @@ SERVER:
         - FI_SOCKETS_CONN_TIMEOUT=2000
       storage:
         - class: dcpm
-          scm_list: ['/dev/dax1.0']
+          scm_list: ['/dev/pmem1']
           scm_mount: ${PER_NODE_DIR}/scm_test
 AGENT:
   hosts: 1-3
