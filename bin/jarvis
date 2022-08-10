@@ -58,7 +58,7 @@ if __name__ == '__main__':
     pkg_id = args.pkg_id
     no_config_ops = {'Scaffold', 'Create', 'Base', 'ListConfigs'}
     no_config_classes = {'Base'}
-    if launcher_op_name not in no_config_opts and launcher_class_name not in no_config_classes:
+    if launcher_op_name not in no_config_ops and launcher_class_name not in no_config_classes:
         launcher_instance = launcher_class(scaffold_dir=scaffold_dir, pkg_id=pkg_id, load_config=True)
         if not launcher_instance.is_scaffolded:
             print(f"No configuration file found when calling {launcher_class_name}.{launcher_op_name}.")
