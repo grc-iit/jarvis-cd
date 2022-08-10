@@ -12,40 +12,24 @@ class Base(Launcher):
     def UnloadEnv(self):
         RmNode(os.path.join(self.GetUserEnv(), '*'), hosts=self.all_hosts, shell=True).Run()
 
-    def Cd(self, pkg_id):
+    def Cd(self, pkg_id, p):
         self._PackagePathsFromID(pkg_id)
-        if os.path.exists(self.shared_dir):
+        if not p:
             print(self.shared_dir)
             return self.shared_dir
-        elif os.path.exists(self.per_node_dir):
+        else:
             print(self.per_node_dir)
             return self.per_node_dir
-        return None
     def _CdArgs(self, parser):
         parser.add_argument('pkg_id', metavar='pkg_id', type=str, help='The id of the package to cd into')
-
-    def CdShared(self, pkg_id):
-        self._PackagePathsFromID(pkg_id)
-        if os.path.exists(self.shared_dir):
-            print(self.shared_dir)
-        return self.shared_dir
-    def _CdSharedArgs(self, parser):
-        self._CdArgs(parser)
-
-    def CdPerNode(self, pkg_id):
-        self._PackagePathsFromID(pkg_id)
-        if os.path.exists(self.per_node_dir):
-            print(self.per_node_dir)
-        return self.per_node_dir
-    def _CdPerNodeArgs(self, parser):
-        self._CdArgs(parser)
+        parser.add_argument('-p', action="store_true", help='Path of the shared directory')
 
     def Rm(self, pkg_id):
         self._PackagePathsFromID(pkg_id)
         RmNode(self.shared_dir).Run()
         RmNode(self.per_node_dir, hosts=self.all_hosts).Run()
     def _RmArgs(self, parser):
-        self._CdArgs(parser)
+        parser.add_argument('pkg_id', metavar='pkg_id', type=str, help='The id of the package to cd into')
 
     def List(self):
         pkgs = set()
