@@ -112,6 +112,10 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
     def _ScaffoldArgs(self, parser):
         parser.add_argument('conf_type', metavar='type', help='the configuration file to load')
 
+    def ListConfigs(self):
+        for conf in os.listdir(self.package_root):
+            print(conf)
+
     def Create(self, pkg_id, conf_type='default'):
         self._PackagePathsFromID(pkg_id)
         if self.shared_dir is not None:
