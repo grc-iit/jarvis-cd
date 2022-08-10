@@ -113,7 +113,7 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
         parser.add_argument('conf_type', metavar='type', help='the configuration file to load')
 
     def ListConfigs(self):
-        for conf in os.listdir(self.package_root):
+        for conf in os.listdir(os.path.join(self.package_root, 'conf')):
             print(conf)
 
     def Create(self, pkg_id, conf_type='default'):
