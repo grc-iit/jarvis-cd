@@ -26,7 +26,7 @@ class Daos(Application):
 
     def Install(self, sys):
         url = 'https://github.com/daos-stack/daos.git'
-        branch = 'v2.0.0'
+        branch = 'release/2.0'
         GitNode(url, "/tmp/daos", GitOps.CLONE, branch=branch, hosts=self.all_hosts).Run()
         if sys == 'ubuntu20':
             ExecNode(f"bash /tmp/daos/utils/scripts/install-ubuntu20.sh", hosts=self.all_hosts, shell=True).Run()
