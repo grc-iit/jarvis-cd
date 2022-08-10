@@ -136,6 +136,7 @@ class Daos(Application):
             self.config['CONF']['SERVER'],
             self.config['CONF']['CONTROL'],
             f"{self.shared_dir}/daosCA",
+            self.config['DAOS_ROOT'],
             os.path.join(self.per_node_dir, '*.sock'),
             os.path.join(self.per_node_dir, '*.log')
         ]
