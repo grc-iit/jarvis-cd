@@ -12,6 +12,7 @@ CONF:
 SERVER:
   hosts: 1-3
   provider: ofi+verbs
+  socket_dir: ${PER_NODE_DIR}/daos_server
   telemetry_port: 9191
   control_log_file: ${PER_NODE_DIR}/daos_server.log
   socket_dir: ${PER_NODE_DIR}/daos_server
