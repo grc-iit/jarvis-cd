@@ -32,7 +32,7 @@ SERVER:
         - FI_SOCKETS_CONN_TIMEOUT=2000
       storage:
         - class: dcpm
-          scm_list: ['/dev/pmem1']
+          scm_list: ['/dev/pmem0']
           scm_mount: ${PER_NODE_DIR}/scm_test
 AGENT:
   hosts: 1-3
