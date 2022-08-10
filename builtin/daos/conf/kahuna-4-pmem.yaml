@@ -1,6 +1,6 @@
 DAOS_SPACK:
   package_name: daos
-DAOS_ROOT: ${SHARED_DIR}/daos_install
+DAOS_ROOT: ${PER_NODE_DIR}/daos_install
 NAME: daos_server
 PORT: 10001
 SECURE: false
@@ -32,6 +32,7 @@ SERVER:
       storage:
         - class: dcpm
           scm_list: ['/dev/dax0.0']
+          scm_mount: ${PER_NODE_DIR}/scm_test
 AGENT:
   hosts: 1-3
   transport_config:

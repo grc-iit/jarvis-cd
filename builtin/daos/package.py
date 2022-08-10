@@ -31,14 +31,14 @@ class Daos(Application):
         if sys == 'ubuntu20':
             ExecNode(f"bash /tmp/daos/utils/scripts/install-ubuntu20.sh", hosts=self.all_hosts, shell=True).Run()
         elif sys == 'centos8':
-            ExecNode('wget -O /etc/yum.repos.d/daos-packages.repo https://packages.daos.io/v2.0/EL8/packages/x86_64/daos_packages.repo',
-                     hosts=self.all_hosts, sudo=True).Run()
-            ExecNode('rpm --import https://packages.daos.io/RPM-GPG-KEY',
-                     hosts=self.all_hosts, sudo=True).Run()
-            ExecNode('yum install -y epel-release daos-server daos-client',
-                     hosts=self.all_hosts, sudo=True).Run()
-            #PatchNode(os.path.join(self.package_root, "patches", "centos8_deps.patch"), "/tmp/daos", hosts=self.all_hosts).Run()
-            #ExecNode(f"bash /tmp/daos/utils/scripts/install-el8.sh", hosts=self.all_hosts, shell=True).Run()
+            #ExecNode('wget -O /etc/yum.repos.d/daos-packages.repo https://packages.daos.io/v2.0/EL8/packages/x86_64/daos_packages.repo',
+            #         hosts=self.all_hosts, sudo=True).Run()
+            #ExecNode('rpm --import https://packages.daos.io/RPM-GPG-KEY',
+            #         hosts=self.all_hosts, sudo=True).Run()
+            #ExecNode('yum install -y epel-release daos-server daos-client',
+            #         hosts=self.all_hosts, sudo=True).Run()
+            PatchNode(os.path.join(self.package_root, "patches", "centos8_deps.patch"), "/tmp/daos", hosts=self.all_hosts).Run()
+            ExecNode(f"bash /tmp/daos/utils/scripts/install-el8.sh", hosts=self.all_hosts, shell=True).Run()
         elif sys == 'centos7':
             ExecNode(f"bash /tmp/daos/utils/scripts/install-centos7.sh", hosts=self.all_hosts, shell=True).Run()
         elif sys == 'leap15':
@@ -46,7 +46,7 @@ class Daos(Application):
         else:
             print("Requires variant OS")
             exit()
-        ExecNode(f"spack install daos", hosts=self.shared_hosts).Run()
+        ExecNode(f"spack install daos@2.0", hosts=self.shared_hosts).Run()
 
     def _InstallArgs(self, parser):
         parser.add_argument('--sys', metavar='os', default='centos8', help='OS for installing dependencies (centos8,centos7,ubuntu20,leap15)')
