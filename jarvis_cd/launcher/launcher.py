@@ -117,7 +117,7 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
         if not os.path.exists(path):
             return
         for conf in os.listdir(path):
-            print(conf)
+            print(os.path.splitext(conf)[0])
 
     def Create(self, pkg_id, conf_type='default'):
         self._PackagePathsFromID(pkg_id)
