@@ -57,6 +57,9 @@ class Daos(Application):
             LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.all_hosts).Run()
         else:
             self.config['DAOS_ROOT'] = '/usr'
+        #Create socket directories
+        MkdirNode(self.config['SERVER']['socket_dir'], hosts=self.all_hosts).Run()
+        MkdirNode(self.config['AGENT']['runtime_dir'], hosts=self.all_hosts).Run()
         #Generate security certificates
         if self.config['SECURE']:
             self._CreateCertificates()
@@ -163,7 +166,7 @@ class Daos(Application):
 
     def _StartServers(self):
         EchoNode("Starting DAOS server").Run()
-        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']} -d {self.per_node_dir}"
+        server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']}"
         EchoNode(server_start_cmd).Run()
         ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True).Run()
         SleepNode(3).Run()
@@ -222,7 +225,6 @@ class Daos(Application):
     def _CreateAgentConfig(self):
         agent_config = self.config.copy()['AGENT']
         del agent_config['hosts']
-        agent_config['runtime_dir'] = self.config['SERVER']['socket_dir']
         agent_config['transport_config']['allow_insecure'] = not self.config['SECURE']
         agent_config['port'] = self.config['PORT']
         agent_config['name'] = self.config['NAME']

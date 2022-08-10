@@ -14,7 +14,6 @@ SERVER:
   provider: ofi+sockets
   telemetry_port: 9191
   control_log_file: ${PER_NODE_DIR}/daos_server.log
-  socket_dir: ${PER_NODE_DIR}
   transport_config:
     ca_cert: ${SHARED_DIR}/daosCA/certs/daosCA.crt
     cert: ${SHARED_DIR}/daosCA/certs/server.crt
@@ -24,7 +23,7 @@ SERVER:
     - targets: 1
       first_core: 0
       nr_xs_helpers: 0
-      fabric_iface: ib1
+      fabric_iface: ens3
       fabric_iface_port: 31416
       log_file: ${PER_NODE_DIR}/daos_engine.0.log
       env_vars:
@@ -40,7 +39,7 @@ AGENT:
     ca_cert: ${SHARED_DIR}/daosCA/certs/daosCA.crt
     cert: ${SHARED_DIR}/daosCA/certs/agent.crt
     key: ${SHARED_DIR}/daosCA/certs/agent.key
-  runtime_dir: ${PER_NODE_DIR}
+  runtime_dir: ${PER_NODE_DIR}/daos_agent
   log_file: ${PER_NODE_DIR}/daos_agent.log
 CONTROL:
   hosts: 1-3
