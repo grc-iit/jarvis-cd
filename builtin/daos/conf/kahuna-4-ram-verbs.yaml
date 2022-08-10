@@ -12,10 +12,8 @@ CONF:
 SERVER:
   hosts: 1-3
   provider: ofi+verbs
-  socket_dir: ${PER_NODE_DIR}/daos_server
   telemetry_port: 9191
   control_log_file: ${PER_NODE_DIR}/daos_server.log
-  socket_dir: ${PER_NODE_DIR}/daos_server
   transport_config:
     ca_cert: ${SHARED_DIR}/daosCA/certs/daosCA.crt
     cert: ${SHARED_DIR}/daosCA/certs/server.crt
@@ -39,7 +37,6 @@ AGENT:
     ca_cert: ${SHARED_DIR}/daosCA/certs/daosCA.crt
     cert: ${SHARED_DIR}/daosCA/certs/agent.crt
     key: ${SHARED_DIR}/daosCA/certs/agent.key
-  runtime_dir: ${PER_NODE_DIR}/daos_agent
   log_file: ${PER_NODE_DIR}/daos_agent.log
 CONTROL:
   hosts: 1-3
