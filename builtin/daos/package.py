@@ -90,10 +90,11 @@ class Daos(Application):
         CopyNode(to_copy, self.shared_dir, hosts=self.shared_hosts).Run()
         #Start dummy DAOS server (on all server nodes)
         self._StartServers()
+
         # Get networking options
         EchoNode("Scanning networks").Run()
         self._ScanNetworks()
-        iface = input('Get actual network interface')
+        iface = input('Get actual network interface: ')
         #Format storage
         EchoNode("Formatting DAOS storage").Run()
         self._FormatStorage()
@@ -170,6 +171,7 @@ class Daos(Application):
         EchoNode("Starting DAOS server").Run()
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']}"
         ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True).Run()
+        EchoNode(self.server_hosts).Run()
         SleepNode(3).Run()
 
     def _StartAgents(self):
