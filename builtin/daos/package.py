@@ -127,7 +127,6 @@ class Daos(Application):
                     f"-m {container['mount']}"
                 ]
                 mount_cmd = " ".join(mount_cmd)
-                EchoNode(mount_cmd).Run()
                 ExecNode(mount_cmd, hosts=self.agent_hosts).Run()
 
     def _DefineClean(self):
@@ -172,13 +171,11 @@ class Daos(Application):
     def _StartServers(self):
         EchoNode("Starting DAOS server").Run()
         server_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_server start -o {self.config['CONF']['SERVER']}"
-        EchoNode(server_start_cmd).Run()
         ExecNode(server_start_cmd, hosts=self.server_hosts, sudo=True, exec_async=True).Run()
         SleepNode(3).Run()
 
     def _StartAgents(self):
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
-        EchoNode(agent_start_cmd).Run()
         ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True).Run()
 
     def _CreateCertificates(self):
@@ -187,12 +184,10 @@ class Daos(Application):
 
     def _FormatStorage(self):
         storage_format_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg storage format --force -o {self.config['CONF']['CONTROL']}"
-        EchoNode(storage_format_cmd)
         ExecNode(storage_format_cmd, sudo=True).Run()
 
     def _ScanNetworks(self):
         network_check_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} network scan -p all"
-        EchoNode(network_check_cmd).Run()
         ExecNode(network_check_cmd, sudo=True, shell=True).Run()
 
     def _CreatePool(self, pool_info):
@@ -203,7 +198,6 @@ class Daos(Application):
             #f"--nranks={len(self.server_hosts)}"
         ]
         create_pool_cmd = " ".join(create_pool_cmd)
-        EchoNode(create_pool_cmd).Run()
         ExecNode(create_pool_cmd).Run()
 
     def _CreateContainer(self, container_info):
@@ -215,7 +209,6 @@ class Daos(Application):
         ]
         MkdirNode(container_info['mount'], hosts=self.agent_hosts).Run()
         create_container_cmd = " ".join(create_container_cmd)
-        EchoNode(create_container_cmd).Run()
         ExecNode(create_container_cmd).Run()
 
     def _CreateServerConfig(self):
