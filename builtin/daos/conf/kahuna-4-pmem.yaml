@@ -48,7 +48,7 @@ CONTROL:
     key: ${SHARED_DIR}/daosCA/certs/admin.key
 POOLS:
   - label: io500_pool
-    size: 500G
+    size: 5000G
 CONTAINERS:
   - label: io500_container
     pool: io500_pool
