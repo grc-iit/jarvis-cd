@@ -113,10 +113,8 @@ class Daos(Application):
     def _DefineStart(self):
         #Start DAOS server
         self._StartServers()
-        SleepNode(3).Run()
         #Start client
         self._StartAgents()
-        SleepNode(3).Run()
         #Mount containers on clients
         for container in self.config['CONTAINERS']:
             if 'mount' in container and container['mount'] is not None:
@@ -177,6 +175,7 @@ class Daos(Application):
     def _StartAgents(self):
         agent_start_cmd = f"{self.config['DAOS_ROOT']}/bin/daos_agent start -o {self.config['CONF']['AGENT']}"
         ExecNode(agent_start_cmd, hosts=self.agent_hosts, sudo=True, exec_async=True).Run()
+        SleepNode(3).Run()
 
     def _CreateCertificates(self):
         gen_certificates_cmd = f"{self.config['DAOS_ROOT']}/lib64/daos/certgen/gen_certificates.sh {self.shared_dir}"
