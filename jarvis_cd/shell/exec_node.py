@@ -25,7 +25,7 @@ class ExecNode(ParallelNode):
     def _Run(self):
         if len(self.cmds) == 0:
             return
-        EchoNode(self.cmds, color=Color.YELLOW).run()
+        EchoNode(self.cmds, color=Color.YELLOW).Run()
         if self.do_ssh:
             self.node = SSHExecNode(self.cmds, **self.GetClassParams(ParallelNode, print_output=False)).Run()
         else:
