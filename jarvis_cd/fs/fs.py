@@ -1,4 +1,5 @@
 from jarvis_cd.shell.exec_node import ExecNode
+from jarvis_cd.parallel_node import ParallelNode
 from enum import Enum
 import os
 
@@ -55,11 +56,11 @@ class F2FSFormat(ExecNode):
 
 class TmpfsFormat(ExecNode):
     def __init_(self, size, mount_point, **kwargs):
-        cmd = f"mount -t tmpfs -o size={size} tmpfs {path}"
+        cmd = f"mount -t tmpfs -o size={size} tmpfs {mount_point}"
         kwargs['sudo'] = True
         super().__init__(cmd, **kwargs)
 
-class PrepareStorage(ExecNode):
+class PrepareStorage(ParallelNode):
     def __init__(self, spec, **kwargs):
         super().__init__(**kwargs)
         self.spec = spec
