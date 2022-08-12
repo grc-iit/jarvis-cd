@@ -20,8 +20,15 @@ class UnmountFS(ExecNode):
         super().__init__(cmd, sudo=True, **kwargs)
 
 class MountFS(ExecNode):
-    def __init__(self, dev_path, fs_path, **kwargs):
-        cmd = f"mount {dev_path} {fs_path}"
+    def __init__(self, dev_path, fs_path, dax=False, **kwargs):
+        cmd = [
+            'mount',
+            dev_path,
+            fs_path
+        ]
+        if dax:
+            cmd.append('-o dax')
+        cmd = " ".join(cmd)
         super().__init__(cmd, sudo=True, **kwargs)
 
 class EXT4Format(ExecNode):
@@ -46,14 +53,14 @@ class PrepareStorage(ExecNode):
         self.nodes = []
         for item in self.spec:
             if item['format'] == 'EXT4':
-                nodes.append(EXT4Format(item['partition'], **kwargs))
-                nodes.append(MountFS(item['mount_point'], **kwargs))
+                nodes.append(EXT4Format(**item['format_params'], **kwargs))
+                nodes.append(MountFS(**item['mount_params'], **kwargs))
             if item['format'] == 'XFS':
-                nodes.append(XFSFormat(item['partition'], **kwargs))
-                nodes.append(MountFS(item['mount_point'], **kwargs))
+                nodes.append(XFSFormat(**item['format_params'], **kwargs))
+                nodes.append(MountFS(**item['mount_params'], **kwargs))
             if item['format'] == 'F2FS':
-                nodes.append(F2FSFormat(item['partition'], **kwargs))
-                nodes.append(MountFS(item['mount_point'], **kwargs))
+                nodes.append(F2FSFormat(**item['format_params'], **kwargs))
+                nodes.append(MountFS(**item['mount_params'], **kwargs))
 
     def _Run(self):
         for node in self.nodes:
