@@ -4,10 +4,6 @@ IO500_SPACK:
 IO500_ROOT: ${PER_NODE_DIR}/io500_install
 MPI:
   nprocs: 144
-DAOS:
-  pool: io500_pool
-  container: io500_container
-  pkg_id: daos1
 GLOBAL:
   timestamp-datadir: TRUE
   resultdir: ${SHARED_DIR}/io500_results

@@ -19,7 +19,6 @@ class Io500(Application):
         #Create basic io500 sections
         io500_ini['DEBUG'] = self.config['DEBUG']
         io500_ini['GLOBAL'] = self.config['GLOBAL']
-        io500_ini['GLOBAL']['datadir'] = mount
         # io500_ini['GLOBAL']['drop-caches-cmd'] = DropCaches().GetCommands()[0]
         io500_ini['ior-easy'] = self.config['ior-easy']
         io500_ini['ior-hard'] = self.config['ior-hard']
@@ -28,8 +27,9 @@ class Io500(Application):
         io500_ini['find'] = self.config['find']
 
         #Do system-specific initialization functions
-        if 'IO500_CLASS' in self.config and self.config['IO500_CLASS'] == 'daos':
-            self._DaosInit(io500_ini)
+        if 'IO500_CLASS' in self.config:
+            if self.config['IO500_CLASS'] == 'daos':
+                self._DaosInit(io500_ini)
 
         #Create io500 configuration
         IniFile(f"{self.shared_dir}/io500.ini").Save(io500_ini)
@@ -45,11 +45,11 @@ class Io500(Application):
         container_uuid = self.daos.GetContainerUUID(pool_uuid, container_label)
 
         # Add DAOS API to io500 config
-        if 'DAOS' in self.config:
-            io500_ini['ior-easy']['API'] = self._DFSApi(pool_uuid, container_uuid, mount)
-            io500_ini['ior-hard']['API'] = self._DFSApi(pool_uuid, container_uuid, mount)
-            io500_ini['mdtest-easy']['API'] = self._DFSApi(pool_uuid, container_uuid, mount, oclass=False)
-            io500_ini['mdtest-hard']['API'] = self._DFSApi(pool_uuid, container_uuid, mount, oclass=False)
+        io500_ini['GLOBAL']['datadir'] = mount
+        io500_ini['ior-easy']['API'] = self._DFSApi(pool_uuid, container_uuid, mount)
+        io500_ini['ior-hard']['API'] = self._DFSApi(pool_uuid, container_uuid, mount)
+        io500_ini['mdtest-easy']['API'] = self._DFSApi(pool_uuid, container_uuid, mount, oclass=False)
+        io500_ini['mdtest-hard']['API'] = self._DFSApi(pool_uuid, container_uuid, mount, oclass=False)
 
         self.env += [
             f"export DAOS_POOL={pool_uuid}",
