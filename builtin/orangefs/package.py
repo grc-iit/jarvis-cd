@@ -94,8 +94,7 @@ class Orangefs(Application):
             f"umount -f {self.config['CLIENT']['MOUNT_POINT']}",
             f"umount {self.config['CLIENT']['MOUNT_POINT']}",
             f"killall -9 pvfs2-client",
-            f"killall -9 pvfs2-client-core",
-            f"kill-pvfs2-client"
+            f"killall -9 pvfs2-client-core"
         ]
         ExecNode(cmds, hosts=self.client_hosts, sudo=True).Run()
         ExecNode("killall -9 pvfs2-server", hosts=self.server_hosts).Run()
