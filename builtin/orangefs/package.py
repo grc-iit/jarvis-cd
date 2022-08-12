@@ -1,6 +1,6 @@
 from jarvis_cd.basic.echo_node import EchoNode
 from jarvis_cd.hostfile import Hostfile
-from jarvis_cd.launcher.launcher import Launcher
+from jarvis_cd.launcher.application import Application
 import os
 import socket
 
@@ -11,7 +11,7 @@ from jarvis_cd.shell.copy_node import CopyNode
 from jarvis_cd.fs.mkdir_node import MkdirNode
 from jarvis_cd.fs.rm_node import RmNode
 
-class Orangefs(Launcher):
+class Orangefs(Application):
     def _ProcessConfig(self):
         self.server_hosts = self.all_hosts.SelectHosts(self.config['SERVER']['HOSTS'])
         self.md_hosts = self.all_hosts.SelectHosts(self.config['METADATA']['HOSTS'])
