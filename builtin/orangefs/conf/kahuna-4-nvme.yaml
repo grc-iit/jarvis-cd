@@ -7,14 +7,14 @@ PREPARE_STORAGE:
         dev_path: /dev/nvme6n1
       mount_params:
         dev_path: /dev/nvme6n1
-        fs_path: ${SHARED_DIR}/pvfs2-mount
+        fs_path: ${PER_NODE_DIR}/orangefs_data
 METADATA:
     HOSTS: 1-3
-    META_DIR: ${PER_NODE_DIR}/orangefs_meta
+    META_DIR: ${PER_NODE_DIR}/orangefs_data/metadata
 SERVER:
     HOSTS: 1-3
-    PVFS2TAB: ${SHARED_DIR}/pvfs2tab
-    STORAGE_DIR: ${PER_NODE_DIR}/orangefs_data
+    PVFS2TAB: ${PER_NODE_DIR}/pvfs2tab
+    STORAGE_DIR: ${PER_NODE_DIR}/orangefs_data/data
     LOG: ${PER_NODE_DIR}/orangefs_server.log
     STRIPE_SIZE: 65536
     DISTRIBUTION_NAME: simple_stripe
@@ -23,5 +23,5 @@ SERVER:
     PVFS2_PROTOCOL: tcp
 CLIENT:
     HOSTS: 1-3
-    PVFS2TAB: ${SHARED_DIR}/pvfs2tab
-    MOUNT_POINT: ${SHARED_DIR}/pvfs2-mount
+    PVFS2TAB: ${PER_NODE_DIR}/pvfs2tab
+    MOUNT_POINT: ${PER_NODE_DIR}/pvfs2-mount
