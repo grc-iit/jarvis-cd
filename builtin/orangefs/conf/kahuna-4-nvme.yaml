@@ -6,7 +6,8 @@ PREPARE_STORAGE:
       format_params:
         dev_path: /dev/nvme6n1
       mount_params:
-        mount_point: ${SHARED_DIR}/pvfs2-mount
+        dev_path: /dev/nvme6n1
+        fs_path: ${SHARED_DIR}/pvfs2-mount
 METADATA:
     HOSTS: 1-3
     META_DIR: ${PER_NODE_DIR}/orangefs_meta

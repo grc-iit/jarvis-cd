@@ -6,7 +6,8 @@ PREPARE_STORAGE:
       format_params:
         dev_path: /dev/pmem0
       mount_params:
-        mount_point: ${SHARED_DIR}/pvfs2-mount
+        dev_path: /dev/pmem0
+        fs_path: ${SHARED_DIR}/pvfs2-mount
         dax: true
 METADATA:
     HOSTS: 1-3
