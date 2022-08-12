@@ -46,6 +46,11 @@ class Orangefs(Application):
         ExecNode(pvfs_gen_cmd).Run()
         CopyNode(self.pfs_conf, hosts=self.shared_hosts).Run()
 
+        #Create storage directories
+        MkdirNode(self.config['CLIENT']['MOUNT_POINT'], hosts=self.client_hosts).Run()
+        MkdirNode(self.config['SERVER']['STORAGE_DIR'], hosts=self.server_hosts).Run()
+        MkdirNode(self.config['METADATA']['META_DIR'], hosts=self.meta_hosts).Run()
+
         #Prepare storage
         if 'PREPARE_STORAGE' in self.config:
             PrepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
@@ -61,10 +66,6 @@ class Orangefs(Application):
                 client_pvfs2tab=self.config['CLIENT']['PVFS2TAB']
             )
             ExecNode(cmd, hosts=client, shell=True).Run()
-
-        #Create directories
-        MkdirNode(self.config['CLIENT']['MOUNT_POINT'], hosts=self.client_hosts).Run()
-        MkdirNode(self.config['SERVER']['STORAGE_DIR'], hosts=self.server_hosts).Run()
 
     def _DefineStart(self):
         # start pfs servers
