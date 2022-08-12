@@ -1,5 +1,6 @@
 from jarvis_cd.shell.exec_node import ExecNode
 from jarvis_cd.parallel_node import ParallelNode
+from jarvis_cd.fs.mkdir_node import MkdirNode
 from enum import Enum
 import os
 
@@ -71,19 +72,23 @@ class PrepareStorage(ParallelNode):
                 if 'mount_params' in item:
                     self.nodes.append(MkdirNode(item['fs_path'], **kwargs))
                     self.nodes.append(MountFS(**item['mount_params'], **kwargs))
+                    self.nodes.append(ChownFS(item['fs_path'], **kwargs))
             if item['format'] == 'XFS':
                 self.nodes.append(XFSFormat(**item['format_params'], **kwargs))
                 if 'mount_params' in item:
                     self.nodes.append(MkdirNode(item['fs_path'], **kwargs))
                     self.nodes.append(MountFS(**item['mount_params'], **kwargs))
+                    self.nodes.append(ChownFS(item['fs_path'], **kwargs))
             if item['format'] == 'F2FS':
                 self.nodes.append(F2FSFormat(**item['format_params'], **kwargs))
                 if 'mount_params' in item:
                     self.nodes.append(MkdirNode(item['fs_path'], **kwargs))
                     self.nodes.append(MountFS(**item['mount_params'], **kwargs))
+                    self.nodes.append(ChownFS(item['fs_path'], **kwargs))
             if item['format'] == 'tmpfs':
                 self.nodes.append(MkdirNode(item['fs_path'], **kwargs))
                 self.nodes.append(TmpfsFormat(**item['format_params'], **kwargs))
+                self.nodes.append(ChownFS(item['fs_path'], **kwargs))
 
     def _Run(self):
         for node in self.nodes:

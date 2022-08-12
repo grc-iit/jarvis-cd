@@ -103,7 +103,7 @@ class Orangefs(Application):
             f"killall -9 pvfs2-client-core"
         ]
         ExecNode(cmds, hosts=self.client_hosts, sudo=True).Run()
-        ExecNode("killall -9 pvfs2-server", hosts=self.server_hosts).Run()
+        ExecNode("killall -9 pvfs2-server", sudo=True, hosts=self.server_hosts).Run()
         ExecNode("pgrep -la pvfs2-server", hosts=self.client_hosts).Run()
         UnmountFS(self.config['SERVER']['STORAGE_DIR'], hosts=self.server_hosts).Run()
 
