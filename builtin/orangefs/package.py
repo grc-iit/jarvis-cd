@@ -63,12 +63,13 @@ class Orangefs(Application):
 
     def _DefineStart(self):
         # start pfs servers
-        pvfs2_server = os.path.join(self.orangefs_root,"sbin","pvfs2-server")
-        server_start_cmds = [
-            f"{pvfs2_server} {self.pfs_conf} -f -a {host}",
-            f"{pvfs2_server} {self.pfs_conf} -a {host}"
-        ]
-        ExecNode(server_start_cmds, hosts=self.server_hosts).Run()
+        for host in self.server_data_hosts:
+            pvfs2_server = os.path.join(self.orangefs_root,"sbin","pvfs2-server")
+            server_start_cmds = [
+                f"{pvfs2_server} {self.pfs_conf} -f -a {host}",
+                f"{pvfs2_server} {self.pfs_conf} -a {host}"
+            ]
+            ExecNode(server_start_cmds, hosts=host).Run()
         SleepNode(5).Run()
         self.Status()
 
