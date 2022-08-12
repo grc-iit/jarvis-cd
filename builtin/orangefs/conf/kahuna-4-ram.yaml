@@ -3,7 +3,7 @@ ORANGEFS_SPACK:
     package_name: orangefs
 PREPARE_STORAGE:
     - format: tmpfs
-      format_params:
+      mount_params:
         size: 250g
         fs_path: ${PER_NODE_DIR}/orangefs_data
 METADATA:
