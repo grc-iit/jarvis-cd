@@ -10,11 +10,10 @@ class CopyNode(ParallelNode):
         super().__init__(**kwargs)
 
         if destination is None:
-            if isinstance(destination, str):
+            if isinstance(sources, str):
                 destination = sources
-            elif isinstance(destination, list) and len(destination) == 1:
-                destination = destination[0]
-
+            elif isinstance(sources, list) and len(sources) == 1:
+                destination = sources[0]
 
         # Make sure the sources is a list
         if isinstance(sources, list):
