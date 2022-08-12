@@ -1,7 +1,7 @@
 HOSTS: ${SHARED_DIR}/hostfile.txt
 ORANGEFS_SPACK:
     package_name: orangefs
-META:
+METADATA:
     HOSTS: 1-3
 SERVER:
     HOSTS: 1-3
