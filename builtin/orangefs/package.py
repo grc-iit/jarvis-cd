@@ -80,13 +80,12 @@ class Orangefs(Application):
         self.Status()
 
         # start pfs client
-        pvfs2_client = os.path.join(self.orangefs_root, "sbin","pvfs2-client")
-        pvfs2_client_core = os.path.join(self.orangefs_root, "sbin", "pvfs2-client-core")
+        pvfs2_fuse = os.path.join(self.orangefs_root, "bin", "pvfs2fuse")
         for i,client in self.client_hosts.enumerate():
             metadata_server_ip = self.md_hosts.list()[i % len(self.md_hosts)]
             start_client_cmds = [
-                "sudo {} -p {}".format(pvfs2_client, pvfs2_client_core),
-                "sudo mount -t pvfs2 {protocol}://{ip}:{port}/orangefs {mount_point}".format(
+                "{pvfs2_fuse} -o fs_spec={protocol}://{ip}:{port}/orangefs {mount_point}".format(
+                    pvfs2_fuse=pvfs2_fuse,
                     protocol=self.config['SERVER']['PVFS2_PROTOCOL'],
                     port=self.config['SERVER']['PVFS2_PORT'],
                     ip=metadata_server_ip,
