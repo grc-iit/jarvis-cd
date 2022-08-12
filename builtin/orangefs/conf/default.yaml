@@ -3,10 +3,12 @@ ORANGEFS_SPACK:
     package_name: orangefs
 METADATA:
     HOSTS: 1-3
+    META_DIR: ${PER_NODE_DIR}/orangefs_meta
 SERVER:
     HOSTS: 1-3
     PVFS2TAB: ${SHARED_DIR}/pvfs2tab
-    STORAGE_DIR: /mnt/hdd/${USER}/pvfs2-storage
+    STORAGE_DIR: ${PER_NODE_DIR}/orangefs_data
+    LOG: ${PER_NODE_DIR}/orangefs_server.log
     STRIPE_SIZE: 65536
     DISTRIBUTION_NAME: simple_stripe
     PVFS2_PORT: 3334
