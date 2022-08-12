@@ -9,6 +9,13 @@ class CopyNode(ParallelNode):
     def __init__(self, sources, destination=None, **kwargs):
         super().__init__(**kwargs)
 
+        if destination is None:
+            if isinstance(destination, str):
+                destination = sources
+            elif isinstance(destination, list) and len(destination) == 1:
+                destination = destination[0]
+
+
         # Make sure the sources is a list
         if isinstance(sources, list):
             sources = sources
@@ -16,9 +23,6 @@ class CopyNode(ParallelNode):
             sources = [sources]
         else:
             raise Error(ErrorCode.INVALID_TYPE).format(obj="SCPNode source paths", t=type(sources))
-
-        if destination is None:
-            destination = sources
 
         self.sources = [source for source in sources if source is not None]
         self.destination = destination
