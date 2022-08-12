@@ -18,7 +18,7 @@ class Orangefs(Application):
         self.client_hosts = self.all_hosts.SelectHosts(self.config['CLIENT']['HOSTS'])
 
         self.orangefs_root = os.path.join(self.per_node_dir, 'orangefs_install')
-        self.pfs_conf = os.path.join(self.shared_dir,"pfs_{}.conf".format(len(self.server_hosts)))
+        self.pfs_conf = os.path.join(self.shared_dir, "orangefs.conf")
 
     def _DefineInit(self):
         #Link orangefs spackage
