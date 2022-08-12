@@ -4,7 +4,7 @@ ORANGEFS_SPACK:
 PREPARE_STORAGE:
     - format: EXT4
       format_params:
-        partition: /dev/pmem0
+        dev_path: /dev/pmem0
         dax: true
       mount_params:
         mount_point: ${SHARED_DIR}/pvfs2-mount

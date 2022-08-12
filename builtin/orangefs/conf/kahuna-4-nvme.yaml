@@ -4,7 +4,7 @@ ORANGEFS_SPACK:
 PREPARE_STORAGE:
     - format: EXT4
       format_params:
-        partition: /dev/nvme6n1
+        dev_path: /dev/nvme6n1
       mount_params:
         mount_point: ${SHARED_DIR}/pvfs2-mount
 METADATA:
