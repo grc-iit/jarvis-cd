@@ -67,19 +67,19 @@ class PrepareStorage(ParallelNode):
         self.nodes = []
         for item in self.spec:
             if item['format'] == 'EXT4':
-                nodes.append(EXT4Format(**item['format_params'], **kwargs))
+                self.nodes.append(EXT4Format(**item['format_params'], **kwargs))
                 if 'mount_params' in item:
-                    nodes.append(MountFS(**item['mount_params'], **kwargs))
+                    self.nodes.append(MountFS(**item['mount_params'], **kwargs))
             if item['format'] == 'XFS':
-                nodes.append(XFSFormat(**item['format_params'], **kwargs))
+                self.nodes.append(XFSFormat(**item['format_params'], **kwargs))
                 if 'mount_params' in item:
-                    nodes.append(MountFS(**item['mount_params'], **kwargs))
+                    self.nodes.append(MountFS(**item['mount_params'], **kwargs))
             if item['format'] == 'F2FS':
-                nodes.append(F2FSFormat(**item['format_params'], **kwargs))
+                self.nodes.append(F2FSFormat(**item['format_params'], **kwargs))
                 if 'mount_params' in item:
-                    nodes.append(MountFS(**item['mount_params'], **kwargs))
+                    self.nodes.append(MountFS(**item['mount_params'], **kwargs))
             if item['format'] == 'tmpfs':
-                nodes.append(TmpfsFormat(**item['format_params'], **kwargs))
+                self.nodes.append(TmpfsFormat(**item['format_params'], **kwargs))
 
     def _Run(self):
         for node in self.nodes:
