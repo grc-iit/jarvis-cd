@@ -44,8 +44,7 @@ class Orangefs(Application):
 
         #set pvfstab on clients
         for i,client in self.client_hosts.enumerate():
-            metadata_server = self.md_hosts.list()[i % len(self.md_hosts)]
-            metadata_server_ip = socket.gethostbyname(metadata_server)
+            metadata_server_ip = self.md_hosts.list()[i % len(self.md_hosts)]
             cmd.append("echo '{protocol}://{ip}:{port}/orangefs {mount_point} pvfs2 defaults,auto 0 0' > {client_pvfs2tab}".format(
                 protocol=self.config['SERVER']['PVFS2_PROTOCOL'],
                 port=self.config['SERVER']['PVFS2_PORT'],
@@ -75,8 +74,7 @@ class Orangefs(Application):
         pvfs2_client = os.path.join(self.orangefs_root, "sbin","pvfs2-client")
         pvfs2_client_core = os.path.join(self.orangefs_root, "sbin", "pvfs2-client-core")
         for i,client in self.client_hosts.enumerate():
-            metadata_server = self.md_hosts.list()[i % len(self.md_hosts)]
-            metadata_server_ip = socket.gethostbyname(metadata_server)
+            metadata_server_ip = self.md_hosts.list()[i % len(self.md_hosts)]
             start_client_cmds = [
                 #"sudo insmod {}".format(kernel_ko),
                 "sudo {} -p {}".format(pvfs2_client, pvfs2_client_core),
