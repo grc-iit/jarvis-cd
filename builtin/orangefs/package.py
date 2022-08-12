@@ -13,6 +13,7 @@ from jarvis_cd.fs.rm_node import RmNode
 
 class Orangefs(Application):
     def _ProcessConfig(self):
+        super()._ProcessConfig()
         self.server_hosts = self.all_hosts.SelectHosts(self.config['SERVER']['HOSTS'])
         self.md_hosts = self.all_hosts.SelectHosts(self.config['METADATA']['HOSTS'])
         self.client_hosts = self.all_hosts.SelectHosts(self.config['CLIENT']['HOSTS'])
