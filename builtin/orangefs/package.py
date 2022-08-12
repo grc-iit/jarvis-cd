@@ -45,14 +45,14 @@ class Orangefs(Application):
         #set pvfstab on clients
         for i,client in self.client_hosts.enumerate():
             metadata_server_ip = self.md_hosts.list()[i % len(self.md_hosts)]
-            cmd.append("echo '{protocol}://{ip}:{port}/orangefs {mount_point} pvfs2 defaults,auto 0 0' > {client_pvfs2tab}".format(
+            cmd = "echo '{protocol}://{ip}:{port}/orangefs {mount_point} pvfs2 defaults,auto 0 0' > {client_pvfs2tab}".format(
                 protocol=self.config['SERVER']['PVFS2_PROTOCOL'],
                 port=self.config['SERVER']['PVFS2_PORT'],
                 ip=metadata_server_ip,
                 mount_point=self.config['CLIENT']['MOUNT_POINT'],
                 client_pvfs2tab=self.config['CLIENT']['PVFS2TAB']
-            ))
-            ExecNode(cmds, hosts=client, shell=True).Run()
+            )
+            ExecNode(cmd, hosts=client, shell=True).Run()
 
         #Create directories
         MkdirNode(self.config['CLIENT']['MOUNT_POINT'], hosts=self.client_hosts).Run()
