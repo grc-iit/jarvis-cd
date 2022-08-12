@@ -1,6 +1,10 @@
 HOSTS: ${SHARED_DIR}/hostfile.txt
 ORANGEFS_SPACK:
     package_name: orangefs
+PREPARE_STORAGE:
+    - format: EXT4
+      partition: /dev/pmem0
+      mount_point: ${SHARED_DIR}/pvfs2-mount
 METADATA:
     HOSTS: 1-3
     META_DIR: ${PER_NODE_DIR}/orangefs_meta

@@ -39,6 +39,28 @@ class F2FSFormat(ExecNode):
         cmd = f"mkfs.f2fs {dev_path} -f"
         super().__init__(cmd, sudo=True, **kwargs)
 
+class PrepareStorage(ExecNode):
+    def __init__(self, spec, **kwargs):
+        super().__init__(**kwargs)
+        self.spec = spec
+        self.nodes = []
+        for item in self.spec:
+            if item['format'] == 'EXT4':
+                nodes.append(EXT4Format(item['partition'], **kwargs))
+                nodes.append(MountFS(item['mount_point'], **kwargs))
+            if item['format'] == 'XFS':
+                nodes.append(XFSFormat(item['partition'], **kwargs))
+                nodes.append(MountFS(item['mount_point'], **kwargs))
+            if item['format'] == 'F2FS':
+                nodes.append(F2FSFormat(item['partition'], **kwargs))
+                nodes.append(MountFS(item['mount_point'], **kwargs))
+
+    def _Run(self):
+        for node in self.nodes:
+            node.Run()
+
+
+
 class DisableVARandomization(ExecNode):
     def __init__(self, **kwargs):
         cmds = [

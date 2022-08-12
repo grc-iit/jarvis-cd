@@ -3,6 +3,7 @@ from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launcher.application import Application
 import os
 
+from jarvis_cd.fs.fs import PrepareStorage
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.basic.sleep_node import SleepNode
 from jarvis_cd.shell.exec_node import ExecNode
@@ -44,6 +45,10 @@ class Orangefs(Application):
         pvfs_gen_cmd = " ".join(pvfs_gen_cmd)
         ExecNode(pvfs_gen_cmd).Run()
         CopyNode(self.pfs_conf, hosts=self.shared_hosts).Run()
+
+        #Prepare storage
+        if 'PREPARE_STORAGE' in self.config:
+            PrePareStorage(self.config['PREPARE_STORAGE'])
 
         #set pvfstab on clients
         for i,client in self.client_hosts.enumerate():
