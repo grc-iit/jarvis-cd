@@ -48,7 +48,7 @@ class Orangefs(Application):
 
         #Prepare storage
         if 'PREPARE_STORAGE' in self.config:
-            PrePareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
+            PrepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
 
         #set pvfstab on clients
         for i,client in self.client_hosts.enumerate():
