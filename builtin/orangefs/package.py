@@ -29,7 +29,10 @@ class Orangefs(Application):
         pvfs_gen_cmd.append(f"{os.path.join(self.orangefs_root, 'bin', 'pvfs2-genconfig')}")
         pvfs_gen_cmd.append(f"--quiet")
         pvfs_gen_cmd.append(f"--protocol {self.config['SERVER']['PVFS2_PROTOCOL']}")
-        pvfs_gen_cmd.append(f"--tcpport {self.config['SERVER']['PVFS2_PORT']}")
+        if self.config['SERVER']['PVFS2_PROTOCOL'] == 'tcp':
+            pvfs_gen_cmd.append(f"--tcpport {self.config['SERVER']['PVFS2_PORT']}")
+        elif self.config['SERVER']['PVFS2_PROTOCOL'] == 'ib':
+            pvfs_gen_cmd.append(f"--ibport {self.config['SERVER']['PVFS2_PORT']}")
         pvfs_gen_cmd.append(f"--dist-name {self.config['SERVER']['DISTRIBUTION_NAME']}")
         pvfs_gen_cmd.append(f"--dist-params strip_size: {self.config['SERVER']['STRIPE_SIZE']}")
         pvfs_gen_cmd.append(f"--ioservers {self.server_hosts.to_str(sep=',')}")
