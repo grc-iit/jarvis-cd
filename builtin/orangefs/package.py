@@ -74,13 +74,11 @@ class Orangefs(Application):
         self.Status()
 
         # start pfs client
-        #kernel_ko = os.path.join(self.orangefs_root, "lib/modules/3.10.0-862.el7.x86_64/kernel/fs/pvfs2/pvfs2.ko")
         pvfs2_client = os.path.join(self.orangefs_root, "sbin","pvfs2-client")
         pvfs2_client_core = os.path.join(self.orangefs_root, "sbin", "pvfs2-client-core")
         for i,client in self.client_hosts.enumerate():
             metadata_server_ip = self.md_hosts.list()[i % len(self.md_hosts)]
             start_client_cmds = [
-                #"sudo insmod {}".format(kernel_ko),
                 "sudo {} -p {}".format(pvfs2_client, pvfs2_client_core),
                 "sudo mount -t pvfs2 {protocol}://{ip}:{port}/orangefs {mount_point}".format(
                     protocol=self.config['SERVER']['PVFS2_PROTOCOL'],
@@ -97,7 +95,6 @@ class Orangefs(Application):
             f"umount {self.config['CLIENT']['MOUNT_POINT']}",
             f"killall -9 pvfs2-client",
             f"killall -9 pvfs2-client-core",
-            f"rmmod pvfs2",
             f"kill-pvfs2-client"
         ]
         ExecNode(cmds, hosts=self.client_hosts, sudo=True).Run()
