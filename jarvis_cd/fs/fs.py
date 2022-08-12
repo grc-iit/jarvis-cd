@@ -55,8 +55,8 @@ class F2FSFormat(ExecNode):
         super().__init__(cmd, **kwargs)
 
 class TmpfsFormat(ExecNode):
-    def __init_(self, size, mount_point, **kwargs):
-        cmd = f"mount -t tmpfs -o size={size} tmpfs {mount_point}"
+    def __init_(self, size, fs_path, **kwargs):
+        cmd = f"mount -t tmpfs -o size={size} tmpfs {fs_path}"
         kwargs['sudo'] = True
         super().__init__(cmd, **kwargs)
 
@@ -69,16 +69,20 @@ class PrepareStorage(ParallelNode):
             if item['format'] == 'EXT4':
                 self.nodes.append(EXT4Format(**item['format_params'], **kwargs))
                 if 'mount_params' in item:
+                    self.nodes.append(MkdirNode(item['fs_path'], **kwargs))
                     self.nodes.append(MountFS(**item['mount_params'], **kwargs))
             if item['format'] == 'XFS':
                 self.nodes.append(XFSFormat(**item['format_params'], **kwargs))
                 if 'mount_params' in item:
+                    self.nodes.append(MkdirNode(item['fs_path'], **kwargs))
                     self.nodes.append(MountFS(**item['mount_params'], **kwargs))
             if item['format'] == 'F2FS':
                 self.nodes.append(F2FSFormat(**item['format_params'], **kwargs))
                 if 'mount_params' in item:
+                    self.nodes.append(MkdirNode(item['fs_path'], **kwargs))
                     self.nodes.append(MountFS(**item['mount_params'], **kwargs))
             if item['format'] == 'tmpfs':
+                self.nodes.append(MkdirNode(item['fs_path'], **kwargs))
                 self.nodes.append(TmpfsFormat(**item['format_params'], **kwargs))
 
     def _Run(self):
