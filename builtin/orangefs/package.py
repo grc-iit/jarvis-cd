@@ -49,7 +49,7 @@ class Orangefs(Application):
         #Create storage directories
         MkdirNode(self.config['CLIENT']['MOUNT_POINT'], hosts=self.client_hosts).Run()
         MkdirNode(self.config['SERVER']['STORAGE_DIR'], hosts=self.server_hosts).Run()
-        MkdirNode(self.config['METADATA']['META_DIR'], hosts=self.meta_hosts).Run()
+        MkdirNode(self.config['METADATA']['META_DIR'], hosts=self.md_hosts).Run()
 
         #Prepare storage
         if 'PREPARE_STORAGE' in self.config:
