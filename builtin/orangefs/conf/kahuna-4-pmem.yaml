@@ -7,11 +7,11 @@ PREPARE_STORAGE:
         dev_path: /dev/pmem0
       mount_params:
         dev_path: /dev/pmem0
-        fs_path: ${PER_NODE_DIR}/orangefs_data/metadata
+        fs_path: ${PER_NODE_DIR}/orangefs_data
         dax: true
 METADATA:
     HOSTS: 1-3
-    META_DIR: ${PER_NODE_DIR}/orangefs_meta
+    META_DIR: ${PER_NODE_DIR}/orangefs_data/meta
 SERVER:
     HOSTS: 1-3
     PVFS2TAB: ${PER_NODE_DIR}/pvfs2tab
