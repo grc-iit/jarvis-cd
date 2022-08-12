@@ -1,5 +1,6 @@
 import os
 from jarvis_cd.exception import Error, ErrorCode
+import socket
 import re
 
 class Hostfile:
@@ -20,13 +21,12 @@ class Hostfile:
                 if len(host) == 0:
                     continue
                 hosts.append(host)
-        self.all_hosts = hosts
-        self.hosts = self.all_hosts
         self.path = path
+        self.SetHosts(hosts)
         return self
 
     def SetHosts(self, hosts):
-        self.all_hosts = hosts
+        self.all_hosts = [socket.gethostbyname(host) for host in hosts]
         self.hosts = hosts
         return self
 

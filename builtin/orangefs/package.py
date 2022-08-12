@@ -2,7 +2,6 @@ from jarvis_cd.basic.echo_node import EchoNode
 from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launcher.application import Application
 import os
-import socket
 
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.basic.sleep_node import SleepNode
