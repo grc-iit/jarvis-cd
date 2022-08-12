@@ -3,7 +3,7 @@ from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launcher.application import Application
 import os
 
-from jarvis_cd.fs.fs import PrepareStorage
+from jarvis_cd.fs.fs import PrepareStorage, UnmountFS, MountFS
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.basic.sleep_node import SleepNode
 from jarvis_cd.shell.exec_node import ExecNode
@@ -48,7 +48,7 @@ class Orangefs(Application):
 
         #Prepare storage
         if 'PREPARE_STORAGE' in self.config:
-            PrePareStorage(self.config['PREPARE_STORAGE'])
+            PrePareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
 
         #set pvfstab on clients
         for i,client in self.client_hosts.enumerate():
@@ -104,6 +104,7 @@ class Orangefs(Application):
         ExecNode(cmds, hosts=self.client_hosts, sudo=True).Run()
         ExecNode("killall -9 pvfs2-server", hosts=self.server_hosts).Run()
         ExecNode("pgrep -la pvfs2-server", hosts=self.client_hosts).Run()
+        UnmountFS(self.config['SERVER']['STORAGE_DIR'], hosts=self.server_hosts).Run()
 
     def _DefineClean(self):
         RmNode(self.config['CLIENT']['MOUNT_POINT'], hosts=self.client_hosts).Run()
