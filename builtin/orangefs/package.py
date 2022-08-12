@@ -43,7 +43,7 @@ class Orangefs(Application):
         pvfs_gen_cmd.append(self.pfs_conf)
         pvfs_gen_cmd = " ".join(pvfs_gen_cmd)
         ExecNode(pvfs_gen_cmd).Run()
-        CopyNode(self.pfs_conf, self.pfs_conf, hosts=self.server_hosts).Run()
+        CopyNode(self.pfs_conf, hosts=self.shared_hosts).Run()
 
         #set pvfstab on clients
         for i,client in self.client_hosts.enumerate():

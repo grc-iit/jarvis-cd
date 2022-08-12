@@ -6,7 +6,7 @@ import shutil, os
 
 
 class CopyNode(ParallelNode):
-    def __init__(self, sources, destination, **kwargs):
+    def __init__(self, sources, destination=None, **kwargs):
         super().__init__(**kwargs)
 
         # Make sure the sources is a list
@@ -16,6 +16,9 @@ class CopyNode(ParallelNode):
             sources = [sources]
         else:
             raise Error(ErrorCode.INVALID_TYPE).format(obj="SCPNode source paths", t=type(sources))
+
+        if destination is None:
+            destination = sources
 
         self.sources = [source for source in sources if source is not None]
         self.destination = destination
