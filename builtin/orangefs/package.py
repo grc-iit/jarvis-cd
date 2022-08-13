@@ -110,7 +110,7 @@ class Orangefs(Application):
         RmNode(self.config['SERVER']['STORAGE_DIR'], hosts=self.server_hosts).Run()
         RmNode(self.config['METADATA']['META_DIR'], hosts=self.md_hosts).Run()
         if 'PREPARE_STORAGE' in self.config:
-            UnprepareStorage(self.config['UNPREPARE_STORAGE'], hosts=self.server_hosts).Run()
+            UnprepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
 
     def _DefineStatus(self):
         ExecNode("mount | grep pvfs", hosts=self.server_hosts, shell=True).Run()
