@@ -139,6 +139,5 @@ cd io500
 git apply ${JARVIS_ROOT}/builtin/daos/patches/io500.patch
 
 ./prepare.sh
-make
 cp -r bin `scspkg pkg-root daos-io500`
 cp io500 `scspkg pkg-root daos-io500`/bin
