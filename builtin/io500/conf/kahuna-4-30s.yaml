@@ -3,7 +3,7 @@ IO500_SPACK:
   package_name: io500@isc22 ~daos
 IO500_ROOT: ${PER_NODE_DIR}/io500_install
 MPI:
-  nprocs: 144
+  nprocs: 128
 GLOBAL:
   timestamp-datadir: TRUE
   resultdir: ${SHARED_DIR}/io500_results
@@ -28,4 +28,4 @@ ior-hard:
 mdtest-hard:
   n:  1000000
 find:
-  nproc:  144
+  nproc:  128
