@@ -3,7 +3,7 @@ from jarvis_cd.hostfile import Hostfile
 from jarvis_cd.launcher.application import Application
 import os
 
-from jarvis_cd.fs.fs import PrepareStorage, UnmountFS, MountFS
+from jarvis_cd.fs.fs import PrepareStorage, UnmountFS, MountFS, UnprepareStorage
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.basic.sleep_node import SleepNode
 from jarvis_cd.shell.exec_node import ExecNode
