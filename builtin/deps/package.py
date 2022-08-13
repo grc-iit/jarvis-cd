@@ -27,6 +27,11 @@ class Deps(Launcher):
             if os.path.exists(os.environ['SCS_REPO']):
                 self.config['scs_repo']['path'] = os.environ['SCS_REPO']
 
+        #Check if scspkg already installed
+        if 'SCSPKG_ROOT' in os.environ:
+            if os.path.exists(os.environ['SCSPKG_ROOT']):
+                self.config['scspkg']['path'] = os.environ['SCSPKG_ROOT']
+
     def _ProcessConfig(self):
         super()._ProcessConfig()
         self.jarvis_shared = self.config['JARVIS_PATHS']['shared']
