@@ -83,6 +83,7 @@ class Io500(Application):
             f"{self.shared_dir}/datafiles",
             f"{self.shared_dir}/io500_results",
             f"{self.shared_dir}/io500.ini"
+            f"{self.shared_dir}/*.jarvis_env.sh"
         ]
         RmNode(paths).Run()
         RmNode(f"{self.per_node_dir}/*", hosts=self.all_hosts).Run()
