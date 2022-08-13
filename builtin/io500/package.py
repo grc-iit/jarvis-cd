@@ -82,7 +82,7 @@ class Io500(Application):
         paths = [
             f"{self.shared_dir}/datafiles",
             f"{self.shared_dir}/io500_results",
-            f"{self.shared_dir}/io500.ini"
+            f"{self.shared_dir}/io500.ini",
             f"{self.per_node_dir}/*"
         ]
         RmNode(paths).Run()
