@@ -9,6 +9,10 @@ class Base(Launcher):
     def _ExecArgs(self, parser):
         parser.add_argument('cmd', metavar='command', type=str, help='The python code to execute')
 
+    def CheckEnv(self):
+        for item in os.listdir(self.GetUserEnv()):
+            print(item)
+
     def UnloadEnv(self):
         RmNode(os.path.join(self.GetUserEnv(), '*'), hosts=self.all_hosts, shell=True).Run()
 
