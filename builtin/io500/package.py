@@ -41,7 +41,7 @@ class Io500(Application):
 
     def _OrangefsInit(self, io500_ini):
         self.orangefs = Orangefs(pkg_id=self.config['ORANGEFS']['pkg_id'])
-        io500_ini['GLOBAL']['datadir'] = self.orangefs.config['CLIENT']['MOUNT_POINT']
+        io500_ini['GLOBAL']['datadir'] = os.path.join(self.orangefs.config['CLIENT']['MOUNT_POINT'], 'io500-test-data')
         self.env += [
             f"spack load {self.config['ORANGEFS_MPICH']}"
         ]
@@ -57,7 +57,7 @@ class Io500(Application):
         container_uuid = self.daos.GetContainerUUID(pool_uuid, container_label)
 
         # Add DAOS API to io500 config
-        io500_ini['GLOBAL']['datadir'] = mount
+        io500_ini['GLOBAL']['datadir'] = os.path.join(mount, 'io500-test-dir')
         io500_ini['ior-easy']['API'] = self._DFSApi(pool_uuid, container_uuid, mount)
         io500_ini['ior-hard']['API'] = self._DFSApi(pool_uuid, container_uuid, mount)
         io500_ini['mdtest-easy']['API'] = self._DFSApi(pool_uuid, container_uuid, mount, oclass=False)
