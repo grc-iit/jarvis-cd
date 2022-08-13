@@ -14,7 +14,7 @@ class ScspkgSetup(Installer):
             f"cd {scspkg_root}",
             f"./install.sh",
         ]
-        ExecNode(cmds).Run()
+        ExecNode(cmds, shell=True).Run()
         EnvNode(self.jarvis_env,
                 cmd=f"export SCSPKG_ROOT={scspkg_root}",
                 cmd_re="export SCSPKG_ROOT",

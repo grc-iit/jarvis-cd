@@ -28,3 +28,8 @@ scs_repo:
   branch: main
   commit: null
   path: ${HOME}/scs-repo
+scspkg:
+  url: https://github.com/scs-lab/scspkg.git
+  branch: master
+  commit: null
+  path: ${HOME}/scspkg
