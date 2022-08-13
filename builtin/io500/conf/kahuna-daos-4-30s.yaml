@@ -11,7 +11,7 @@ DAOS:
   pkg_id: daos1
 GLOBAL:
   timestamp-datadir: TRUE
-  resultdir: ${SHARED_DIR}/io500_results
+  resultdir: ${PER_NODE_DIR}/io500_results
   timestamp-resultdir: TRUE
   api: POSIX
   drop-caches: FALSE
