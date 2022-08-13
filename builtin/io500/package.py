@@ -7,6 +7,8 @@ from jarvis_cd.shell.kill_node import KillNode
 from jarvis_cd.fs.rm_node import RmNode
 from jarvis_cd.installer.env_node import EnvNode, EnvNodeOps
 from builtin.daos.package import Daos
+from builtin.orangefs.package import Orangefs
+
 import configparser
 from jarvis_cd.serialize.ini_file import IniFile
 import os
@@ -38,6 +40,8 @@ class Io500(Application):
         IniFile(f"{self.shared_dir}/io500.ini").Save(io500_ini)
 
     def _OrangefsInit(self, io500_ini):
+        self.orangefs = Orangefs(pkg_id=self.config['ORANGEFS']['pkg_id'])
+        io500_ini['GLOBAL']['datadir'] = self.orangefs.config['CLIENT']['MOUNT_POINT']
         self.env += [
             f"spack load {self.config['ORANGEFS_MPICH']}"
         ]
