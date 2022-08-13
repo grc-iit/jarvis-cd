@@ -16,7 +16,7 @@ class ScspkgSetup(Installer):
         ]
         ExecNode(cmds).Run()
         EnvNode(self.jarvis_env,
-                cmd=f"export SCSPKG_ROOT={spack_root}",
+                cmd=f"export SCSPKG_ROOT={scspkg_root}",
                 cmd_re="export SCSPKG_ROOT",
                 op=EnvNodeOps.SET).Run()
 
@@ -24,8 +24,8 @@ class ScspkgSetup(Installer):
         GitNode(**self.config['scspkg'], method=GitOps.UPDATE).Run()
 
     def LocalUninstall(self):
-        spack_root = self.config['spack']['path']
-        shutil.rmtree(spack_root)
+        scspkg_root = self.config['scspkg']['path']
+        shutil.rmtree(scspkg_root)
         EnvNode(self.jarvis_env,
                 cmd_re="export SCSPKG_ROOT",
                 op=EnvNodeOps.REMOVE).Run()
