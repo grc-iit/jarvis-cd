@@ -1,0 +1,33 @@
+HOSTS: ${SHARED_DIR}/hostfile.txt
+IO500_SPACK:
+  package_name: io500@isc22 ~daos
+IO500_ROOT: ${PER_NODE_DIR}/io500_install
+ORANGFS_MPICH:
+  package_name: orangefs-mpich
+MPI:
+  nprocs: 144
+GLOBAL:
+  timestamp-datadir: TRUE
+  resultdir: ${SHARED_DIR}/io500_results
+  timestamp-resultdir: TRUE
+  api: POSIX
+  drop-caches: FALSE
+  drop-caches-cmd: sudo -n bash -c "echo 3 > /proc/sys/vm/drop_caches"
+  io-buffers-on-gpu: FALSE
+  verbosity: 1
+  scc: TRUE
+DEBUG:
+  stonewall-time: 30
+ior-easy:
+  transferSize:  1m
+  blockSize:  20000m
+  filePerProc:  FALSE
+  uniqueDir:  FALSE
+mdtest-easy:
+  n:  1000000
+ior-hard:
+  segmentCount:  10000000
+mdtest-hard:
+  n:  1000000
+find:
+  nproc:  144

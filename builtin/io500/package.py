@@ -30,9 +30,16 @@ class Io500(Application):
         if 'IO500_CLASS' in self.config:
             if self.config['IO500_CLASS'] == 'daos':
                 self._DaosInit(io500_ini)
+            if self.config['IO500_CLASS'] == 'orangefs':
+                self._OrangefsInit(io500_ini)
 
         #Create io500 configuration
         IniFile(f"{self.shared_dir}/io500.ini").Save(io500_ini)
+
+    def _OrangefsInit(self, io500_ini):
+        self.env += [
+            f"spack load {self.config['ORANGEFS_MPICH']}"
+        ]
 
     def _DaosInit(self, io500_ini):
         self.daos = Daos(pkg_id=self.config['DAOS']['pkg_id'])
