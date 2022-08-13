@@ -3,6 +3,7 @@ from jarvis_cd.mpi.mpi_node import MPINode
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.fs.mkdir_node import MkdirNode
 
+from jarvis_cd.shell.kill_node import KillNode
 from jarvis_cd.fs.rm_node import RmNode
 from jarvis_cd.installer.env_node import EnvNode, EnvNodeOps
 from builtin.daos.package import Daos
