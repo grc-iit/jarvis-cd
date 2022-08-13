@@ -66,35 +66,53 @@ class PrepareStorage(ParallelNode):
         super().__init__(**kwargs)
         self.spec = spec
         self.nodes = []
-        for item in self.spec:
-            if item['format'] == 'EXT4':
-                self.nodes.append(EXT4Format(**item['format_params'], **kwargs))
-                if 'mount_params' in item:
-                    self.nodes.append(MkdirNode(item['mount_params']['fs_path'], **kwargs))
-                    self.nodes.append(MountFS(**item['mount_params'], **kwargs))
-                    self.nodes.append(ChownFS(item['mount_params']['fs_path'], **kwargs))
-            if item['format'] == 'XFS':
-                self.nodes.append(XFSFormat(**item['format_params'], **kwargs))
-                if 'mount_params' in item:
-                    self.nodes.append(MkdirNode(item['mount_params']['fs_path'], **kwargs))
-                    self.nodes.append(MountFS(**item['mount_params'], **kwargs))
-                    self.nodes.append(ChownFS(item['mount_params']['fs_path'], **kwargs))
-            if item['format'] == 'F2FS':
-                self.nodes.append(F2FSFormat(**item['format_params'], **kwargs))
-                if 'mount_params' in item:
-                    self.nodes.append(MkdirNode(item['mount_params']['fs_path'], **kwargs))
-                    self.nodes.append(MountFS(**item['mount_params'], **kwargs))
-                    self.nodes.append(ChownFS(item['mount_params']['fs_path'], **kwargs))
-            if item['format'] == 'tmpfs':
-                self.nodes.append(MkdirNode(item['mount_params']['fs_path'], **kwargs))
-                self.nodes.append(TmpfsMount(**item['mount_params'], **kwargs))
-                self.nodes.append(ChownFS(item['mount_params']['fs_path'], **kwargs))
+        self.kwargs = kwargs
 
     def _Run(self):
-        for node in self.nodes:
-            node.Run()
+        for item in self.spec:
+            if item['format'] == 'EXT4':
+                EXT4Format(**item['format_params'], **self.kwargs).Run()
+                if 'mount_params' in item:
+                    MkdirNode(item['mount_params']['fs_path'], **self.kwargs).Run()
+                    MountFS(**item['mount_params'], **self.kwargs).Run()
+                    ChownFS(item['mount_params']['fs_path'], **self.kwargs).Run()
+            if item['format'] == 'XFS':
+                XFSFormat(**item['format_params'], **self.kwargs).Run()
+                if 'mount_params' in item:
+                    MkdirNode(item['mount_params']['fs_path'], **self.kwargs).Run()
+                    MountFS(**item['mount_params'], **self.kwargs).Run()
+                    ChownFS(item['mount_params']['fs_path'], **self.kwargs).Run()
+            if item['format'] == 'F2FS':
+                F2FSFormat(**item['format_params'], **self.kwargs).Run()
+                if 'mount_params' in item:
+                    MkdirNode(item['mount_params']['fs_path'], **self.kwargs).Run()
+                    MountFS(**item['mount_params'], **self.kwargs).Run()
+                    ChownFS(item['mount_params']['fs_path'], **self.kwargs).Run()
+            if item['format'] == 'tmpfs':
+                MkdirNode(item['mount_params']['fs_path'], **self.kwargs).Run()
+                TmpfsMount(**item['mount_params'], **self.kwargs).Run()
+                ChownFS(item['mount_params']['fs_path'], **self.kwargs).Run()
 
+class UnprepareStorage(ParallelNode):
+    def __init__(self, spec, **kwargs):
+        super().__init__(**kwargs)
+        self.spec = spec
+        self.nodes = []
+        self.kwargs = kwargs
 
+    def _Run(self):
+        for item in self.spec:
+            if item['format'] == 'EXT4':
+                if 'mount_params' in item:
+                    UnmountFS(**item['mount_params'], **self.kwargs).Run()
+            if item['format'] == 'XFS':
+                if 'mount_params' in item:
+                    UnmountFS(**item['mount_params'], **self.kwargs).Run()
+            if item['format'] == 'F2FS':
+                if 'mount_params' in item:
+                    UnmountFS(**item['mount_params'], **self.kwargs).Run()
+            if item['format'] == 'tmpfs':
+                UnmountFS(**item['mount_params'], **self.kwargs).Run()
 
 class DisableVARandomization(ExecNode):
     def __init__(self, **kwargs):
