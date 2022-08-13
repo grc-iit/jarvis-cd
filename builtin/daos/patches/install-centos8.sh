@@ -108,14 +108,16 @@ jarvis ssh exec "yum -y install libarchive-devel bzip2-devel" --sudo -C $JARVIS_
 
 ## IO500 -- MFU
 scspkg create mfu
-scspkg add-deps mfu libcircle lwgrp dtcmp
+scspkg add-deps mfu libcircle lwgrp dtcmp daos-2.1
 cd `scspkg pkg-src mfu`
-wget https://github.com/hpc/mpifileutils/archive/v0.10.tar.gz
-tar -zxf v0.10.tar.gz
-cd mpifileutils-0.10
+git clone https://github.com/mchaarawi/mpifileutils -b pfind_integration
+cd mpifileutils
 mkdir build
 cd build
+CFLAGS="-I `scspkg pkg-root daos-2.1`/include" \
+LDFLAGS="-L `scspkg pkg-root daos-2.1`/lib64 -luuid -ldaos -ldfs -ldaos_common -lgurt -lpthread" \
 cmake ../ \
+  -DENABLE_XATTRS=OFF \
   -DWITH_DTCMP_PREFIX=`scspkg pkg-root dtcmp` \
   -DWITH_LibCircle_PREFIX=`scspkg pkg-root libcircle` \
   -DCMAKE_INSTALL_PREFIX=`scspkg pkg-root mfu`
@@ -124,17 +126,17 @@ module load mfu
 
 ## IO500
 scspkg create daos-io500
-MY_DAOS_INSTALL_PATH=`scspkg pkg-root daos-2.1`
-MY_MFU_INSTALL_PATH=`scspkg pkg-root mfu`
-MY_MFU_SOURCE_PATH=`scspkg pkg-root mfu`/src/mpifileutils-0.10
-MY_MFU_BUILD_PATH=`scspkg pkg-root mfu`/src/mpifileutils-0.10/build
-MY_IO500_PATH=`scspkg pkg-root daos-io500`/io500
+scspkg add-deps daos-2.1 mfu orangefs-mpich
+export MY_DAOS_INSTALL_PATH=`scspkg pkg-root daos-2.1`
+export MY_MFU_INSTALL_PATH=`scspkg pkg-root mfu`
+export MY_MFU_SOURCE_PATH=`scspkg pkg-root mfu`/src/mpifileutils
+export MY_MFU_BUILD_PATH=`scspkg pkg-root mfu`/src/mpifileutils/build
+export MY_IO500_PATH=`scspkg pkg-root daos-io500`/io500
 
 cd `scspkg pkg-src daos-io500`
 git clone https://github.com/IO500/io500.git -b io500-isc22
 cd io500
-git apply ${JARVIS_ROOT}/builtin/daos/patches/io500_prepare.patch
-git apply ${JARVIS_ROOT}/builtin/daos/patches/io500_Makefile.patch
+git apply ${JARVIS_ROOT}/builtin/daos/patches/io500.patch
 
 ./prepare.sh
 make
