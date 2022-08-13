@@ -56,16 +56,16 @@ class Orangefs(Application):
             PrepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
 
         #set pvfstab on clients
-        for i,client in self.client_hosts.enumerate():
-            metadata_server_ip = self.md_hosts.list()[i % len(self.md_hosts)]
-            cmd = "echo '{protocol}://{ip}:{port}/orangefs {mount_point} pvfs2 defaults,auto 0 0' > {client_pvfs2tab}".format(
-                protocol=self.config['SERVER']['PVFS2_PROTOCOL'],
-                port=self.config['SERVER']['PVFS2_PORT'],
-                ip=metadata_server_ip,
-                mount_point=self.config['CLIENT']['MOUNT_POINT'],
-                client_pvfs2tab=self.config['CLIENT']['PVFS2TAB']
-            )
-            ExecNode(cmd, hosts=client, shell=True).Run()
+        # for i,client in self.client_hosts.enumerate():
+        #     metadata_server_ip = self.md_hosts.list()[i % len(self.md_hosts)]
+        #     cmd = "echo '{protocol}://{ip}:{port}/orangefs {mount_point} pvfs2 defaults,auto 0 0' > {client_pvfs2tab}".format(
+        #         protocol=self.config['SERVER']['PVFS2_PROTOCOL'],
+        #         port=self.config['SERVER']['PVFS2_PORT'],
+        #         ip=metadata_server_ip,
+        #         mount_point=self.config['CLIENT']['MOUNT_POINT'],
+        #         client_pvfs2tab=self.config['CLIENT']['PVFS2TAB']
+        #     )
+        #     ExecNode(cmd, hosts=client, shell=True).Run()
 
     def _DefineStart(self):
         # start pfs servers
@@ -117,7 +117,7 @@ class Orangefs(Application):
         pvfs2_ping = os.path.join(self.orangefs_root, "bin", "pvfs2-ping")
         verify_server_cmd = [
             f"export LD_LIBRARY_PATH={os.path.join(self.orangefs_root, 'lib')}",
-            f"export PVFS2TAB_FILE={self.config['CLIENT']['PVFS2TAB']}",
+            #f"export PVFS2TAB_FILE={self.config['CLIENT']['PVFS2TAB']}",
             f"{pvfs2_ping} -m {self.config['CLIENT']['MOUNT_POINT']} | grep 'appears to be correctly configured'"
         ]
         verify_server_cmd = ';'.join(verify_server_cmd)
