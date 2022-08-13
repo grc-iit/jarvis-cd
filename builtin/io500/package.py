@@ -82,10 +82,10 @@ class Io500(Application):
         paths = [
             f"{self.shared_dir}/datafiles",
             f"{self.shared_dir}/io500_results",
-            f"{self.shared_dir}/io500.ini",
-            f"{self.per_node_dir}/*"
+            f"{self.shared_dir}/io500.ini"
         ]
         RmNode(paths).Run()
+        RmNode(f"{self.per_node_dir}/*", hosts=self.all_hosts).Run()
 
 
     def _DefineStop(self):
