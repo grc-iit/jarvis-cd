@@ -3,8 +3,7 @@ IO500_CLASS: orangefs
 IO500_SPACK:
   package_name: io500@isc22 ~daos
 IO500_ROOT: ${PER_NODE_DIR}/io500_install
-ORANGEFS_MPICH:
-  package_name: orangefs-mpich
+ORANGEFS_MPICH: orangefs-mpich
 MPI:
   nprocs: 128
 GLOBAL:
