@@ -5,7 +5,7 @@ IO500_SPACK:
 IO500_ROOT: ${PER_NODE_DIR}/io500_install
 ORANGEFS_MPICH: orangefs-mpich
 ORANGEFS:
-  name: ofs1
+  pkg_id: ofs1
 MPI:
   nprocs: 128
 GLOBAL:
