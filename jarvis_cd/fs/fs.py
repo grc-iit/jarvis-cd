@@ -104,15 +104,15 @@ class UnprepareStorage(ParallelNode):
         for item in self.spec:
             if item['format'] == 'EXT4':
                 if 'mount_params' in item:
-                    UnmountFS(**item['mount_params'], **self.kwargs).Run()
+                    UnmountFS(**item['mount_params']['fs_path'], **self.kwargs).Run()
             if item['format'] == 'XFS':
                 if 'mount_params' in item:
-                    UnmountFS(**item['mount_params'], **self.kwargs).Run()
+                    UnmountFS(**item['mount_params']['fs_path'], **self.kwargs).Run()
             if item['format'] == 'F2FS':
                 if 'mount_params' in item:
-                    UnmountFS(**item['mount_params'], **self.kwargs).Run()
+                    UnmountFS(**item['mount_params']['fs_path'], **self.kwargs).Run()
             if item['format'] == 'tmpfs':
-                UnmountFS(**item['mount_params'], **self.kwargs).Run()
+                UnmountFS(**item['mount_params']['fs_path'], **self.kwargs).Run()
 
 class DisableVARandomization(ExecNode):
     def __init__(self, **kwargs):
