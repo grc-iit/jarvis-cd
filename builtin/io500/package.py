@@ -90,7 +90,7 @@ class Io500(Application):
 
 
     def _DefineStop(self):
-        return
+        KillNode('.*io500.*', hosts=self.all_hosts).Run()
 
     def _DefineStatus(self):
         pass
