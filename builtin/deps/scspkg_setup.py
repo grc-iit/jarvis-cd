@@ -10,7 +10,7 @@ class ScspkgSetup(Installer):
         scspkg_root = self.config['scspkg']['path']
         GitNode(**self.config['scspkg'], method=GitOps.CLONE).Run()
         cmds = [
-            f"chmod +x {scspkg_root}/dependencies.sh",
+            f"chmod +x {scspkg_root}/install.sh",
             f"cd {scspkg_root}",
             f"./install.sh",
         ]
