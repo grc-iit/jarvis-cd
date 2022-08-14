@@ -33,4 +33,4 @@ ior-hard:
 mdtest-hard:
   n:  1000000
 find:
-  nproc:  128
+  nproc:  1

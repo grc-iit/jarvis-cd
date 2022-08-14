@@ -128,7 +128,7 @@ module load mfu
 
 ## IO500
 scspkg create daos-io500
-scspkg add-deps daos-2.1 mfu orangefs-mpich
+scspkg add-deps daos-io500 daos-2.1 orangefs-mpich
 export MY_DAOS_INSTALL_PATH=`scspkg pkg-root daos-2.1`
 export MY_MFU_INSTALL_PATH=`scspkg pkg-root mfu`
 export MY_MFU_SOURCE_PATH=`scspkg pkg-root mfu`/src/mpifileutils
