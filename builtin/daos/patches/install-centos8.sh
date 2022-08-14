@@ -33,10 +33,34 @@ make -j8
 make install
 module load orangefs-mpich
 
+#install RDMA-CORE
+scspkg create rdma-core
+cd `scspkg pkg-root rdma-core`
+wget https://github.com/linux-rdma/rdma-core/archive/refs/tags/v41.0.tar.gz
+tar -xzf v41.0.tar.gz
+cd rdma-core-41.0
+jarvis ssh exec "yum -y install cmake gcc libnl3-devel libudev-devel make pkgconfig valgrind-devel" -C $JARVIS_ROOT
+./build.sh
+cp -r build/* `scspkg pkg-root rdma-core`
+module load rdma-core
+
+#Install libfabric
+scspkg create libfabric
+scspkg add-deps libfabric rdma-core
+cd `scspkg pkg-src libfabric`
+wget https://github.com/ofiwg/libfabric/archive/refs/tags/v1.15.1.tar.gz
+tar -xzf v1.15.1.tar.gz
+cd libfabric-1.15.1
+./autogen.sh
+./configure --prefix=`scspkg pkg-root libfabric` --enable-verbs
+make -j8
+make install
+module load libfabric
+
 #Install DAOS
 python3 -m pip install defusedxml distro junit_xml pyxattr tabulate scons pyyaml pyelftools
 scspkg create daos-2.1
-scspkg add-deps daos-2.1 orangefs-mpich
+scspkg add-deps daos-2.1 orangefs-mpich libfabric
 cd `scspkg pkg-src daos-2.1`
 git clone --recurse-submodules https://github.com/daos-stack/daos.git -b v2.1.104-tb
 cd daos
@@ -131,9 +155,6 @@ scspkg create daos-io500
 scspkg add-deps daos-io500 daos-2.1 orangefs-mpich
 export MY_DAOS_INSTALL_PATH=`scspkg pkg-root daos-2.1`
 export MY_MFU_INSTALL_PATH=`scspkg pkg-root mfu`
-export MY_MFU_SOURCE_PATH=`scspkg pkg-root mfu`/src/mpifileutils
-export MY_MFU_BUILD_PATH=`scspkg pkg-root mfu`/src/mpifileutils/build
-export MY_IO500_PATH=`scspkg pkg-root daos-io500`/io500
 
 cd `scspkg pkg-src daos-io500`
 git clone https://github.com/IO500/io500.git -b io500-isc22
