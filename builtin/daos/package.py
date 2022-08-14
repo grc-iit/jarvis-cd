@@ -112,7 +112,8 @@ class Daos(Application):
             f"{self.shared_dir}/daosCA",
             self.config['DAOS_ROOT'],
             os.path.join(self.per_node_dir, '*.sock'),
-            os.path.join(self.per_node_dir, '*.log')
+            os.path.join(self.per_node_dir, '*.log'),
+            self.config['DAOS_ROOT']
         ]
         RmNode(to_rm, hosts=self.all_hosts).Run()
 

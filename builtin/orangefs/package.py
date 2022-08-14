@@ -113,6 +113,7 @@ class Orangefs(Application):
         RmNode(self.config['CLIENT']['MOUNT_POINT'], hosts=self.client_hosts).Run()
         RmNode(self.config['SERVER']['STORAGE_DIR'], hosts=self.server_hosts).Run()
         RmNode(self.config['METADATA']['META_DIR'], hosts=self.md_hosts).Run()
+        RmNode(self.orangefs_root, hosts=self.all_hosts).Run()
         if 'PREPARE_STORAGE' in self.config:
             UnprepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
 
