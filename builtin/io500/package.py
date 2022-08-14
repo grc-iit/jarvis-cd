@@ -48,13 +48,13 @@ class Io500(Application):
     def _OrangefsInit(self, io500_ini):
         self.orangefs = Orangefs(pkg_id=self.config['ORANGEFS']['pkg_id'])
         io500_ini['GLOBAL']['datadir'] = os.path.join(self.orangefs.config['CLIENT']['MOUNT_POINT'], 'io500-test-data')
-        if 'ORANGEFS_MPICH_SPACK' in self.config:
+        if 'ORANGEFS_SPACK' in self.config:
             self.env += [
-                f"spack load {self.config['ORANGEFS_MPICH']}"
+                f"spack load {self.config['ORANGEFS_SPACK']}"
             ]
-        elif 'ORANGEFS_MPICH_SCSPKG' in self.config:
+        elif 'ORANGEFS_SCSPKG' in self.config:
             self.env += [
-                f"module load {self.config['ORANGEFS_MPICH_SCSPKG']}"
+                f"module load {self.config['ORANGEFS_SCSPKG']}"
             ]
 
     def _DaosInit(self, io500_ini):

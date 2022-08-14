@@ -23,6 +23,7 @@ module load orangefs
 
 #Install mpich
 scspkg create orangefs-mpich
+scspkg add-deps orangefs-mpich orangefs
 cd `scspkg pkg-src orangefs-mpich`
 wget http://www.mpich.org/static/downloads/3.2/mpich-3.2.tar.gz --no-check-certificate
 tar -xzf mpich-3.2.tar.gz
@@ -35,6 +36,7 @@ module load orangefs-mpich
 #Install DAOS
 python3 -m pip install defusedxml distro junit_xml pyxattr tabulate scons pyyaml pyelftools
 scspkg create daos-2.1
+scspkg add-deps daos-2.1 orangefs-mpich
 cd `scspkg pkg-src daos-2.1`
 git clone --recurse-submodules https://github.com/daos-stack/daos.git -b v2.1.104-tb
 cd daos

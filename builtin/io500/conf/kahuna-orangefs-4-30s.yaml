@@ -2,7 +2,7 @@ HOSTS: ${SHARED_DIR}/hostfile.txt
 IO500_CLASS: orangefs
 IO500_SCSPKG: orangefs-io500
 IO500_ROOT: ${PER_NODE_DIR}/io500_install
-ORANGEFS_MPICH_SCSPKG: orangefs-mpich
+ORANGEFS_SCSPKG: orangefs-mpich
 ORANGEFS:
   pkg_id: ofs1
 MPI:
