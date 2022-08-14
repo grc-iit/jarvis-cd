@@ -1,6 +1,5 @@
 HOSTS: ${SHARED_DIR}/hostfile.txt
-ORANGEFS_SPACK:
-    package_name: orangefs
+ORANGEFS_SCSPKG: orangefs
 METADATA:
     HOSTS: 1-3
     META_DIR: ${PER_NODE_DIR}/orangefs_data/metadata

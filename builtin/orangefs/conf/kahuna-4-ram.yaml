@@ -1,6 +1,5 @@
 HOSTS: ${SHARED_DIR}/hostfile.txt
-ORANGEFS_SPACK:
-    package_name: orangefs
+ORANGEFS_SCSPKG: orangefs
 PREPARE_STORAGE:
     - format: tmpfs
       mount_params:

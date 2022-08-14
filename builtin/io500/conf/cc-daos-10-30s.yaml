@@ -1,6 +1,5 @@
 HOSTS: ${SHARED_DIR}/hostfile.txt
-IO500_SPACK:
-  package_name: daos-io500
+IO500_SCSPKG: daos-io500
 IO500_ROOT: ${PER_NODE_DIR}/io500_install
 MPI:
   nprocs: 216

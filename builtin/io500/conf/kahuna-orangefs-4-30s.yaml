@@ -1,9 +1,8 @@
 HOSTS: ${SHARED_DIR}/hostfile.txt
 IO500_CLASS: orangefs
-IO500_SPACK:
-  package_name: io500@isc22 ~daos
+IO500_SCSPKG: orangefs-io500
 IO500_ROOT: ${PER_NODE_DIR}/io500_install
-ORANGEFS_MPICH: orangefs-mpich
+ORANGEFS_MPICH_SCSPKG: orangefs-mpich
 ORANGEFS:
   pkg_id: ofs1
 MPI:

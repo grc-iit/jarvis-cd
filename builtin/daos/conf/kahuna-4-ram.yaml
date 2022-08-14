@@ -1,5 +1,4 @@
-DAOS_SPACK:
-  package_name: daos
+DAOS_SCSPKG: daos-2.1
 DAOS_ROOT: ${PER_NODE_DIR}/daos_install
 NAME: daos_server
 PORT: 10001

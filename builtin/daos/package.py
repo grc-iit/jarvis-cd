@@ -4,6 +4,7 @@ from jarvis_cd.launcher.application import Application
 from jarvis_cd.fs.mkdir_node import MkdirNode
 from jarvis_cd.fs.rm_node import RmNode
 from jarvis_cd.fs.link_node import LinkNode
+from jarvis_cd.spack.link_scspkg import LinkScspkg
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.introspect.detect_networks import DetectNetworks
 from jarvis_cd.basic.sleep_node import SleepNode
@@ -28,6 +29,8 @@ class Daos(Application):
         #Create DAOS_ROOT sybmolic link
         if 'DAOS_SPACK' in self.config:
             LinkSpackage(self.config['DAOS_SPACK'], self.config['DAOS_ROOT'], hosts=self.all_hosts).Run()
+        elif 'DAOS_SCSPKG' in self.config:
+            LinkScspkg(self.config['DAOS_SCSPKG'], self.config['DAOS_ROOT'], hosts=self.all_hosts).Run()
         else:
             self.config['DAOS_ROOT'] = '/usr'
         #Create socket directories

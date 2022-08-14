@@ -4,6 +4,7 @@ from jarvis_cd.launcher.application import Application
 import os
 
 from jarvis_cd.fs.fs import PrepareStorage, UnmountFS, MountFS, UnprepareStorage
+from jarvis_cd.spack.link_scspkg import LinkScspkg
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.basic.sleep_node import SleepNode
 from jarvis_cd.shell.exec_node import ExecNode
@@ -23,7 +24,10 @@ class Orangefs(Application):
 
     def _DefineInit(self):
         #Link orangefs spackage
-        LinkSpackage(self.config['ORANGEFS_SPACK'], self.orangefs_root, hosts=self.all_hosts).Run()
+        if 'ORANGEFS_SPACK' in self.config:
+            LinkSpackage(self.config['ORANGEFS_SPACK'], self.orangefs_root, hosts=self.all_hosts).Run()
+        elif 'ORANGEFS_SCSPKG' in self.config:
+            LinkScspkg(self.config['ORANGEFS_SCSPKG'], self.orangefs_root, hosts=self.all_hosts).Run()
 
         # generate PFS Gen config
         pvfs_gen_cmd = []

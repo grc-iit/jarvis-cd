@@ -1,5 +1,6 @@
 from jarvis_cd.launcher.application import Application
 from jarvis_cd.mpi.mpi_node import MPINode
+from jarvis_cd.spack.link_scspkg import LinkScspkg
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.fs.mkdir_node import MkdirNode
 
@@ -15,8 +16,13 @@ import os
 
 class Io500(Application):
     def _DefineInit(self):
-        LinkSpackage(self.config['IO500_SPACK'], self.config['IO500_ROOT'], hosts=self.all_hosts).Run()
-        self.env = [f"spack load {self.config['IO500_SPACK']['package_name']}"]
+        if 'IO500_SPACK' in self.config:
+            LinkSpackage(self.config['IO500_SPACK'], self.config['IO500_ROOT'], hosts=self.all_hosts).Run()
+            self.env = [f"spack load {self.config['IO500_SPACK']['package_name']}"]
+        elif 'IO500_SCSPKG' in self.config:
+            LinkScspkg(self.config['IO500_SCSPKG'], self.config['IO500_ROOT'], hosts=self.all_hosts).Run()
+            self.env = [f"module load {self.config['IO500_SCSPKG']}"]
+
         io500_ini = configparser.ConfigParser()
 
         #Create basic io500 sections
@@ -42,9 +48,14 @@ class Io500(Application):
     def _OrangefsInit(self, io500_ini):
         self.orangefs = Orangefs(pkg_id=self.config['ORANGEFS']['pkg_id'])
         io500_ini['GLOBAL']['datadir'] = os.path.join(self.orangefs.config['CLIENT']['MOUNT_POINT'], 'io500-test-data')
-        self.env += [
-            f"spack load {self.config['ORANGEFS_MPICH']}"
-        ]
+        if 'ORANGEFS_MPICH_SPACK' in self.config:
+            self.env += [
+                f"spack load {self.config['ORANGEFS_MPICH']}"
+            ]
+        elif 'ORANGEFS_MPICH_SCSPKG' in self.config:
+            self.env += [
+                f"module load {self.config['ORANGEFS_MPICH_SCSPKG']}"
+            ]
 
     def _DaosInit(self, io500_ini):
         self.daos = Daos(pkg_id=self.config['DAOS']['pkg_id'])
