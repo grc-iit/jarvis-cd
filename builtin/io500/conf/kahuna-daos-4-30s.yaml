@@ -2,6 +2,7 @@ HOSTS: ${SHARED_DIR}/hostfile.txt
 IO500_CLASS: daos
 IO500_SCSPKG: daos-io500
 IO500_ROOT: ${PER_NODE_DIR}/io500_install
+DAOS_SCSPKG: daos-2.1
 MPI:
   nprocs: 128
 DAOS:

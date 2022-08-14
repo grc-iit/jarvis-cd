@@ -59,6 +59,10 @@ class Io500(Application):
 
     def _DaosInit(self, io500_ini):
         self.daos = Daos(pkg_id=self.config['DAOS']['pkg_id'])
+        if 'DAOS_SPACK' in self.config:
+            self.env += [f"spack load {self.config['DAOS_SPACK']['package_name']}"]
+        elif 'DAOS_SCSPKG' in self.config:
+            self.env += [f"module load {self.config['DAOS_SCSPKG']}"]
 
         # Get DAOS info
         mount = self.daos.config['CONTAINERS'][0]['mount']
