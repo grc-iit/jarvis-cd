@@ -28,6 +28,7 @@ class Orangefs(Application):
             LinkSpackage(self.config['ORANGEFS_SPACK'], self.orangefs_root, hosts=self.all_hosts).Run()
         elif 'ORANGEFS_SCSPKG' in self.config:
             LinkScspkg(self.config['ORANGEFS_SCSPKG'], self.orangefs_root, hosts=self.all_hosts).Run()
+            self.env = [f"module load {self.config['ORANGEFS_SCSPKG']}"]
 
         # generate PFS Gen config
         pvfs_gen_cmd = []
