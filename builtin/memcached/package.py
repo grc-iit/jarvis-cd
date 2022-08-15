@@ -1,5 +1,5 @@
 from jarvis_cd.shell.exec_node import ExecNode
-from jarvis_cd.shell.copy_node import CopyNode
+from jarvis_cd.fs.copy_node import CopyNode
 from jarvis_cd.launcher.application import Application
 from jarvis_cd.fs.mkdir_node import MkdirNode
 from jarvis_cd.fs.rm_node import RmNode

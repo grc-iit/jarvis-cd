@@ -1,6 +1,6 @@
 
 import re
-from jarvis_cd.node import *
+from jarvis_cd.basic.node import *
 
 class DetectOSNode(Node):
     def __init__(self, program, **kwargs):

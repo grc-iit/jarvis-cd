@@ -2,9 +2,9 @@ import subprocess
 import shlex
 import time
 import os
-from jarvis_cd.enumerations import OutputStream
+from jarvis_cd.basic.enumerations import OutputStream
 
-from jarvis_cd.parallel_node import ParallelNode
+from jarvis_cd.basic.parallel_node import ParallelNode
 
 class LocalExecNode(ParallelNode):
     def __init__(self, cmds, **kwargs):

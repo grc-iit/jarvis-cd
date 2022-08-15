@@ -1,5 +1,5 @@
 from jarvis_cd.shell.exec_node import ExecNode
-from jarvis_cd.shell.copy_node import CopyNode
+from jarvis_cd.fs.copy_node import CopyNode
 from jarvis_cd.launcher.application import Application
 from jarvis_cd.fs.mkdir_node import MkdirNode
 from jarvis_cd.fs.rm_node import RmNode
@@ -14,7 +14,7 @@ from jarvis_cd.fs.fs import UnmountFS
 from jarvis_cd.serialize.yaml_file import YAMLFile
 from jarvis_cd.installer.git_node import GitNode,GitOps
 from jarvis_cd.installer.patch_node import PatchNode
-from jarvis_cd.hostfile import Hostfile
+from jarvis_cd.basic.hostfile import Hostfile
 import os
 
 class Daos(Application):

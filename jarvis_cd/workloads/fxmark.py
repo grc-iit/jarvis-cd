@@ -1,5 +1,6 @@
 from jarvis_cd.shell.exec_node import ExecNode
 import re
+from enum import Enum
 
 class FxMarkOp(Enum):
     MWCL = "MWCL"

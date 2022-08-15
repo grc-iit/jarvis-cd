@@ -1,5 +1,5 @@
 import os
-from jarvis_cd.exception import Error, ErrorCode
+from jarvis_cd.basic.exception import Error, ErrorCode
 import socket
 import re
 

@@ -1,5 +1,5 @@
 
-from jarvis_cd.parallel_node import ParallelNode
+from jarvis_cd.basic.parallel_node import ParallelNode
 from jarvis_cd.shell.exec_node import ExecNode
 from jarvis_cd.basic.echo_node import EchoNode
 from abc import abstractmethod

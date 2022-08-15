@@ -1,5 +1,5 @@
 from jarvis_cd.basic.echo_node import EchoNode
-from jarvis_cd.hostfile import Hostfile
+from jarvis_cd.basic.hostfile import Hostfile
 from jarvis_cd.launcher.application import Application
 import os
 
@@ -8,7 +8,7 @@ from jarvis_cd.spack.link_scspkg import LinkScspkg
 from jarvis_cd.spack.link_package import LinkSpackage
 from jarvis_cd.basic.sleep_node import SleepNode
 from jarvis_cd.shell.exec_node import ExecNode
-from jarvis_cd.shell.copy_node import CopyNode
+from jarvis_cd.fs.copy_node import CopyNode
 from jarvis_cd.fs.mkdir_node import MkdirNode
 from jarvis_cd.fs.rm_node import RmNode
 

@@ -1,4 +1,4 @@
-from jarvis_cd.node import Node
+from jarvis_cd.basic.node import Node
 from enum import Enum
 import re
 import os,sys

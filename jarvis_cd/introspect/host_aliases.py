@@ -1,7 +1,7 @@
 from jarvis_cd.introspect.detect_networks import DetectNetworks
-from jarvis_cd.hostfile import Hostfile
-from jarvis_cd.node import Node
-from jarvis_cd.exception import Error,ErrorCode
+from jarvis_cd.basic.hostfile import Hostfile
+from jarvis_cd.basic.node import Node
+from jarvis_cd.basic.exception import Error,ErrorCode
 
 class FindHostAliases(DetectNetworks):
     def __init__(self, hosts, **kwargs):

@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
-from jarvis_cd.jarvis_manager import JarvisManager
+from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_cd.serialize.yaml_file import YAMLFile
 import os
 
-from jarvis_cd.exception import Error, ErrorCode
+from jarvis_cd.basic.exception import Error, ErrorCode
 
 class YAMLConfig(ABC):
     def __init__(self):

@@ -1,6 +1,6 @@
 
 from jarvis_cd.shell.exec_node import ExecNode
-from jarvis_cd.hostfile import Hostfile
+from jarvis_cd.basic.hostfile import Hostfile
 from jarvis_cd.ssh.ssh_info_mixin import SSHInfoMixin
 import getpass
 import os

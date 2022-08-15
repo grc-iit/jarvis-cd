@@ -1,6 +1,6 @@
-from jarvis_cd.exception import Error, ErrorCode
-from jarvis_cd.hostfile import Hostfile
-from jarvis_cd.node import Node
+from jarvis_cd.basic.exception import Error, ErrorCode
+from jarvis_cd.basic.hostfile import Hostfile
+from jarvis_cd.basic.node import Node
 from jarvis_cd.ssh.ssh_info_mixin import SSHInfoMixin
 import sys,os
 

@@ -1,6 +1,6 @@
 import psutil
-from jarvis_cd.node import Node
-from jarvis_cd.enumerations import Color, OutputStream
+from jarvis_cd.basic.node import Node
+from jarvis_cd.basic.enumerations import Color, OutputStream
 
 class DetectNetworks(Node):
     def __init__(self, **kwargs):

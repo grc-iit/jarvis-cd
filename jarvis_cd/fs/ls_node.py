@@ -1,7 +1,7 @@
 #from jarvis_cd.basic.exec_node import ExecNode
-from jarvis_cd.node import Node
+from jarvis_cd.basic.node import Node
 import sys,os
-from jarvis_cd.enumerations import Color, OutputStream
+from jarvis_cd.basic.enumerations import Color, OutputStream
 
 class LsNode(Node):
     def __init__(self, path, recurse=True, print_output=False, **kwargs):

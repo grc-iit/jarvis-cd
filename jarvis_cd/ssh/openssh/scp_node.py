@@ -1,10 +1,10 @@
 from pssh.clients import ParallelSSHClient
 from gevent import joinall
 import sys, os
-from jarvis_cd.parallel_node import ParallelNode
+from jarvis_cd.basic.parallel_node import ParallelNode
 from jarvis_cd.fs.rm_node import RmNode
 from jarvis_cd.fs.ls_node import LsNode
-from jarvis_cd.exception import Error, ErrorCode
+from jarvis_cd.basic.exception import Error, ErrorCode
 from jarvis_cd.shell.local_exec_node import LocalExecNode
 
 sys.stderr = sys.__stderr__

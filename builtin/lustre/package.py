@@ -1,4 +1,4 @@
-from jarvis_cd.hostfile import Hostfile
+from jarvis_cd.basic.hostfile import Hostfile
 from jarvis_cd.launchers import Launcher
 
 from jarvis_cd.shell.exec_node import ExecNode

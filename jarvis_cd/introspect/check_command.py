@@ -1,7 +1,7 @@
 
 import shutil
 
-from jarvis_cd.node import *
+from jarvis_cd.basic.node import *
 
 class CheckCommandNode(Node):
     def __init__(self, program, **kwargs):

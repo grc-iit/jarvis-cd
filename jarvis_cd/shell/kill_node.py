@@ -1,6 +1,6 @@
 from jarvis_cd.shell.exec_node import ExecNode
 from jarvis_cd.shell.jarvis_exec_node import JarvisExecNode
-from jarvis_cd.enumerations import OutputStream
+from jarvis_cd.basic.enumerations import OutputStream
 import re
 
 class KillNode(JarvisExecNode):

@@ -1,13 +1,13 @@
 from jarvis_cd.installer.git_node import GitNode, GitOps
 from jarvis_cd.shell.exec_node import ExecNode
-from jarvis_cd.shell.copy_node import CopyNode
+from jarvis_cd.fs.copy_node import CopyNode
 from jarvis_cd.fs.mkdir_node import MkdirNode
 from jarvis_cd.fs.fs import ChownFS
 from jarvis_cd.launcher.launcher import Launcher
-from jarvis_cd.jarvis_manager import JarvisManager
+from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_cd.introspect.check_command import CheckCommandNode
 from jarvis_cd.util.naming import ToCamelCase
-from jarvis_cd.exception import Error,ErrorCode
+from jarvis_cd.basic.exception import Error,ErrorCode
 import os
 
 class Deps(Launcher):

@@ -1,9 +1,9 @@
 import sys
 from jarvis_cd.ssh.openssh.ssh_exec_node import SSHExecNode
 from jarvis_cd.shell.local_exec_node import LocalExecNode
-from jarvis_cd.parallel_node import ParallelNode
+from jarvis_cd.basic.parallel_node import ParallelNode
 from jarvis_cd.basic.echo_node import EchoNode
-from jarvis_cd.enumerations import Color
+from jarvis_cd.basic.enumerations import Color
 
 sys.stderr = sys.__stderr__
 

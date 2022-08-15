@@ -1,5 +1,5 @@
 import sys,os
-from jarvis_cd.exception import Error, ErrorCode
+from jarvis_cd.basic.exception import Error, ErrorCode
 from jarvis_cd.serialize.yaml_file import YAMLFile
 from jarvis_cd.util.naming import ToSnakeCase
 import pathlib

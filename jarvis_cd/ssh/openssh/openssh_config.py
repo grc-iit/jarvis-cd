@@ -1,7 +1,7 @@
-from jarvis_cd.node import Node
+from jarvis_cd.basic.node import Node
 from jarvis_cd.shell.jarvis_exec_node import JarvisExecNode
 from jarvis_cd.ssh.openssh.util import GetPublicKey,GetPrivateKey
-from jarvis_cd.hostfile import Hostfile
+from jarvis_cd.basic.hostfile import Hostfile
 import os
 import re
 

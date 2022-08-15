@@ -1,6 +1,6 @@
 from jarvis_cd.launcher.launcher import Launcher
 from jarvis_cd.fs.link_node import LinkNode
-from jarvis_cd.jarvis_manager import JarvisManager
+from jarvis_cd.basic.jarvis_manager import JarvisManager
 import os
 
 class Repo(Launcher):

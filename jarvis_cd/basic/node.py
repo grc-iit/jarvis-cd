@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from jarvis_cd.enumerations import Color, OutputStream
-from jarvis_cd.jarvis_manager import JarvisManager
+from jarvis_cd.basic.enumerations import Color, OutputStream
+from jarvis_cd.basic.jarvis_manager import JarvisManager
 import sys
 import inspect
 

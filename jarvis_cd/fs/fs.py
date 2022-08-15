@@ -1,5 +1,5 @@
 from jarvis_cd.shell.exec_node import ExecNode
-from jarvis_cd.parallel_node import ParallelNode
+from jarvis_cd.basic.parallel_node import ParallelNode
 from jarvis_cd.fs.mkdir_node import MkdirNode
 from enum import Enum
 import os

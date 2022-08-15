@@ -1,4 +1,4 @@
-from jarvis_cd.jarvis_manager import JarvisManager
+from jarvis_cd.basic.jarvis_manager import JarvisManager
 import os
 
 class SSHInfoMixin:

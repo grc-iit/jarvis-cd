@@ -1,6 +1,5 @@
-from jarvis_cd.shell.copy_node import CopyNode
+from jarvis_cd.fs.copy_node import CopyNode
 from jarvis_cd.fs.rm_node import RmNode
-from jarvis_cd.shell.bash_env import BashEnv
 import os
 
 class BasicEnvMixin:
@@ -36,7 +35,6 @@ class BasicEnvMixin:
         if not os.path.exists(self.GetLocalEnv()):
             return
         CopyNode(self.GetLocalEnv(), self.GetEnv(), hosts=self.jarvis_env_hosts).Run()
-        BashEnv(self.jarvis_env).Run()
 
     def UnloadEnv(self):
         if not os.path.exists(self.GetLocalEnv()):
