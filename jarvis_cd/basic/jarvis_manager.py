@@ -15,7 +15,7 @@ class JarvisManager:
         return JarvisManager.instance_
 
     def __init__(self):
-        self.root = os.path.dirname(pathlib.Path(__file__).parent.resolve())
+        self.root = os.path.dirname(os.path.dirname(pathlib.Path(__file__).parent.resolve()))
         self.print_fancy = True
         self.ssh_info = None
         sys.path.insert(0,self.root)
