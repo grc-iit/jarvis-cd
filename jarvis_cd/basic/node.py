@@ -125,7 +125,7 @@ class Node(ABC):
         param_str = self._GetParamStr(node_params)
         python_cmds = [
             f"from {node_import} import {node_type}",
-            f"from jarvis_cd.jarvis_manager import JarvisManager",
+            f"from jarvis_cd.basic.jarvis_manager import JarvisManager",
             "JarvisManager.GetInstance().DisableFancyPrint()",
             f"{node_type}({param_str}).Run()"
         ]

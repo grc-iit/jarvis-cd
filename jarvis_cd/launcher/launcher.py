@@ -9,7 +9,7 @@ from jarvis_cd.basic.exception import Error,ErrorCode
 from jarvis_cd.fs.mkdir_node import MkdirNode
 import os
 import inspect
-import random
+import randomF
 import datetime
 import time
 import inspect
