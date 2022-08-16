@@ -34,6 +34,7 @@ SERVER:
           scm_mount: ${PER_NODE_DIR}/scm_test
         - class: kdev
           bdev_list: [/dev/nvme2n1]
+          bdev_size: 3500
 AGENT:
   hosts: 1-3
   transport_config:
