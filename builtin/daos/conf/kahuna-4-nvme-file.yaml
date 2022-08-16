@@ -40,7 +40,7 @@ SERVER:
           scm_list: ['/dev/pmem0']
           scm_mount: ${PER_NODE_DIR}/scm_test
         - class: file
-          bdev_list: [ '${PER_NODE_DIR}/daos_data' ]
+          bdev_list: [ '${PER_NODE_DIR}/daos_data/daos' ]
           bdev_size: 3000
 AGENT:
   hosts: 1-3
