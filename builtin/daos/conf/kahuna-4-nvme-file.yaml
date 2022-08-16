@@ -11,9 +11,9 @@ CONF:
 PREPARE_STORAGE:
   - format: EXT4
       format_params:
-        dev_path: /dev/nvme6n1
+        dev_path: /dev/nvme2n1
       mount_params:
-        dev_path: /dev/nvme6n1
+        dev_path: /dev/nvme2n1
         fs_path: ${PER_NODE_DIR}/daos_data
 SERVER:
   hosts: 1-3
