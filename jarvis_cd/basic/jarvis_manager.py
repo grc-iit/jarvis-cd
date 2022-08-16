@@ -32,7 +32,6 @@ class JarvisManager:
     def GetSSHInfo(self):
         return self.ssh_info
 
-
     def _LauncherPathTuple(self, module_name):
         module_name = ToSnakeCase(module_name)
         repos_path = os.path.join(self.root, 'jarvis_repos')

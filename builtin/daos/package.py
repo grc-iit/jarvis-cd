@@ -1,20 +1,4 @@
-from jarvis_cd.shell.exec_node import ExecNode
-from jarvis_cd.fs.copy_node import CopyNode
-from jarvis_cd.launcher.application import Application
-from jarvis_cd.fs.mkdir_node import MkdirNode
-from jarvis_cd.fs.rm_node import RmNode
-from jarvis_cd.fs.link_node import LinkNode
-from jarvis_cd.spack.link_scspkg import LinkScspkg
-from jarvis_cd.spack.link_package import LinkSpackage
-from jarvis_cd.introspect.detect_networks import DetectNetworks
-from jarvis_cd.basic.sleep_node import SleepNode
-from jarvis_cd.shell.kill_node import KillNode
-from jarvis_cd.basic.echo_node import EchoNode
-from jarvis_cd.fs.fs import UnmountFS
-from jarvis_cd.serialize.yaml_file import YAMLFile
-from jarvis_cd.installer.git_node import GitNode,GitOps
-from jarvis_cd.installer.patch_node import PatchNode
-from jarvis_cd.basic.hostfile import Hostfile
+from jarvis_cd import *
 import os
 
 class Daos(Application):
@@ -23,6 +7,12 @@ class Daos(Application):
         self.server_hosts = self.all_hosts.SelectHosts(self.config['SERVER']['hosts'])
         self.agent_hosts = self.all_hosts.SelectHosts(self.config['AGENT']['hosts'])
         self.control_hosts = self.all_hosts.SelectHosts(self.config['CONTROL']['hosts'])
+        if 'socket_dir' in self.config['SERVER'] and 'runtime_dir' in self.config['AGENT']:
+            self.server_sockets = self.config['SERVER']['socket_dir']
+            self.agent_sockets = self.config['AGENT']['runtime_dir']
+        else:
+            self.server_sockets = '/var/run/daos_server'
+            self.agent_sockets = '/var/run/daos_agent'
         self.pools_by_label = {}
 
     def _DefineInit(self):
@@ -34,12 +24,8 @@ class Daos(Application):
         else:
             self.config['DAOS_ROOT'] = '/usr'
         #Create socket directories
-        if 'socket_dir' in self.config['SERVER'] and 'runtime_dir' in self.config['AGENT']:
-            MkdirNode(self.config['SERVER']['socket_dir'], hosts=self.all_hosts).Run()
-            MkdirNode(self.config['AGENT']['runtime_dir'], hosts=self.all_hosts).Run()
-        else:
-            MkdirNode('/var/run/daos_server', sudo=True, hosts=self.all_hosts).Run()
-            MkdirNode('/var/run/daos_agent', sudo=True, hosts=self.all_hosts).Run()
+        MkdirNode(self.server_sockets, hosts=self.all_hosts).Run()
+        MkdirNode(self.agent_sockets, hosts=self.all_hosts).Run()
         #Generate security certificates
         if self.config['SECURE']:
             self._CreateCertificates()
@@ -64,9 +50,11 @@ class Daos(Application):
             f"{self.shared_dir}/daosCA" if self.config['SECURE'] else None
         ]
         CopyNode(to_copy, self.shared_dir, hosts=self.shared_hosts).Run()
+        #Prepare storage
+        if 'PREPARE_STORAGE' in self.config:
+            PrepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
         #Start dummy DAOS server (on all server nodes)
         self._StartServers()
-
         # Get networking options
         EchoNode("Scanning networks").Run()
         self._ScanNetworks()
@@ -111,12 +99,13 @@ class Daos(Application):
             self.config['CONF']['CONTROL'],
             f"{self.shared_dir}/daosCA",
             self.config['DAOS_ROOT'],
-            os.path.join(self.per_node_dir, '*.sock'),
-            os.path.join(self.per_node_dir, '*.log'),
+            os.path.join(self.server_sockets, '*.sock'),
+            os.path.join(self.agent_sockets, '*.log'),
             self.config['DAOS_ROOT']
         ]
         RmNode(to_rm, hosts=self.all_hosts).Run()
-
+        if 'PREPARE_STORAGE' in self.config:
+            UnprepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
         for engine in self.config['SERVER']['engines']:
             for storage in engine['storage']:
                 for key,mount in storage.items():
@@ -130,7 +119,7 @@ class Daos(Application):
 
     def _DefineStop(self):
         #Politefully stop servers
-        server_stop_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg system stop -o {self.config['CONF']['CONTROL']} -d {self.per_node_dir}"
+        server_stop_cmd = f"{self.config['DAOS_ROOT']}/bin/dmg system stop -o {self.config['CONF']['CONTROL']}"
         ExecNode(server_stop_cmd, sudo=True).Run()
         #Unmount containers
         for container in self.config['CONTAINERS']:
