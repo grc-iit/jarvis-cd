@@ -41,7 +41,7 @@ SERVER:
           scm_mount: ${PER_NODE_DIR}/scm_test
         - class: file
           bdev_list: [ '${PER_NODE_DIR}/daos_data/daos' ]
-          bdev_size: 3000
+          bdev_size: 1000
 AGENT:
   hosts: 1-3
   transport_config:
