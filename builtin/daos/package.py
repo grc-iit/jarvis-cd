@@ -24,8 +24,8 @@ class Daos(Application):
         else:
             self.config['DAOS_ROOT'] = '/usr'
         #Create socket directories
-        MkdirNode(self.server_sockets, hosts=self.all_hosts).Run()
-        MkdirNode(self.agent_sockets, hosts=self.all_hosts).Run()
+        MkdirNode(self.server_sockets, hosts=self.all_hosts, sudo=True).Run()
+        MkdirNode(self.agent_sockets, hosts=self.all_hosts, sudo=True).Run()
         #Generate security certificates
         if self.config['SECURE']:
             self._CreateCertificates()
