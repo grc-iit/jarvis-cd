@@ -98,12 +98,14 @@ class Daos(Application):
             self.config['CONF']['SERVER'],
             self.config['CONF']['CONTROL'],
             f"{self.shared_dir}/daosCA",
-            self.config['DAOS_ROOT'],
-            os.path.join(self.server_sockets, '*.sock'),
-            os.path.join(self.agent_sockets, '*.log'),
             self.config['DAOS_ROOT']
         ]
         RmNode(to_rm, hosts=self.all_hosts).Run()
+        to_rm = [
+            os.path.join(self.server_sockets, '*.sock'),
+            os.path.join(self.agent_sockets, '*.log')
+        ]
+        RmNode(to_rm, hosts=self.all_hosts, sudo=True).Run()
         if 'PREPARE_STORAGE' in self.config:
             UnprepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
         for engine in self.config['SERVER']['engines']:
