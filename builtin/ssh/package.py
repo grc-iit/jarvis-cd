@@ -50,7 +50,7 @@ class Ssh(Launcher):
     def _CopyArgs(self, parser):
         parser.add_argument('source', metavar='path', type=str, help="Source path")
         parser.add_argument('destination', metavar='path', type=str, help="Destination path")
-        parser.add_argument('--sudo', metavar='path', action="store_true", help="Use sudo when copying")
+        parser.add_argument('--sudo', action="store_true", help="Use sudo when copying")
 
     def Rm(self, path):
         RmNode(path, hosts=self.all_hosts).Run()
