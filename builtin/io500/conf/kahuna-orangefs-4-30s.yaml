@@ -30,5 +30,5 @@ ior-hard:
   segmentCount:  10000000
 mdtest-hard:
   n:  1000000
-find:
-  nproc:  1
+#find:
+#  nproc:  1

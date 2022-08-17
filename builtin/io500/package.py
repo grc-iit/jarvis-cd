@@ -16,14 +16,21 @@ class Io500(Application):
         io500_ini = configparser.ConfigParser()
 
         #Create basic io500 sections
-        io500_ini['DEBUG'] = self.config['DEBUG']
-        io500_ini['GLOBAL'] = self.config['GLOBAL']
+        if 'DEBUG' in self.config:
+            io500_ini['DEBUG'] = self.config['DEBUG']
+        if 'GLOBAL' in self.config:
+            io500_ini['GLOBAL'] = self.config['GLOBAL']
         # io500_ini['GLOBAL']['drop-caches-cmd'] = DropCaches().GetCommands()[0]
-        io500_ini['ior-easy'] = self.config['ior-easy']
-        io500_ini['ior-hard'] = self.config['ior-hard']
-        io500_ini['mdtest-easy'] = self.config['mdtest-easy']
-        io500_ini['mdtest-hard'] = self.config['mdtest-hard']
-        io500_ini['find'] = self.config['find']
+        if 'ior-easy' in self.config:
+            io500_ini['ior-easy'] = self.config['ior-easy']
+        if 'ior-hard' in self.config:
+            io500_ini['ior-hard'] = self.config['ior-hard']
+        if 'mdtest-easy' in self.config:
+            io500_ini['mdtest-easy'] = self.config['mdtest-easy']
+        if 'mdtest-hard' in self.config:
+            io500_ini['mdtest-hard'] = self.config['mdtest-hard']
+        if 'find' in self.config:
+            io500_ini['find'] = self.config['find']
 
         #Do system-specific initialization functions
         if 'IO500_CLASS' in self.config:
