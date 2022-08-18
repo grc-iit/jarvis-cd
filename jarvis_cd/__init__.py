@@ -13,6 +13,7 @@ from jarvis_cd.fs.copy_node import *
 from jarvis_cd.fs.ls_node import *
 from jarvis_cd.fs.link_node import *
 from jarvis_cd.util.naming import *
+from jarvis_cd.util.expand_paths import *
 from jarvis_cd.launcher.application import *
 from jarvis_cd.launcher.launcher import *
 from jarvis_cd.serialize.ini_file import *
