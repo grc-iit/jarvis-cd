@@ -16,6 +16,8 @@ class EditBeegfsConfig(JarvisExecNode):
             for i,line in enumerate(lines):
                 if self.key in line and '=' in line:
                     lines[i] = f"{self.key} = {self.val}"
+
+        with open(self.path, 'w') as fp:
             fp.write("\n".join(lines))
 
 class Beegfs(Application):
