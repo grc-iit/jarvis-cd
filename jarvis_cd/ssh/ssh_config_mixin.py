@@ -30,7 +30,7 @@ class SSHConfigMixin(YAMLConfig):
         if 'host_aliases' not in self.ssh_info:
             self.ssh_info['host_aliases'] = []
         self.ssh_info['host_aliases'] += FindHostAliases(self.all_hosts).Run().GetAliases()
-        EchoNode(f"This host has the following aliases: {self.ssh_info['host_aliases']}", color=Color.Yellow).Run()
+        EchoNode(f"This host has the following aliases: {self.ssh_info['host_aliases']}", color=Color.YELLOW).Run()
         self.host_aliases = self.ssh_info['host_aliases']
         JarvisManager.GetInstance().SetSSHInfo(self.ssh_info)
 
