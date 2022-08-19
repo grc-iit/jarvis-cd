@@ -9,14 +9,22 @@ from abc import abstractmethod
 import os
 
 class JarvisExecNode(ParallelNode):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.is_local = False
+
     def _Run(self):
-        # We ignore ParallelNode since we don't want to call SSH during _LocalRun
-        path = os.path.join('/tmp', f"{hash(str(self))}.jarvis_node")
-        cmd = f"jarvis base exec {path}"
-        PickleFile(path).Save(self)
-        CopyNode(path, **self.GetClassParams(ParallelNode, print_output=False, shell=True)).Run()
-        node = ExecNode(cmd, **self.GetClassParams(ParallelNode, print_output=False, shell=True)).Run()
-        self.output = node.GetOutput()
+        if not self.is_local:
+            # We ignore ParallelNode since we don't want to call SSH during _LocalRun
+            self.is_local = True
+            path = os.path.join('/tmp', f"{hash(str(self))}.jarvis_node")
+            cmd = f"jarvis base exec {path}"
+            PickleFile(path).Save(self)
+            CopyNode(path, **self.GetClassParams(ParallelNode, print_output=False, shell=True)).Run()
+            node = ExecNode(cmd, **self.GetClassParams(ParallelNode, print_output=False, shell=True)).Run()
+            self.output = node.GetOutput()
+        else:
+            self._LocalRun()
 
     @abstractmethod
     def _LocalRun(self):
