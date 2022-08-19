@@ -4,6 +4,7 @@ from jarvis_cd.shell.exec_node import ExecNode
 from jarvis_cd.basic.echo_node import EchoNode
 from jarvis_cd.basic.enumerations import Color
 from jarvis_cd.serialize.pickle import PickleFile
+from jarvis_cd.fs.copy_node import CopyNode
 from abc import abstractmethod
 import os
 
