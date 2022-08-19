@@ -185,6 +185,8 @@ class Daos(Application):
             create_pool_cmd.append(f"--scm-size {pool_info['scm_size']}")
         if 'nvme_size' in pool_info:
             create_pool_cmd.append(f"--nvme-size {pool_info['nvme_size']}")
+        if 'tier_ratio' in pool_info:
+            create_pool_cmd.append(f"--tier-ratio {pool_info['tier_ratio']}")
         create_pool_cmd = " ".join(create_pool_cmd)
         ExecNode(create_pool_cmd).Run()
 
