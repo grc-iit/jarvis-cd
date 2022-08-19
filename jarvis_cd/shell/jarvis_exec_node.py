@@ -12,7 +12,7 @@ class JarvisExecNode(ParallelNode):
         # We ignore ParallelNode since we don't want to call SSH during _LocalRun
         path = f"{hash(str(self))}.jarvis_node"
         cmd = f"jarvis base exec {os.path.join('tmp', path)}"
-        PickleFile.Save(self, path)
+        PickleFile(path).Save(self)
         CopyNode(path, **self.GetClassParams(ParallelNode, print_output=False, shell=True)).Run()
         node = ExecNode(cmd, **self.GetClassParams(ParallelNode, print_output=False, shell=True)).Run()
         self.output = node.GetOutput()
