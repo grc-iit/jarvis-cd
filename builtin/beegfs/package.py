@@ -4,18 +4,21 @@ import os
 import re
 
 class EditBeegfsConfig(JarvisExecNode):
-    def __init__(self, path, key, val, **kwargs):
+    def __init__(self, path, pairs, **kwargs):
         super().__init__(**kwargs)
         self.path = path
-        self.key = key
-        self.val = val
+        self.pairs = pairs
 
     def _LocalRun(self):
         with open(self.path, 'r') as fp:
             lines = fp.readlines()
             for i,line in enumerate(lines):
-                if self.key in line and '=' in line:
-                    lines[i] = f"{self.key} = {self.val}"
+                for key,value in self.pairs:
+                    if key in line and '=' in line:
+                        if value is not None:
+                            lines[i] = f"{key} = {value}"
+                        else:
+                            del lines[i]
 
         with open(self.path, 'w') as fp:
             fp.write("\n".join(lines))
@@ -80,10 +83,14 @@ class Beegfs(Application):
                  hosts=self.client_hosts).Run()
 
         #Edit all configs for connauth
-        EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-mgmtd.conf'), 'connAuthFile', self.connauthfile, hosts=self.mgmt_host).Run()
-        EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-meta.conf'), 'connAuthFile', self.connauthfile, hosts=self.md_hosts).Run()
-        EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-storage.conf'), 'connAuthFile', self.connauthfile, hosts=self.storage_hosts).Run()
-        EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-client.conf'), 'connAuthFile', self.connauthfile, hosts=self.client_hosts).Run()
+        pairs = [
+            ('connAuthFile', self.connauthfile),
+            ('storeFsUUID', None)
+        ]
+        EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-mgmtd.conf'), pairs, hosts=self.mgmt_host).Run()
+        EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-meta.conf'), pairs, hosts=self.md_hosts).Run()
+        EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-storage.conf'), pairs, hosts=self.storage_hosts).Run()
+        EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-client.conf'), pairs, hosts=self.client_hosts).Run()
 
         # Copy BeeGFS configs back
         CopyNode(os.path.join(self.per_node_dir, 'beegfs-mgmtd.conf'),
