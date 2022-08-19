@@ -69,8 +69,11 @@ class Hostfile:
     def enumerate(self):
         return enumerate(self.hosts)
 
-    def to_str(self, sep=','):
+    def hostname_str(self, sep=','):
         return sep.join(self.hosts)
+
+    def ip_str(self, sep=','):
+        return sep.join(self.hosts_ip)
 
     def __len__(self):
         return len(self.hosts)

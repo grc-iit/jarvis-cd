@@ -46,11 +46,11 @@ class Beegfs(Application):
         ExecNode(cmd, hosts=self.mgmt_host, sudo=True).Run()
 
         #Init md
-        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-meta')} -p {self.config['METADATA_SERVICE']['MOUNT_POINT']} -m {self.mgmt_host}"
+        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-meta')} -p {self.config['METADATA_SERVICE']['MOUNT_POINT']} -m {self.mgmt_host.ip_str()}"
         ExecNode(cmd, hosts=self.md_hosts, sudo=True).Run()
 
         #Init storage
-        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-storage')} -p {self.config['STORAGE_SERVICE']['MOUNT_POINT']} -m {self.mgmt_host}"
+        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-storage')} -p {self.config['STORAGE_SERVICE']['MOUNT_POINT']} -m {self.mgmt_host.ip_str()}"
         ExecNode(cmd, hosts=self.storage_hosts, sudo=True).Run()
 
         #Init client
