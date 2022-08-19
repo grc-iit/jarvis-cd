@@ -41,9 +41,10 @@ class Beegfs(Application):
         ExecNode(cmd, hosts=self.client_hosts, sudo=True).Run()
 
         #Create connauth
-        ExecNode(f"dd if=/dev/random of={self.connauthfile} bs=128", sudo=True).Run()
+        ExecNode(f"dd if=/dev/random of={self.connauthfile} bs=128 count=1", sudo=True).Run()
         ChownFS(self.connauthfile, user="root", sudo=True).Run()
         ChmodFS(400, self.connauthfile, sudo=True).Run()
+        CopyNode(self.connauthfile, hosts=self.all_hosts, sudo=True).Run()
 
     def _DefineStart(self):
         ExecNode(f"systemctl start beegfs-mgmtd", hosts=self.mgmt_host, sudo=True).Run()
