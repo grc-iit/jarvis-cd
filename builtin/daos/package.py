@@ -55,6 +55,7 @@ class Daos(Application):
             PrepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
         if 'PREPARE_NVME' in self.config and self.config['PREPARE_NVME']:
             EchoNode("Re-bind NVMe").Run()
+            ExecNode(f"{self.config['DAOS_ROOT']}/prereq/release/spdk/share/spdk/scripts/setup.sh", sudo=True).Run()
             ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} -o {self.shared_dir}/daos_server.yaml storage prepare --nvme-only", sudo=True).Run()
             EchoNode("Select NVMe").Run()
             ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} -o {self.shared_dir}/daos_server.yaml storage scan", sudo=True).Run()
@@ -116,6 +117,8 @@ class Daos(Application):
         RmNode(to_rm, hosts=self.all_hosts, sudo=True).Run()
         if 'PREPARE_STORAGE' in self.config:
             UnprepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
+        if 'PREPARE_NVME' in self.config:
+            ExecNode(f"{self.config['DAOS_ROOT']}/prereq/release/spdk/share/spdk/scripts/setup.sh reset", sudo=True).Run()
         for engine in self.config['SERVER']['engines']:
             for storage in engine['storage']:
                 for key,mount in storage.items():
