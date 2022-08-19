@@ -67,7 +67,7 @@ class SCPNode(ParallelNode):
             if os.path.isdir(source):
                 dirs[source] = dst_path
             else:
-                files[file] = dst_path
+                files[source] = dst_path
 
         #Create new remote directories
         RmNode(list(dirs.values()), **self.GetClassParams(ParallelNode)).Run()
