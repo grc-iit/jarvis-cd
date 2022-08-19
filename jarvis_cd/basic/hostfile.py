@@ -39,9 +39,8 @@ class Hostfile:
     #Hostset: 1,5-8,10
     def SelectHosts(self, hostset):
         #Hosts are numbered from 1
+        hosts = []
         hostset = str(hostset)
-        hosts = self.copy()
-        hosts.hosts = []
         ranges = hostset.split(',')
         for range in ranges:
             range = range.split('-')
@@ -50,12 +49,12 @@ class Hostfile:
                 max = int(range[1])
                 if min > max or min < 1 or max > len(self.hosts):
                     raise Error(ErrorCode.INVALID_HOST_RANGE).format(len(self.hosts), min, max)
-                hosts.hosts += hosts.hosts[min-1:max]
+                hosts += self.hosts[min-1:max]
             else:
                 val = int(range[0])
                 if val < 1 or val > len(self.hosts):
                     raise Error(ErrorCode.INVALID_HOST_ID).format(len(self.hosts), val)
-                hosts.hosts += [hosts.hosts[val-1]]
+                hosts += [self.hosts[val-1]]
         return Hostfile(hosts)
 
     def Path(self):
@@ -72,14 +71,6 @@ class Hostfile:
 
     def to_str(self, sep=','):
         return sep.join(self.hosts)
-
-    def copy(self):
-        hosts = Hostfile()
-        if self.hosts:
-            hosts.hosts = self.hosts.copy()
-        if self.hosts:
-            hosts.hosts = self.hosts.copy()
-        return hosts
 
     def __len__(self):
         return len(self.hosts)
