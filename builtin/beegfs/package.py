@@ -31,7 +31,6 @@ class Beegfs(Application):
         self.connauthfile = "/etc/beegfs/connauthfile"
 
     def _DefineInit(self):
-        """
         #Create storage directories
         MkdirNode(self.config['MANAGEMENT_SERVICE']['MOUNT_POINT'], hosts=self.mgmt_host).Run()
         MkdirNode(self.config['METADATA_SERVICE']['MOUNT_POINT'], hosts=self.md_hosts).Run()
@@ -65,7 +64,6 @@ class Beegfs(Application):
         ChownFS(self.connauthfile, user="root", sudo=True).Run()
         ChmodFS(400, self.connauthfile, sudo=True).Run()
         CopyNode(self.connauthfile, hosts=self.all_hosts, sudo=True).Run()
-        """
 
         #Copy BeeGFS configs
         CopyNode(os.path.join('/etc/beegfs', 'beegfs-mgmtd.conf'),
