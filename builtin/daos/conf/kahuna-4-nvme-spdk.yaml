@@ -51,7 +51,7 @@ POOLS:
   - label: io500_pool
     #size: 5000G
     scm_size: 256MiB
-    nvme_size: 4000GiB
+    nvme_size: 3500GiB
 CONTAINERS:
   - label: io500_container
     pool: io500_pool
