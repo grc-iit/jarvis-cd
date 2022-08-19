@@ -1,6 +1,23 @@
 from jarvis_cd import *
 import os
 
+import re
+
+class EditBeegfsConfig(JarvisExecNode):
+    def __init__(self, path, key, val, **kwargs):
+        super().__init__(**kwargs)
+        self.path = path
+        self.key = key
+        self.val = val
+
+    def _LocalRun(self):
+        with open(path, 'w') as fp:
+            lines = fp.readlines()
+            for i,line in enumerate(lines):
+                if key in line and '=' in line:
+                    lines[i] = f"{self.key} = {self.val}"
+            fp.write("\n".join(lines))
+
 class Beegfs(Application):
     def _ProcessConfig(self):
         super()._ProcessConfig()
@@ -45,6 +62,12 @@ class Beegfs(Application):
         ChownFS(self.connauthfile, user="root", sudo=True).Run()
         ChmodFS(400, self.connauthfile, sudo=True).Run()
         CopyNode(self.connauthfile, hosts=self.all_hosts, sudo=True).Run()
+
+        #Edit all configs for connauth
+        EditBeegfsConfig(os.path.join(self.beegfs_root, 'beegfs-mgmtd.conf'), 'connAuthFile', self.connauthfile, hosts=self.mgmt_host).Run()
+        EditBeegfsConfig(os.path.join(self.beegfs_root, 'beegfs-meta.conf'), 'connAuthFile', self.connauthfile, hosts=self.md_hosts).Run()
+        EditBeegfsConfig(os.path.join(self.beegfs_root, 'beegfs-storage.conf'), 'connAuthFile', self.connauthfile, hosts=self.storage_hosts).Run()
+        EditBeegfsConfig(os.path.join(self.beegfs_root, 'beegfs-client.conf'), 'connAuthFile', self.connauthfile, hosts=self.client_hosts).Run()
 
     def _DefineStart(self):
         ExecNode(f"systemctl start beegfs-mgmtd", hosts=self.mgmt_host, sudo=True).Run()
