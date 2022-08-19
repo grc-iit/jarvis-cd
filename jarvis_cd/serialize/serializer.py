@@ -6,5 +6,5 @@ class Serializer(ABC):
         pass
 
     @abstractmethod
-    def Save(self, data=None):
+    def Save(self, data):
         pass

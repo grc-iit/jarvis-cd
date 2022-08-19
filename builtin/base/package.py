@@ -1,13 +1,12 @@
-import sys
-from jarvis_cd.launcher.launcher import Launcher
-from jarvis_cd.fs.rm_node import RmNode
-import os
+import sys, os
+from jarvis_cd import *
 
 class Base(Launcher):
-    def Exec(self, cmd):
-        exec(cmd)
+    def Exec(self, path):
+        node = PickleFile(path).Load()
+        node.Run()
     def _ExecArgs(self, parser):
-        parser.add_argument('cmd', metavar='command', type=str, help='The python code to execute')
+        parser.add_argument('path', metavar='command', type=str, help='The jarvis node to execute')
 
     def CheckEnv(self):
         for item in os.listdir(self.GetUserEnv()):

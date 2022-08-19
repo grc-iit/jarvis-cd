@@ -3,13 +3,16 @@ from jarvis_cd.basic.parallel_node import ParallelNode
 from jarvis_cd.shell.exec_node import ExecNode
 from jarvis_cd.basic.echo_node import EchoNode
 from jarvis_cd.basic.enumerations import Color
+from jarvis_cd.serialize.pickle import PickleFile
 from abc import abstractmethod
 
 class JarvisExecNode(ParallelNode):
     def _Run(self):
         # We ignore ParallelNode since we don't want to call SSH during _LocalRun
-        cmd = self._ToShellCmd(ignore_base=ParallelNode)
-        #EchoNode(cmd, color=Color.YELLOW).Run()
+        path = f"{hash(str(self))}.jarvis_node"
+        cmd = f"jarvis base exec {os.path.join('tmp', path)}"
+        PickleFile.Save(self, path)
+        CopyNode(path, **self.GetClassParams(ParallelNode, print_output=False, shell=True)).Run()
         node = ExecNode(cmd, **self.GetClassParams(ParallelNode, print_output=False, shell=True)).Run()
         self.output = node.GetOutput()
 
