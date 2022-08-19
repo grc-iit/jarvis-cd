@@ -5,7 +5,7 @@ import re
 
 class Hostfile:
     def __init__(self, hosts):
-        self.host_map = None
+        self.hosts_ip = None
         self.hosts = None
         self.path = None
         if hosts is None:
@@ -56,13 +56,13 @@ class Hostfile:
                 if val < 1 or val > len(self.hosts):
                     raise Error(ErrorCode.INVALID_HOST_ID).format(len(self.hosts), val)
                 hosts.hosts += [hosts.hosts[val-1]]
-        return Hostfile().Load(hosts)
+        return Hostfile(hosts)
 
     def Path(self):
         return self.path
 
     def ip_list(self):
-        return self.hosts
+        return self.hosts_ip
 
     def list(self):
         return self.hosts
