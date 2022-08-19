@@ -42,6 +42,7 @@ class SCPNode(ParallelNode):
             dst_dir = os.path.normpath(destination)
             if src_file == dst_file or src_dir == dst_dir:
                 self.hosts = self.hosts_no_alias
+                EchoNode("Copying files to the same location. Ignoring host aliases.", color=Color.YELLOW).Run()
                 break
 
     def _copy_file(self, client, source, destination, recurse=False):

@@ -9,7 +9,16 @@ class Hostfile:
         self.hosts = None
         self.path = None
 
-    def LoadHostfile(self, path):
+    def Load(self, hosts):
+        if hosts is None:
+            hosts = []
+        if isinstance(hosts, str):
+            self._load_hostfile(hosts)
+        else:
+            self._set_hosts(hosts)
+        return self
+
+    def _load_hostfile(self, path):
         if not os.path.exists(path):
             raise Error(ErrorCode.HOSTFILE_NOT_FOUND).format(path)
         hosts = []
@@ -22,23 +31,15 @@ class Hostfile:
                     continue
                 hosts.append(host)
         self.path = path
-        self.SetHosts(hosts)
+        self._set_hosts(hosts)
         return self
 
-    def SetHosts(self, hosts):
+    def _set_hosts(self, hosts):
         self.all_hosts = [socket.gethostbyname(host) for host in hosts]
         self.hosts = hosts
         return self
 
-    def Load(self, hosts):
-        if hosts is None:
-            hosts = []
-        if isinstance(hosts, str):
-            self.LoadHostfile(hosts)
-        else:
-            self.SetHosts(hosts)
-        return self
-
+    #Hostset: 1,5-8,10
     def SelectHosts(self, hostset):
         #Hosts are numbered from 1
         hostset = str(hostset)
