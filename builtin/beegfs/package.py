@@ -37,7 +37,7 @@ class Beegfs(Application):
         cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-client')} -m {self.client_hosts}"
         ExecNode(cmd, hosts=self.client_hosts, sudo=True).Run()
         cmd = f"echo {self.config['CLIENT']['MOUNT_POINT']} /etc/beegfs/beegfs-client.conf > /etc/beegfs/beegfs-mounts.conf"
-        ExecNode(cmd, hosts=self.client_hosts).Run()
+        ExecNode(cmd, hosts=self.client_hosts, sudo=True).Run()
 
     def _DefineStart(self):
         ExecNode(f"systemctl start beegfs-mgmtd", hosts=self.mgmt_host, sudo=True).Run()
