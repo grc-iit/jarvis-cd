@@ -21,7 +21,7 @@ class SSHConfigMixin(YAMLConfig):
         self.host_aliases = None
 
         if 'HOSTS' in self.config:
-            self.all_hosts = Hostfile().Load(self.config['HOSTS'])
+            self.all_hosts = Hostfile(self.config['HOSTS'])
         self.ssh_info = FromOpenSSHConfig(self.all_hosts).Run().GetConfig()
         if 'SSH' in self.config and 'primary' in self.config['SSH']:
             self.ssh_info.update(self.config['SSH']['primary'])

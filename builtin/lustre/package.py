@@ -10,8 +10,8 @@ class Lustre(Launcher):
     def _ProcessConfig(self):
         self.ssh_port = int(self.config['BASIC']['SSH_PORT'])
         self.ssh_user = self.config['BASIC']['SSH_USER']
-        self.oss_hosts = Hostfile().LoadHostfile(self.config['OBJECT_STORAGE_SERVERS']['HOSTFILE'])
-        self.client_hosts = Hostfile().LoadHostfile(self.config['CLIENT']['HOSTFILE'])
+        self.oss_hosts = Hostfile(self.config['OBJECT_STORAGE_SERVERS']['HOSTFILE'])
+        self.client_hosts = Hostfile(self.config['CLIENT']['HOSTFILE'])
         self.osts = self.config['OBJECT_STORAGE_SERVER']['OSTS']
         self.num_ost_per_node = len(self.osts)
 

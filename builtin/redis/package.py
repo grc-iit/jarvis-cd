@@ -24,7 +24,7 @@ class Redis(Application):
         self.control_hosts = self.all_hosts.SelectHosts(self.config['CONTROL']['hosts'])
         self.all_hosts = self.all_hosts
         if 'DAOS_HOSTS' in self.config:
-            self.all_hosts = Hostfile().LoadHostfile(self.config['DAOS_HOSTS'])
+            self.all_hosts = Hostfile(self.config['DAOS_HOSTS'])
         self.server_hosts = self.all_hosts.SelectHosts(self.config['SERVER']['hosts'])
         self.agent_hosts = self.all_hosts.SelectHosts(self.config['AGENT']['hosts'])
         self.control_hosts = self.all_hosts.SelectHosts(self.config['CONTROL']['hosts'])

@@ -186,7 +186,7 @@ class Daos(Application):
         server_config['transport_config']['allow_insecure'] = not self.config['SECURE']
         server_config['port'] = self.config['PORT']
         server_config['name'] = self.config['NAME']
-        server_config['access_points'] = self.server_hosts.list()
+        server_config['access_points'] = self.server_hosts.ip_list()
         YAMLFile(self.config['CONF']['SERVER']).Save(server_config)
 
     def _CreateAgentConfig(self):
@@ -195,7 +195,7 @@ class Daos(Application):
         agent_config['transport_config']['allow_insecure'] = not self.config['SECURE']
         agent_config['port'] = self.config['PORT']
         agent_config['name'] = self.config['NAME']
-        agent_config['access_points'] = self.agent_hosts.list()
+        agent_config['access_points'] = self.agent_hosts.ip_list()
         YAMLFile(self.config['CONF']['AGENT']).Save(agent_config)
 
     def _CreateControlConfig(self):
@@ -204,7 +204,7 @@ class Daos(Application):
         control_config['transport_config']['allow_insecure'] = not self.config['SECURE']
         control_config['port'] = self.config['PORT']
         control_config['name'] = self.config['NAME']
-        control_config['hostlist'] = self.control_hosts.list()
+        control_config['hostlist'] = self.control_hosts.ip_list()
         YAMLFile(self.config['CONF']['CONTROL']).Save(control_config)
 
     def GetPoolUUID(self, pool_label):

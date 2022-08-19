@@ -101,8 +101,8 @@ class Labios(Application):
     def _GenLabiosConfig(self):
         ldict = self.config['LABIOS'].copy()
         del ldict['CONF']
-        ldict['NATS_URL_CLIENT'] = f"nats://{self.nats_client_hosts.list()[0]}:{self.config['NATS_CLIENT']['PORT']}/"
-        ldict['NATS_URL_SERVER'] = f"nats://{self.nats_server_hosts.list()[0]}:{self.config['NATS_SERVER']['PORT']}/"
-        ldict['MEMCACHED_URL_CLIENT'] = f"--SERVER={self.memcached_client_hosts.list()[0]}:{self.config['MEMCACHED_CLIENT']['PORT']}"
-        ldict['MEMCACHED_URL_SERVER'] = f"--SERVER={self.memcached_server_hosts.list()[0]}:{self.config['MEMCACHED_SERVER']['PORT']}"
+        ldict['NATS_URL_CLIENT'] = f"nats://{self.nats_client_hosts.ip_list()[0]}:{self.config['NATS_CLIENT']['PORT']}/"
+        ldict['NATS_URL_SERVER'] = f"nats://{self.nats_server_hosts.ip_list()[0]}:{self.config['NATS_SERVER']['PORT']}/"
+        ldict['MEMCACHED_URL_CLIENT'] = f"--SERVER={self.memcached_client_hosts.ip_list()[0]}:{self.config['MEMCACHED_CLIENT']['PORT']}"
+        ldict['MEMCACHED_URL_SERVER'] = f"--SERVER={self.memcached_server_hosts.ip_list()[0]}:{self.config['MEMCACHED_SERVER']['PORT']}"
         YAMLFile(self.config['LABIOS']['CONF']).Save(ldict)

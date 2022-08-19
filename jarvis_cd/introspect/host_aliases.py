@@ -13,7 +13,7 @@ class FindHostAliases(DetectNetworks):
         elif isinstance(hosts, str):
             self.hosts = [hosts]
         elif isinstance(hosts, Hostfile):
-            self.hosts = hosts.list()
+            self.hosts = hosts.ip_list()
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("Find host aliases hosts", type(hosts))
         self.host_aliases = ['localhost']

@@ -4,19 +4,16 @@ import socket
 import re
 
 class Hostfile:
-    def __init__(self):
-        self.all_hosts = None
+    def __init__(self, hosts):
+        self.host_map = None
         self.hosts = None
         self.path = None
-
-    def Load(self, hosts):
         if hosts is None:
             hosts = []
         if isinstance(hosts, str):
             self._load_hostfile(hosts)
         else:
             self._set_hosts(hosts)
-        return self
 
     def _load_hostfile(self, path):
         if not os.path.exists(path):
@@ -35,8 +32,8 @@ class Hostfile:
         return self
 
     def _set_hosts(self, hosts):
-        self.all_hosts = [socket.gethostbyname(host) for host in hosts]
-        self.hosts = self.all_hosts
+        self.hosts = hosts
+        self.hosts_ip = [socket.gethostbyname(host) for host in hosts]
         return self
 
     #Hostset: 1,5-8,10
@@ -53,16 +50,19 @@ class Hostfile:
                 max = int(range[1])
                 if min > max or min < 1 or max > len(self.hosts):
                     raise Error(ErrorCode.INVALID_HOST_RANGE).format(len(self.hosts), min, max)
-                hosts.hosts += hosts.all_hosts[min-1:max]
+                hosts.hosts += hosts.hosts[min-1:max]
             else:
                 val = int(range[0])
                 if val < 1 or val > len(self.hosts):
                     raise Error(ErrorCode.INVALID_HOST_ID).format(len(self.hosts), val)
-                hosts.hosts += [hosts.all_hosts[val-1]]
-        return hosts
+                hosts.hosts += [hosts.hosts[val-1]]
+        return Hostfile().Load(hosts)
 
     def Path(self):
         return self.path
+
+    def ip_list(self):
+        return self.hosts
 
     def list(self):
         return self.hosts
@@ -75,8 +75,8 @@ class Hostfile:
 
     def copy(self):
         hosts = Hostfile()
-        if self.all_hosts:
-            hosts.all_hosts = self.all_hosts.copy()
+        if self.hosts:
+            hosts.hosts = self.hosts.copy()
         if self.hosts:
             hosts.hosts = self.hosts.copy()
         return hosts
@@ -88,7 +88,7 @@ class Hostfile:
         return self.hosts[idx]
 
     def __str__(self):
-        return str(self.all_hosts)
+        return str(self.hosts)
 
     def __repr__(self):
         return str(self)

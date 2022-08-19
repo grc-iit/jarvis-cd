@@ -18,7 +18,7 @@ class ParallelNode(Node,SSHInfoMixin):
         elif isinstance(hosts, str):
             self.hosts = [hosts]
         elif isinstance(hosts, Hostfile):
-            self.hosts = hosts.list()
+            self.hosts = hosts.ip_list()
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SSHExecNode hosts", type(hosts))
 
