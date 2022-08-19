@@ -49,9 +49,8 @@ CONTROL:
     key: ${SHARED_DIR}/daosCA/certs/admin.key
 POOLS:
   - label: io500_pool
-    #size: 5000G
-    scm_size: 256MiB
-    nvme_size: 3500GiB
+    size: 5000G
+    tier_ratio: 1
 CONTAINERS:
   - label: io500_container
     pool: io500_pool
