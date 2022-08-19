@@ -9,5 +9,5 @@ class PickleFile(Serializer):
         return pkl.load(self.path)
 
     def Save(self, data):
-        with open(self.path, 'w') as fp:
+        with open(self.path, 'wb') as fp:
             pkl.dump(data, fp)
