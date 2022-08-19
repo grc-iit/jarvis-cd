@@ -55,10 +55,10 @@ class Daos(Application):
             PrepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
         if 'PREPARE_NVME' in self.config and self.config['PREPARE_NVME']:
             EchoNode("Re-bind NVMe").Run()
-            ExecNode(f"{self.config['DAOS_ROOT']}/prereq/release/spdk/share/spdk/scripts/setup.sh", sudo=True).Run()
-            ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} -o {self.shared_dir}/daos_server.yaml storage prepare --nvme-only", sudo=True).Run()
+            ExecNode(f"{self.config['DAOS_ROOT']}/prereq/release/spdk/share/spdk/scripts/setup.sh", hosts=self.server_hosts, sudo=True).Run()
+            ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} storage prepare --nvme-only", hosts=self.server_hosts,  sudo=True).Run()
             EchoNode("Select NVMe").Run()
-            ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} -o {self.shared_dir}/daos_server.yaml storage scan", sudo=True).Run()
+            ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} storage scan", hosts=self.server_hosts,  sudo=True).Run()
             addrs = input("Select NVMe addrs: ")
             addrs = addrs.split(',')
             self.config['SERVER']['engines'][0]['storage'][0]['bdev_list'] = addrs
