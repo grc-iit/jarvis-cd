@@ -53,6 +53,14 @@ class Daos(Application):
         #Prepare storage
         if 'PREPARE_STORAGE' in self.config:
             PrepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
+        if 'PREPARE_NVME' in self.config and self.config['PREPARE_NVME']:
+            EchoNode("Re-bind NVMe").Run()
+            ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'dmg')} -o {self.shared_dir}/daos_control.yaml storage prepare --nvme-only").Run()
+            EchoNode("Select NVMe").Run()
+            ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'dmg')} -o {self.shared_dir}/daos_control.yaml storage scan")
+            addrs = input("Select NVMe addrs: ")
+            addrs = addrs.split(',')
+            self.config['SERVER']['engines'][0]['storage'][0]['bdev_list'] = addrs
         #Start dummy DAOS server (on all server nodes)
         self._StartServers()
         # Get networking options
