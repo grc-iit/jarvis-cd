@@ -31,14 +31,5 @@ class CopyNode(ParallelNode):
             node = SCPNode(self.sources, self.destination, **self.GetClassParams(ParallelNode, print_output=False)).Run()
             self.output = node.GetOutput()
         else:
-            for source in self.sources:
-                src_file = os.path.normpath(source)
-                dst_file = os.path.normpath(self.destination)
-                src_dir = os.path.normpath(os.path.dirname(source))
-                dst_dir = os.path.normpath(self.destination)
-                if src_file == dst_file or src_dir == dst_dir:
-                    continue
-                if os.path.isdir(source):
-                    shutil.copytree(source, self.destination)
-                else:
-                    shutil.copy(source, self.destination)
+            cmds = [f"cp -r {source} {self.destination}" for source in self.sources]
+            ExecNode(cmds, **self.GetClassParams(ParallelNode, print_output=False)).Run()
