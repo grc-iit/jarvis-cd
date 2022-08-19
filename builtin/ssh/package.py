@@ -52,10 +52,11 @@ class Ssh(Launcher):
         parser.add_argument('destination', metavar='path', type=str, help="Destination path")
         parser.add_argument('--sudo', action="store_true", help="Use sudo when copying")
 
-    def Rm(self, path):
-        RmNode(path, hosts=self.all_hosts).Run()
+    def Rm(self, path, sudo=False):
+        RmNode(path, hosts=self.all_hosts, sudo=sudo).Run()
     def _RmArgs(self, parser):
         parser.add_argument('path', metavar='path', type=str, help="The path to delete")
+        parser.add_argument('--sudo', action='store_true', type=str, help="The path to delete")
 
     def Mkdir(self, path):
         MkdirNode(path, hosts=self.all_hosts).Run()
