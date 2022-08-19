@@ -43,12 +43,12 @@ class Beegfs(Application):
         ExecNode(f"systemctl start beegfs-mgmtd", hosts=self.mgmt_host, sudo=True).Run()
         ExecNode(f"systemctl start beegfs-meta", hosts=self.md_hosts, sudo=True).Run()
         ExecNode(f"systemctl start beegfs-storage", hosts=self.storage_hosts, sudo=True).Run()
-        ExecNode(f"systemctl start beegfs-helperd", hosts=self.client_hosts, sudo=True).Run()
+        #ExecNode(f"systemctl start beegfs-helperd", hosts=self.client_hosts, sudo=True).Run()
         ExecNode(f"systemctl start beegfs-client", hosts=self.client_hosts, sudo=True).Run()
 
     def _DefineStop(self):
         ExecNode(f"systemctl stop beegfs-client", hosts=self.client_hosts, sudo=True).Run()
-        ExecNode(f"systemctl stop beegfs-helperd", hosts=self.client_hosts, sudo=True).Run()
+        #ExecNode(f"systemctl stop beegfs-helperd", hosts=self.client_hosts, sudo=True).Run()
         ExecNode(f"systemctl stop beegfs-storage", hosts=self.storage_hosts, sudo=True).Run()
         ExecNode(f"systemctl stop beegfs-meta", hosts=self.md_hosts, sudo=True).Run()
         ExecNode(f"systemctl stop beegfs-mgmtd", hosts=self.mgmt_host, sudo=True).Run()
