@@ -7,14 +7,11 @@ from abc import abstractmethod
 
 class JarvisExecNode(ParallelNode):
     def _Run(self):
-        if self.do_ssh:
-            # We ignore ParallelNode since we don't want to call SSH during _LocalRun
-            cmd = self._ToShellCmd(ignore_base=ParallelNode)
-            EchoNode(cmd, color=Color.YELLOW).Run()
-            node = ExecNode(cmd, **self.GetClassParams(ParallelNode, print_output=False, shell=True)).Run()
-            self.output = node.GetOutput()
-        else:
-            self._LocalRun()
+        # We ignore ParallelNode since we don't want to call SSH during _LocalRun
+        cmd = self._ToShellCmd(ignore_base=ParallelNode)
+        #EchoNode(cmd, color=Color.YELLOW).Run()
+        node = ExecNode(cmd, **self.GetClassParams(ParallelNode, print_output=False, shell=True)).Run()
+        self.output = node.GetOutput()
 
     @abstractmethod
     def _LocalRun(self):
