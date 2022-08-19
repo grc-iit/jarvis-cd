@@ -56,7 +56,7 @@ class Ssh(Launcher):
         RmNode(path, hosts=self.all_hosts, sudo=sudo).Run()
     def _RmArgs(self, parser):
         parser.add_argument('path', metavar='path', type=str, help="The path to delete")
-        parser.add_argument('--sudo', action='store_true', type=str, help="The path to delete")
+        parser.add_argument('--sudo', action='store_true', help="Do sudo")
 
     def Mkdir(self, path):
         MkdirNode(path, hosts=self.all_hosts).Run()
