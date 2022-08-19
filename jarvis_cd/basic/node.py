@@ -9,7 +9,7 @@ class Node(ABC):
         self.print_output = print_output
         self.name = name
         self.collect_output = collect_output
-        self.print_fancy = JarvisManager.GetInstance().print_fancy
+        self.jarvis_manager = JarvisManager.GetInstance()
 
         self.output = {}
         self.class_params = {}
@@ -26,13 +26,13 @@ class Node(ABC):
         return self
 
     def Print(self):
-        if self.print_fancy:
+        if self.jarvis_manager.print_level == 2:
             for host,outputs in self.output.items():
                 for line,color in zip(outputs[OutputStream.STDOUT][0], outputs[OutputStream.STDOUT][1]):
                     print(color + "[OUT] {host} {line}".format(host=host, line=line) + Color.END)
                 for line,color in zip(outputs[OutputStream.STDERR][0], outputs[OutputStream.STDERR][1]):
                     print(color + "[ERR] {host} {line}".format(host=host, line=line) + Color.END)
-        else:
+        elif self.jarvis_manager.print_level == 1:
             for host,outputs in self.output.items():
                 for line,color in zip(outputs[OutputStream.STDOUT][0], outputs[OutputStream.STDOUT][1]):
                     print(color + line + Color.END)

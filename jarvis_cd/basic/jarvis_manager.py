@@ -16,15 +16,19 @@ class JarvisManager:
 
     def __init__(self):
         self.root = os.path.dirname(os.path.dirname(pathlib.Path(__file__).parent.resolve()))
-        self.print_fancy = True
+        self.print_level = 2
         self.ssh_info = None
         sys.path.insert(0,self.root)
 
-    def DisableFancyPrint(self):
-        self.print_fancy = False
 
+    def DisablePrint(self):
+        self.print_level = 0
+    def EnablePrint(self):
+        self.print_level = 1
+    def DisableFancyPrint(self):
+        self.print_level = 1
     def EnableFancyPrint(self):
-        self.print_fancy = True
+        self.print_level = 2
 
     def SetSSHInfo(self, ssh_info):
         self.ssh_info = ssh_info
