@@ -46,11 +46,15 @@ class SCPNode(ParallelNode):
                 break
 
     def _copy_file(self, client, source, destination, recurse=False):
+        if recurse:
+            RmNode(destination, **self.GetClassParams(ParallelNode)).Run()
         if self.sudo:
             tmp_dst = os.path.join('/tmp', os.path.basename(source))
+            if recurse:
+                RmNode(tmp_dst, **self.GetClassParams(ParallelNode)).Run()
             output = client.copy_file(source, tmp_dst, recurse=recurse)
             joinall(output, raise_error=True)
-            MvNode(tmp_dst, destination).Run()
+            MvNode(tmp_dst, destination, hosts=self.hosts).Run()
         else:
             output = client.copy_file(source, destination, recurse=recurse)
             joinall(output, raise_error=True)
@@ -70,9 +74,6 @@ class SCPNode(ParallelNode):
                 dirs[source] = dst_path
             else:
                 files[source] = dst_path
-
-        #Create new remote directories
-        RmNode(list(dirs.values()), **self.GetClassParams(ParallelNode)).Run()
 
         #Copy all files to the remote host
         for source,destination in files.items():
