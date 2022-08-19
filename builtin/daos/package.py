@@ -36,6 +36,16 @@ class Daos(Application):
                 DetectNetworks().Run()
                 iface = input('Initial Network Interface: ')
                 self.config['SERVER']['engines'][0]['fabric_iface'] = iface
+        #Prepare NVMe before the config is generated
+        if 'PREPARE_NVME' in self.config and self.config['PREPARE_NVME']:
+            EchoNode("Re-bind NVMe").Run()
+            ExecNode(f"{self.config['DAOS_ROOT']}/prereq/release/spdk/share/spdk/scripts/setup.sh", hosts=self.server_hosts, sudo=True).Run()
+            ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} storage prepare --nvme-only", hosts=self.server_hosts,  sudo=True).Run()
+            #EchoNode("Select NVMe").Run()
+            #ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} storage scan", hosts=self.server_hosts,  sudo=True).Run()
+            addrs = input("Select NVMe addrs: ")
+            addrs = addrs.split(',')
+            self.config['SERVER']['engines'][0]['storage'][0]['bdev_list'] = addrs
         #Generate config files
         self._CreateServerConfig()
         self._CreateAgentConfig()
@@ -53,15 +63,6 @@ class Daos(Application):
         #Prepare storage
         if 'PREPARE_STORAGE' in self.config:
             PrepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
-        if 'PREPARE_NVME' in self.config and self.config['PREPARE_NVME']:
-            EchoNode("Re-bind NVMe").Run()
-            ExecNode(f"{self.config['DAOS_ROOT']}/prereq/release/spdk/share/spdk/scripts/setup.sh", hosts=self.server_hosts, sudo=True).Run()
-            ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} storage prepare --nvme-only", hosts=self.server_hosts,  sudo=True).Run()
-            #EchoNode("Select NVMe").Run()
-            #ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} storage scan", hosts=self.server_hosts,  sudo=True).Run()
-            addrs = input("Select NVMe addrs: ")
-            addrs = addrs.split(',')
-            self.config['SERVER']['engines'][0]['storage'][0]['bdev_list'] = addrs
         #Start dummy DAOS server (on all server nodes)
         self._StartServers()
         # Get networking options
