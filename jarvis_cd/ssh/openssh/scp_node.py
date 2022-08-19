@@ -78,7 +78,6 @@ class SCPNode(ParallelNode):
         for source,destination in dirs.items():
             self._copy_file(client, source, destination, recurse=True)
 
-
     def _Run(self):
         if self.do_ssh:
             self._exec_scp()
