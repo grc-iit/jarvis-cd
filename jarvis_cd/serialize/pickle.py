@@ -6,8 +6,8 @@ class PickleFile(Serializer):
         self.path = path
 
     def Load(self):
-        with open(self.path, 'rb'):
-            return pkl.load(self.path)
+        with open(self.path, 'rb') as fp:
+            return pkl.load(fp)
 
     def Save(self, data):
         with open(self.path, 'wb') as fp:
