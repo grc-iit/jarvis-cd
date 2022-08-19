@@ -63,7 +63,9 @@ class SCPNode(ParallelNode):
         dirs = {}
         files = {}
         for source in self.sources:
-            dst_path = os.path.join(self.destination, os.path.basename(source))
+            dst_path = self.destination
+            if os.path.isdir(self.destination):
+                dst_path = os.path.join(self.destination, os.path.basename(source))
             if os.path.isdir(source):
                 dirs[source] = dst_path
             else:
