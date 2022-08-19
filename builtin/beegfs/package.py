@@ -57,7 +57,7 @@ class Beegfs(Application):
         ExecNode(cmd, hosts=self.storage_hosts, sudo=True).Run()
 
         #Init client
-        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-client')} -m {self.client_hosts}"
+        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-client')} -m {self.mgmt_host.ip_str()}"
         ExecNode(cmd, hosts=self.client_hosts, sudo=True).Run()
         cmd = f"echo {self.config['CLIENT']['MOUNT_POINT']} /etc/beegfs/beegfs-client.conf > /etc/beegfs/beegfs-mounts.conf"
         ExecNode(cmd, hosts=self.client_hosts, sudo=True).Run()
