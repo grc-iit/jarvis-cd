@@ -1,0 +1,19 @@
+PREPARE_STORAGE:
+  - format: EXT4
+    format_params:
+      dev_path: /dev/nvme2n1
+    mount_params:
+      dev_path: /dev/nvme2n1
+      fs_path: ${PER_NODE_DIR}/beegfs_data
+MANAGEMENT_SERVICE:
+  HOSTS: 1-3
+  MOUNT_POINT: ${PER_NODE_DIR}/beegfs_data/mgmtd
+METADATA_SERVICE:
+  HOSTS: 1-3
+  MOUNT_POINT: ${PER_NODE_DIR}/beegfs_data/meta
+STORAGE_SERVICE:
+  HOSTS: 1-3
+  MOUNT_POINT: ${PER_NODE_DIR}/beegfs_data/storage
+CLIENT:
+  HOSTS: 1-3
+  MOUNT_POINT: ${PER_NODE_DIR}/beegfs_mount
