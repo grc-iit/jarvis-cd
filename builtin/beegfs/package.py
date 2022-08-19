@@ -19,7 +19,7 @@ class Beegfs(Application):
 
         #Prepare storage
         if 'PREPARE_STORAGE' in self.config:
-            PrepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
+            PrepareStorage(self.config['PREPARE_STORAGE'], hosts=self.storage_hosts).Run()
 
         #Init mgmt
         cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-mgmtd')} -p {self.config['MANAGEMENT_SERVICE']['MOUNT_POINT']}"
@@ -55,7 +55,7 @@ class Beegfs(Application):
 
     def _DefineClean(self):
         if 'PREPARE_STORAGE' in self.config:
-            UnprepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
+            UnprepareStorage(self.config['PREPARE_STORAGE'], hosts=self.storage_hosts).Run()
         RmNode(self.config['MANAGEMENT_SERVICE']['MOUNT_POINT'], hosts=self.mgmt_host).Run()
         RmNode(self.config['METADATA_SERVICE']['MOUNT_POINT'], hosts=self.md_hosts).Run()
         RmNode(self.config['STORAGE_SERVICE']['MOUNT_POINT'], hosts=self.storage_hosts).Run()
