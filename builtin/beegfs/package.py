@@ -78,6 +78,9 @@ class Beegfs(Application):
         CopyNode(os.path.join('/etc/beegfs', 'beegfs-storage.conf'),
                  os.path.join(self.per_node_dir, 'beegfs-storage.conf'),
                  hosts=self.storage_hosts).Run()
+        CopyNode(os.path.join('/etc/beegfs', 'beegfs-helperd.conf'),
+                 os.path.join(self.per_node_dir, 'beegfs-helperd.conf'),
+                 hosts=self.client_hosts).Run()
         CopyNode(os.path.join('/etc/beegfs', 'beegfs-client.conf'),
                  os.path.join(self.per_node_dir, 'beegfs-client.conf'),
                  hosts=self.client_hosts).Run()
@@ -90,6 +93,7 @@ class Beegfs(Application):
         EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-mgmtd.conf'), pairs, hosts=self.mgmt_host).Run()
         EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-meta.conf'), pairs, hosts=self.md_hosts).Run()
         EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-storage.conf'), pairs, hosts=self.storage_hosts).Run()
+        EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-helperd.conf'), pairs, hosts=self.storage_hosts).Run()
         EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-client.conf'), pairs, hosts=self.client_hosts).Run()
 
         # Copy BeeGFS configs back
@@ -105,6 +109,10 @@ class Beegfs(Application):
                  os.path.join('/etc/beegfs', 'beegfs-storage.conf'),
                  hosts=self.storage_hosts,
                  sudo=True).Run()
+        CopyNode(os.path.join(self.per_node_dir, 'beegfs-helperd.conf'),
+                 os.path.join('/etc/beegfs', 'beegfs-helperd.conf'),
+                 hosts=self.storage_hosts,
+                 sudo=True).Run()
         CopyNode(os.path.join(self.per_node_dir, 'beegfs-client.conf'),
                  os.path.join('/etc/beegfs', 'beegfs-client.conf'),
                  hosts=self.client_hosts,
@@ -114,12 +122,12 @@ class Beegfs(Application):
         ExecNode(f"systemctl start beegfs-mgmtd", hosts=self.mgmt_host, sudo=True).Run()
         ExecNode(f"systemctl start beegfs-meta", hosts=self.md_hosts, sudo=True).Run()
         ExecNode(f"systemctl start beegfs-storage", hosts=self.storage_hosts, sudo=True).Run()
-        #ExecNode(f"systemctl start beegfs-helperd", hosts=self.client_hosts, sudo=True).Run()
+        ExecNode(f"systemctl start beegfs-helperd", hosts=self.client_hosts, sudo=True).Run()
         ExecNode(f"systemctl start beegfs-client", hosts=self.client_hosts, sudo=True).Run()
 
     def _DefineStop(self):
         ExecNode(f"systemctl stop beegfs-client", hosts=self.client_hosts, sudo=True).Run()
-        #ExecNode(f"systemctl stop beegfs-helperd", hosts=self.client_hosts, sudo=True).Run()
+        ExecNode(f"systemctl stop beegfs-helperd", hosts=self.client_hosts, sudo=True).Run()
         ExecNode(f"systemctl stop beegfs-storage", hosts=self.storage_hosts, sudo=True).Run()
         ExecNode(f"systemctl stop beegfs-meta", hosts=self.md_hosts, sudo=True).Run()
         ExecNode(f"systemctl stop beegfs-mgmtd", hosts=self.mgmt_host, sudo=True).Run()
