@@ -3,6 +3,7 @@ from gevent import joinall
 import sys, os
 from jarvis_cd.basic.parallel_node import ParallelNode
 from jarvis_cd.fs.rm_node import RmNode
+from jarvis_cd.fs.mv_node import MvNode
 from jarvis_cd.fs.ls_node import LsNode
 from jarvis_cd.basic.exception import Error, ErrorCode
 from jarvis_cd.basic.echo_node import EchoNode
@@ -43,40 +44,28 @@ class SCPNode(ParallelNode):
                 self.hosts = self.hosts_no_alias
                 break
 
+    def _copy_file(self, source, destination, recurse=False):
+        if self.sudo:
+            tmp_dst = os.path.join('/tmp', os.path.basename(source))
+            output = client.copy_file(source, tmp_dst, recurse=recurse)
+            joinall(output, raise_error=True)
+            MvNode(tmp_dst, destination).Run()
+        else:
+            output = client.copy_file(source, destination, recurse=recurse)
+            joinall(output, raise_error=True)
+
     def _exec_scp(self):
         EchoNode(f"pssh {self.hosts} user={self.username} pkey={self.pkey} port={self.port}", color=Color.YELLOW).Run()
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password,
                                    port=self.port)
-
         #Expand all directories
         dirs = {}
         files = {}
         for source in self.sources:
-            #source is either a single file or a directory
-            is_dir = os.path.isdir(source)
-            source_files = [source]
-
-            #Create source dir -> destination command
-            if is_dir:
-                node = LsNode(source).Run()
-                #source_files = node.GetFiles()
-                source_files = []
-                rel_path = os.path.relpath(source, source)
-                dst_path = os.path.join(self.destination, rel_path)
+            dst_path = os.path.join(self.destination, os.path.basename(source))
+            if os.path.isdir(source):
                 dirs[source] = dst_path
-
-            #Create source file -> destination command
-            for file in source_files:
-                #We are copying a directory to another directory. Override if exists
-                if is_dir:
-                    rel_path = os.path.relpath(file, source)
-                    dst_path = os.path.join(self.destination, rel_path)
-                #We are copying a set of files into "destination"
-                elif len(self.sources) > 1:
-                    dst_path = os.path.join(self.destination, os.path.basename(source))
-                #We are copying a single file into "destination"
-                else:
-                    dst_path = self.destination
+            else:
                 files[file] = dst_path
 
         #Create new remote directories
@@ -84,11 +73,10 @@ class SCPNode(ParallelNode):
 
         #Copy all files to the remote host
         for source,destination in files.items():
-            output = client.copy_file(source, destination)
-            joinall(output, raise_error=True)
+            self._copy_file(source, destination)
         for source,destination in dirs.items():
-            output = client.copy_file(source, destination, recurse=True)
-            joinall(output, raise_error=True)
+            self._copy_file(source, destination, recurse=True)
+
 
     def _Run(self):
         if self.do_ssh:
