@@ -22,6 +22,10 @@ class ParallelNode(Node,SSHInfoMixin):
         else:
             raise Error(ErrorCode.INVALID_TYPE).format("SSHExecNode hosts", type(hosts))
 
+        self.hosts_no_alias = self.hosts.copy()
+        for alias in self.host_aliases:
+            self.hosts_no_alias.remove(alias)
+
         self._ProcessSSHInfo()
         self.sudo = sudo
         self.shell = shell

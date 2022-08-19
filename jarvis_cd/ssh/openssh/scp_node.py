@@ -5,6 +5,8 @@ from jarvis_cd.basic.parallel_node import ParallelNode
 from jarvis_cd.fs.rm_node import RmNode
 from jarvis_cd.fs.ls_node import LsNode
 from jarvis_cd.basic.exception import Error, ErrorCode
+from jarvis_cd.basic.echo_node import EchoNode
+from jarvis_cd.basic.enumerations import Color
 from jarvis_cd.shell.local_exec_node import LocalExecNode
 
 sys.stderr = sys.__stderr__
@@ -38,15 +40,11 @@ class SCPNode(ParallelNode):
             src_dir = os.path.normpath(os.path.dirname(source))
             dst_dir = os.path.normpath(destination)
             if src_file == dst_file or src_dir == dst_dir:
-                self.hosts = self.hosts.copy()
-                if 'localhost' in self.hosts:
-                    self.hosts.remove('localhost')
-                for alias in self.host_aliases:
-                    if alias in self.hosts:
-                        self.hosts.remove(alias)
+                self.hosts = self.hosts_no_alias
                 break
 
     def _exec_scp(self):
+        EchoNode(f"pssh {self.hosts} user={self.username} pkey={self.pkey} port={self.port}", color=Color.YELLOW).Run()
         client = ParallelSSHClient(self.hosts, user=self.username, pkey=self.pkey, password=self.password,
                                    port=self.port)
 
