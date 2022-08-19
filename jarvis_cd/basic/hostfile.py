@@ -36,7 +36,7 @@ class Hostfile:
 
     def _set_hosts(self, hosts):
         self.all_hosts = [socket.gethostbyname(host) for host in hosts]
-        self.hosts = hosts
+        self.hosts = self.all_hosts
         return self
 
     #Hostset: 1,5-8,10
