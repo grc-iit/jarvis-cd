@@ -176,12 +176,15 @@ class Daos(Application):
     def _CreatePool(self, pool_info):
         create_pool_cmd = [
             f"{self.config['DAOS_ROOT']}/bin/dmg -o {self.config['CONF']['CONTROL']} pool create",
-            f"-z {pool_info['size']}",
             f"--label {pool_info['label']}",
             #f"--nranks={len(self.server_hosts)}"
         ]
+        if 'size' in pool_info:
+            create_pool_cmd.append(f"-z {pool_info['size']}")
         if 'scm_size' in pool_info:
             create_pool_cmd.append(f"--scm-size {pool_info['scm_size']}")
+        if 'nvme_size' in pool_info:
+            create_pool_cmd.append(f"--nvme-size {pool_info['scm_size']}")
         create_pool_cmd = " ".join(create_pool_cmd)
         ExecNode(create_pool_cmd).Run()
 
