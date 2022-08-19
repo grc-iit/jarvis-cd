@@ -64,10 +64,10 @@ class Beegfs(Application):
         CopyNode(self.connauthfile, hosts=self.all_hosts, sudo=True).Run()
 
         #Edit all configs for connauth
-        EditBeegfsConfig(os.path.join(self.beegfs_root, 'beegfs-mgmtd.conf'), 'connAuthFile', self.connauthfile, hosts=self.mgmt_host).Run()
-        EditBeegfsConfig(os.path.join(self.beegfs_root, 'beegfs-meta.conf'), 'connAuthFile', self.connauthfile, hosts=self.md_hosts).Run()
-        EditBeegfsConfig(os.path.join(self.beegfs_root, 'beegfs-storage.conf'), 'connAuthFile', self.connauthfile, hosts=self.storage_hosts).Run()
-        EditBeegfsConfig(os.path.join(self.beegfs_root, 'beegfs-client.conf'), 'connAuthFile', self.connauthfile, hosts=self.client_hosts).Run()
+        EditBeegfsConfig(os.path.join(self.beegfs_root, 'beegfs-mgmtd.conf'), 'connAuthFile', self.connauthfile, hosts=self.mgmt_host, sudo=True).Run()
+        EditBeegfsConfig(os.path.join(self.beegfs_root, 'beegfs-meta.conf'), 'connAuthFile', self.connauthfile, hosts=self.md_hosts, sudo=True).Run()
+        EditBeegfsConfig(os.path.join(self.beegfs_root, 'beegfs-storage.conf'), 'connAuthFile', self.connauthfile, hosts=self.storage_hosts, sudo=True).Run()
+        EditBeegfsConfig(os.path.join(self.beegfs_root, 'beegfs-client.conf'), 'connAuthFile', self.connauthfile, hosts=self.client_hosts, sudo=True).Run()
 
     def _DefineStart(self):
         ExecNode(f"systemctl start beegfs-mgmtd", hosts=self.mgmt_host, sudo=True).Run()
