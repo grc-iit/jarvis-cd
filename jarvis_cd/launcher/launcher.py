@@ -7,6 +7,7 @@ from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_cd.basic.hostfile import Hostfile
 from jarvis_cd.basic.exception import Error,ErrorCode
 from jarvis_cd.fs.mkdir_node import MkdirNode
+from jarvis_cd.util.expand_paths import ExpandPaths
 import os
 import inspect
 import random
@@ -104,7 +105,7 @@ class Launcher(SSHConfigMixin,YAMLCacheMixin,BasicEnvMixin):
         self.config['Z_UUID'] = config_uuid
         self.config['SHARED_DIR'] = self.shared_dir
         self.config['PER_NODE_DIR'] = self.per_node_dir
-        self.config = self._ExpandPaths()
+        self.config = ExpandPaths(self.config).Run()
         self._Scaffold()
         YAMLFile(new_conf_path).Save(self.config)
     def _ScaffoldArgs(self, parser):

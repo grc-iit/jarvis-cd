@@ -33,7 +33,7 @@ class YAMLConfig(ABC):
             self.config = config.config
         else:
             self.config = config
-        self.config = self._ExpandPaths()
+        self.config = ExpandPaths(self.config).Run()
         self._ProcessConfig()
         return self
 
