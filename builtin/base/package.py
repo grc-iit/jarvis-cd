@@ -16,6 +16,7 @@ class Base(Launcher):
         RmNode(os.path.join(self.GetUserEnv(), '*'), hosts=self.all_hosts, shell=True).Run()
 
     def Cd(self, pkg_id, p):
+        self.jarvis_manager.DisableFancyPrint()
         self._PackagePathsFromID(pkg_id)
         if not p:
             print(self.shared_dir)
