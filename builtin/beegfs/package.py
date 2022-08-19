@@ -9,6 +9,7 @@ class Beegfs(Application):
         self.storage_hosts = self.all_hosts.SelectHosts(self.config['STORAGE_SERVICE']['HOSTS'])
         self.client_hosts = self.all_hosts.SelectHosts(self.config['CLIENT']['HOSTS'])
         self.beegfs_root = self.config['BEEGFS_ROOT']
+        self.connauthfile = "/etc/beegfs/connauthfile"
 
     def _DefineInit(self):
         #Create storage directories
@@ -38,6 +39,11 @@ class Beegfs(Application):
         ExecNode(cmd, hosts=self.client_hosts, sudo=True).Run()
         cmd = f"echo {self.config['CLIENT']['MOUNT_POINT']} /etc/beegfs/beegfs-client.conf > /etc/beegfs/beegfs-mounts.conf"
         ExecNode(cmd, hosts=self.client_hosts, sudo=True).Run()
+
+        #Create connauth
+        ExecNode(f"dd if=/dev/random of={self.connauthfile} bs=128", sudo=True).Run()
+        ChownFS(self.connauthfile, user="root", sudo=True).Run()
+        ChmodFS(400, self.connauthfile, sudo=True).Run()
 
     def _DefineStart(self):
         ExecNode(f"systemctl start beegfs-mgmtd", hosts=self.mgmt_host, sudo=True).Run()

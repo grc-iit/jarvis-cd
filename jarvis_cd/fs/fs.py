@@ -18,6 +18,11 @@ class ChownFS(ExecNode):
         kwargs['sudo'] = True
         super().__init__(cmd, **kwargs)
 
+class ChmodFS(ExecNode):
+    def __init__(self, path, perm, **kwargs):
+        cmd = f"chmod {perm} {path}"
+        super().__init__(cmd, **kwargs)
+
 class UnmountFS(ExecNode):
     def __init__(self, dev_path, **kwargs):
         cmd = f"umount {dev_path}"
