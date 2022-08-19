@@ -116,6 +116,7 @@ class Beegfs(Application):
         ExecNode(f"systemctl stop beegfs-storage", hosts=self.storage_hosts, sudo=True).Run()
         ExecNode(f"systemctl stop beegfs-meta", hosts=self.md_hosts, sudo=True).Run()
         ExecNode(f"systemctl stop beegfs-mgmtd", hosts=self.mgmt_host, sudo=True).Run()
+        KillNode('.*beegfs.*', hosts=self.all_hosts, sudo=True).Run()
 
     def _DefineClean(self):
         if 'PREPARE_STORAGE' in self.config:
