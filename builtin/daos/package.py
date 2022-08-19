@@ -14,6 +14,18 @@ class Daos(Application):
             self.server_sockets = '/var/run/daos_server'
             self.agent_sockets = '/var/run/daos_agent'
         self.pools_by_label = {}
+#0000:4c:00.0
+    def Prepare(self):
+        # Prepare NVMe before the config is generated
+        if 'PREPARE_NVME' in self.config and self.config['PREPARE_NVME']:
+            EchoNode("Re-bind NVMe").Run()
+            ExecNode(f"{self.config['DAOS_ROOT']}/prereq/release/spdk/share/spdk/scripts/setup.sh",
+                     hosts=self.server_hosts, sudo=True).Run()
+            ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} storage prepare --nvme-only",
+                     hosts=self.server_hosts, sudo=True).Run()
+            # EchoNode("Select NVMe").Run()
+            ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} storage scan", sudo=True).Run()
+        return
 
     def _DefineInit(self):
         #Create DAOS_ROOT sybmolic link
@@ -36,16 +48,6 @@ class Daos(Application):
                 DetectNetworks().Run()
                 iface = input('Initial Network Interface: ')
                 self.config['SERVER']['engines'][0]['fabric_iface'] = iface
-        #Prepare NVMe before the config is generated
-        if 'PREPARE_NVME' in self.config and self.config['PREPARE_NVME']:
-            EchoNode("Re-bind NVMe").Run()
-            ExecNode(f"{self.config['DAOS_ROOT']}/prereq/release/spdk/share/spdk/scripts/setup.sh", hosts=self.server_hosts, sudo=True).Run()
-            ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} storage prepare --nvme-only", hosts=self.server_hosts,  sudo=True).Run()
-            #EchoNode("Select NVMe").Run()
-            #ExecNode(f"{os.path.join(self.config['DAOS_ROOT'], 'bin', 'daos_server')} storage scan", sudo=True).Run()
-            addrs = input("Select NVMe addrs: ")
-            addrs = addrs.split(',')
-            self.config['SERVER']['engines'][0]['storage'][0]['bdev_list'] = addrs
         #Generate config files
         self._CreateServerConfig()
         self._CreateAgentConfig()
