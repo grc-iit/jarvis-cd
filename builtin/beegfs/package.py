@@ -63,11 +63,43 @@ class Beegfs(Application):
         ChmodFS(400, self.connauthfile, sudo=True).Run()
         CopyNode(self.connauthfile, hosts=self.all_hosts, sudo=True).Run()
 
+        #Copy BeeGFS configs
+        CopyNode(os.path.join('/etc/beegfs', 'beegfs-mgmtd.conf'),
+                 os.path.join(self.per_node_dir, 'beegfs-mgmtd.conf'),
+                 hosts=self.mgmt_host).Run()
+        CopyNode(os.path.join('/etc/beegfs', 'beegfs-meta.conf'),
+                 os.path.join(self.per_node_dir, 'beegfs-meta.conf'),
+                 hosts=self.md_hosts).Run()
+        CopyNode(os.path.join('/etc/beegfs', 'beegfs-storage.conf'),
+                 os.path.join(self.per_node_dir, 'beegfs-storage.conf'),
+                 hosts=self.storage_hosts).Run()
+        CopyNode(os.path.join('/etc/beegfs', 'beegfs-client.conf'),
+                 os.path.join(self.per_node_dir, 'beegfs-client.conf'),
+                 hosts=self.client_hosts).Run()
+
         #Edit all configs for connauth
-        EditBeegfsConfig(os.path.join('/etc/beegfs', 'beegfs-mgmtd.conf'), 'connAuthFile', self.connauthfile, hosts=self.mgmt_host, sudo=True).Run()
-        EditBeegfsConfig(os.path.join('/etc/beegfs', 'beegfs-meta.conf'), 'connAuthFile', self.connauthfile, hosts=self.md_hosts, sudo=True).Run()
-        EditBeegfsConfig(os.path.join('/etc/beegfs', 'beegfs-storage.conf'), 'connAuthFile', self.connauthfile, hosts=self.storage_hosts, sudo=True).Run()
-        EditBeegfsConfig(os.path.join('/etc/beegfs', 'beegfs-client.conf'), 'connAuthFile', self.connauthfile, hosts=self.client_hosts, sudo=True).Run()
+        EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-mgmtd.conf'), 'connAuthFile', self.connauthfile, hosts=self.mgmt_host).Run()
+        EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-meta.conf'), 'connAuthFile', self.connauthfile, hosts=self.md_hosts).Run()
+        EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-storage.conf'), 'connAuthFile', self.connauthfile, hosts=self.storage_hosts).Run()
+        EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-client.conf'), 'connAuthFile', self.connauthfile, hosts=self.client_hosts).Run()
+
+        # Copy BeeGFS configs back
+        CopyNode(os.path.join(self.per_node_dir, 'beegfs-mgmtd.conf'),
+                 os.path.join('/etc/beegfs', 'beegfs-mgmtd.conf'),
+                 hosts=self.mgmt_host,
+                 sudo=True).Run()
+        CopyNode(os.path.join(self.per_node_dir, 'beegfs-meta.conf'),
+                 os.path.join('/etc/beegfs', 'beegfs-meta.conf'),
+                 hosts=self.md_hosts,
+                 sudo=True).Run()
+        CopyNode(os.path.join(self.per_node_dir, 'beegfs-storage.conf'),
+                 os.path.join('/etc/beegfs', 'beegfs-storage.conf'),
+                 hosts=self.storage_hosts,
+                 sudo=True).Run()
+        CopyNode(os.path.join(self.per_node_dir, 'beegfs-client.conf'),
+                 os.path.join('/etc/beegfs', 'beegfs-client.conf'),
+                 hosts=self.client_hosts,
+                 sudo=True).Run()
 
     def _DefineStart(self):
         ExecNode(f"systemctl start beegfs-mgmtd", hosts=self.mgmt_host, sudo=True).Run()
