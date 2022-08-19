@@ -31,7 +31,9 @@ SERVER:
       storage:
         - class: nvme
           bdev_list: []
-          bdev_size: 3500
+        - class: dcpm
+          scm_list: [ '/dev/pmem0' ]
+          scm_mount: ${PER_NODE_DIR}/scm_test
 AGENT:
   hosts: 1-3
   transport_config:
@@ -48,6 +50,7 @@ CONTROL:
 POOLS:
   - label: io500_pool
     size: 5000G
+    scm_size: 256MiB
 CONTAINERS:
   - label: io500_container
     pool: io500_pool
