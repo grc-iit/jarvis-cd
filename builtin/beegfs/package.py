@@ -11,10 +11,10 @@ class EditBeegfsConfig(JarvisExecNode):
         self.val = val
 
     def _LocalRun(self):
-        with open(path, 'w') as fp:
+        with open(self.path, 'w') as fp:
             lines = fp.readlines()
             for i,line in enumerate(lines):
-                if key in line and '=' in line:
+                if self.key in line and '=' in line:
                     lines[i] = f"{self.key} = {self.val}"
             fp.write("\n".join(lines))
 
