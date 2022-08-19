@@ -44,7 +44,7 @@ class SCPNode(ParallelNode):
                 self.hosts = self.hosts_no_alias
                 break
 
-    def _copy_file(self, source, destination, recurse=False):
+    def _copy_file(self, client, source, destination, recurse=False):
         if self.sudo:
             tmp_dst = os.path.join('/tmp', os.path.basename(source))
             output = client.copy_file(source, tmp_dst, recurse=recurse)
@@ -73,9 +73,9 @@ class SCPNode(ParallelNode):
 
         #Copy all files to the remote host
         for source,destination in files.items():
-            self._copy_file(source, destination)
+            self._copy_file(client, source, destination)
         for source,destination in dirs.items():
-            self._copy_file(source, destination, recurse=True)
+            self._copy_file(client, source, destination, recurse=True)
 
 
     def _Run(self):
