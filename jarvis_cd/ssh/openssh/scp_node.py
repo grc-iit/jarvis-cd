@@ -54,7 +54,7 @@ class SCPNode(ParallelNode):
                 RmNode(tmp_dst, **self.GetClassParams(ParallelNode)).Run()
             output = client.copy_file(source, tmp_dst, recurse=recurse)
             joinall(output, raise_error=True)
-            MvNode(tmp_dst, destination, hosts=self.hosts).Run()
+            MvNode(tmp_dst, destination, hosts=self.hosts, sudo=True).Run()
         else:
             output = client.copy_file(source, destination, recurse=recurse)
             joinall(output, raise_error=True)
