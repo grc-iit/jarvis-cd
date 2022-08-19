@@ -49,19 +49,19 @@ class Beegfs(Application):
             PrepareStorage(self.config['PREPARE_STORAGE'], hosts=self.storage_hosts).Run()
 
         #Init mgmt
-        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-mgmtd')} -p {self.config['MANAGEMENT_SERVICE']['MOUNT_POINT']}"
+        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-mgmtd')} -f -p {self.config['MANAGEMENT_SERVICE']['MOUNT_POINT']}"
         ExecNode(cmd, hosts=self.mgmt_host, sudo=True).Run()
 
         #Init md
-        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-meta')} -p {self.config['METADATA_SERVICE']['MOUNT_POINT']} -m {self.mgmt_host.ip_str()}"
+        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-meta')} -f -p {self.config['METADATA_SERVICE']['MOUNT_POINT']} -m {self.mgmt_host.ip_str()}"
         ExecNode(cmd, hosts=self.md_hosts, sudo=True).Run()
 
         #Init storage
-        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-storage')} -p {self.config['STORAGE_SERVICE']['MOUNT_POINT']} -m {self.mgmt_host.ip_str()}"
+        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-storage')} -f -p {self.config['STORAGE_SERVICE']['MOUNT_POINT']} -m {self.mgmt_host.ip_str()}"
         ExecNode(cmd, hosts=self.storage_hosts, sudo=True).Run()
 
         #Init client
-        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-client')} -m {self.mgmt_host.ip_str()}"
+        cmd = f"{os.path.join(self.beegfs_root, 'sbin', 'beegfs-setup-client')} -f -m {self.mgmt_host.ip_str()}"
         ExecNode(cmd, hosts=self.client_hosts, sudo=True).Run()
         cmd = f"echo {self.config['CLIENT']['MOUNT_POINT']} /etc/beegfs/beegfs-client.conf > /etc/beegfs/beegfs-mounts.conf"
         ExecNode(cmd, hosts=self.client_hosts, sudo=True).Run()
