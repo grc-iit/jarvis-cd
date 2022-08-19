@@ -33,5 +33,6 @@ class ParallelNode(Node,SSHInfoMixin):
 
         self.hosts_no_alias = self.hosts.copy()
         for alias in self.host_aliases:
-            self.hosts_no_alias.remove(alias)
+            if alias in self.host_no_alias:
+                self.hosts_no_alias.remove(alias)
 
