@@ -4,6 +4,7 @@ IO500_ROOT: ${PER_NODE_DIR}/io500_install
 MPI:
   nprocs: 128
 GLOBAL:
+  datadir: ${PER_NODE_DIR}/test_dir
   timestamp-datadir: TRUE
   resultdir: ${PER_NODE_DIR}/io500_results
   timestamp-resultdir: TRUE
