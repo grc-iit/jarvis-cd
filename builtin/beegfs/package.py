@@ -87,7 +87,7 @@ class Beegfs(Application):
 
         #Edit all configs for connauth
         pairs = [
-            ('connAuthFile', None),
+            ('connAuthFile', self.connauthfile),
             ('storeFsUUID', None)
         ]
         EditBeegfsConfig(os.path.join(self.per_node_dir, 'beegfs-mgmtd.conf'), pairs, hosts=self.mgmt_host).Run()
