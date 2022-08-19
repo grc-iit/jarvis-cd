@@ -4,7 +4,6 @@ import os
 class ExpandPaths:
     def __init__(self, config):
         self.config = config
-        self._Run()
 
     def _ExpandPath(self, path):
         return os.path.expandvars(path)
@@ -25,5 +24,5 @@ class ExpandPaths:
         else:
             return var
 
-    def _Run(self):
+    def Run(self):
         return self._ExpandVar(self.config)

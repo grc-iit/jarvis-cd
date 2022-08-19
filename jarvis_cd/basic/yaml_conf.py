@@ -21,7 +21,7 @@ class YAMLConfig(ABC):
             os.environ['SHARED_DIR'] = str(self.config['SHARED_DIR'])
         if 'PER_NODE_DIR' in self.config and self.config['PER_NODE_DIR'] is not None:
             os.environ['PER_NODE_DIR'] = str(self.config['PER_NODE_DIR'])
-        ExpandPaths(self.config)
+        self.config = ExpandPaths(self.config).Run()
         self._ProcessConfig()
         return self
 
