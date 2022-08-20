@@ -106,7 +106,7 @@ class Daos(Application):
 
     def _DefineClean(self):
         if 'PREPARE_NVME' in self.config:
-            ExecNode(f"{self.config['DAOS_ROOT']}/prereq/release/spdk/share/spdk/scripts/setup.sh reset", sudo=True).Run()
+            ExecNode(f"{self.config['DAOS_ROOT']}/prereq/release/spdk/share/spdk/scripts/setup.sh reset", hosts=self.server_hosts, sudo=True).Run()
         to_rm = [
             self.config['CONF']['AGENT'],
             self.config['CONF']['SERVER'],
