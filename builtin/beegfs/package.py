@@ -23,8 +23,6 @@ class EditBeegfsConfig(JarvisExecNode):
                             lines[i] = f"{key} = {value}"
                         else:
                             del lines[i]
-                            continue
-                        self.pairs.remove((key,value))
         with open(self.path, 'w') as fp:
             fp.write("\n".join(lines))
 
