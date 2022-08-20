@@ -143,6 +143,7 @@ class Beegfs(Application):
     def _DefineClean(self):
         if 'PREPARE_STORAGE' in self.config:
             UnprepareStorage(self.config['PREPARE_STORAGE'], hosts=self.storage_hosts).Run()
+        """
         paths = [
             os.path.join('/etc/beegfs', 'beegfs-mgmtd.conf'),
             os.path.join('/etc/beegfs', 'beegfs-meta.conf'),
@@ -151,10 +152,12 @@ class Beegfs(Application):
             os.path.join('/etc/beegfs', 'beegfs-client.conf'),
         ]
         RmNode(paths, hosts=self.all_hosts, sudo=True).Run()
+        """
         RmNode(self.config['MANAGEMENT_SERVICE']['MOUNT_POINT'], hosts=self.mgmt_host, sudo=True).Run()
         RmNode(self.config['METADATA_SERVICE']['MOUNT_POINT'], hosts=self.md_hosts, sudo=True).Run()
         RmNode(self.config['STORAGE_SERVICE']['MOUNT_POINT'], hosts=self.storage_hosts, sudo=True).Run()
         RmNode(self.config['CLIENT']['MOUNT_POINT'], hosts=self.client_hosts, sudo=True).Run()
+
 
     def _DefineStatus(self):
         pass
