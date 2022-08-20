@@ -105,6 +105,8 @@ class Daos(Application):
                 ExecNode(mount_cmd, hosts=self.agent_hosts).Run()
 
     def _DefineClean(self):
+        if 'PREPARE_NVME' in self.config:
+            ExecNode(f"{self.config['DAOS_ROOT']}/prereq/release/spdk/share/spdk/scripts/setup.sh reset", sudo=True).Run()
         to_rm = [
             self.config['CONF']['AGENT'],
             self.config['CONF']['SERVER'],
@@ -120,8 +122,6 @@ class Daos(Application):
         RmNode(to_rm, hosts=self.all_hosts, sudo=True).Run()
         if 'PREPARE_STORAGE' in self.config:
             UnprepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
-        if 'PREPARE_NVME' in self.config:
-            ExecNode(f"{self.config['DAOS_ROOT']}/prereq/release/spdk/share/spdk/scripts/setup.sh reset", sudo=True).Run()
         for engine in self.config['SERVER']['engines']:
             for storage in engine['storage']:
                 for key,mount in storage.items():
