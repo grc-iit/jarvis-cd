@@ -16,12 +16,14 @@ class EditBeegfsConfig(JarvisExecNode):
                 line = line.strip()
                 if len(line) == 0:
                     del lines[i]
+                    continue
                 for key,value in self.pairs:
                     if key in line and '=' in line:
                         if value is not None:
                             lines[i] = f"{key} = {value}"
                         else:
                             del lines[i]
+                            continue
                         self.pairs.remove((key,value))
         with open(self.path, 'w') as fp:
             fp.write("\n".join(lines))
