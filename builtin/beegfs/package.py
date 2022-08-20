@@ -11,12 +11,8 @@ class EditBeegfsConfig(JarvisExecNode):
 
     def _LocalRun(self):
         with open(self.path, 'r') as fp:
-            lines = fp.readlines()
+            lines = fp.read().splitlines()
             for i,line in enumerate(lines):
-                line = line.strip()
-                if len(line) == 0:
-                    del lines[i]
-                    continue
                 for key,value in self.pairs:
                     if key in line and '=' in line:
                         if value is not None:
