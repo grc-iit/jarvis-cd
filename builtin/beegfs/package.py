@@ -13,7 +13,8 @@ class EditBeegfsConfig(JarvisExecNode):
         with open(self.path, 'r') as fp:
             lines = fp.readlines()
             for i,line in enumerate(lines):
-                if re.match('\s+',line):
+                line = line.strip()
+                if len(line) == 0:
                     del lines[i]
                 for key,value in self.pairs:
                     if key in line and '=' in line:
