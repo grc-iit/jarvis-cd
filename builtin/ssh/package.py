@@ -40,7 +40,7 @@ class Ssh(Launcher):
         parser.add_argument('node_id', metavar='id', type=int, help="Node index in hostfile")
 
     def Exec(self, cmd, sudo):
-        ExecNode(cmd, hosts=self.all_hosts, sudo=sudo).Run()
+        ExecNode(cmd, hosts=self.all_hosts, sudo=sudo, shell=True).Run()
     def _ExecArgs(self, parser):
         parser.add_argument('cmd', metavar='command', type=str, help="The command to distribute")
         parser.add_argument('--sudo', action='store_true', help="Whether or not to use sudo")
