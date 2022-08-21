@@ -21,7 +21,7 @@ class Memcached(Application):
         start_memcached_cmd = [
             f"{self.config['MEMCACHED_ROOT']}/bin/memcached",
             f"-p {self.config['PORT']}",
-            f"-l {self.memcached_host.list()[0]}",
+            f"-l {self.memcached_host.hostname_list()[0]}",
             f"-d",
             f"-I {self.config['MAX_ITEM_SIZE']}"
         ]

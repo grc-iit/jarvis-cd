@@ -70,7 +70,7 @@ class FromOpenSSHConfig(Node):
         if isinstance(hosts, str):
             hosts = [hosts]
         if isinstance(hosts, Hostfile):
-            hosts = hosts.list()
+            hosts = hosts.hostname_list()
         self.hosts = hosts
         self.ssh_config = {}
 

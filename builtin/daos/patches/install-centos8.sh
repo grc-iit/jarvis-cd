@@ -15,7 +15,7 @@ cd `scspkg pkg-src orangefs`
 wget http://download.orangefs.org/current/source/orangefs-2.9.8.tar.gz
 tar -xvzf orangefs-2.9.8.tar.gz
 cd orangefs-v.2.9.8
-./configure --prefix=`scspkg pkg-root orangefs` --with-kernel=/lib/modules/`uname -r`/build --enable-shared --enable-fuse
+./configure --prefix=`scspkg pkg-root orangefs` --with-kernel=/lib/modules/`uname -r`/build --enable-shared --enable-fuse --with-openib=/usr --without-bmi-tcp
 make -j8
 make install
 scspkg add-deps orangefs berkeley-db

@@ -21,7 +21,7 @@ class NatsServer(Application):
         nats_start_cmd = [
             f"{self.config['NATS_ROOT']}/bin/nats-server",
             f"-p {self.config['PORT']}",
-            f"-a {self.nats_host.list()[0]}",
+            f"-a {self.nats_host.hostname_list()[0]}",
             f"-DV",
             f"-l {self.config['LOG_PATH']}",
         ]

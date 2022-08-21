@@ -89,13 +89,13 @@ class Labios(Application):
     def _GenMemcachedConfig(self, mdict):
         mdict.update(self.config['MEMCACHED'])
         mdict['MEMCACHED_HOST'] = mdict['HOSTS']
-        mdict['HOSTS'] = self.all_hosts.SelectHosts(mdict['HOSTS']).list()
+        mdict['HOSTS'] = self.all_hosts.SelectHosts(mdict['HOSTS']).hostname_list()
         Memcached(mdict['SCAFFOLD']).Scaffold(config=mdict)
 
     def _GenNatsConfig(self, ndict):
         ndict.update(self.config['NATS'])
         ndict['NATS_HOST'] = ndict['HOSTS']
-        ndict['HOSTS'] = self.all_hosts.SelectHosts(ndict['HOSTS']).list()
+        ndict['HOSTS'] = self.all_hosts.SelectHosts(ndict['HOSTS']).hostname_list()
         NatsServer(ndict['SCAFFOLD']).Scaffold(config=ndict)
 
     def _GenLabiosConfig(self):

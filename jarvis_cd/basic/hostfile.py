@@ -63,13 +63,13 @@ class Hostfile:
     def ip_list(self):
         return self.hosts_ip
 
-    def list(self):
+    def hostname_list(self):
         return self.hosts
 
     def enumerate(self):
         return enumerate(self.hosts)
 
-    def hostname_str(self, sep=','):
+    def host_str(self, sep=','):
         return sep.join(self.hosts)
 
     def ip_str(self, sep=','):
