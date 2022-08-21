@@ -51,6 +51,7 @@ CONTROL:
 POOLS:
   - label: io500_pool
     size: 5000G
+    tier_ratio: 4
 CONTAINERS:
   - label: io500_container
     pool: io500_pool
