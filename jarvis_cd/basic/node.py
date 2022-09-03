@@ -114,21 +114,3 @@ class Node(ABC):
                 del args[param_name]
         args.update(override)
         return args
-
-    def _GetParamStr(self, params):
-        return ','.join([f"{key}=\'{val}\'" if isinstance(val, str) else f"{key}={val}" for key, val in params.items()])
-
-    def _ToShellCmd(self, ignore_base=None, set_params={}):
-        node_import = type(self).__module__
-        node_params = self.GetClassParams(ignore_base=ignore_base, **set_params)
-        node_type = type(self).__name__
-        param_str = self._GetParamStr(node_params)
-        python_cmds = [
-            f"from {node_import} import {node_type}",
-            f"from jarvis_cd.basic.jarvis_manager import JarvisManager",
-            "JarvisManager.GetInstance().DisableFancyPrint()",
-            f"{node_type}({param_str}).Run()"
-        ]
-        python_cmd = '\n'.join(python_cmds)
-        cmd = f"python3 -c \"{python_cmd}\" -C $JARVIS_ROOT"
-        return cmd

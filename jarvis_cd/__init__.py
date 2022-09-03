@@ -44,8 +44,8 @@ from jarvis_cd.basic.echo_node import *
 from jarvis_cd.basic.basic_env import *
 from jarvis_cd.basic.test_tracker import *
 from jarvis_cd.basic.yaml_cache import *
-from jarvis_cd.introspect.detect_os import *
 from jarvis_cd.introspect.detect_networks import *
+from jarvis_cd.introspect.system_info import *
 from jarvis_cd.introspect.host_aliases import *
 from jarvis_cd.introspect.check_command import *
 from jarvis_cd.ssh.ssh_config_mixin import *

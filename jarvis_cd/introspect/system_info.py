@@ -1,12 +1,8 @@
 
-import re
+import re, platform
 from jarvis_cd.basic.node import *
 
-class DetectOSNode(Node):
-    def __init__(self, program, **kwargs):
-        super().__init__(**kwargs)
-        self.program = program
-
+class SystemInfoNode(Node):
     def _DetectOSType(self, lines):
         for line in lines:
             if "ID=" in line:
@@ -36,12 +32,20 @@ class DetectOSNode(Node):
     def _Run(self):
         with open('/etc/os-release') as fp:
             lines = fp.read().splitlines()
-            self.os = self._DetectOSType()
-            self.os_like = self._DetectOSLiketype()
-            self.os_version = self._DetectOSVersion()
+            self.os = self._DetectOSType(lines)
+            self.os_like = self._DetectOSLikeType(lines)
+            self.os_version = self._DetectOSVersion(lines)
+        self.ksemantic = platform.platform()
+        self.krelease = platform.release()
+        self.ktype = platform.system()
+        self.cpu = platform.processor()
+        self.cpu_family = platform.machine()
 
     def IsLike(self, os, version):
         if os == self.os or os == self.os_like:
             if version == self.os_version:
                 return True
         return False
+
+    def __hash__(self):
+        return hash(str([self.os, self.os_like, self.os_version, self.ksemantic, self.krelease, self.ktype, self.cpu, self.cpu_family]))

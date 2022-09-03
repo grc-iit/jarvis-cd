@@ -1,0 +1,6 @@
+SLURM: salloc -N 4 -p compute
+HOSTS: ${SHARED_DIR}/hostfile.txt
+HERMES_BUILD: ${HOME}/hermes
+HERMES_CONF: ${HOME}/hermes/test/data/hermes.conf
+IOR:
+  nprocs: 48
