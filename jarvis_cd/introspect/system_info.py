@@ -25,7 +25,7 @@ class SystemInfoNode(Node):
 
     def _DetectOSVersion(self, lines):
         for line in lines:
-            grp = re.match('VERSION_ID=\"(.*)\"')
+            grp = re.match('VERSION_ID=\"(.*)\"', line)
             if grp:
                 return grp.group(1)
 
