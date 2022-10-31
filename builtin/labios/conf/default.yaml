@@ -7,6 +7,7 @@ LABIOS:
   ASSIGNMENT_POLICY: RANDOM
   TS_NUM_WORKER_THREADS: 8
   CONF: ${SHARED_DIR}/labios_conf.yaml
+  BUILD: /home/lukemartinlogan/Documents/Projects/PhD/labios/cmake-build-debug
 WORKER:
   NPROCS: 1
   HOSTS: 1

@@ -17,6 +17,8 @@ class Labios(Application):
         self.server_hosts = self.all_hosts.SelectHosts(self.config['SERVER']['HOSTS'])
         self.client_hosts = self.all_hosts.SelectHosts(self.config['CLIENT']['HOSTS'])
 
+        self.labios_build = self.config['LABIOS']['BUILD']
+
     def _Scaffold(self):
         super()._Scaffold()
 
@@ -37,35 +39,32 @@ class Labios(Application):
         self._GenNatsConfig(self.config['NATS_SERVER'])
 
         #Initialize memcached and NATS
-        Memcached(self.config['MEMCACHED_CLIENT']['SCAFFOLD']).LoadConfig().Init()
-        Memcached(self.config['MEMCACHED_SERVER']['SCAFFOLD']).LoadConfig().Init()
-        NatsServer(self.config['NATS_CLIENT']['SCAFFOLD']).LoadConfig().Init()
-        NatsServer(self.config['NATS_SERVER']['SCAFFOLD']).LoadConfig().Init()
+        Memcached(self.config['MEMCACHED_CLIENT']['SCAFFOLD']).Init()
+        Memcached(self.config['MEMCACHED_SERVER']['SCAFFOLD']).Init()
+        NatsServer(self.config['NATS_CLIENT']['SCAFFOLD']).Init()
+        NatsServer(self.config['NATS_SERVER']['SCAFFOLD']).Init()
 
         #Create LABIOS configuration
         self._GenLabiosConfig()
 
-        #Do spack load labios during any SSH connection
-        self.env = ["spack load labios"]
-
     def _DefineStart(self):
-        Memcached(self.config['MEMCACHED_CLIENT']['SCAFFOLD']).LoadConfig().Start()
-        Memcached(self.config['MEMCACHED_SERVER']['SCAFFOLD']).LoadConfig().Start()
-        NatsServer(self.config['NATS_CLIENT']['SCAFFOLD']).LoadConfig().Start()
-        NatsServer(self.config['NATS_SERVER']['SCAFFOLD']).LoadConfig().Start()
-        MPINode(f"labios_worker {self.config['LABIOS']['CONF']}",
+        Memcached(self.config['MEMCACHED_CLIENT']['SCAFFOLD']).Start()
+        Memcached(self.config['MEMCACHED_SERVER']['SCAFFOLD']).Start()
+        NatsServer(self.config['NATS_CLIENT']['SCAFFOLD']).Start()
+        NatsServer(self.config['NATS_SERVER']['SCAFFOLD']).Start()
+        MPINode(f"{self.labios_build}/labios_worker {self.config['LABIOS']['CONF']}",
                 self.config['WORKER']['NPROCS'],
                 hosts=self.worker_hosts, exec_async=True).Run()
-        MPINode(f"labios_worker_manager {self.config['LABIOS']['CONF']}",
+        MPINode(f"{self.labios_build}/labios_worker_manager {self.config['LABIOS']['CONF']}",
                 self.config['WORKER_MANAGER']['NPROCS'],
                 hosts=self.worker_manager_hosts, exec_async=True).Run()
-        MPINode(f"labios_task_scheduler {self.config['LABIOS']['CONF']}",
+        MPINode(f"{self.labios_build}/labios_task_scheduler {self.config['LABIOS']['CONF']}",
                 self.config['TASK_SCHEDULER']['NPROCS'],
                 hosts=self.task_scheduler_hosts, exec_async=True).Run()
-        MPINode(f"labios_server {self.config['LABIOS']['CONF']}",
+        MPINode(f"{self.labios_build}/labios_server {self.config['LABIOS']['CONF']}",
                 self.config['SERVER']['NPROCS'],
                 hosts=self.server_hosts, exec_async=True).Run()
-        MPINode(f"labios_client {self.config['LABIOS']['CONF']}",
+        MPINode(f"{self.labios_build}/labios_client {self.config['LABIOS']['CONF']}",
                 self.config['CLIENT']['NPROCS'],
                 hosts=self.client_hosts, exec_async=True).Run()
 
@@ -73,10 +72,10 @@ class Labios(Application):
         pass
 
     def _DefineStop(self):
-        Memcached(self.config['MEMCACHED_CLIENT']['SCAFFOLD']).LoadConfig().Stop()
-        Memcached(self.config['MEMCACHED_SERVER']['SCAFFOLD']).LoadConfig().Stop()
-        NatsServer(self.config['NATS_CLIENT']['SCAFFOLD']).LoadConfig().Stop()
-        NatsServer(self.config['NATS_SERVER']['SCAFFOLD']).LoadConfig().Stop()
+        Memcached(self.config['MEMCACHED_CLIENT']['SCAFFOLD']).Stop()
+        Memcached(self.config['MEMCACHED_SERVER']['SCAFFOLD']).Stop()
+        NatsServer(self.config['NATS_CLIENT']['SCAFFOLD']).Stop()
+        NatsServer(self.config['NATS_SERVER']['SCAFFOLD']).Stop()
         KillNode('.*labios_worker.*').Run()
         KillNode('.*labios_worker_manager.*').Run()
         KillNode('.*labios_task_scheduler.*').Run()
