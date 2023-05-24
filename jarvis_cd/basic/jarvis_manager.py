@@ -1,88 +1,59 @@
-import sys,os
-from jarvis_cd.basic.exception import Error, ErrorCode
-from jarvis_cd.serialize.yaml_file import YAMLFile
-from jarvis_cd.util.naming import ToSnakeCase
+"""
+This module represents the JarvisCD Manager singleton. It stores an index
+of all relevant paths needed by most jarvis repos.
+"""
+
 import pathlib
+import os
+import sys
+from jarvis_util.serialization.yaml_file import YamlFile
+from jarvis_util.util.import_mod import load_class
 
 
 class JarvisManager:
+    """
+    This class stores relevant paths and loads global configurations for
+    internal use by jarvis repos.
+    """
+
     instance_ = None
 
     @staticmethod
-    def GetInstance():
+    def get_instance():
         if JarvisManager.instance_ is None:
-            JarvisManager.instance_ = JarvisManager()
+            instance_ = JarvisManager()
         return JarvisManager.instance_
 
     def __init__(self):
-        self.root = os.path.dirname(os.path.dirname(pathlib.Path(__file__).parent.resolve()))
-        self.print_level = 2
-        self.ssh_info = None
-        sys.path.insert(0,self.root)
+        self.jarvis_root = str(
+            pathlib.Path(__file__).parent.parent.parent.resolve())
+        self.jarvis_conf_path = os.path.join(self.jarvis_root,
+                                             'config', 'jarvis_conf.yaml')
+        self.jarvis_conf = None
+        if os.path.exists(self.jarvis_conf):
+            self.jarvis_conf = YamlFile(self.jarvis_conf).load()
+        self.per_node_dir = self.jarvis_conf['PER_NODE_DIR']
+        self.shared_dir = self.jarvis_conf['SHARED_DIR']
+        self.resource_graph_path = os.path.join(self.jarvis_root,
+                                                'config',
+                                                'resource_graph.yaml')
 
+    def get_per_node_dir(self, context=''):
+        depths = context.split('.')
+        return os.path.join(self.per_node_dir, *depths)
 
-    def DisablePrint(self):
-        self.print_level = 0
-    def EnablePrint(self):
-        self.print_level = 1
-    def DisableFancyPrint(self):
-        self.print_level = 1
-    def EnableFancyPrint(self):
-        self.print_level = 2
+    def get_shared_dir(self, context=''):
+        depths = context.split('.')
+        return os.path.join(self.shared_dir, *depths)
 
-    def SetSSHInfo(self, ssh_info):
-        self.ssh_info = ssh_info
+    def add_repos(self, *paths):
+        pass
 
-    def GetSSHInfo(self):
-        return self.ssh_info
+    def load_repo(self, repo_name, context):
+        """
+        :param repo_name: The name of the repo to load (snake case).
+        :param context: A dot-separated identifier indicating the location
 
-    def _LauncherPathTuple(self, module_name):
-        module_name = ToSnakeCase(module_name)
-        repos_path = os.path.join(self.root, 'jarvis_repos')
-        for repo_name in os.listdir(repos_path):
-            repo_path = os.path.join(repos_path, repo_name)
-            if not os.path.isdir(repo_path):
-                continue
-            for some_module in os.listdir(repo_path):
-                some_module_path = os.path.join(repo_path, some_module)
-                if not os.path.isdir(some_module_path):
-                    continue
-                if some_module == module_name:
-                    return (self.root, 'jarvis_repos', repo_name, module_name)
-        return None
-
-    def FindLauncherPath(self, module_name):
-        path = self._LauncherPathTuple(module_name)
-        if path is None:
-            return None
-        return os.path.join(*path)
-
-    def GetRepoPath(self, repo_name):
-        repo_name = ToSnakeCase(repo_name)
-        return os.path.join(self.root, 'jarvis_repos', repo_name)
-
-    def NewRepoPath(self, path):
-        repo_name = os.path.basename(path)
-        repo_name = ToSnakeCase(repo_name)
-        dst_launcher_path = os.path.join(self.root, 'jarvis_repos', repo_name)
-        return dst_launcher_path
-
-    def GetLauncherClass(self, module_name, class_name):
-        path = self._LauncherPathTuple(module_name)
-        if path is None:
-            return None
-        jarvis_repos = __import__(f"{path[1]}.{path[2]}.{path[3]}.package", fromlist=[class_name])
-        klass = getattr(jarvis_repos, class_name)
-        return klass
-
-    def GetJarvisRoot(self):
-        return self.root
-
-    def GetPkgInstanceDir(self, shared=False):
-        if shared:
-            if 'JARVIS_SHARED_DIR' in os.environ:
-                return os.path.join(os.environ['JARVIS_SHARED_DIR'], 'jarvis_instances')
-        else:
-            if 'JARVIS_PER_NODE_DIR' in os.environ:
-                return os.path.join(os.environ['JARVIS_PER_NODE_DIR'], 'jarvis_instances')
-        return None
+        :return:
+        """
+        load_class('')

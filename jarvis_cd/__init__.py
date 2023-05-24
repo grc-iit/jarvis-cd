@@ -16,8 +16,8 @@ from jarvis_cd.fs.mv_node import *
 from jarvis_cd.util.naming import *
 from jarvis_cd.util.import_all import *
 from jarvis_cd.util.expand_paths import *
-from jarvis_cd.launcher.application import *
-from jarvis_cd.launcher.launcher import *
+from jarvis_cd.basic.repo import *
+from jarvis_cd.basic.launcher import *
 from jarvis_cd.serialize.ini_file import *
 from jarvis_cd.serialize.yaml_file import *
 from jarvis_cd.serialize.text_file import *
