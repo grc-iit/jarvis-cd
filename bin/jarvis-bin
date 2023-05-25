@@ -1,7 +1,223 @@
 #!/usr/bin/env python3
 
 from jarvis_cd.basic.jarvis_manager import JarvisManager
-from jarvis_util.argparse import ArgParse
+from jarvis_util.util.argparse import ArgParse
+from jarvis_cd.basic.node import Pipeline
+
+
+class JarvisArgs(ArgParse):
+    def define_options(self):
+        self.jarvis = JarvisManager.get_instance()
+        self.define_init_opts()
+        self.define_repo_opts()
+        self.define_pipeline_opts()
+
+    def define_init_opts(self):
+        # jarvis-bin init
+        self.add_menu('init',
+                      msg='Initialize jarvis cd configuration')
+        self.start_required()
+        self.add_arg('PRIVATE_DIR',
+                     msg='The path to a directory which is common on all nodes,'
+                         ' but stores data privately to the node')
+        self.add_arg('SHARED_DIR',
+                     msg='The path to a directory which is common on all nodes,'
+                         ' but all nodes have a shared view of the contents')
+        self.end_required()
+
+    def define_repo_opts(self):
+        # jarvis-bin repo add
+        self.add_menu('repo add',
+                      msg='Register a jarvis repo')
+        self.start_required()
+        self.add_arg('repo_path',
+                     msg='The path to the repo in the filesystem')
+        self.end_required()
+
+        # jarvis-bin repo create
+        self.add_menu('repo create',
+                      msg='Create a node in the primary repo')
+        self.start_required()
+        self.add_arg('node_name',
+                     msg='The name of the node to create')
+        self.add_arg('node_type',
+                     msg='The type of node to create',
+                     choices=['service', 'app', 'interceptor'])
+        self.end_required()
+
+        # jarvis-bin repo promote
+        self.add_menu('repo promote',
+                      msg='Make a repo the primary repo for '
+                          'subsequent repo create commands')
+        self.start_required()
+        self.add_arg('repo_name',
+                     msg='The name of the repo to promote')
+        self.end_required()
+
+        # jarvis-bin repo remove
+        self.add_menu('repo remove',
+                      msg='Remove a repo from consideration')
+        self.start_required()
+        self.add_arg('repo_name',
+                     msg='The name of the repo to remove')
+        self.end_required()
+
+        # jarvis-bin repo list
+        self.add_menu('repo list',
+                      msg='List the set of repos, or list the set of nodes')
+        self.add_arg('repo_name',
+                     msg='The name of the repo to list nodes')
+
+    def define_pipeline_opts(self):
+        # jarvis-bin create
+        self.add_menu('create',
+                      msg='Create a pipeline')
+        self.start_required()
+        self.add_arg('name',
+                     msg="A unique name for this pipeline")
+        self.end_required()
+
+        # jarvis-bin list
+        self.add_menu('list',
+                      msg='List all created pipelines')
+
+        # jarvis-bin cd
+        self.add_menu('cd',
+                      msg='Make all jarvis operations apply to a '
+                          'certain pipeline')
+        self.start_required()
+        self.add_arg('name',
+                     msg="The unique name of the pipeline to switch to")
+        self.end_required()
+
+        # jarvis-bin delete
+        self.add_menu('delete', msg='Delete a pipeline')
+        self.start_required()
+        self.add_arg('name',
+                     msg="Delete the jarvis directories containing metadata"
+                         "for the pipeline")
+        self.end_required()
+
+        # jarvis-bin append
+        self.add_menu('append', msg='Append a node to a pipeline')
+        self.start_required()
+        self.add_arg('node_type',
+                     msg='The type of node being added to the pipeline')
+        self.end_required()
+        self.add_arg('node_id',
+                     msg='The unique name of the node being added to '
+                         'the pipeline. By default, will be equal to '
+                         'node_type')
+
+        # jarvis-bin configure
+        self.add_menu('configure', msg="Configure a node in the pipeline")
+        self.start_required()
+        self.add_arg('node_id',
+                     msg='The unique name of the node being added to '
+                         'the pipeline. By default, will be equal to '
+                         'node_type')
+        self.end_required()
+
+        # jarvis-bin unlink
+        self.add_menu('unlink', msg="Unlink a node from the pipeline.")
+        self.start_required()
+        self.add_arg('node_id',
+                     msg='The unique name of the node being added to '
+                         'the pipeline. By default, will be equal to '
+                         'node_type')
+        self.end_required()
+
+        # jarvis-bin [start/stop/clean/status]
+        self.add_menu('start',
+                      msg="Start a pipeline",
+                      use_remainder=True)
+        self.add_menu('stop',
+                      msg="Stop a pipeline",
+                      use_remainder=True)
+        self.add_menu('clean',
+                      msg="Clean a pipeline",
+                      use_remainder=True)
+        self.add_menu('status',
+                      msg="Get the status of a pipeline",
+                      use_remainder=True)
+
+    def process_args(self):
+        func_name = self.menu_name.replace(' ', '_')
+        func = getattr(self, func_name)
+        func()
+
+    def init(self):
+        self.jarvis.create(self.kwargs['PRIVATE_DIR'],
+                           self.kwargs['SHARED_DIR'])
+
+    def repo_add(self):
+        self.jarvis.add_repo(self.kwargs['repo_path'])
+        self.jarvis.save()
+
+    def repo_create(self):
+        self.jarvis.add_repo(self.kwargs['repo_path'])
+        self.jarvis.save()
+
+    def repo_promote(self):
+        self.jarvis.promote_repo(self.kwargs['repo_name'])
+        self.jarvis.save()
+
+    def repo_remove(self):
+        self.jarvis.remove_repo(self.kwargs['repo_name'])
+        self.jarvis.save()
+
+    def repo_list(self):
+        if 'repo_name' in self.kwargs:
+            self.jarvis.list_repo(self.kwargs['repo_name'])
+        else:
+            self.jarvis.list_repos()
+
+    def create(self):
+        Pipeline(self.kwargs['name']).save()
+        self.jarvis.save()
+
+    def destroy(self):
+        Pipeline(self.kwargs['name']).destroy()
+        self.jarvis.save()
+
+    def list(self):
+        for pipeline_ctx in self.jarvis.pipelines:
+            print(pipeline_ctx)
+
+    def append(self):
+        pipeline = Pipeline(self.jarvis.cur_pipeline)
+        pipeline.append(self.kwargs['name'], self.kwargs)
+
+    def unlink(self):
+        pipeline = Pipeline(self.jarvis.cur_pipeline)
+        pipeline.unlink(self.kwargs['name'])
+
+    def remove(self):
+        pipeline = Pipeline(self.jarvis.cur_pipeline)
+        pipeline.remove(self.kwargs['name'])
+
+    def configure(self):
+        pipeline = Pipeline(self.jarvis.cur_pipeline)
+        pipeline.configure(self.kwargs['name'], self.kwargs)
+
+    def start(self):
+        pipeline = Pipeline(self.jarvis.cur_pipeline)
+        pipeline.start()
+
+    def stop(self):
+        pipeline = Pipeline(self.jarvis.cur_pipeline)
+        pipeline.stop()
+
+    def clean(self):
+        pipeline = Pipeline(self.jarvis.cur_pipeline)
+        pipeline.clean()
+
+    def status(self):
+        pipeline = Pipeline(self.jarvis.cur_pipeline)
+        pipeline.status()
+
 
 if __name__ == '__main__':
-    pass
+    args = JarvisArgs()
+    args.process_args()
+
