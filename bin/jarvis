@@ -17,10 +17,15 @@ class JarvisArgs(ArgParse):
         self.add_menu('init',
                       msg='Initialize jarvis cd configuration')
         self.start_required()
-        self.add_arg('CONFIG_DIR',
-                     msg='A directory which will store persistent jarvis '
-                         'pipeline configuration data')
+        self.add_arg('PRIVATE_DIR',
+                     msg='A directory which is common across all machines, but '
+                         'stores data locally to the machine')
         self.end_required()
+        self.add_arg('SHARED_DIR',
+                     msg='A directory which is common across all machines, '
+                         'where each machine has the same view of data '
+                         'in the directory',
+                     default=None)
 
     def define_repo_opts(self):
         # jarvis repo add
@@ -151,7 +156,8 @@ class JarvisArgs(ArgParse):
         func()
 
     def init(self):
-        self.jarvis.create(self.kwargs['CONFIG_DIR'])
+        self.jarvis.create(self.kwargs['PRIVATE_DIR'],
+                           self.kwargs['SHARED_DIR'])
 
     def repo_add(self):
         self.jarvis.add_repo(self.kwargs['repo_path'])

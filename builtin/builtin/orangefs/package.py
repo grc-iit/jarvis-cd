@@ -4,19 +4,29 @@ import os
 
 
 class Orangefs(Service):
-    def configure(self, config):
-        self.config = {
+    def default_configure(self):
+        config = {
             'server': {
                 'pvfs2_protocol': 'tcp',
                 'pvfs2_port': 3334,
                 'distribution_name': 'simple_stripe',
                 'stripe_size': 65536,
-
+                'storage_dir': 'orangefs_data/data',
+                'log': f'{self.config_dir}/orangefs_server.log'
+            },
+            'client': {
+                'pvfs2tab': f'{self.config_dir}/pvfs2tab',
+                'mountpoint': f'{self.config_dir}/orangefs_data/client'
+            },
+            'metadata': {
+                f'{self.config_dir}/orangefs_data/metadata'
             }
         }
+        return config
+
+    def configure(self, config):
         self.config.update(config)
         self.pfs_conf = f'{self.config_dir}/orangefs.xml'
-
         
         # generate PFS Gen config
         if self.config['server']['pvfs2_protocol'] == 'tcp':
@@ -107,7 +117,6 @@ class Orangefs(Service):
     def status(self):
         Exec("mount | grep pvfs", hosts=self.server_hosts)
         verify_server_cmd = [
-            f"export LD_LIBRARY_PATH={os.path.join(self.orangefs_root, 'lib')}",
             f"export PVFS2TAB_FILE={self.config['CLIENT']['PVFS2TAB']}",
             f"pvfs2-ping -m {self.config['CLIENT']['MOUNT_POINT']} | grep 'appears to be correctly configured'"
         ]

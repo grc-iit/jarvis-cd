@@ -29,7 +29,8 @@ class JarvisManager:
         self.jarvis_conf_path = os.path.join(self.jarvis_root,
                                              'config',
                                              'jarvis_config.yaml')
-        self.config_dir = None
+        self.private_dir = None
+        self.shared_dir = None
         self.cur_pipeline = None
         self.jarvis_conf = None
         self.pipelines = {}
@@ -40,9 +41,10 @@ class JarvisManager:
                                                 'config',
                                                 'resource_graph.yaml')
 
-    def create(self, config_dir=None):
+    def create(self, private_dir, shared_dir=None):
         self.jarvis_conf = {
-            'CONFIG_DIR': config_dir,
+            'PRIVATE_DIR': private_dir,
+            'SHARED_DIR': shared_dir,
             'CUR_PIPELINE': None,
             'PIPELINES': {},
             'REPOS': [],
@@ -72,7 +74,8 @@ class JarvisManager:
         self.cur_pipeline = self.jarvis_conf['CUR_PIPELINE']
         self.pipelines = self.jarvis_conf['PIPELINES']
         self.repos = self.jarvis_conf['REPOS']
-        self.config_dir = self.jarvis_conf['CONFIG_DIR']
+        self.private_dir = self.jarvis_conf['PRIVATE_DIR']
+        self.shared_dir = self.jarvis_conf['SHARED_DIR']
 
     def cd(self, pipeline_id):
         """

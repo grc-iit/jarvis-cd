@@ -25,10 +25,17 @@ class Node(ABC):
     directly
     """
 
-    def __init__(self):
+    def __init__(self, requires_shared=False):
+        """
+        Initialize paths
+
+        :param requires_shared: Whether this repo requires the shared directory
+        """
+
         self.jarvis = JarvisManager.get_instance()
         self.type = to_snake_case(self.__class__.__name__)
         self.node_id = None
+        self.requires_shared = requires_shared
         """The node dir (e.g., ${JARVIS_ROOT}/builtin/orangefs)"""
         self.pkg_dir = str(
             pathlib.Path(inspect.getfile(self.__class__)).parent.resolve())
@@ -37,11 +44,20 @@ class Node(ABC):
         """The configuration path"""
         self.config_path = None
         """The configuration for the class"""
-        self.config = {}
+        self.config = self.default_configure()
         """Environment variable cache path"""
         self.env_path = None
         """Environment variable dictionary"""
         self.env = {}
+
+    @abstractmethod
+    def default_configure(self):
+        """
+        Produce a default configuration of the node.
+
+        :return: Configuration dictionary
+        """
+        pass
 
     def create(self, node_id, config_dir):
         """
@@ -183,6 +199,9 @@ class Pipeline(Node):
         super().__init__()
         self.config = []  # List of (node_type, context)
         self.nodes = []  # List of nodes
+
+    def default_configure(self):
+        return []
 
     def create(self, node_id, config_dir=None):
         """

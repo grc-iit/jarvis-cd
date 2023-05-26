@@ -3,6 +3,9 @@ from jarvis_util import *
 
 
 class MyRepo(Service):
+    def __init__(self):
+        super().__init__(requires_shared=True)
+
     def configure(self, config):
         """
         Converts the Jarvis configuration to application-specific configuration.

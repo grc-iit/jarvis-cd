@@ -3,6 +3,14 @@ from jarvis_util import *
 
 
 class MyRepo(Application):
+    def __init__(self):
+        """
+        Initialize paths
+
+        requires_shared indicates whether this repo needs to be shared or not.
+        """
+        super().__init__(requires_shared=True)
+
     def configure(self, config):
         """
         Converts the Jarvis configuration to application-specific configuration.

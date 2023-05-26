@@ -3,6 +3,9 @@ from jarvis_util import *
 
 
 class MyRepo(Interceptor):
+    def __init__(self):
+        super().__init__(requires_shared=False)
+
     def modify_env(self):
         """
         Modify the jarvis environment.
