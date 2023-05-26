@@ -309,6 +309,28 @@ class Pipeline(Node):
         else:
             return matches[0]
 
+    @staticmethod
+    def kwargs_to_config(kwargs):
+        """
+        Convert a kwargs dict to a nested configuration file.
+
+        :param kwargs: A dictionary
+        :return:
+        """
+        config = {}
+        for key, val in kwargs.items():
+            nesting = key.split('.')
+            if len(nesting) == 1:
+                config[key] = val
+                continue
+            config[key] = {}
+            cur_config = config[key]
+            for key in nesting[1:-1]:
+                cur_config[key] = {}
+                cur_config = cur_config[key]
+            cur_config[nesting[-1]] = val
+        return config
+
     def configure(self, node_id, config=None):
         """
         Configure a node in the pipeline

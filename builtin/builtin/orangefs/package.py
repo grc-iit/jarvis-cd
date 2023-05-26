@@ -1,58 +1,64 @@
-from jarvis_cd import *
-from jarvis_util.shell.exec import Exec
-from jarvis_util.shell.local_exec import LocalExecInfo
-from jarvis_util.shell.pssh_exec import PsshExecInfo
-from jarvis_util.shell.pscp_exec import PscpExecInfo
-from jarvis_util.shell.filesystem import Rm, Mkdir
-from jarvis_util.shell.process import Kill
+from jarvis_cd.basic.node import Service
+from jarvis_util import *
 import os
 
 
 class Orangefs(Service):
     def configure(self, config):
-        self.config = config
+        self.config = {
+            'server': {
+                'pvfs2_protocol': 'tcp',
+                'pvfs2_port': 3334,
+                'distribution_name': 'simple_stripe',
+                'stripe_size': 65536,
 
+            }
+        }
+        self.config.update(config)
+        self.pfs_conf = f'{self.config_dir}/orangefs.xml'
+
+        
         # generate PFS Gen config
-        pvfs_gen_cmd = []
-        pvfs_gen_cmd.append(f"{os.path.join(self.orangefs_root, 'bin', 'pvfs2-genconfig')}")
-        pvfs_gen_cmd.append(f"--quiet")
-        pvfs_gen_cmd.append(f"--protocol {self.config['SERVER']['PVFS2_PROTOCOL']}")
-        if self.config['SERVER']['PVFS2_PROTOCOL'] == 'tcp':
-            pvfs_gen_cmd.append(f"--tcpport {self.config['SERVER']['PVFS2_PORT']}")
-        elif self.config['SERVER']['PVFS2_PROTOCOL'] == 'ib':
-            pvfs_gen_cmd.append(f"--ibport {self.config['SERVER']['PVFS2_PORT']}")
-        pvfs_gen_cmd.append(f"--dist-name {self.config['SERVER']['DISTRIBUTION_NAME']}")
-        pvfs_gen_cmd.append(f"--dist-params strip_size: {self.config['SERVER']['STRIPE_SIZE']}")
-        pvfs_gen_cmd.append(f"--ioservers {self.server_hosts.ip_str(sep=',')}")
-        pvfs_gen_cmd.append(f"--metaservers {self.md_hosts.ip_str(sep=',')}")
-        pvfs_gen_cmd.append(f"--storage {self.config['SERVER']['STORAGE_DIR']}")
-        pvfs_gen_cmd.append(f"--metadata {self.config['METADATA']['META_DIR']}")
-        pvfs_gen_cmd.append(f"--logfile {self.config['SERVER']['LOG']}")
-        pvfs_gen_cmd.append(self.pfs_conf)
+        if self.config['server']['pvfs2_protocol'] == 'tcp':
+            proto_cmd = f'--tcpport {self.config["server"]["pvfs2_port"]}'
+        elif self.config['server']['pvfs2_protocol'] == 'ib':
+            proto_cmd = f'--ibport {self.config["server"]["pvfs2_port"]}'
+        else:
+            raise Exception("Protocol must be either tcp or ib")
+        pvfs_gen_cmd = [
+            'pvfs2-genconfig',
+            '--quiet',
+            f'--protocol {self.config["server"]["pvfs2_protocol"]}',
+            proto_cmd,
+            f'--dist-name {self.config["server"]["distribution_name"]}'
+            f'--dist-params strip_size: {self.config["server"]["STRIPE_SIZE"]}'
+            f'--ioservers {self.server_hosts.ip_str(sep=",")}',
+            f'--metaservers {self.md_hosts.ip_str(sep=",")}',
+            f'--storage {self.config["server"]["storage_dir"]}',
+            f'--metadata {self.config["metadata"]["meta_dir"]}',
+            f'--logfile {self.config["server"]["log"]}',
+            self.pfs_conf
+        ]
         pvfs_gen_cmd = " ".join(pvfs_gen_cmd)
-        Exec(pvfs_gen_cmd).Run()
-        Pscp(self.pfs_conf, hosts=self.shared_hosts).Run()
+        Exec(pvfs_gen_cmd)
+        Pscp(self.pfs_conf, ExecInfo(hostfile=self.config['hostfile']))
 
         #Create storage directories
-        MkdirNode(self.config['CLIENT']['MOUNT_POINT'], hosts=self.client_hosts).Run()
-        MkdirNode(self.config['SERVER']['STORAGE_DIR'], hosts=self.server_hosts).Run()
-        MkdirNode(self.config['METADATA']['META_DIR'], hosts=self.md_hosts).Run()
-
-        #Prepare storage
-        if 'PREPARE_STORAGE' in self.config:
-            PrepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
+        Mkdir(self.config['CLIENT']['MOUNT_POINT'], hosts=self.client_hosts)
+        Mkdir(self.config['server']['storage_dir'], hosts=self.server_hosts)
+        Mkdir(self.config['metadata']['meta_dir'], hosts=self.md_hosts)
 
         #set pvfstab on clients
-        for i,client in self.client_hosts.enumerate():
+        for i, client in self.client_hosts.enumerate():
             metadata_server_ip = self.md_hosts.hostname_list()[i % len(self.md_hosts)]
             cmd = "echo '{protocol}://{ip}:{port}/pfs {mount_point} pvfs2 defaults,auto 0 0' > {client_pvfs2tab}".format(
-                protocol=self.config['SERVER']['PVFS2_PROTOCOL'],
-                port=self.config['SERVER']['PVFS2_PORT'],
+                protocol=self.config['server']['pvfs2_protocol'],
+                port=self.config['server']['pvfs2_port'],
                 ip=metadata_server_ip,
                 mount_point=self.config['CLIENT']['MOUNT_POINT'],
                 client_pvfs2tab=self.config['CLIENT']['PVFS2TAB']
             )
-            ExecNode(cmd, hosts=client, shell=True).Run()
+            Exec(cmd, hosts=client, shell=True)
 
     def start(self):
         # start pfs servers
@@ -62,8 +68,8 @@ class Orangefs(Service):
                 f"{pvfs2_server} {self.pfs_conf} -f -a {host}",
                 f"{pvfs2_server} {self.pfs_conf} -a {host}"
             ]
-            ExecNode(server_start_cmds, hosts=host).Run()
-        SleepNode(5).Run()
+            Exec(server_start_cmds, hosts=host)
+        Sleep(5)
         self.Status()
 
         # start pfs client
@@ -73,12 +79,12 @@ class Orangefs(Service):
             start_client_cmds = [
                 "{pvfs2_fuse} -o fs_spec={protocol}://{ip}:{port}/pfs {mount_point}".format(
                     pvfs2_fuse=pvfs2_fuse,
-                    protocol=self.config['SERVER']['PVFS2_PROTOCOL'],
-                    port=self.config['SERVER']['PVFS2_PORT'],
+                    protocol=self.config['server']['pvfs2_protocol'],
+                    port=self.config['server']['pvfs2_port'],
                     ip=metadata_server_ip,
                     mount_point=self.config['CLIENT']['MOUNT_POINT'])
             ]
-            ExecNode(start_client_cmds, hosts=client).Run()
+            Exec(start_client_cmds, hosts=client)
 
     def stop(self):
         cmds = [
@@ -88,25 +94,22 @@ class Orangefs(Service):
             f"killall -9 pvfs2-client",
             f"killall -9 pvfs2-client-core"
         ]
-        ExecNode(cmds, hosts=self.client_hosts, sudo=True).Run()
-        ExecNode("killall -9 pvfs2-server", sudo=True, hosts=self.server_hosts).Run()
-        ExecNode("pgrep -la pvfs2-server", hosts=self.client_hosts).Run()
+        Exec(cmds, hosts=self.client_hosts, sudo=True)
+        Exec("killall -9 pvfs2-server", sudo=True, hosts=self.server_hosts)
+        Exec("pgrep -la pvfs2-server", hosts=self.client_hosts)
 
     def clean(self):
-        RmNode(self.config['CLIENT']['MOUNT_POINT'], hosts=self.client_hosts).Run()
-        RmNode(self.config['SERVER']['STORAGE_DIR'], hosts=self.server_hosts).Run()
-        RmNode(self.config['METADATA']['META_DIR'], hosts=self.md_hosts).Run()
-        RmNode(self.orangefs_root, hosts=self.all_hosts).Run()
-        if 'PREPARE_STORAGE' in self.config:
-            UnprepareStorage(self.config['PREPARE_STORAGE'], hosts=self.server_hosts).Run()
+        Rm(self.config['CLIENT']['MOUNT_POINT'], hosts=self.client_hosts)
+        Rm(self.config['server']['storage_dir'], hosts=self.server_hosts)
+        Rm(self.config['metadata']['meta_dir'], hosts=self.md_hosts)
+        Rm(self.orangefs_root, hosts=self.all_hosts)
 
     def status(self):
-        ExecNode("mount | grep pvfs", hosts=self.server_hosts, shell=True).Run()
-        pvfs2_ping = os.path.join(self.orangefs_root, "bin", "pvfs2-ping")
+        Exec("mount | grep pvfs", hosts=self.server_hosts)
         verify_server_cmd = [
             f"export LD_LIBRARY_PATH={os.path.join(self.orangefs_root, 'lib')}",
             f"export PVFS2TAB_FILE={self.config['CLIENT']['PVFS2TAB']}",
-            f"{pvfs2_ping} -m {self.config['CLIENT']['MOUNT_POINT']} | grep 'appears to be correctly configured'"
+            f"pvfs2-ping -m {self.config['CLIENT']['MOUNT_POINT']} | grep 'appears to be correctly configured'"
         ]
         verify_server_cmd = ';'.join(verify_server_cmd)
-        ExecNode(verify_server_cmd, hosts=self.client_hosts, shell=True).Run()
+        Exec(verify_server_cmd, hosts=self.client_hosts)

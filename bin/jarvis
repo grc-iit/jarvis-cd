@@ -213,8 +213,9 @@ class JarvisArgs(ArgParse):
         pipeline_id = None
         if 'pipeline_id' in self.kwargs:
             pipeline_id = self.kwargs['pipeline_id']
+        config = Pipeline.kwargs_to_config(self.kwargs)
         Pipeline().load().\
-            append(self.kwargs['node_type'], pipeline_id, self.kwargs).save()
+            append(self.kwargs['node_type'], pipeline_id, config).save()
 
     def unlink(self):
         Pipeline().load().unlink(self.kwargs['pipeline_id']).save()
@@ -223,7 +224,8 @@ class JarvisArgs(ArgParse):
         Pipeline().load().remove(self.kwargs['pipeline_id']).save()
 
     def configure(self):
-        Pipeline().load().configure(self.kwargs['pipeline_id'], self.kwargs)
+        config = Pipeline.kwargs_to_config(self.kwargs)
+        Pipeline().load().configure(self.kwargs['pipeline_id'], config)
 
     def start(self):
         Pipeline().load().start()
