@@ -48,4 +48,5 @@ class First(Service):
 
         :return: True or false
         """
-        return print('first status')
+        print('first status')
+        return True

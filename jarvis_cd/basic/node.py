@@ -53,26 +53,20 @@ class Node(ABC):
         of a pipeline. Id does not need to be unique across pipelines.
         """
 
-        """The unique id of this node in the pipeline"""
         self.node_id = node_id
         if node_id is None:
             self.node_id = self.type
-        """The directory which stores configuration data"""
         self.config_dir = config_dir
-        """The configuration path"""
-        self.config_path = f"{self.config_dir}/{self.node_id}.yaml"
-        """Environment variable cache path"""
-        self.env_path = f"{self.config_dir}/env.yaml"
-        """Create directories"""
+        self.config_path = f'{self.config_dir}/{self.node_id}.yaml'
+        self.env_path = f'{self.config_dir}/env.yaml'
         os.makedirs(self.config_dir, exist_ok=True)
-        """Copy the """
         return self
 
     def load(self, node_id, config_dir):
         self.node_id = node_id
         self.config_dir = config_dir
-        self.config_path = f"{self.config_dir}/{self.node_id}.yaml"
-        self.env_path = f"{self.config_dir}/env.yaml"
+        self.config_path = f'{self.config_dir}/{self.node_id}.yaml'
+        self.env_path = f'{self.config_dir}/env.yaml'
         self.config = YamlFile(self.config_path).load()
         self.env = YamlFile(self.env_path).load()
         return self
@@ -190,46 +184,52 @@ class Pipeline(Node):
         self.config = []  # List of (node_type, context)
         self.nodes = []  # List of nodes
 
-    def create(self, pipeline_id, config_dir=None):
+    def create(self, node_id, config_dir=None):
         """
         Create a pipeline.
 
-        :param pipeline_id: The unique name of the pipeline in jarvis
+        :param node_id: The unique name of the pipeline in jarvis
         :param config_dir: The directory to place the pipeline configuration
         data
-        :return:
+        :return: self
         """
-        self.jarvis.cd(pipeline_id)
+        self.jarvis.cd(node_id)
         if config_dir is None:
-            config_dir = f'{self.jarvis.config_dir}/{pipeline_id}'
-        if self.jarvis.pipeline_exists(pipeline_id):
-            self.load(pipeline_id, config_dir)
+            config_dir = f'{self.jarvis.config_dir}/{node_id}'
+        if self.jarvis.pipeline_exists(node_id):
+            self.load(node_id, config_dir)
             return self
-        super().create(pipeline_id, config_dir)
+        super().create(node_id, config_dir)
         self.jarvis.add_pipeline(self.config_dir, self.node_id)
         return self
 
-    def load(self, pipeline_id=None, config_dir=None):
+    def load(self, node_id=None, config_dir=None):
         """
         Load an existing pipeline
 
-        :param pipeline_id: The unique name of the pipeline in jarvis
+        :param node_id: The unique name of the pipeline in jarvis
         :param config_dir: Ignored.
-        :return:
+        :return: self
         """
 
-        if pipeline_id is None:
-            pipeline_id = self.jarvis.cur_pipeline
-        config_dir = self.jarvis.get_pipeline_info(pipeline_id)
-        super().load(pipeline_id, config_dir)
-        for node_type, node_id in self.config:
-            node_config_dir = f"{config_dir}/{node_id}"
-            node = self.jarvis.construct_node(node_type)
-            node.load(node_id, node_config_dir)
-            self.nodes.append(node)
+        if node_id is None:
+            node_id = self.jarvis.cur_pipeline
+        config_dir = self.jarvis.get_pipeline_info(node_id)
+        super().load(node_id, config_dir)
+        for sub_node_type, sub_node_id in self.config:
+            sub_node_config_dir = f'{config_dir}/{sub_node_id}'
+            sub_node = self.jarvis.construct_node(sub_node_type)
+            sub_node.load(sub_node_id, sub_node_config_dir)
+            self.nodes.append(sub_node)
         return self
 
     def save(self):
+        """
+        Save a pipeline to a file.
+
+        :return: self
+        """
+
         super().save()
         for node in self.nodes:
             node.save()
@@ -237,12 +237,26 @@ class Pipeline(Node):
         return self
 
     def destroy(self):
+        """
+        Destroy this pipeline's metadata.
+
+        :return: None
+        """
+
         for node in self.nodes:
             node.destroy()
         super().destroy()
         self.jarvis.remove_pipeline(self.node_id)
 
     def append(self, node_type, node_id=None, config=None):
+        """
+        Create and append a node to the pipeline
+
+        :param node_type: The type of node to create (e.g., OrangeFS)
+        :param node_id: Semantic name of the node to create
+        :param config: Any parameters the user want to configure in the node
+        :return: self
+        """
         if node_id is None:
             node_id = node_type
         self.config.append([node_type, node_id])
@@ -256,12 +270,25 @@ class Pipeline(Node):
         return self
 
     def remove(self, node_id):
+        """
+        Remove a node from the pipeline & delete its contents
+
+        :param node_id: The name of the node to remove
+        :return: self
+        """
         node = self.get_node(node_id)
         node.destroy()
         self.unlink(node_id)
         return self
 
     def unlink(self, node_id):
+        """
+        Remove a node from the pipeline, but keep its contents in case
+        it gets added back.
+
+        :param node_id: The name of the node to remove
+        :return: self
+        """
         self.nodes = [test_node for test_node in self.nodes
                       if test_node.node_id != node_id]
         self.config = [[test_node_type, test_node_id]
@@ -270,6 +297,12 @@ class Pipeline(Node):
         return self
 
     def get_node(self, node_id):
+        """
+        Get a node in the pipeline.
+
+        :param node_id: The node id to find
+        :return: A node
+        """
         matches = [node for node in self.nodes if node.node_id == node_id]
         if len(matches) == 0:
             return None
@@ -277,6 +310,13 @@ class Pipeline(Node):
             return matches[0]
 
     def configure(self, node_id, config=None):
+        """
+        Configure a node in the pipeline
+
+        :param node_id: The semantic name of the node to configure
+        :param config: Configuration parameters
+        :return:
+        """
         node = self.get_node(node_id)
         if node is None:
             raise Exception(f'Cloud not find node: {node_id}')
@@ -284,8 +324,12 @@ class Pipeline(Node):
             node.configure(config)
 
     def start(self):
-        exec = LocalExecInfo()
-        env = exec.env
+        """
+        Start the pipeline
+
+        :return: None
+        """
+        env = LocalExecInfo().env
         for node in self.nodes:
             if isinstance(node, Service):
                 node.set_env(env.copy())
@@ -295,24 +339,36 @@ class Pipeline(Node):
                 node.modify_env()
 
     def stop(self):
-        exec = LocalExecInfo()
-        env = exec.env
+        """
+        Stop the pipeline
+
+        :return: None
+        """
+        env = LocalExecInfo().env
         for node in reversed(self.nodes):
             if isinstance(node, Service):
                 node.set_env(env.copy())
                 node.stop()
 
     def clean(self):
-        exec = LocalExecInfo()
-        env = exec.env
+        """
+        Clean the pipeline
+
+        :return: None
+        """
+        env = LocalExecInfo().env
         for node in reversed(self.nodes):
             if isinstance(node, Service):
                 node.set_env(env.copy())
                 node.clean()
 
     def status(self):
-        exec = LocalExecInfo()
-        env = exec.env
+        """
+        Get the status of the pipeline
+
+        :return: None
+        """
+        env = LocalExecInfo().env
         statuses = []
         for node in reversed(self.nodes):
             if isinstance(node, Service):

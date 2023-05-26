@@ -5,7 +5,6 @@ of all relevant paths needed by most jarvis repos.
 
 import pathlib
 import os
-import sys
 from jarvis_util.serialize.yaml_file import YamlFile
 from jarvis_util.util.import_mod import load_class
 from jarvis_util.util.naming import to_camel_case
@@ -49,7 +48,7 @@ class JarvisManager:
             'REPOS': [],
         }
         self.add_repo(f'{self.jarvis_root}/builtin')
-        os.makedirs(f"{self.jarvis_root}/config", exist_ok=True)
+        os.makedirs(f'{self.jarvis_root}/config', exist_ok=True)
         self.save()
 
     def save(self):
@@ -152,7 +151,8 @@ class JarvisManager:
         """
         # load the template data
         tmpl_dir = f'{self.jarvis_root}/jarvis_cd/template'
-        with open(f'{tmpl_dir}/{node_cls}_templ.py') as fp:
+        with open(f'{tmpl_dir}/{node_cls}_templ.py',
+                  encoding='utf-8') as fp:
             text = fp.read()
 
         # Replace MyRepo with the node name
@@ -163,7 +163,8 @@ class JarvisManager:
         repo_dir = self.repos[0]['path']
         node_path = f'{repo_dir}/{repo_name}/{node_type}'
         os.makedirs(node_path, exist_ok=True)
-        with open(f'{node_path}/node.py', 'w') as fp:
+        with open(f'{node_path}/node.py', 'w',
+                  encoding='utf-8') as fp:
             fp.write(text)
 
     def get_repo(self, repo_name):
@@ -189,7 +190,7 @@ class JarvisManager:
         """
 
         main_repo = self.get_repo(repo_name)
-        if matches is None:
+        if main_repo is None:
             raise Exception(f'Could not find repo: {repo_name}')
         self.repos = [repo for repo in self.repos if repo_name != repo['name']]
         self.repos.insert(0, main_repo)
