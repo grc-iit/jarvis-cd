@@ -3,7 +3,7 @@ import setuptools
 setuptools.setup(
     name="jarvis_cd",
     packages=setuptools.find_packages(),
-    scripts=['bin/jarvis', 'bin/jarvis-py-paths', 'bin/jarvis-bin'],
+    scripts=['bin/jarvis'],
     version="0.0.1",
     author="Luke Logan",
     author_email="llogan@hawk.iit.edu",

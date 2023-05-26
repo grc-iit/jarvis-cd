@@ -16,61 +16,67 @@ class Node(ABC):
     """
     Represents a generic Jarvis node. Includes methods to load configurations
     and to specialize the node using a context.
+
+    Nodes should never be created directly and are intended only to be used
+    within a Pipeline. Use a Pipeline object instead of creating nodes
+    directly
     """
 
-    def __init__(self, context):
-        """
-        Initialize application context
-
-        :param context: A dot-separated path indicating where configuration
-        data should be stored for the application. E.g., ior.orangefs would
-        inidicate we should place data in ${PRIVATE_DIR}/ior/orangefs/ and
-        ${SHARED_DIR}/ior/orangefs
-        """
-        self.type = to_snake_case(self.__class__.__name__)
-        self.context = context
+    def __init__(self):
         self.jarvis = JarvisManager.get_instance()
-        """The node dir (e.g., ${JARVIS_ROOT}/jarvis_cdbuiltin/orangefs)"""
+        self.type = to_snake_case(self.__class__.__name__)
+        self.id = None
+        """The node dir (e.g., ${JARVIS_ROOT}/builtin/orangefs)"""
         self.pkg_dir = str(
             pathlib.Path(inspect.getfile(self.__class__)).parent.resolve())
-        """The shared directory where data should be placed"""
-        self.shared_dir = self.jarvis.get_shared_dir(self.context)
-        """The private directory where data should be placed"""
-        self.private_dir = self.jarvis.get_private_dir(self.context)
-        """The configuration for the class"""
-        self.config = None
+        """The directory which stores configuration data"""
+        self.config_dir = None
         """The configuration path"""
-        if os.path.exists(self.jarvis.get_shared_dir()):
-            self.config_path = f"{self.shared_dir}/{self.id}.yaml"
-        elif os.path.exists(self.jarvis.get_private_dir()):
-            self.config_path = f"{self.private_dir}/{self.id}.yaml"
-        else:
-            self.config_path = None
+        self.config_path = None
+        """The configuration for the class"""
+        self.config = {}
+        """Environment variable cache path"""
+        self.env_path = None
         """Environment variable dictionary"""
         self.env = {}
 
-    def from_file(self):
+    def create(self, id, config_dir):
+        """
+        Create a brand new node in the pipeline
+
+        :param config_dir: The absolute path to a directory which stores
+        the configuration data for the node
+        :param id: A unique identifier for the node within the context
+        of a pipeline. Id does not need to be unique across pipelines.
+        """
+
+        """The unique id of this node in the pipeline"""
+        self.id = id
+        if id is None:
+            self.id = self.type
+        """The directory which stores configuration data"""
+        self.config_dir = config_dir
+        """The configuration path"""
+        self.config_path = f"{self.config_dir}/{self.id}.yaml"
+        """Create directories"""
+        os.makedirs(self.config_dir, exist_ok=True)
+        """Copy the """
+        return self
+
+    def load(self, id, config_dir):
+        self.id = id
+        self.config_path = f"{self.config_dir}/{self.id}.yaml"
         self.config = YamlFile(self.config_path).load()
+        self.env = YamlFile(self.env_path).load(self.env)
         return self
 
     def save(self):
         YamlFile(self.config_path).save(self.config)
+        YamlFile(self.env_path).save(self.env)
         return self
 
     def destroy(self):
-        shutil.rmtree(self.shared_dir)
-        shutil.rmtree(self.per_node_dir)
-
-    def create(self):
-        try:
-            os.makedirs(self.shared_dir)
-        except:
-            pass
-
-        try:
-            os.makedirs(self.private_dir)
-        except:
-            pass
+        shutil.rmtree(self.config_dir)
 
     def set_env(self, env):
         """
@@ -90,11 +96,10 @@ class Interceptor(Node):
     """
 
     @abstractmethod
-    def modify_env(self, env):
+    def modify_env(self):
         """
         Modify the jarvis environment.
 
-        :param env: The environment dictionary
         :return: None
         """
         pass
@@ -107,7 +112,7 @@ class Service(Node):
     """
 
     @abstractmethod
-    def configure(self):
+    def configure(self, config):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -172,18 +177,29 @@ class Application(Service):
 class Pipeline(Node):
     """
     A pipeline connects the different node types together in a chain.
-
-    The pipeline file is stored as pipeline.yaml
     """
-    def __init__(self, context):
-        super().__init__(context)
+    def __init__(self):
+        super().__init__()
         self.config = []  # List of (node_type, context)
         self.nodes = []  # List of nodes
+        self.env_path = f'{self.per_node_dir}'
 
-    def from_file(self):
-        super().from_file()
-        for node_type, context in self.config:
-            self.nodes.append(self.jarvis.load_node(node_type, context))
+    def create(self, id, config_dir=None):
+        if config_dir is None:
+            config_dir = self.jarvis.config_dir
+        super().create(id, config_dir)
+
+    def load(self, id=None, config_dir=None):
+        if id is None:
+            id = self.jarvis.cur_pipeline
+        if config_dir is None:
+            config_dir = self.jarvis.get_pipeline_info(id)
+        super().load(id, config_dir)
+        for node_type, node_id in self.config:
+            node_config_dir = f"{config_dir}/{node_id}"
+            node = self.jarvis.construct_node(node_type)
+            node.load(node_id, node_config_dir)
+            self.nodes.append(node)
         return self
 
     def save(self):
@@ -200,6 +216,7 @@ class Pipeline(Node):
         super().destroy()
         self.jarvis.pipelines.remove(context)
         self.jarvis.save()
+        return self
 
     def append(self, node_type, id=None, kwargs=None):
         if id is None:
@@ -233,12 +250,12 @@ class Pipeline(Node):
         else:
             return matches[0]
 
-    def configure(self, id, kwargs=None):
+    def configure(self, id, config=None):
         node = self.get_node(id)
         if node is None:
             raise Exception(f'Cloud not find node: {node_type}')
         if isinstance(node, Service):
-            node.configure(kwargs)
+            node.configure(config)
 
     def start(self):
         exec = LocalExecInfo()
@@ -248,7 +265,8 @@ class Pipeline(Node):
                 node.set_env(env.copy())
                 node.start()
             if isinstance(node, Interceptor):
-                node.modify_env(env)
+                node.set_env(env)
+                node.modify_env()
 
     def stop(self):
         exec = LocalExecInfo()

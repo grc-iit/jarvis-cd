@@ -8,6 +8,7 @@ import os
 import sys
 from jarvis_util.serialize.yaml_file import YamlFile
 from jarvis_util.util.import_mod import load_class
+from jarvis_util.util.naming import to_camel_case
 
 
 class JarvisManager:
@@ -15,7 +16,6 @@ class JarvisManager:
     This class stores relevant paths and loads global configurations for
     internal use by jarvis repos.
     """
-
     instance_ = None
 
     @staticmethod
@@ -30,29 +30,25 @@ class JarvisManager:
         self.jarvis_conf_path = os.path.join(self.jarvis_root,
                                              'config',
                                              'jarvis_config.yaml')
+        self.config_dir = None
         self.cur_pipeline = None
         self.jarvis_conf = None
-        self.pipelines = []
+        self.pipelines = {}
         self.repos = []
-        self.private_dir = None
-        self.shared_dir = None
         if os.path.exists(self.jarvis_conf_path):
             self.load()
         self.resource_graph_path = os.path.join(self.jarvis_root,
                                                 'config',
                                                 'resource_graph.yaml')
 
-    def create(self, private_dir=None, shared_dir=None):
+    def create(self, config_dir=None):
         self.jarvis_conf = {
-            'PRIVATE_DIR': private_dir,
-            'SHARED_DIR': shared_dir,
+            'CONFIG_DIR': config_dir,
             'CUR_PIPELINE': None,
-            'PIPELINES': [],
-            'REPOS': [{
-                'path': f'{self.jarvis_root}/builtin',
-                'name': 'builtin'
-            }],
+            'PIPELINES': {},
+            'REPOS': [],
         }
+        self.add_repo(f'{self.jarvis_root}/builtin')
         os.makedirs(f"{self.jarvis_root}/config", exist_ok=True)
         self.save()
 
@@ -77,46 +73,110 @@ class JarvisManager:
         self.cur_pipeline = self.jarvis_conf['CUR_PIPELINE']
         self.pipelines = self.jarvis_conf['PIPELINES']
         self.repos = self.jarvis_conf['REPOS']
-        self.private_dir = self.jarvis_conf['PRIVATE_DIR']
-        self.shared_dir = self.jarvis_conf['SHARED_DIR']
+        self.config_dir = self.jarvis_conf['CONFIG_DIR']
 
-    def get_private_dir(self, context=''):
+    def cd(self, id):
         """
-        Get the private directory for the jarvis context.
-        The global private dir is is empty string.
+        Make jarvis focus on the pipeline with id ID.
 
-        :param context: A dot-sperated string indicating the directories where
-        jarvis stores configuration data.
+        :param id: The id of the pipeline to focus on
         :return:
         """
-        depths = context.split('.')
-        return os.path.join(self.private_dir, *depths)
+        self.cur_pipeline = id
 
-    def get_shared_dir(self, context=''):
+    def add_pipeline(self, config_dir, id):
         """
-        Get the shared directory for the current jarvis context.
+        Track the state for a new pipeline.
+        Does not create data on the filesystem.
 
-        :param context: A dot-sperated string indicating the directories where
-        jarvis stores configuration data.
+        :param config_dir: The directory to store config data
+        :param id: The unique name of the pipeline in jarvis
+        :return: None
+        """
+        self.pipelines[id] = config_dir
+
+    def get_pipeline_info(self, id):
+        """
+        Returns the configuration directory of the pipeline
+
+        :param id:
+        :return: A string for the config directory path for this pipeline
+        """
+        return self.pipelines[id]
+
+    def remove_pipeline(self, id):
+        """
+        Remove a pipeline from the jarvis manager's pipeline tracking variable.
+        Does not destroy data.
+
+        :param id: The id of the pipeline to remove.
         :return:
         """
-        depths = context.split('.')
-        return os.path.join(self.shared_dir, *depths)
+        del self.pipelines[id]
 
     def add_repo(self, path):
+        """
+        Induct a repo into the jarvis managers repo search variable.
+        Does not create data on the filesystem.
+
+        :param path: The path to the repo to induct. The basename of the
+        repo is assumed to be its repo name. E.g., for /home/hi/myrepo,
+        my repo would be the basename.
+        :return:
+        """
+
         repo_name = os.path.basename(path)
-        self.repos.append({
+        self.repos.insert(0, {
             'path': path,
             'name': repo_name
         })
 
+    def create_node(self, node_cls, node_type):
+        """
+        Creates the skeleton of a node within the primary repo.
+
+        :param node_type: The name of the node to create
+        :param node_cls: The type of node to create (Service, Application, etc.)
+        :return:
+        """
+        # load the template data
+        tmpl_dir = f'{self.jarvis_root}/jarvis_cd/template'
+        with open(f'{tmpl_dir}/{node_cls}_templ.py') as fp:
+            text = fp.read()
+
+        # Replace MyRepo with the node name
+        text = text.replace('MyRepo', to_camel_case(node_type))
+
+        # Write the specialized data
+        repo_name = self.repos[0]['name']
+        repo_dir = self.repos[0]['path']
+        node_path = f'{repo_dir}/{repo_name}/{node_type}'
+        os.makedirs(node_path, exist_ok=True)
+        with open(f'{node_path}/node.py', 'w') as fp:
+            fp.write(text)
+
     def get_repo(self, repo_name):
+        """
+        Get the repo information associated with the repo name
+
+        :param repo_name: The repo to get info for
+        :return: A dictionary containing the name of the repo and the
+        path to the repo
+        """
+
         matches = [repo for repo in self.repos if repo_name == repo['name']]
         if len(matches) == 0:
             return None
         return matches[0]
 
     def promote_repo(self, repo_name):
+        """
+        Make all subsequent jarvis append operations track this repo first.
+
+        :param repo_name: The repo to prioritize
+        :return:
+        """
+
         main_repo = self.get_repo(repo_name)
         if matches is None:
             raise Exception(f'Could not find repo: {repo_name}')
@@ -124,6 +184,12 @@ class JarvisManager:
         self.repos.insert(0, main_repo)
 
     def remove_repo(self, repo_name):
+        """
+        Remove a repo from consideration. Does not destroy data.
+
+        :param repo_name:
+        :return:
+        """
         self.repos = [repo for repo in self.repos if repo_name != repo['name']]
 
     def list_repos(self):
@@ -131,21 +197,28 @@ class JarvisManager:
             print(f'{repo["name"]}: {repo["path"]}')
 
     def list_repo(self, repo_name):
+        """
+        List all of the nodes in a repo
+
+        :param repo_name: The repo to list
+        :return:
+        """
         repo = self.get_repo(repo_name)
         node_types = os.listdir(repo['path'])
         for node_type in node_types:
             print(node_type)
 
-    def get_node(self, node_type, context):
+    def construct_node(self, node_type):
         """
-        :param node_type: The type of node to load (snake case).
-        :param context: A dot-separated identifier indicating the location
-        of
+        Construct a node by searching repos for the node type
 
-        :return:
+        :param node_type: The type of node to load (snake case).
+        :return: A object of type "node_type"
         """
         for repo in self.repos:
-            cls = load_class(f'{repo["name"]}.{node_type}')
+            cls = load_class(f'{repo["name"]}.{node_type}.node',
+                             self.repos[0]['path'],
+                             to_camel_case(node_type))
             if cls is None:
                 continue
-            return cls(context)
+            return cls()
