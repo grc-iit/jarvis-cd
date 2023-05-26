@@ -75,44 +75,55 @@ class JarvisManager:
         self.repos = self.jarvis_conf['REPOS']
         self.config_dir = self.jarvis_conf['CONFIG_DIR']
 
-    def cd(self, id):
+    def cd(self, pipeline_id):
         """
         Make jarvis focus on the pipeline with id ID.
 
-        :param id: The id of the pipeline to focus on
+        :param pipeline_id: The id of the pipeline to focus on
         :return:
         """
-        self.cur_pipeline = id
+        self.cur_pipeline = pipeline_id
 
-    def add_pipeline(self, config_dir, id):
+    def add_pipeline(self, config_dir, pipeline_id):
         """
         Track the state for a new pipeline.
         Does not create data on the filesystem.
 
         :param config_dir: The directory to store config data
-        :param id: The unique name of the pipeline in jarvis
+        :param pipeline_id: The unique name of the pipeline in jarvis
         :return: None
         """
-        self.pipelines[id] = config_dir
+        self.pipelines[pipeline_id] = config_dir
 
-    def get_pipeline_info(self, id):
+    def pipeline_exists(self, pipeline_id):
+        """
+        Check if the pipeline with id already exists
+
+        :param pipeline_id: The unique name of the pipeline in jarvis
+        :return: True or false
+        """
+        return pipeline_id in self.pipelines
+
+    def get_pipeline_info(self, pipeline_id):
         """
         Returns the configuration directory of the pipeline
 
-        :param id:
+        :param pipeline_id: The unique name of the pipeline in jarvis
         :return: A string for the config directory path for this pipeline
         """
-        return self.pipelines[id]
+        return self.pipelines[pipeline_id]
 
-    def remove_pipeline(self, id):
+    def remove_pipeline(self, pipeline_id):
         """
         Remove a pipeline from the jarvis manager's pipeline tracking variable.
         Does not destroy data.
 
-        :param id: The id of the pipeline to remove.
+        :param pipeline_id: The unique name of the pipeline in jarvis.
         :return:
         """
-        del self.pipelines[id]
+        if self.cur_pipeline == pipeline_id:
+            self.cur_pipeline = None
+        del self.pipelines[pipeline_id]
 
     def add_repo(self, path):
         """

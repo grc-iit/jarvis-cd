@@ -12,7 +12,7 @@ class First(Service):
         application.
         :return: None
         """
-        pass
+        print('first configure')
 
     def start(self):
         """
@@ -21,7 +21,7 @@ class First(Service):
 
         :return: None
         """
-        pass
+        print('first start')
 
     def stop(self):
         """
@@ -30,7 +30,7 @@ class First(Service):
 
         :return: None
         """
-        pass
+        print('first stop')
 
     def clean(self):
         """
@@ -39,7 +39,7 @@ class First(Service):
 
         :return: None
         """
-        pass
+        print('first clean')
 
     def status(self):
         """
@@ -48,4 +48,4 @@ class First(Service):
 
         :return: True or false
         """
-        return True
+        return print('first status')

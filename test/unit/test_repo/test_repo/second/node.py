@@ -9,4 +9,4 @@ class Second(Interceptor):
 
         :return: None
         """
-        pass
+        print('second modify_env')

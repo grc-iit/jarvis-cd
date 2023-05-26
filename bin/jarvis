@@ -70,7 +70,7 @@ class JarvisArgs(ArgParse):
         self.add_menu('create',
                       msg='Create a pipeline')
         self.start_required()
-        self.add_arg('name',
+        self.add_arg('pipeline_id',
                      msg="A unique name for this pipeline")
         self.end_required()
 
@@ -83,23 +83,23 @@ class JarvisArgs(ArgParse):
                       msg='Make all jarvis operations apply to a '
                           'certain pipeline')
         self.start_required()
-        self.add_arg('name',
+        self.add_arg('pipeline_id',
                      msg="The unique name of the pipeline to switch to")
         self.end_required()
 
         # jarvis path
         self.add_menu('path',
                       msg='Get the path of a jarvis pipeline or node')
-        self.add_arg('name',
-                     msg="The name of the pipeline to get config path for")
+        self.add_arg('pipeline_id',
+                     msg='The name of the pipeline to get config path for',
+                     default=None)
 
         # jarvis delete
-        self.add_menu('delete', msg='Delete a pipeline')
-        self.start_required()
-        self.add_arg('name',
-                     msg="Delete the jarvis directories containing metadata"
-                         "for the pipeline")
-        self.end_required()
+        self.add_menu('destroy', msg='Delete a pipeline')
+        self.add_arg('pipeline_id',
+                     msg='Delete the jarvis directories containing metadata'
+                         'for the pipeline',
+                     default=None)
 
         # jarvis append
         self.add_menu('append', msg='Append a node to a pipeline')
@@ -178,41 +178,52 @@ class JarvisArgs(ArgParse):
             self.jarvis.list_repos()
 
     def cd(self):
-        self.jarvis.cd(self.kwargs['name'])
+        self.jarvis.cd(self.kwargs['pipeline_id'])
         self.jarvis.save()
 
     def path(self):
-        if 'name' in self.kwargs:
-            name = self.kwargs['name']
+        if 'pipeline_id' in self.kwargs:
+            pipeline_id = self.kwargs['pipeline_id']
         else:
-            name = self.jarvis.cur_pipeline
-        path = Pipeline().load(name).config_dir
+            pipeline_id = self.jarvis.cur_pipeline
+        path = Pipeline().load(pipeline_id).config_dir
         print(path)
 
     def getcwd(self):
         print(self.jarvis.cur_pipeline)
 
     def create(self):
-        Pipeline().load(self.kwargs['name']).create()
+        pipeline_id = self.kwargs['pipeline_id']
+        Pipeline().create(pipeline_id,
+                          config_dir=f'{self.jarvis.config_dir}/'
+                                     f'{pipeline_id}').save()
 
     def destroy(self):
-        Pipeline().load(self.kwargs['name']).destroy()
+        pipeline_id = None
+        if 'pipeline_id' in self.kwargs:
+            pipeline_id = self.kwargs['pipeline_id']
+        Pipeline().load(pipeline_id).destroy()
+        self.jarvis.save()
 
     def list(self):
         for pipeline_ctx in self.jarvis.pipelines:
             print(pipeline_ctx)
 
     def append(self):
-        Pipeline().load().append(self.kwargs['name'], self.kwargs)
+        pipeline_id = None
+        if 'pipeline_id' in self.kwargs:
+            pipeline_id = self.kwargs['pipeline_id']
+        Pipeline().load().\
+            append(self.kwargs['node_type'], pipeline_id, self.kwargs).save()
 
     def unlink(self):
-        Pipeline().load().unlink(self.kwargs['name'])
+        Pipeline().load().unlink(self.kwargs['pipeline_id']).save()
 
     def remove(self):
-        Pipeline().load().remove(self.kwargs['name'])
+        Pipeline().load().remove(self.kwargs['pipeline_id']).save()
 
     def configure(self):
-        Pipeline().load().configure(self.kwargs['name'], self.kwargs)
+        Pipeline().load().configure(self.kwargs['pipeline_id'], self.kwargs)
 
     def start(self):
         Pipeline().load().start()

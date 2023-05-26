@@ -1,19 +1,21 @@
 from jarvis_util.shell.local_exec import LocalExec, LocalExecInfo
 from jarvis_util.shell.exec import Exec
+from jarvis_cd.basic.jarvis_manager import JarvisManager
 import pathlib
 from unittest import TestCase
 import os
 import shutil
 
-class TestHostfile(TestCase):
+
+class TestCli(TestCase):
     def add_test_repo(self):
-        self.jarvis = Jarvis.get_instance()
-        path = f'{jarvis.jarvis_root}/test/unit/test_repo'
+        self.jarvis = JarvisManager.get_instance()
+        path = f'{self.jarvis.jarvis_root}/test/unit/test_repo'
         Exec(f'jarvis repo add {path}')
         self.jarvis.load()
 
     def rm_test_repo(self):
-        self.jarvis = Jarvis.get_instance()
+        self.jarvis = JarvisManager.get_instance()
         Exec(f'jarvis repo remove test_repo')
         self.jarvis.load()
 
@@ -34,7 +36,7 @@ class TestHostfile(TestCase):
         self.assertTrue(repo is None)
 
     def test_jarvis_create_cd_rm(self):
-        self.jarvis = Jarvis.get_instance()
+        self.jarvis = JarvisManager.get_instance()
         # Create pipelines
         Exec('jarvis create test_pipeline')
         Exec('jarvis create test_pipeline2')
@@ -56,7 +58,22 @@ class TestHostfile(TestCase):
         path = node.stdout.strip()
         self.assertEqual(path, f'{self.jarvis.config_dir}/test_pipeline')
 
+        # Delete the pipelines
+        Exec('jarvis destroy test_pipeline')
+        Exec('jarvis destroy test_pipeline2')
+        self.assertFalse(
+            os.path.exists(f'{self.jarvis_config_dir}/test_pipeline'))
+        self.assertFalse(
+            os.path.exists(f'{self.jarvis_config_dir}/test_pipeline2'))
+
     def test_jarvis_append(self):
         self.add_test_repo()
-        Exec('jarvis append ')
+        Exec('jarvis create test_pipeline')
+        Exec('jarvis append first')
+        Exec('jarvis append second')
+        Exec('jarvis append third')
+        Exec('jarvis start')
+        Exec('jarvis stop')
+        Exec('jarvis clean')
+        Exec('jarvis status')
         self.rm_test_repo()

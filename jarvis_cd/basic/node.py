@@ -9,7 +9,10 @@ from jarvis_util.util.naming import to_snake_case
 from jarvis_util.serialize.yaml_file import YamlFile
 from jarvis_util.shell.local_exec import LocalExecInfo
 import inspect
+import pathlib
+import shutil
 import math
+import os
 
 
 class Node(ABC):
@@ -25,7 +28,7 @@ class Node(ABC):
     def __init__(self):
         self.jarvis = JarvisManager.get_instance()
         self.type = to_snake_case(self.__class__.__name__)
-        self.id = None
+        self.node_id = None
         """The node dir (e.g., ${JARVIS_ROOT}/builtin/orangefs)"""
         self.pkg_dir = str(
             pathlib.Path(inspect.getfile(self.__class__)).parent.resolve())
@@ -40,34 +43,38 @@ class Node(ABC):
         """Environment variable dictionary"""
         self.env = {}
 
-    def create(self, id, config_dir):
+    def create(self, node_id, config_dir):
         """
         Create a brand new node in the pipeline
 
         :param config_dir: The absolute path to a directory which stores
         the configuration data for the node
-        :param id: A unique identifier for the node within the context
+        :param node_id: A unique identifier for the node within the context
         of a pipeline. Id does not need to be unique across pipelines.
         """
 
         """The unique id of this node in the pipeline"""
-        self.id = id
-        if id is None:
-            self.id = self.type
+        self.node_id = node_id
+        if node_id is None:
+            self.node_id = self.type
         """The directory which stores configuration data"""
         self.config_dir = config_dir
         """The configuration path"""
-        self.config_path = f"{self.config_dir}/{self.id}.yaml"
+        self.config_path = f"{self.config_dir}/{self.node_id}.yaml"
+        """Environment variable cache path"""
+        self.env_path = f"{self.config_dir}/env.yaml"
         """Create directories"""
         os.makedirs(self.config_dir, exist_ok=True)
         """Copy the """
         return self
 
-    def load(self, id, config_dir):
-        self.id = id
-        self.config_path = f"{self.config_dir}/{self.id}.yaml"
+    def load(self, node_id, config_dir):
+        self.node_id = node_id
+        self.config_dir = config_dir
+        self.config_path = f"{self.config_dir}/{self.node_id}.yaml"
+        self.env_path = f"{self.config_dir}/env.yaml"
         self.config = YamlFile(self.config_path).load()
-        self.env = YamlFile(self.env_path).load(self.env)
+        self.env = YamlFile(self.env_path).load()
         return self
 
     def save(self):
@@ -182,19 +189,39 @@ class Pipeline(Node):
         super().__init__()
         self.config = []  # List of (node_type, context)
         self.nodes = []  # List of nodes
-        self.env_path = f'{self.per_node_dir}'
 
-    def create(self, id, config_dir=None):
-        if config_dir is None:
-            config_dir = self.jarvis.config_dir
-        super().create(id, config_dir)
+    def create(self, pipeline_id, config_dir=None):
+        """
+        Create a pipeline.
 
-    def load(self, id=None, config_dir=None):
-        if id is None:
-            id = self.jarvis.cur_pipeline
+        :param pipeline_id: The unique name of the pipeline in jarvis
+        :param config_dir: The directory to place the pipeline configuration
+        data
+        :return:
+        """
+        self.jarvis.cd(pipeline_id)
         if config_dir is None:
-            config_dir = self.jarvis.get_pipeline_info(id)
-        super().load(id, config_dir)
+            config_dir = f'{self.jarvis.config_dir}/{pipeline_id}'
+        if self.jarvis.pipeline_exists(pipeline_id):
+            self.load(pipeline_id, config_dir)
+            return self
+        super().create(pipeline_id, config_dir)
+        self.jarvis.add_pipeline(self.config_dir, self.node_id)
+        return self
+
+    def load(self, pipeline_id=None, config_dir=None):
+        """
+        Load an existing pipeline
+
+        :param pipeline_id: The unique name of the pipeline in jarvis
+        :param config_dir: Ignored.
+        :return:
+        """
+
+        if pipeline_id is None:
+            pipeline_id = self.jarvis.cur_pipeline
+        config_dir = self.jarvis.get_pipeline_info(pipeline_id)
+        super().load(pipeline_id, config_dir)
         for node_type, node_id in self.config:
             node_config_dir = f"{config_dir}/{node_id}"
             node = self.jarvis.construct_node(node_type)
@@ -206,7 +233,6 @@ class Pipeline(Node):
         super().save()
         for node in self.nodes:
             node.save()
-        self.jarvis.pipelines.append(self.context)
         self.jarvis.save()
         return self
 
@@ -214,46 +240,46 @@ class Pipeline(Node):
         for node in self.nodes:
             node.destroy()
         super().destroy()
-        self.jarvis.pipelines.remove(context)
-        self.jarvis.save()
-        return self
+        self.jarvis.remove_pipeline(self.node_id)
 
-    def append(self, node_type, id=None, kwargs=None):
-        if id is None:
-            id = node_type
-        node_context = f'{self.context}.{id}'
-        self.config.append((node_type, node_context))
-        node = self.jarvis.load_node(node_type, node_context)
+    def append(self, node_type, node_id=None, config=None):
+        if node_id is None:
+            node_id = node_type
+        self.config.append([node_type, node_id])
+        node = self.jarvis.construct_node(node_type)
+        node.create(node_id, f'{self.config_dir}/{node_id}')
         if node is None:
             raise Exception(f'Cloud not find node: {node_type}')
-        if isinstance(node, Service) and kwargs is not None:
-            node.configure(kwargs)
+        if isinstance(node, Service) and config is not None:
+            node.configure(config)
         self.nodes.append(node)
+        return self
 
-    def remove(self, id):
-        node = self.get_node(id)
+    def remove(self, node_id):
+        node = self.get_node(node_id)
         node.destroy()
-        self.unlink(id)
+        self.unlink(node_id)
+        return self
 
-    def unlink(self, id):
-        self.nodes = [node for node in self.nodes if node.id != id]
-        remove_context = f"{self.context}.{id}"
-        self.config = [(node_type, node_context)
-                       for node_type, node_context in self.config
-                       if node_context != remove_context]
+    def unlink(self, node_id):
+        self.nodes = [test_node for test_node in self.nodes
+                      if test_node.node_id != node_id]
+        self.config = [[test_node_type, test_node_id]
+                       for test_node_type, test_node_id in self.config
+                       if test_node_id != node_id]
+        return self
 
-    def get_node(self, id):
-        context = f"{self.context}.{id}"
-        matches = [node for node in self.nodes if node.context == context]
+    def get_node(self, node_id):
+        matches = [node for node in self.nodes if node.node_id == node_id]
         if len(matches) == 0:
             return None
         else:
             return matches[0]
 
-    def configure(self, id, config=None):
-        node = self.get_node(id)
+    def configure(self, node_id, config=None):
+        node = self.get_node(node_id)
         if node is None:
-            raise Exception(f'Cloud not find node: {node_type}')
+            raise Exception(f'Cloud not find node: {node_id}')
         if isinstance(node, Service):
             node.configure(config)
 
@@ -271,7 +297,7 @@ class Pipeline(Node):
     def stop(self):
         exec = LocalExecInfo()
         env = exec.env
-        for node in self.nodes.reverse():
+        for node in reversed(self.nodes):
             if isinstance(node, Service):
                 node.set_env(env.copy())
                 node.stop()
@@ -279,7 +305,7 @@ class Pipeline(Node):
     def clean(self):
         exec = LocalExecInfo()
         env = exec.env
-        for node in self.nodes.reverse():
+        for node in reversed(self.nodes):
             if isinstance(node, Service):
                 node.set_env(env.copy())
                 node.clean()
@@ -288,7 +314,7 @@ class Pipeline(Node):
         exec = LocalExecInfo()
         env = exec.env
         statuses = []
-        for node in self.nodes.reverse():
+        for node in reversed(self.nodes):
             if isinstance(node, Service):
                 node.set_env(env.copy())
                 statuses.append(node.status())

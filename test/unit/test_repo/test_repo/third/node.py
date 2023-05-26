@@ -12,7 +12,7 @@ class Third(Application):
         application.
         :return: None
         """
-        pass
+        print('third configure')
 
     def start(self):
         """
@@ -21,7 +21,7 @@ class Third(Application):
 
         :return: None
         """
-        pass
+        print('third start')
 
     def stop(self):
         """
@@ -30,7 +30,7 @@ class Third(Application):
 
         :return: None
         """
-        pass
+        print('third stop')
 
     def clean(self):
         """
@@ -39,4 +39,4 @@ class Third(Application):
 
         :return: None
         """
-        pass
+        print('third clean')
