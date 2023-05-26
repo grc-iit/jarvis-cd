@@ -6,10 +6,8 @@ class MyRepo(Interceptor):
     def __init__(self):
         """
         Initialize paths
-
-        requires_shared indicates whether this pkg needs to be shared or not.
         """
-        super().__init__(requires_shared=False)
+        super().__init__()
 
     def modify_env(self):
         """

@@ -4,7 +4,10 @@ from jarvis_util import *
 
 class MyRepo(Service):
     def __init__(self):
-        super().__init__(requires_shared=True)
+        """
+        Initialize paths
+        """
+        super().__init__()
 
     def configure(self, config):
         """

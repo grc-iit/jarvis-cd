@@ -17,6 +17,10 @@ class JarvisArgs(ArgParse):
         self.add_menu('init',
                       msg='Initialize jarvis cd configuration')
         self.start_required()
+        self.add_arg('CONFIG_DIR',
+                     msg='A directory where jarvis metadata for nodes and '
+                         'pipelines are stored. This directory can be anywhere '
+                         'that the current user can access.')
         self.add_arg('PRIVATE_DIR',
                      msg='A directory which is common across all machines, but '
                          'stores data locally to the machine')
@@ -156,7 +160,8 @@ class JarvisArgs(ArgParse):
         func()
 
     def init(self):
-        self.jarvis.create(self.kwargs['PRIVATE_DIR'],
+        self.jarvis.create(self.kwargs['CONFIG_DIR'],
+                           self.kwargs['PRIVATE_DIR'],
                            self.kwargs['SHARED_DIR'])
 
     def repo_add(self):
@@ -200,14 +205,12 @@ class JarvisArgs(ArgParse):
 
     def create(self):
         pipeline_id = self.kwargs['pipeline_id']
-        Pipeline().create(pipeline_id,
-                          config_dir=f'{self.jarvis.config_dir}/'
-                                     f'{pipeline_id}').save()
+        Pipeline().create(pipeline_id).save()
+        self.jarvis.cd(pipeline_id)
+        self.jarvis.save()
 
     def destroy(self):
-        pipeline_id = None
-        if 'pipeline_id' in self.kwargs:
-            pipeline_id = self.kwargs['pipeline_id']
+        pipeline_id = self.kwargs['pipeline_id']
         Pipeline().load(pipeline_id).destroy()
         self.jarvis.save()
 
@@ -216,9 +219,7 @@ class JarvisArgs(ArgParse):
             print(pipeline_ctx)
 
     def append(self):
-        pipeline_id = None
-        if 'pipeline_id' in self.kwargs:
-            pipeline_id = self.kwargs['pipeline_id']
+        pipeline_id = self.kwargs['pipeline_id']
         config = Pipeline.kwargs_to_config(self.kwargs)
         Pipeline().load().\
             append(self.kwargs['node_type'], pipeline_id, config).save()

@@ -29,11 +29,11 @@ class JarvisManager:
         self.jarvis_conf_path = os.path.join(self.jarvis_root,
                                              'config',
                                              'jarvis_config.yaml')
+        self.config_dir = None
         self.private_dir = None
         self.shared_dir = None
         self.cur_pipeline = None
         self.jarvis_conf = None
-        self.pipelines = {}
         self.repos = []
         if os.path.exists(self.jarvis_conf_path):
             self.load()
@@ -41,12 +41,12 @@ class JarvisManager:
                                                 'config',
                                                 'resource_graph.yaml')
 
-    def create(self, private_dir, shared_dir=None):
+    def create(self, config_dir, private_dir, shared_dir=None):
         self.jarvis_conf = {
+            'CONFIG_DIR': config_dir,
             'PRIVATE_DIR': private_dir,
             'SHARED_DIR': shared_dir,
             'CUR_PIPELINE': None,
-            'PIPELINES': {},
             'REPOS': [],
         }
         self.add_repo(f'{self.jarvis_root}/builtin')
@@ -60,7 +60,6 @@ class JarvisManager:
         :return: None
         """
         self.jarvis_conf['CUR_PIPELINE'] = self.cur_pipeline
-        self.jarvis_conf['PIPELINES'] = self.pipelines
         self.jarvis_conf['REPOS'] = self.repos
         YamlFile(self.jarvis_conf_path).save(self.jarvis_conf)
 
@@ -72,60 +71,21 @@ class JarvisManager:
         """
         self.jarvis_conf = YamlFile(self.jarvis_conf_path).load()
         self.cur_pipeline = self.jarvis_conf['CUR_PIPELINE']
-        self.pipelines = self.jarvis_conf['PIPELINES']
         self.repos = self.jarvis_conf['REPOS']
+        self.config_dir = self.jarvis_conf['CONFIG_DIR']
         self.private_dir = self.jarvis_conf['PRIVATE_DIR']
         self.shared_dir = self.jarvis_conf['SHARED_DIR']
 
     def cd(self, pipeline_id):
         """
         Make jarvis focus on the pipeline with id ID.
+        This pipeline will be used for subsequent operations:
+            jarvis [start/stop/clean/stop/destroy/configure]
 
         :param pipeline_id: The id of the pipeline to focus on
         :return:
         """
         self.cur_pipeline = pipeline_id
-
-    def add_pipeline(self, config_dir, pipeline_id):
-        """
-        Track the state for a new pipeline.
-        Does not create data on the filesystem.
-
-        :param config_dir: The directory to store config data
-        :param pipeline_id: The unique name of the pipeline in jarvis
-        :return: None
-        """
-        self.pipelines[pipeline_id] = config_dir
-
-    def pipeline_exists(self, pipeline_id):
-        """
-        Check if the pipeline with id already exists
-
-        :param pipeline_id: The unique name of the pipeline in jarvis
-        :return: True or false
-        """
-        return pipeline_id in self.pipelines
-
-    def get_pipeline_info(self, pipeline_id):
-        """
-        Returns the configuration directory of the pipeline
-
-        :param pipeline_id: The unique name of the pipeline in jarvis
-        :return: A string for the config directory path for this pipeline
-        """
-        return self.pipelines[pipeline_id]
-
-    def remove_pipeline(self, pipeline_id):
-        """
-        Remove a pipeline from the jarvis manager's pipeline tracking variable.
-        Does not destroy data.
-
-        :param pipeline_id: The unique name of the pipeline in jarvis.
-        :return:
-        """
-        if self.cur_pipeline == pipeline_id:
-            self.cur_pipeline = None
-        del self.pipelines[pipeline_id]
 
     def add_repo(self, path):
         """
