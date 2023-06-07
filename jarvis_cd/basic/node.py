@@ -197,13 +197,58 @@ class Node(ABC):
         """
         self.env = env
 
+    def build_env(self, env_track_dict=None):
+        """
+        Build the environment variable cache for this node.
+
+        :param env_track_dict: a dict of booleans. Boolean indicates whether
+        to track the environment variable, which are the keys of the dict.
+        :return: self
+        """
+        exec_info = LocalExecInfo()
+        self.env = exec_info.basic_env
+        self.track_env(env_track_dict)
+        return self
+
+    def track_env(self, env_track_dict=None):
+        """
+        Add and remove cached environment variables.
+
+        :param env_track_dict: a dict of booleans. Boolean indicates whether
+        to track the environment variable, which are the keys of the dict.
+        :return: self
+        """
+        if env_track_dict is None:
+            return
+        for key, val in env_track_dict.items():
+            if val:
+                if key in os.environ:
+                    self.env[key] = os.getenv(key)
+            else:
+                if key in self.env:
+                    del self.env[key]
+        return self
+
+    def scan_env(self, rescan_list=None):
+        """
+        Re-scan environment variables.
+
+        :param rescan_list: a list of keys to re-scan.
+        :return: self
+        """
+        if rescan_list is None:
+            rescan_list = list(self.env.keys())
+        for key in rescan_list:
+            self.env[key] = os.getenv(key)
+        return self
+
     @staticmethod
     def kwargs_to_config(kwargs):
         """
         Convert a kwargs dict to a nested configuration file.
 
         :param kwargs: A dictionary
-        :return:
+        :return: Dictionary
         """
         config = {}
         for key, val in kwargs.items():
@@ -242,18 +287,6 @@ class Service(Node):
     A service is a long-running process. For example, a storage system is
     a service which runs until explicitly stopped.
     """
-
-    @abstractmethod
-    def configure(self, config):
-        """
-        Converts the Jarvis configuration to application-specific configuration.
-        E.g., OrangeFS produces an orangefs.xml file.
-
-        :param config: The human-readable jarvis YAML configuration for the
-        application.
-        :return: None
-        """
-        pass
 
     @abstractmethod
     def start(self):

@@ -8,6 +8,10 @@ import os
 from jarvis_util.serialize.yaml_file import YamlFile
 from jarvis_util.util.import_mod import load_class
 from jarvis_util.util.naming import to_camel_case
+from jarvis_util.util.expand_env import expand_env
+from jarvis_util.util.hostfile import Hostfile
+from jarvis_util.introspect.system_info import ResourceGraph
+from jarvis_util.shell.pssh_exec import PsshExecInfo
 
 
 class JarvisManager:
@@ -34,40 +38,58 @@ class JarvisManager:
         self.shared_dir = None
         self.cur_pipeline = None
         self.jarvis_conf = None
+        self.resource_graph = None
+        self.hostfile = None
         self.repos = []
-        if os.path.exists(self.jarvis_conf_path):
-            self.load()
         self.resource_graph_path = os.path.join(self.jarvis_root,
                                                 'config',
                                                 'resource_graph.yaml')
+        if os.path.exists(self.jarvis_conf_path):
+            self.load()
 
     def create(self, config_dir, private_dir, shared_dir=None):
+        """
+        Create a new jarvis config under config/jarvis_config.yaml
+
+        :param config_dir: the directory where jarvis stores pipeline
+        metadata
+        :param private_dir: a directory which is shared on all nodes, but
+        stores data privately to the node
+        :param shared_dir: a directory which is shared on all nodes, where
+        all nodes have the same view of the data
+        :return: None
+        """
         self.jarvis_conf = {
             'CONFIG_DIR': config_dir,
             'PRIVATE_DIR': private_dir,
             'SHARED_DIR': shared_dir,
+            'HOSTFILE': None,
             'CUR_PIPELINE': None,
             'REPOS': [],
         }
         self.add_repo(f'{self.jarvis_root}/builtin')
+        self.resource_graph = ResourceGraph()
+        self.hostfile = Hostfile()
         os.makedirs(f'{self.jarvis_root}/config', exist_ok=True)
         self.save()
 
     def save(self):
         """
-        Save the jarvis conf to the config/jarvis_config.yaml
+        Save the jarvis conf to the config/ares.yaml
 
         :return: None
         """
         self.jarvis_conf['CUR_PIPELINE'] = self.cur_pipeline
         self.jarvis_conf['REPOS'] = self.repos
+        self.jarvis_conf['HOSTFILE'] = self.hostfile.path
+        self.resource_graph.save(self.resource_graph_path)
         YamlFile(self.jarvis_conf_path).save(self.jarvis_conf)
 
     def load(self):
         """
-        Load the jarvis conf from the config/jarvis_config.yaml
+        Load the jarvis conf from the config/ares.yaml
 
-        :return:
+        :return: None
         """
         self.jarvis_conf = YamlFile(self.jarvis_conf_path).load()
         self.cur_pipeline = self.jarvis_conf['CUR_PIPELINE']
@@ -75,6 +97,71 @@ class JarvisManager:
         self.config_dir = self.jarvis_conf['CONFIG_DIR']
         self.private_dir = self.jarvis_conf['PRIVATE_DIR']
         self.shared_dir = self.jarvis_conf['SHARED_DIR']
+        self.hostfile = Hostfile(hostfile=self.jarvis_conf['HOSTFILE'])
+        self.resource_graph = ResourceGraph().load(self.resource_graph_path)
+
+    def set_hostfile(self, path):
+        """
+        Set the hostfile and re-configure all existing jarvis pipelines
+
+        :return: None
+        """
+        self.hostfile = Hostfile(hostfile=path)
+
+    def bootstrap_from(self, machine):
+        """
+        Bootstrap jarvis for a particular machine
+
+        :param machine: The machine config to copy
+        :return: None
+        """
+        config_path = f'{self.jarvis_root}/builtin/config/{machine}.yaml'
+        if os.path.exists(config_path):
+            config = expand_env(YamlFile(config_path).load())
+            new_config_path = f'{self.jarvis_root}/config/jarvis_config.yaml'
+            YamlFile(new_config_path).save(config)
+
+        rg_path = f'{self.jarvis_root}/builtin/resource_graph/{machine}.yaml'
+        if os.path.exists(rg_path):
+            self.resource_graph = ResourceGraph().load(rg_path)
+            new_rg_path = f'{self.jarvis_root}/config/resource_graph.yaml'
+            self.resource_graph.save(new_rg_path)
+
+    def bootstrap_list(self):
+        """
+        List machines we can bootstrap with no additional configuration
+
+        :return: None
+        """
+        configs = os.listdir(f'{self.jarvis_root}/builtin/config')
+        for config in configs:
+            print(config)
+
+    def resource_graph_init(self):
+        """
+        Create an empty resource graph
+
+        :return: None
+        """
+        self.resource_graph = ResourceGraph()
+
+    def resource_graph_build(self):
+        """
+        Introspect the system and construct a resource graph.
+
+        :return: None
+        """
+        self.resource_graph = ResourceGraph()
+        self.resource_graph.build(
+            PsshExecInfo(hostfile=self.hostfile))
+
+    def list_pipelines(self):
+        """
+        Get a list of all created pipelines
+
+        :return: List of pipelines
+        """
+        return os.listdir(self.config_dir)
 
     def cd(self, pipeline_id):
         """
@@ -83,7 +170,7 @@ class JarvisManager:
             jarvis [start/stop/clean/stop/destroy/configure]
 
         :param pipeline_id: The id of the pipeline to focus on
-        :return:
+        :return: None
         """
         self.cur_pipeline = pipeline_id
 
@@ -95,7 +182,7 @@ class JarvisManager:
         :param path: The path to the repo to induct. The basename of the
         repo is assumed to be its repo name. E.g., for /home/hi/myrepo,
         my repo would be the basename.
-        :return:
+        :return: None
         """
 
         repo_name = os.path.basename(path)
@@ -110,7 +197,7 @@ class JarvisManager:
 
         :param node_type: The name of the node to create
         :param node_cls: The type of node to create (Service, Application, etc.)
-        :return:
+        :return: None
         """
         # load the template data
         tmpl_dir = f'{self.jarvis_root}/jarvis_cd/template'
@@ -149,7 +236,7 @@ class JarvisManager:
         Make all subsequent jarvis append operations track this repo first.
 
         :param repo_name: The repo to prioritize
-        :return:
+        :return: None
         """
 
         main_repo = self.get_repo(repo_name)
@@ -162,12 +249,17 @@ class JarvisManager:
         """
         Remove a repo from consideration. Does not destroy data.
 
-        :param repo_name:
-        :return:
+        :param repo_name: the name of the repo to remove
+        :return: None
         """
         self.repos = [repo for repo in self.repos if repo_name != repo['name']]
 
     def list_repos(self):
+        """
+        Print all repos in jarvis
+
+        :return: None
+        """
         for repo in self.repos:
             print(f'{repo["name"]}: {repo["path"]}')
 
@@ -176,7 +268,7 @@ class JarvisManager:
         List all of the nodes in a repo
 
         :param repo_name: The repo to list
-        :return:
+        :return: None
         """
         repo = self.get_repo(repo_name)
         node_types = os.listdir(repo['path'])

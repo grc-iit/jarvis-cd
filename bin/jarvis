@@ -2,6 +2,7 @@
 
 from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_util.util.argparse import ArgParse
+from jarvis_util.util.hostfile import Hostfile
 from jarvis_cd.basic.node import Pipeline
 
 
@@ -16,72 +17,253 @@ class JarvisArgs(ArgParse):
         # jarvis init
         self.add_menu('init',
                       msg='Initialize jarvis cd configuration')
-        self.start_required()
-        self.add_arg('CONFIG_DIR',
-                     msg='A directory where jarvis metadata for nodes and '
-                         'pipelines are stored. This directory can be anywhere '
-                         'that the current user can access.')
-        self.add_arg('PRIVATE_DIR',
-                     msg='A directory which is common across all machines, but '
-                         'stores data locally to the machine')
-        self.end_required()
-        self.add_arg('SHARED_DIR',
-                     msg='A directory which is common across all machines, '
+        self.add_args([
+            {
+                'name': 'CONFIG_DIR',
+                'msg': 'A directory where jarvis metadata for nodes and '
+                       'pipelines are stored. This directory can be anywhere '
+                       'that the current user can access.',
+                'required': True,
+                'pos': True
+            },
+            {
+                'name': 'PRIVATE_DIR',
+                'msg': 'A directory which is common across all machines, but '
+                       'stores data locally to the machine',
+                'required': True,
+                'pos': True
+            },
+            {
+                'name': 'SHARED_DIR',
+                'msg': 'A directory which is common across all machines, '
                          'where each machine has the same view of data '
                          'in the directory',
-                     default=None)
+                'default': None,
+                'pos': True
+            }
+        ])
+
+        # jarvis bootstrap from
+        self.add_menu('bootstrap from',
+                      msg='Initialize jarvis from an existing machine')
+        self.add_args([
+            {
+                'name': 'MACHINE_NAME',
+                'msg': 'The machine to bootstrap from',
+                'required': True,
+                'pos': True
+            }
+        ])
+
+        # jarvis bootstrap list
+        self.add_menu('bootstrap list',
+                      msg='List all machines')
+
+        # jarvis hostfile set
+        self.add_menu('hostfile set',
+                      msg='Define the hostfile for the job')
+        self.add_args([
+            {
+                'name': 'path',
+                'msg': 'The path to the hostfile of this job',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis resource-graph init
+        self.add_menu('resource-graph init',
+                      msg='Create an empty resource graph')
+
+        # jarvis resource-graph build
+        self.add_menu('resource-graph build',
+                      msg='Introspect resource graph for this machine')
+
+        # jarvis resource-graph add storage
+        self.add_menu('resource-graph add storage',
+                      msg='Add a storage device or PFS to track')
+        self.add_args([
+            {
+                'name': 'hostfile',
+                'msg': 'The path to the hosts having the storage'
+            },
+            {
+                'name': 'hosts',
+                'msg': 'A hostfile string (e.g., ares-comp-[10-30])'
+            },
+            {
+                'name': 'device',
+                'msg': 'Device path (e.g., /dev/sda)'
+            },
+            {
+                'name': 'mount',
+                'msg': 'Where device is currently mounted'
+            },
+            {
+                'name': 'tran',
+                'msg': 'Whether the device is rotational',
+                'choices': ['sata', 'nvme', 'dimm']
+            },
+            {
+                'name': 'size',
+                'msg': 'The size of the device (e.g., 16g, 32m ...)'
+            },
+            {
+                'name': 'shared',
+                'msg': 'Whether the mount is a pfs or not'
+            },
+        ])
+
+        # jarvis resource-graph add net
+        self.add_menu('resource-graph add net',
+                      msg='Add a network to track')
+        self.add_args([
+            {
+                'name': 'hostfile',
+                'msg': 'The path to the hosts to add'
+            },
+            {
+                'name': 'hosts',
+                'msg': 'The networks to add as a hostfile string'
+            },
+            {
+                'name': 'provider',
+                'msg': 'Network protocol (e.g., tcp, sockets, ib)'
+            },
+            {
+                'name': 'speed',
+                'msg': 'Interconnect speed'
+            },
+        ])
+
+        # jarvis resource-graph filter fs
+        self.add_menu('resource-graph filter fs',
+                      msg='Consider only mounts matching query')
+        self.add_args([
+            {
+                'name': 'mount_re',
+                'msg': 'A regex to match mountpoints',
+                'required': True,
+                'pos': True,
+            },
+            {
+                'name': 'mount_suffix',
+                'msg': 'Append a suffix to the mount point',
+                'default': None
+            },
+        ])
+
+        # jarvis resource-graph filter net
+        self.add_menu('resource-graph filter net',
+                      msg='Consider only mounts matching query')
+        self.add_args([
+            {
+                'name': 'hostfile',
+                'msg': 'Path to hostfile for networks to filter for',
+            },
+            {
+                'name': 'hosts',
+                'msg': 'Hostfile text for networks to filter for',
+            },
+            {
+                'name': 'ip_re',
+                'msg': 'A regex of IP addresess to filter for',
+            },
+            {
+                'name': 'speed',
+                'msg': 'Indicate speed of this network subset',
+            },
+        ])
 
     def define_repo_opts(self):
         # jarvis repo add
         self.add_menu('repo add',
                       msg='Register a jarvis repo')
-        self.start_required()
-        self.add_arg('repo_path',
-                     msg='The path to the repo in the filesystem')
-        self.end_required()
+        self.add_args([
+            {
+                'name': 'repo_path',
+                'msg': 'The path to the repo in the filesystem',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
 
         # jarvis repo create
         self.add_menu('repo create',
                       msg='Create a node in the primary repo')
-        self.start_required()
-        self.add_arg('node_type',
-                     msg='The name of the node to create')
-        self.add_arg('node_cls',
-                     msg='The type of node to create',
-                     choices=['service', 'app', 'interceptor'])
-        self.end_required()
+        self.add_args([
+            {
+                'name': 'node_type',
+                'msg': 'The name of the node to create',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'node_cls',
+                'msg': 'The type of node to create',
+                'required': True,
+                'pos': True,
+                'default': None,
+                'choices': ['service', 'app', 'interceptor']
+            },
+        ])
 
         # jarvis repo promote
         self.add_menu('repo promote',
                       msg='Make a repo the primary repo for '
                           'subsequent repo create commands')
-        self.start_required()
-        self.add_arg('repo_name',
-                     msg='The name of the repo to promote')
-        self.end_required()
+        self.add_args([
+            {
+                'name': 'repo_name',
+                'msg': 'The name of the repo to promote',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
 
         # jarvis repo remove
         self.add_menu('repo remove',
                       msg='Remove a repo from consideration')
-        self.start_required()
-        self.add_arg('repo_name',
-                     msg='The name of the repo to remove')
-        self.end_required()
+        self.add_args([
+            {
+                'name': 'repo_name',
+                'msg': 'The name of the repo to remove',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
 
         # jarvis repo list
         self.add_menu('repo list',
                       msg='List the set of repos, or list the set of nodes')
-        self.add_arg('repo_name',
-                     msg='The name of the repo to list nodes')
+        self.add_args([
+            {
+                'name': 'repo_name',
+                'msg': '',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
 
     def define_pipeline_opts(self):
         # jarvis create
         self.add_menu('create',
                       msg='Create a pipeline')
-        self.start_required()
-        self.add_arg('pipeline_id',
-                     msg="A unique name for this pipeline")
-        self.end_required()
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'A unique name for this pipeline',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
 
         # jarvis list
         self.add_menu('list',
@@ -91,78 +273,177 @@ class JarvisArgs(ArgParse):
         self.add_menu('cd',
                       msg='Make all jarvis operations apply to a '
                           'certain pipeline')
-        self.start_required()
-        self.add_arg('pipeline_id',
-                     msg="The unique name of the pipeline to switch to")
-        self.end_required()
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'The unique name of the pipeline to switch to',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
 
         # jarvis path
         self.add_menu('path',
                       msg='Get the path of a jarvis pipeline or node')
-        self.add_arg('pipeline_id',
-                     msg='The name of the pipeline to get config path for',
-                     default=None)
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'The name of the pipeline to get config path for',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
 
         # jarvis delete
         self.add_menu('destroy', msg='Delete a pipeline')
-        self.add_arg('pipeline_id',
-                     msg='Delete the jarvis directories containing metadata'
-                         'for the pipeline',
-                     default=None)
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'Delete the jarvis directories containing metadata'
+                       'for the pipeline',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
 
         # jarvis append
         self.add_menu('append', msg='Append a node to a pipeline')
-        self.start_required()
-        self.add_arg('node_type',
-                     msg='The type of node being added to the pipeline')
-        self.end_required()
-        self.add_arg('node_id',
-                     msg='The unique name of the node being added to '
-                         'the pipeline. By default, will be equal to '
-                         'node_type')
+        self.add_args([
+            {
+                'name': 'node_type',
+                'msg': 'The type of node being added to the pipeline',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'node_id',
+                'msg': 'The unique name of the node being added to '
+                       'the pipeline. By default, will be equal to '
+                       'node_type',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
 
         # jarvis configure
         self.add_menu('configure', msg="Configure a node in the pipeline")
-        self.start_required()
-        self.add_arg('node_id',
-                     msg='The unique name of the node being added to '
-                         'the pipeline. By default, will be equal to '
-                         'node_type')
-        self.end_required()
+        self.add_args([
+            {
+                'name': 'node_id',
+                'msg': 'The unique name of the node being added to '
+                       'the pipeline. By default, will be equal to '
+                       'node_type',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
 
         # jarvis unlink
         self.add_menu('unlink', msg="Unlink a node from the pipeline.")
-        self.start_required()
-        self.add_arg('node_id',
-                     msg='The unique name of the node being added to '
-                         'the pipeline. By default, will be equal to '
-                         'node_type')
-        self.end_required()
+        self.add_args([
+            {
+                'name': 'node_id',
+                'msg': 'The unique name of the node being added to '
+                       'the pipeline. By default, will be equal to '
+                       'node_type',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis build env
+        self.add_menu('build env',
+                      msg="Cache relevant environment vars. Use +ENV_VAR and"
+                          "-ENV_VAR in remainder list to indicate whether "
+                          "to track certain variables.",
+                      keep_remainder=True)
+
+        # jarvis track env
+        self.add_menu('scan env',
+                      msg="Reload environment vars. Use +ENV_VAR to indicate"
+                          "which variables to track.",
+                      keep_remainder=True)
+
+        # jarvis scan env
+        self.add_menu('track env',
+                      msg="Add or remove environment vars. Use +ENV_VAR and"
+                          "-ENV_VAR in remainder list to indicate whether "
+                          "to track certain variables.",
+                      keep_remainder=True)
 
         # jarvis [start/stop/clean/status]
         self.add_menu('start',
                       msg="Start a pipeline",
-                      use_remainder=True)
+                      keep_remainder=True)
         self.add_menu('stop',
                       msg="Stop a pipeline",
-                      use_remainder=True)
+                      keep_remainder=True)
         self.add_menu('clean',
                       msg="Clean a pipeline",
-                      use_remainder=True)
+                      keep_remainder=True)
         self.add_menu('status',
                       msg="Get the status of a pipeline",
-                      use_remainder=True)
-
-    def process_args(self):
-        func_name = self.menu_name.replace(' ', '_')
-        func_name = func_name.replace('-', '_')
-        func = getattr(self, func_name)
-        func()
+                      keep_remainder=True)
 
     def init(self):
         self.jarvis.create(self.kwargs['CONFIG_DIR'],
                            self.kwargs['PRIVATE_DIR'],
                            self.kwargs['SHARED_DIR'])
+
+    def bootstrap_from(self):
+        self.jarvis.bootstrap_from(self.kwargs['MACHINE'])
+
+    def bootstrap_list(self):
+        self.jarvis.bootstrap_list()
+
+    def hostfile_set(self):
+        self.jarvis.set_hostfile(self.kwargs['HOSTFILE'])
+        pipelines = self.jarvis.list_pipelines()
+        for pipeline in pipelines:
+            Pipeline().load(pipeline).configure()
+
+    def resource_graph_init(self):
+        self.jarvis.resource_graph_init()
+        self.jarvis.save()
+
+    def resource_graph_build(self):
+        self.jarvis.resource_graph_build()
+        self.jarvis.save()
+
+    def resource_graph_add_storage(self):
+        self._resource_graph_hostfile()
+        self.jarvis.resource_graph.add_storage(**self.kwargs)
+        self.jarvis.save()
+
+    def resource_graph_add_net(self):
+        self._resource_graph_hostfile()
+        self.jarvis.resource_graph.add_net(**self.kwargs)
+        self.jarvis.save()
+
+    def resource_graph_filter_fs(self):
+        self.jarvis.resource_graph.filter_fs(**self.kwargs)
+        self.jarvis.save()
+
+    def resource_graph_filter_net(self):
+        self._resource_graph_hostfile()
+        self.jarvis.resource_graph.filter_net(**self.kwargs)
+        self.jarvis.save()
+
+    def _resource_graph_hostfile(self):
+        if self.kwargs['hosts'] is not None:
+            self.kwargs['hosts'] = Hostfile(text=self.kwargs['hosts'])
+        elif self.kwargs['hostfile'] is not None:
+            self.kwargs['hosts'] = Hostfile(hostfile=self.kwargs['hostfile'])
+        else:
+            self.kwargs['hosts'] = self.jarvis.hostfile
+        del self.kwargs['hostfile']
 
     def repo_add(self):
         self.jarvis.add_repo(self.kwargs['repo_path'])
@@ -183,7 +464,7 @@ class JarvisArgs(ArgParse):
         self.jarvis.save()
 
     def repo_list(self):
-        if 'repo_name' in self.kwargs:
+        if self.kwargs['repo_name'] is not None:
             self.jarvis.list_repo(self.kwargs['repo_name'])
         else:
             self.jarvis.list_repos()
@@ -193,10 +474,7 @@ class JarvisArgs(ArgParse):
         self.jarvis.save()
 
     def path(self):
-        if 'pipeline_id' in self.kwargs:
-            pipeline_id = self.kwargs['pipeline_id']
-        else:
-            pipeline_id = self.jarvis.cur_pipeline
+        pipeline_id = self.kwargs['pipeline_id']
         path = Pipeline().load(pipeline_id).config_dir
         print(path)
 
@@ -217,6 +495,18 @@ class JarvisArgs(ArgParse):
     def list(self):
         for pipeline_ctx in self.jarvis.pipelines:
             print(pipeline_ctx)
+
+    def build_env(self):
+        self.autoparse_remainder()
+        Pipeline().load().build_env(self.kwargs).save()
+
+    def track_env(self):
+        self.autoparse_remainder()
+        Pipeline().load().track_env(self.kwargs.keys()).save()
+
+    def scan_env(self):
+        self.autoparse_remainder()
+        Pipeline().load().scan_env(self.kwargs).save()
 
     def append(self):
         pipeline_id = self.kwargs['pipeline_id']
