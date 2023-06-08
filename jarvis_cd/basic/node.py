@@ -257,35 +257,10 @@ class Node(ABC):
         return self
 
 
-class Interceptor(Node):
+class SimpleNode(Node):
     """
-    An interceptor is a library which routes function calls to a custom
-    function. This typically requires modifications to various environment
-    variables, including LD_PRELOAD.
-    """
-
-    @abstractmethod
-    def configure_menu(self):
-        pass
-
-    @abstractmethod
-    def configure(self):
-        pass
-
-    @abstractmethod
-    def modify_env(self):
-        """
-        Modify the jarvis environment.
-
-        :return: None
-        """
-        pass
-
-
-class Service(Node):
-    """
-    A service is a long-running process. For example, a storage system is
-    a service which runs until explicitly stopped.
+    A SimpleNode represents a single program. A pipeline is not a SimpleNode
+    because it represents a combination of multiple programs.
     """
 
     @abstractmethod
@@ -311,6 +286,40 @@ class Service(Node):
         """
         pass
 
+    def update_config(self, kwargs, rebuild=False):
+        """
+        The kwargs to pack with default values
+
+        :param kwargs: the key-word arguments to fill default values for
+        :param rebuild: whether to consider the old self.config or rebuild
+        from self.conifgure_menu
+        :return:
+        """
+        default_args = ArgParse.default_kwargs(self.configure_menu())
+        if not rebuild:
+            default_args.update(self.config)
+        default_args.update(kwargs)
+        self.config = default_args
+
+
+class Interceptor(SimpleNode):
+    """
+    An interceptor is a library which routes function calls to a custom
+    function. This typically requires modifications to various environment
+    variables, including LD_PRELOAD.
+    """
+
+    @abstractmethod
+    def modify_env(self):
+        """
+        Modify the jarvis environment.
+
+        :return: None
+        """
+        pass
+
+
+class Service(SimpleNode):
     @abstractmethod
     def start(self):
         """

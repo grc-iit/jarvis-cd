@@ -39,7 +39,7 @@ class MyRepo(Interceptor):
         :param kwargs: Configuration parameters for this node.
         :return: None
         """
-        pass
+        self.update_config(kwargs, rebuild=False)
 
     def modify_env(self):
         """

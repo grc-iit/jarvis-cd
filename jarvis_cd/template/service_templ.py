@@ -39,7 +39,7 @@ class MyRepo(Service):
         :param kwargs: Configuration parameters for this node.
         :return: None
         """
-        pass
+        self.update_config(kwargs, rebuild=False)
 
     def start(self):
         """

@@ -50,7 +50,9 @@ class Hermes(Service):
             },
             {
                 'name': 'port',
-                'msg': 'The port to listen for data on'
+                'msg': 'The port to listen for data on',
+                'type': int,
+                'default': 8080
             },
         ]
 
@@ -63,17 +65,46 @@ class Hermes(Service):
         application.
         :return: None
         """
-        'devices.nvme.type'
-
+        self.update_config(kwargs, rebuild=False)
         rg = self.jarvis.resource_graph
-        # graphs
-        config = {
-            'devices': {}
+
+        if len(self.config['devices'] == 0):
+            # Get all the fastest storage device mount points on machine
+            dev_df = rg.find_storage(common=True,
+                                     min_cap=SizeConv.to_int('40g'))
+            devs = {
+                'nvme': dev_df[dev_df.type == StorageDeviceType.NVME],
+                'ssd': dev_df[dev_df.type == StorageDeviceType.SSD],
+                'hdd': dev_df[dev_df.type == StorageDeviceType.HDD]
+            }
+        else:
+            # Get the storage devices for the user
+            devs = {}
+            for dev_type, count in self.config['devices']:
+                devs[dev_type] = rg.find_storage(common=True,
+                                                 dev_types=dev_type,
+                                                 count_per_node=count)
+
+        # Get network information
+        net_info = rg.find_net_info(self.jarvis.hostfile)
+        net_info = net_info[net_info.provider == 'sockets']
+        protocol = list(net_info['provier'].unique())[0]
+        domain = list(net_info['domain'].unique())[0]
+
+        # Begin making Hermes config
+        hermes = {
+            'devices': {},
+            'rpc': {
+                'host_file': self.jarvis.hostfile.path,
+                'protocol': protocol,
+                'domain': domain,
+                'port': self.config['port'],
+                'num_threads': 4
+            }
         }
-        # Introspect resource graph to find
-        if 'devices' in config:
-            for dev in config['devices']:
-                config['devices'][dev] = rg.find_storage()
+
+        # Storage info
+
 
     def start(self):
         """
