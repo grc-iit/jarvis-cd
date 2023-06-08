@@ -302,15 +302,18 @@ class JarvisArgs(ArgParse):
             {
                 'name': 'pipeline_id',
                 'msg': 'Delete the jarvis directories containing metadata'
-                       'for the pipeline',
-                'required': True,
+                       'for the pipeline. Will apply to current pipeline by'
+                       'default.',
+                'required': False,
                 'pos': True,
                 'default': None
             },
         ])
 
         # jarvis append
-        self.add_menu('append', msg='Append a node to a pipeline')
+        self.add_menu('append',
+                      msg='Append a node to a pipeline',
+                      keep_remainder=True)
         self.add_args([
             {
                 'name': 'node_type',
@@ -331,7 +334,9 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis configure
-        self.add_menu('configure', msg="Configure a node in the pipeline")
+        self.add_menu('configure',
+                      msg="Configure a node in the pipeline",
+                      keep_remainder=True)
         self.add_args([
             {
                 'name': 'node_id',
@@ -510,9 +515,11 @@ class JarvisArgs(ArgParse):
 
     def append(self):
         node_id = self.kwargs['node_id']
-        pipeline =  Pipeline().load().\
+        if node_id is None:
+            node_id = self.kwargs['node_type']
+        pipeline = Pipeline().load().\
             append(self.kwargs['node_type'], node_id)
-        node = pipeline.get_node(self.kwargs['node_id'])
+        node = pipeline.get_node(node_id)
         menu = node.configure_menu()
         args = NodeArgParse(args=self.remainder, menu=menu)
         node.configure(**args.kwargs)

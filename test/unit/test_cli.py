@@ -4,6 +4,7 @@ from jarvis_cd.basic.jarvis_manager import JarvisManager
 import pathlib
 from unittest import TestCase
 import os
+import yaml
 import shutil
 
 
@@ -69,14 +70,26 @@ class TestCli(TestCase):
             os.path.exists(f'{self.jarvis.config_dir}/test_pipeline2'))
 
     def test_jarvis_append(self):
+        self.jarvis = JarvisManager.get_instance()
+
+        # Remove the pipeline
+        Exec('jarvis destroy test_pipeline')
+        self.assertTrue(
+            not os.path.exists(f'{self.jarvis.config_dir}/test_pipeline'))
+        self.rm_test_repo()
+
         # Create the pipeline
         self.add_test_repo()
         Exec('jarvis create test_pipeline')
         self.assertTrue(
             os.path.exists(f'{self.jarvis.config_dir}/test_pipeline'))
-        Exec('jarvis append first')
+        exec_node = Exec('jarvis append first --port=22 --devices=[[nvme,1]]',
+                         LocalExecInfo(collect_output=True))
         self.assertTrue(
             os.path.exists(f'{self.jarvis.config_dir}/test_pipeline/first'))
+        config_dict = yaml.safe_load(exec_node.stdout['localhost'])
+        self.assertTrue(config_dict['port'] == 22)
+        self.assertTrue(config_dict['devices'] == [['nvme', 1]])
         Exec('jarvis append second')
         self.assertTrue(
             os.path.exists(f'{self.jarvis.config_dir}/test_pipeline/second'))
@@ -108,14 +121,14 @@ class TestCli(TestCase):
         expected_lines = ['first status']
         self.verify_pipeline(exec_node.stdout, expected_lines)
 
-        # Remove the test repo
+        # Remove the pipeline
         Exec('jarvis destroy test_pipeline')
         self.assertTrue(
             not os.path.exists(f'{self.jarvis.config_dir}/test_pipeline'))
         self.rm_test_repo()
 
     def verify_pipeline(self, stdout, expected_lines):
-        lines = stdout.strip().splitlines()
+        lines = stdout['localhost'].strip().splitlines()
         for line, expected_line in zip(lines, expected_lines):
             self.assertEqual(line, expected_line)
 

@@ -4,7 +4,50 @@ from jarvis_util import *
 
 class First(Service):
     def configure_menu(self):
-        return {}
+        """
+        Create a CLI menu for the configurator method.
+        For thorough documentation of these parameters, view:
+        https://github.com/scs-lab/jarvis-util/wiki/3.-Argument-Parsing
+
+        :return: List(dict)
+        """
+        return [
+            {
+                'name': 'walkthrough',
+                'msg': 'Use a terminal walkthrough to modify resource graph',
+                'type': bool,
+                'default': False,
+            },
+            {
+                'name': 'reinit',
+                'msg': 'Destroy previous configuration and rebuild',
+                'type': bool,
+                'default': False
+            },
+            {
+                'name': 'devices',
+                'msg': 'Search for a number of devices to include',
+                'type': list,
+                'default': None,
+                'args': [
+                    {
+                        'name': 'type',
+                        'msg': 'The type of the device being queried',
+                        'type': str
+                    },
+                    {
+                        'name': 'count',
+                        'msg': 'The number of devices being',
+                        'type': int
+                    }
+                ]
+            },
+            {
+                'name': 'port',
+                'msg': 'The port to listen for data on',
+                'type': int
+            },
+        ]
 
     def configure(self, **kwargs):
         """
@@ -15,7 +58,7 @@ class First(Service):
         application.
         :return: None
         """
-        print('first configure')
+        print(f'{kwargs}')
 
     def start(self):
         """

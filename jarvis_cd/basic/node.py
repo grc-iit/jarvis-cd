@@ -98,17 +98,18 @@ class Node(ABC):
             self.context = self.jarvis.cur_pipeline
         self.node_id = self.context.split('.')[-1]
         relpath = self.context.replace('.', '/')
+        self.sub_nodes = []
         self.config_dir = f'{self.jarvis.config_dir}/{relpath}'
         self.private_dir = f'{self.jarvis.private_dir}/{relpath}'
         if self.shared_dir is not None:
             self.shared_dir = f'{self.jarvis.shared_dir}/{relpath}'
         self.config_path = f'{self.config_dir}/{self.node_id}.yaml'
+        if not os.path.exists(self.config_path):
+            return self
         self.config = YamlFile(self.config_path).load()
         self.env_path = f'{self.config_dir}/env.yaml'
         self.env = YamlFile(self.env_path).load()
-        self.sub_nodes = []
         for sub_node_type, sub_node_id in self.config['sub_nodes']:
-            sub_node_config_dir = f'{self.config_dir}/{sub_node_id}'
             sub_node = self.jarvis.construct_node(sub_node_type)
             sub_node.load(f'{self.context}.{sub_node_id}')
             self.sub_nodes.append(sub_node)
@@ -133,7 +134,10 @@ class Node(ABC):
         """
         for node in self.sub_nodes:
             node.destroy()
-        shutil.rmtree(self.config_dir)
+        try:
+            shutil.rmtree(self.config_dir)
+        except FileNotFoundError:
+            pass
 
     def append(self, node_type, node_id=None, **kwargs):
         """

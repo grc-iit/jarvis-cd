@@ -3,6 +3,16 @@ from jarvis_util import *
 
 
 class Third(Application):
+    def configure_menu(self):
+        """
+        Create a CLI menu for the configurator method.
+        For thorough documentation of these parameters, view:
+        https://github.com/scs-lab/jarvis-util/wiki/3.-Argument-Parsing
+
+        :return: List(dict)
+        """
+        return []
+
     def configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
@@ -12,7 +22,7 @@ class Third(Application):
         application.
         :return: None
         """
-        print('third configure')
+        print(f'{kwargs}')
 
     def start(self):
         """
