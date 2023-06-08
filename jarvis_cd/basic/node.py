@@ -8,11 +8,21 @@ from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_util.util.naming import to_snake_case
 from jarvis_util.serialize.yaml_file import YamlFile
 from jarvis_util.shell.local_exec import LocalExecInfo
+from jarvis_util.util.argparse import ArgParse
 import inspect
 import pathlib
 import shutil
 import math
 import os
+
+
+class NodeArgParse(ArgParse):
+    def define_options(self):
+        self.add_menu()
+        self.add_args(self.custom_info['menu'])
+
+    def main_menu(self):
+        pass
 
 
 class Node(ABC):
@@ -125,13 +135,13 @@ class Node(ABC):
             node.destroy()
         shutil.rmtree(self.config_dir)
 
-    def append(self, node_type, node_id=None, config=None):
+    def append(self, node_type, node_id=None, **kwargs):
         """
         Create and append a node to the pipeline
 
         :param node_type: The type of node to create (e.g., OrangeFS)
         :param node_id: Semantic name of the node to create
-        :param config: Any parameters the user want to configure in the node
+        :param kwargs: Any parameters the user want to configure in the node
         :return: self
         """
         if node_id is None:
@@ -142,8 +152,8 @@ class Node(ABC):
             raise Exception(f'Cloud not find node: {node_type}')
         context = f'{self.context}.{node_id}'
         node.create(context)
-        if isinstance(node, Service) and config is not None:
-            node.configure(config)
+        if isinstance(node, Service) and len(kwargs):
+            node.configure(**kwargs)
         self.sub_nodes.append(node)
         return self
 
@@ -242,28 +252,6 @@ class Node(ABC):
             self.env[key] = os.getenv(key)
         return self
 
-    @staticmethod
-    def kwargs_to_config(kwargs):
-        """
-        Convert a kwargs dict to a nested configuration file.
-
-        :param kwargs: A dictionary
-        :return: Dictionary
-        """
-        config = {}
-        for key, val in kwargs.items():
-            nesting = key.split('.')
-            if len(nesting) == 1:
-                config[key] = val
-                continue
-            config[key] = {}
-            cur_config = config[key]
-            for key in nesting[1:-1]:
-                cur_config[key] = {}
-                cur_config = cur_config[key]
-            cur_config[nesting[-1]] = val
-        return config
-
 
 class Interceptor(Node):
     """
@@ -271,6 +259,14 @@ class Interceptor(Node):
     function. This typically requires modifications to various environment
     variables, including LD_PRELOAD.
     """
+
+    @abstractmethod
+    def configure_menu(self):
+        pass
+
+    @abstractmethod
+    def configure(self):
+        pass
 
     @abstractmethod
     def modify_env(self):
@@ -287,6 +283,29 @@ class Service(Node):
     A service is a long-running process. For example, a storage system is
     a service which runs until explicitly stopped.
     """
+
+    @abstractmethod
+    def configure_menu(self):
+        """
+        Create a CLI menu for the configurator method.
+        For thorough documentation of these parameters, view:
+        https://github.com/scs-lab/jarvis-util/wiki/3.-Argument-Parsing
+
+        :return: List(dict)
+        """
+        return []
+
+    @abstractmethod
+    def configure(self, **kwargs):
+        """
+        Converts the Jarvis configuration to application-specific configuration.
+        E.g., OrangeFS produces an orangefs.xml file.
+
+        :param kwargs: The human-readable jarvis YAML configuration for the
+        application.
+        :return: None
+        """
+        pass
 
     @abstractmethod
     def start(self):
@@ -346,7 +365,7 @@ class Pipeline(Node):
     def default_configure(self):
         return {}
 
-    def configure(self, node_id, config=None):
+    def configure(self, node_id, **kwargs):
         """
         Configure a node in the pipeline
 
@@ -358,7 +377,7 @@ class Pipeline(Node):
         if node is None:
             raise Exception(f'Cloud not find node: {node_id}')
         if isinstance(node, Service):
-            node.configure(config)
+            node.configure(**kwargs)
 
     def start(self):
         """

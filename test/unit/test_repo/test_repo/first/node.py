@@ -3,7 +3,10 @@ from jarvis_util import *
 
 
 class First(Service):
-    def configure(self, config):
+    def configure_menu(self):
+        return {}
+
+    def configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.

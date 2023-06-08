@@ -31,7 +31,7 @@ class Orangefs(Service):
         }
         return config
 
-    def configure(self, config):
+    def configure(self, **kwargs):
         self.default_configure()
         self.config.update(config)
         self.pfs_conf = f'{self.private_dir}/orangefs.xml'

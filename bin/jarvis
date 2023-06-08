@@ -3,7 +3,7 @@
 from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_util.util.argparse import ArgParse
 from jarvis_util.util.hostfile import Hostfile
-from jarvis_cd.basic.node import Pipeline
+from jarvis_cd.basic.node import Pipeline, NodeArgParse
 
 
 class JarvisArgs(ArgParse):
@@ -509,20 +509,28 @@ class JarvisArgs(ArgParse):
         Pipeline().load().scan_env(self.kwargs).save()
 
     def append(self):
-        pipeline_id = self.kwargs['pipeline_id']
-        config = Pipeline.kwargs_to_config(self.kwargs)
-        Pipeline().load().\
-            append(self.kwargs['node_type'], pipeline_id, config).save()
+        node_id = self.kwargs['node_id']
+        pipeline =  Pipeline().load().\
+            append(self.kwargs['node_type'], node_id)
+        node = pipeline.get_node(self.kwargs['node_id'])
+        menu = node.configure_menu()
+        args = NodeArgParse(args=self.remainder, menu=menu)
+        node.configure(**args.kwargs)
+        pipeline.save()
 
     def unlink(self):
-        Pipeline().load().unlink(self.kwargs['pipeline_id']).save()
+        Pipeline().load().unlink(self.kwargs['node_id']).save()
 
     def remove(self):
-        Pipeline().load().remove(self.kwargs['pipeline_id']).save()
+        Pipeline().load().remove(self.kwargs['node_id']).save()
 
     def configure(self):
-        config = Pipeline.kwargs_to_config(self.kwargs)
-        Pipeline().load().configure(self.kwargs['pipeline_id'], config)
+        pipeline = Pipeline().load()
+        node = pipeline.get_node(self.kwargs['node_id'])
+        menu = node.configure_menu()
+        args = NodeArgParse(args=self.remainder, menu=menu)
+        node.configure(**args.kwargs)
+        pipeline.save()
 
     def start(self):
         Pipeline().load().start()
