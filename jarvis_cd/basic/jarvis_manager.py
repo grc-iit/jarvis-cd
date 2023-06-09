@@ -98,7 +98,10 @@ class JarvisManager:
         self.private_dir = self.jarvis_conf['PRIVATE_DIR']
         self.shared_dir = self.jarvis_conf['SHARED_DIR']
         self.hostfile = Hostfile(hostfile=self.jarvis_conf['HOSTFILE'])
-        self.resource_graph = ResourceGraph().load(self.resource_graph_path)
+        if os.path.exists(self.resource_graph_path):
+            self.resource_graph = ResourceGraph().load(self.resource_graph_path)
+        else:
+            self.resource_graph = ResourceGraph()
 
     def set_hostfile(self, path):
         """

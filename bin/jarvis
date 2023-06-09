@@ -295,6 +295,13 @@ class JarvisArgs(ArgParse):
                 'default': None
             },
         ])
+        self.add_args([
+            {
+                'name': 'node_id',
+                'msg': 'The name of the node to get the path for',
+                'default': None
+            },
+        ])
 
         # jarvis delete
         self.add_menu('destroy', msg='Delete a pipeline')
@@ -368,13 +375,15 @@ class JarvisArgs(ArgParse):
                       msg="Cache relevant environment vars. Use +ENV_VAR and"
                           "-ENV_VAR in remainder list to indicate whether "
                           "to track certain variables.",
-                      keep_remainder=True)
+                      keep_remainder=True,
+                      remainder_as_kv=True)
 
         # jarvis track env
         self.add_menu('scan env',
                       msg="Reload environment vars. Use +ENV_VAR to indicate"
                           "which variables to track.",
-                      keep_remainder=True)
+                      keep_remainder=True,
+                      remainder_as_kv=True)
 
         # jarvis scan env
         self.add_menu('track env',
@@ -383,7 +392,10 @@ class JarvisArgs(ArgParse):
                           "to track certain variables.",
                       keep_remainder=True)
 
-        # jarvis [start/stop/clean/status]
+        # jarvis [run/start/stop/clean/status]
+        self.add_menu('run',
+                      msg="Run + terminate a pipeline",
+                      keep_remainder=True)
         self.add_menu('start',
                       msg="Start a pipeline",
                       keep_remainder=True)
@@ -480,7 +492,12 @@ class JarvisArgs(ArgParse):
 
     def path(self):
         pipeline_id = self.kwargs['pipeline_id']
-        path = Pipeline().load(pipeline_id).config_dir
+        node_id = self.kwargs['node_id']
+        pipeline = Pipeline().load(pipeline_id)
+        if node_id is not None:
+            path = pipeline.get_node(node_id).config_dir
+        else:
+            path = pipeline.config_dir
         print(path)
 
     def getcwd(self):
@@ -502,15 +519,12 @@ class JarvisArgs(ArgParse):
             print(pipeline_ctx)
 
     def build_env(self):
-        self.autoparse_remainder()
         Pipeline().load().build_env(self.kwargs).save()
 
     def track_env(self):
-        self.autoparse_remainder()
         Pipeline().load().track_env(self.kwargs.keys()).save()
 
     def scan_env(self):
-        self.autoparse_remainder()
         Pipeline().load().scan_env(self.kwargs).save()
 
     def append(self):
@@ -538,6 +552,9 @@ class JarvisArgs(ArgParse):
         args = NodeArgParse(args=self.remainder, menu=menu)
         node.configure(**args.kwargs)
         pipeline.save()
+
+    def run(self):
+        Pipeline().load().run()
 
     def start(self):
         Pipeline().load().start()

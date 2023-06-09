@@ -9,7 +9,7 @@ class MyRepo(Interceptor):
         """
         super().__init__()
 
-    def configure_menu(self):
+    def _configure_menu(self):
         """
         Create a CLI menu for the configurator method.
         For thorough documentation of these parameters, view:

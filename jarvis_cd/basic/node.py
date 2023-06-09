@@ -68,7 +68,7 @@ class Node(ABC):
         relpath = self.context.replace('.', '/')
         self.config_dir = f'{self.jarvis.config_dir}/{relpath}'
         self.private_dir = f'{self.jarvis.private_dir}/{relpath}'
-        if self.shared_dir is not None:
+        if self.jarvis.shared_dir is not None:
             self.shared_dir = f'{self.jarvis.shared_dir}/{relpath}'
         self.config_path = f'{self.config_dir}/{self.node_id}.yaml'
         if os.path.exists(self.config_path):
@@ -101,7 +101,7 @@ class Node(ABC):
         self.sub_nodes = []
         self.config_dir = f'{self.jarvis.config_dir}/{relpath}'
         self.private_dir = f'{self.jarvis.private_dir}/{relpath}'
-        if self.shared_dir is not None:
+        if self.jarvis.shared_dir is not None:
             self.shared_dir = f'{self.jarvis.shared_dir}/{relpath}'
         self.config_path = f'{self.config_dir}/{self.node_id}.yaml'
         if not os.path.exists(self.config_path):
@@ -263,8 +263,25 @@ class SimpleNode(Node):
     because it represents a combination of multiple programs.
     """
 
-    @abstractmethod
     def configure_menu(self):
+        """
+        Add some common configuration options used across all CLI menus.
+
+        :return:
+        """
+        menu = self._configure_menu()
+        menu += [
+            {
+                'name': 'sleep',
+                'msg': 'How much time to sleep during start (seconds)',
+                'type': int,
+                'default': 0,
+            }
+        ]
+        return menu
+
+    @abstractmethod
+    def _configure_menu(self):
         """
         Create a CLI menu for the configurator method.
         For thorough documentation of these parameters, view:
@@ -392,16 +409,27 @@ class Pipeline(Node):
         if isinstance(node, Service):
             node.configure(**kwargs)
 
+    def run(self):
+        self.start()
+        self.stop()
+
     def start(self):
         """
-        Start the pipeline
+        Start the pipeline.
+
+        NOTE: Start CAN hang for pipelines which spawn
+        daemonized processes. This is because input/output is
+        too useful to ignore. Python will attempt to close all
+        file descriptors when the process exits, so the file descriptor
+        used for piping output will be open for as long as the daemon.
+        If using start directly, you should launch as background process.
 
         :return: None
         """
-        env = LocalExecInfo().env
+        env = self.env.copy()
         for node in self.sub_nodes:
             if isinstance(node, Service):
-                node.set_env(env.copy())
+                node.set_env(env)
                 node.start()
             if isinstance(node, Interceptor):
                 node.set_env(env)
@@ -413,10 +441,10 @@ class Pipeline(Node):
 
         :return: None
         """
-        env = LocalExecInfo().env
+        env = self.env.copy()
         for node in reversed(self.sub_nodes):
             if isinstance(node, Service):
-                node.set_env(env.copy())
+                node.set_env(env)
                 node.stop()
 
     def clean(self):
