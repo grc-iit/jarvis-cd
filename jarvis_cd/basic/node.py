@@ -321,6 +321,8 @@ class Node(ABC):
                 continue
             paths = self.env[env_var].split(':')
             for path in paths:
+                if not os.path.exists(path):
+                    continue
                 filenames = os.listdir(path)
                 for name_opt in name_opts:
                     if name_opt in filenames:

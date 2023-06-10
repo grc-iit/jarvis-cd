@@ -103,7 +103,10 @@ class GrayScott(Application):
         """
         self.update_config(kwargs, rebuild=False)
         if self.config['output'] is None:
-            self.config['output'] = os.path.join(os.getcwd(), 'data')
+            adios_dir = os.path.join(os.getcwd(), 'gray-scott')
+            self.config['output'] = os.path.join(adios_dir,
+                                                 'data')
+            os.makedirs(adios_dir, exist_ok=True)
         settings_json = {
             "L": self.config['L'],
             "Du": self.config['Du'],
@@ -131,7 +134,8 @@ class GrayScott(Application):
         Exec(f'gray-scott {self.settings_json_path}',
              MpiExecInfo(nprocs=self.config['nprocs'],
                          ppn=self.config['ppn'],
-                         hostfile=self.jarvis.hostfile))
+                         hostfile=self.jarvis.hostfile,
+                         env=self.env))
 
     def stop(self):
         """

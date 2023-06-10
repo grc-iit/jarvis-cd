@@ -560,7 +560,7 @@ class JarvisArgs(ArgParse):
         self.jarvis.save()
 
     def list(self):
-        for pipeline_ctx in self.jarvis.pipelines:
+        for pipeline_ctx in self.jarvis.list_pipelines():
             print(pipeline_ctx)
 
     def view_nodes(self):

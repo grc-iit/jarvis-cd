@@ -44,8 +44,7 @@ class JarvisManager:
         self.resource_graph_path = os.path.join(self.jarvis_root,
                                                 'config',
                                                 'resource_graph.yaml')
-        if os.path.exists(self.jarvis_conf_path):
-            self.load()
+        self.load()
 
     def create(self, config_dir, private_dir, shared_dir=None):
         """
@@ -91,6 +90,8 @@ class JarvisManager:
 
         :return: None
         """
+        if not os.path.exists(self.jarvis_conf_path):
+            return
         self.jarvis_conf = YamlFile(self.jarvis_conf_path).load()
         self.cur_pipeline = self.jarvis_conf['CUR_PIPELINE']
         self.repos = self.jarvis_conf['REPOS']

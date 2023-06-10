@@ -57,6 +57,12 @@ class Hermes(Service):
                 'type': int,
                 'default': 8080
             },
+            {
+                'name': 'output_dir',
+                'msg': 'Where the application performs I/O',
+                'type': str,
+                'default': None
+            },
         ]
 
     def configure(self, **kwargs):
@@ -112,12 +118,13 @@ class Hermes(Service):
                 raise Exception(f'Unkown device type: {dev_type}')
             hermes_server['devices'][custom_name] = {
                 'mount_point': mount,
-                'capacity': .1 * float(dev['avail']),
+                'capacity': int(.1 * float(dev['avail'])),
                 'block_size': '4kb',
                 'bandwidth': bandwidth,
                 'latency': latency,
-                'is_shared': dev['shared'],
-                'borg_capacity_thresh': [0.0, 1.0]
+                'is_shared_device': dev['shared'],
+                'borg_capacity_thresh': [0.0, 1.0],
+                'slab_sizes': ['4KB', '16KB', '64KB', '1MB']
             }
 
         # Get network Info
@@ -125,8 +132,11 @@ class Hermes(Service):
         net_info = net_info[net_info.provider == 'sockets']
         protocol = list(net_info['provider'].unique())[0]
         domain = list(net_info['domain'].unique())[0]
+        hostfile_path = self.jarvis.hostfile.path
+        if hostfile_path is None:
+            hostfile_path = ""
         hermes_server['rpc'] = {
-            'host_file': self.jarvis.hostfile.path,
+            'host_file': hostfile_path,
             'protocol': protocol,
             'domain': domain,
             'port': self.config['port'],
@@ -149,6 +159,8 @@ class Hermes(Service):
             'base_adapter_mode': 'kDefault',
             'flushing_mode': 'kAsync'
         }
+        if self.config['output_dir'] is not None:
+            hermes_client['path_inclusions'] = self.config['output_dir']
         hermes_client_yaml = f'{self.shared_dir}/hermes_client.yaml'
         YamlFile(hermes_client_yaml).save(hermes_client)
         self.env['HERMES_CLIENT_CONF'] = hermes_client_yaml

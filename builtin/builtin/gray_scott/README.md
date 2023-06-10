@@ -105,10 +105,10 @@ jarvis create gs-hermes
 
 Create the environment variables needed by Hermes + Gray Scott
 ```bash
-spack load --only dependencies hermes
-ADIOSVM_PATH=/path/to/adiosvm
+spack load hermes
+ADIOSVM_PATH=${MY_PROJECTS}/adiosvm
 GRAY_SCOTT_PATH=${ADIOSVM_PATH}/Tutorial/gs-mpiio
-export PATH="${GRAY_SCOTT_PATH}:$PATH"
+export PATH="${GRAY_SCOTT_PATH}/build:$PATH"
 ```
 
 Store the current environment in the pipeline.
