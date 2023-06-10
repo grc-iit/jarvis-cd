@@ -3,11 +3,12 @@ from jarvis_util import *
 
 
 class GrayScott(Application):
-    def __init__(self):
+    def _init(self):
         """
         Initialize paths
         """
-        super().__init__()
+        self.adios2_xml_path = f'{self.pkg_dir}/config/adios2.xml'
+        self.settings_json_path = f'{self.shared_dir}/settings-files.json'
 
     def _configure_menu(self):
         """
@@ -19,15 +20,76 @@ class GrayScott(Application):
         """
         return [
             {
-                'name': None,  # The name of the parameter
-                'msg': '',  # Describe this parameter
-                'type': str,  # What is the parameter type?
-                'default': None,  # What is the default value if not required?
-                # Does this parameter have specific valid inputs?
-                'choices': [],
-                # When type is list, what do the entries of the list mean?
-                # A list of dicts just like this one.
-                'args': [],
+                'name': 'nprocs',
+                'msg': 'Number of processes to spawn',
+                'type': int,
+                'default': 4,
+            },
+            {
+                'name': 'ppn',
+                'msg': 'Processes per node',
+                'type': int,
+                'default': None,
+            },
+            {
+                'name': 'L',
+                'msg': 'Grid size of cube',
+                'type': int,
+                'default': 32,
+            },
+            {
+                'name': 'Du',
+                'msg': 'Diffusion rate of substance U',
+                'type': float,
+                'default': .2,
+            },
+            {
+                'name': 'Dv',
+                'msg': 'Diffusion rate of substance V',
+                'type': float,
+                'default': .1,
+            },
+            {
+                'name': 'F',
+                'msg': 'Feed rate of U',
+                'type': float,
+                'default': .01,
+            },
+            {
+                'name': 'k',
+                'msg': 'Kill rate of V',
+                'type': float,
+                'default': .05,
+            },
+            {
+                'name': 'dt',
+                'msg': 'Timestep',
+                'type': float,
+                'default': 2.0,
+            },
+            {
+                'name': 'steps',
+                'msg': 'Total number of steps to simulate',
+                'type': int,
+                'default': 100,
+            },
+            {
+                'name': 'plotgap',
+                'msg': 'Number of steps between output',
+                'type': float,
+                'default': 10,
+            },
+            {
+                'name': 'noise',
+                'msg': 'Amount of noise',
+                'type': float,
+                'default': .01,
+            },
+            {
+                'name': 'output',
+                'msg': 'Absolute path to output data',
+                'type': str,
+                'default': None,
             },
         ]
 
@@ -40,6 +102,24 @@ class GrayScott(Application):
         :return: None
         """
         self.update_config(kwargs, rebuild=False)
+        if self.config['output'] is None:
+            self.config['output'] = os.path.join(os.getcwd(), 'data')
+        settings_json = {
+            "L": self.config['L'],
+            "Du": self.config['Du'],
+            "Dv": self.config['Dv'],
+            "F": self.config['F'],
+            "k": self.config['k'],
+            "dt": self.config['dt'],
+            "plotgap": self.config['plotgap'],
+            "steps": self.config['steps'],
+            "noise": self.config['noise'],
+            "output": self.config['output'],
+            "adios_config": f'{self.shared_dir}/adios2.xml'
+        }
+        JsonFile(self.settings_json_path).save(settings_json)
+        self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
+                                self.adios2_xml_path)
 
     def start(self):
         """
@@ -48,7 +128,10 @@ class GrayScott(Application):
 
         :return: None
         """
-        pass
+        Exec(f'gray-scott {self.settings_json_path}',
+             MpiExecInfo(nprocs=self.config['nprocs'],
+                         ppn=self.config['ppn'],
+                         hostfile=self.jarvis.hostfile))
 
     def stop(self):
         """
@@ -66,4 +149,4 @@ class GrayScott(Application):
 
         :return: None
         """
-        pass
+        Rm(self.config['output'])

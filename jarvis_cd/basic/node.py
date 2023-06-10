@@ -83,6 +83,7 @@ class Node(ABC):
         os.makedirs(self.config_dir, exist_ok=True)
         if self.shared_dir is not None:
             os.makedirs(self.shared_dir, exist_ok=True)
+        self._init()
         return self
 
     def load(self, context=None):
@@ -113,6 +114,7 @@ class Node(ABC):
             sub_node = self.jarvis.construct_node(sub_node_type)
             sub_node.load(f'{self.context}.{sub_node_id}')
             self.sub_nodes.append(sub_node)
+        self._init()
         return self
 
     def save(self):
@@ -341,6 +343,16 @@ class Node(ABC):
             info += sub_node.to_string_list_pretty(depth + 2)
         return info
 
+    @abstractmethod
+    def _init(self):
+        """
+        Initialize variables global to the project.
+        Called after load() and create()
+
+        :return:
+        """
+        pass
+
 
 class SimpleNode(Node):
     """
@@ -402,6 +414,27 @@ class SimpleNode(Node):
             default_args.update(self.config)
         default_args.update(kwargs)
         self.config = default_args
+
+    @staticmethod
+    def copy_template_file(src, dst, replacements=None):
+        """
+        Copy and configure an application template file
+        Template files makr constants using the notation
+        ##CONST_NAME##
+
+        :param src: Path to the template
+        :param dst: Destination of the template
+        :param replacements: A list of 2-tuples. First entry is the name
+        of the constant to replace, right is the value to replace it with.
+        :return: None
+        """
+        with open(src, 'r') as fp:
+            text = fp.read()
+        if replacements is not None:
+            for const_name, replace in replacements:
+                text = text.replace(f'##{const_name}##', replace)
+        with open(dst, 'w') as fp:
+            fp.write(text)
 
 
 class Interceptor(SimpleNode):
@@ -477,6 +510,9 @@ class Pipeline(Node):
     """
     A pipeline connects the different node types together in a chain.
     """
+    def _init(self):
+        pass
+
     def configure(self, node_id, **kwargs):
         """
         Configure a node in the pipeline

@@ -6,11 +6,10 @@ import time
 
 
 class Hermes(Service):
-    def __init__(self):
+    def _init(self):
         """
         Initialize paths
         """
-        super().__init__()
         self.daemon_node = None
 
     def _configure_menu(self):

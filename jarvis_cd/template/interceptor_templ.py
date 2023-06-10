@@ -3,11 +3,11 @@ from jarvis_util import *
 
 
 class MyRepo(Interceptor):
-    def __init__(self):
+    def _init(self):
         """
         Initialize paths
         """
-        super().__init__()
+        pass
 
     def _configure_menu(self):
         """

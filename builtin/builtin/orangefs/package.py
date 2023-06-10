@@ -4,11 +4,10 @@ import os
 
 
 class Orangefs(Service):
-    def __init__(self):
+    def _init(self):
         """
         Initialize paths
         """
-        super().__init__()
         self.pfs_conf = None
 
     def default_configure(self):
