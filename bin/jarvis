@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 
 from jarvis_cd.basic.jarvis_manager import JarvisManager
-from jarvis_util.util.argparse import ArgParse
-from jarvis_util.util.hostfile import Hostfile
+from jarvis_util import *
 from jarvis_cd.basic.node import Pipeline, NodeArgParse
 
 
@@ -79,6 +78,14 @@ class JarvisArgs(ArgParse):
         # jarvis resource-graph build
         self.add_menu('resource-graph build',
                       msg='Introspect resource graph for this machine')
+        self.add_args([
+            {
+                'name': 'walkthrough',
+                'msg': 'A guide for building a resource graph',
+                'type': bool,
+                'default': False
+            },
+        ])
 
         # jarvis resource-graph add storage
         self.add_menu('resource-graph add storage',
@@ -268,6 +275,29 @@ class JarvisArgs(ArgParse):
         # jarvis list
         self.add_menu('list',
                       msg='List all created pipelines')
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'The pipeline to list. Default None to list the'
+                       'set of pipelines',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis view nodes
+        self.add_menu('view nodes', msg="List all nodes in a pipeline.")
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'The pipeline to list. Default None to list the'
+                       'set of pipelines',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
 
         # jarvis cd
         self.add_menu('cd',
@@ -348,8 +378,7 @@ class JarvisArgs(ArgParse):
             {
                 'name': 'node_id',
                 'msg': 'The unique name of the node being added to '
-                       'the pipeline. By default, will be equal to '
-                       'node_type',
+                       'the pipeline.',
                 'required': True,
                 'pos': True,
                 'default': None
@@ -362,8 +391,19 @@ class JarvisArgs(ArgParse):
             {
                 'name': 'node_id',
                 'msg': 'The unique name of the node being added to '
-                       'the pipeline. By default, will be equal to '
-                       'node_type',
+                       'the pipeline.',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis remove
+        self.add_menu('remove', msg="Remove a node from the pipeline.")
+        self.add_args([
+            {
+                'name': 'node_id',
+                'msg': 'The unique name of the node removed',
                 'required': True,
                 'pos': True,
                 'default': None
@@ -431,7 +471,12 @@ class JarvisArgs(ArgParse):
         self.jarvis.save()
 
     def resource_graph_build(self):
-        self.jarvis.resource_graph_build()
+        walkthrough = self.kwargs['walkthrough']
+        if walkthrough:
+            self.jarvis.resource_graph.walkthrough_build(
+                PsshExecInfo(hostfile=self.jarvis.hostfile))
+        else:
+            self.jarvis.resource_graph_build()
         self.jarvis.save()
 
     def resource_graph_add_storage(self):
@@ -517,6 +562,10 @@ class JarvisArgs(ArgParse):
     def list(self):
         for pipeline_ctx in self.jarvis.pipelines:
             print(pipeline_ctx)
+
+    def view_nodes(self):
+        pipeline_id = self.kwargs['pipeline_id']
+        Pipeline().load(pipeline_id).view_nodes()
 
     def build_env(self):
         Pipeline().load().build_env(self.kwargs).save()

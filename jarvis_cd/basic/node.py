@@ -149,17 +149,27 @@ class Node(ABC):
         :return: self
         """
         if node_id is None:
-            node_id = node_type
+            node_id = self._make_unique_name(node_type)
         self.config['sub_nodes'].append([node_type, node_id])
         node = self.jarvis.construct_node(node_type)
         if node is None:
             raise Exception(f'Cloud not find node: {node_type}')
         context = f'{self.context}.{node_id}'
         node.create(context)
-        if isinstance(node, Service) and len(kwargs):
-            node.configure(**kwargs)
+        node.update_env(self.env)
+        node.configure(**kwargs)
         self.sub_nodes.append(node)
         return self
+
+    def _make_unique_name(self, node_type):
+        if self.get_node(node_type) is None:
+            return node_type
+        count = 1
+        while True:
+            new_name = f'{node_type}{count}'
+            if self.get_node(new_name) is not None:
+                count += 1
+            return new_name
 
     def remove(self, node_id):
         """
@@ -182,10 +192,10 @@ class Node(ABC):
         :return: self
         """
         self.sub_nodes = [test_node for test_node in self.sub_nodes
-                      if test_node.node_id != node_id]
+                          if test_node.node_id != node_id]
         self.config['sub_nodes'] = [
             [test_node_type, test_node_id]
-            for test_node_type, test_node_id in self.config
+            for test_node_type, test_node_id in self.config['sub_nodes']
             if test_node_id != node_id]
         return self
 
@@ -202,14 +212,17 @@ class Node(ABC):
         else:
             return matches[0]
 
-    def set_env(self, env):
+    def view_nodes(self):
+        print(self.to_string_pretty())
+
+    def update_env(self, env):
         """
-        Set the current environment for this program
+        Update the current environment for this program
 
         :param env: The environment dict
         :return:
         """
-        self.env = env
+        self.env.update(env)
 
     def build_env(self, env_track_dict=None):
         """
@@ -255,6 +268,78 @@ class Node(ABC):
         for key in rescan_list:
             self.env[key] = os.getenv(key)
         return self
+
+    def prepend_path(self, env_var, path):
+        """
+        Prepend a path to the an environment variable, such as LD_PRELOAD.
+
+        :param env_var: The name of the environment variable
+        :param path: The path to prepend
+        :return:
+        """
+        if env_var in self.env:
+            cur_env = self.env[env_var]
+        else:
+            cur_env = os.getenv(env_var)
+
+        if cur_env is None or len(cur_env) == 0:
+            self.env[env_var] = path
+        else:
+            self.env[env_var] = f'{path}:{cur_env}'
+
+    def setenv(self, env_var, val):
+        """
+        Set the Jarvis environment variable
+
+        :param env_var: The environment variable
+        :param val: The value of the environment variable
+        :return:
+        """
+        self.env[env_var] = val
+
+    def find_library(self, lib_name, env_vars=None):
+        """
+        Find the location of a shared object automatically using environment
+        variables. If None, will search LD_LIBRARY_PATH.
+
+        :param lib_name: The library to search for. We will search for
+        any file matching lib{lib_name}.so and {lib_name}.so.
+        :param env_vars: A list of environment variables to search for or
+        a string for a single variable.
+        :return: string or None
+        """
+        if env_vars is None:
+            env_vars = ['LD_LIBRARY_PATH']
+        name_opts = [
+            f'{lib_name}.so',
+            f'lib{lib_name}.so',
+        ]
+        for env_var in env_vars:
+            if env_var not in self.env:
+                continue
+            paths = self.env[env_var].split(':')
+            for path in paths:
+                filenames = os.listdir(path)
+                for name_opt in name_opts:
+                    if name_opt in filenames:
+                        return f'{path}/{name_opt}'
+        return None
+
+    def __str__(self):
+        return self.to_string_pretty()
+
+    def __repr__(self):
+        return self.to_string_pretty()
+
+    def to_string_pretty(self):
+        return '\n'.join(self.to_string_list_pretty())
+
+    def to_string_list_pretty(self, depth=0):
+        space = ' ' * depth
+        info = [f'{space}{self.type} with name {self.node_id}']
+        for sub_node in self.sub_nodes:
+            info += sub_node.to_string_list_pretty(depth + 2)
+        return info
 
 
 class SimpleNode(Node):
@@ -392,9 +477,6 @@ class Pipeline(Node):
     """
     A pipeline connects the different node types together in a chain.
     """
-    def default_configure(self):
-        return {}
-
     def configure(self, node_id, **kwargs):
         """
         Configure a node in the pipeline
@@ -406,8 +488,8 @@ class Pipeline(Node):
         node = self.get_node(node_id)
         if node is None:
             raise Exception(f'Cloud not find node: {node_id}')
-        if isinstance(node, Service):
-            node.configure(**kwargs)
+        node.update_env(self.env)
+        node.configure(**kwargs)
 
     def run(self):
         self.start()
@@ -429,10 +511,10 @@ class Pipeline(Node):
         env = self.env.copy()
         for node in self.sub_nodes:
             if isinstance(node, Service):
-                node.set_env(env)
+                node.update_env(env)
                 node.start()
             if isinstance(node, Interceptor):
-                node.set_env(env)
+                node.update_env(env)
                 node.modify_env()
 
     def stop(self):
@@ -444,7 +526,7 @@ class Pipeline(Node):
         env = self.env.copy()
         for node in reversed(self.sub_nodes):
             if isinstance(node, Service):
-                node.set_env(env)
+                node.update_env(env)
                 node.stop()
 
     def clean(self):
@@ -456,7 +538,7 @@ class Pipeline(Node):
         env = LocalExecInfo().env
         for node in reversed(self.sub_nodes):
             if isinstance(node, Service):
-                node.set_env(env.copy())
+                node.update_env(env.copy())
                 node.clean()
 
     def status(self):
@@ -469,6 +551,6 @@ class Pipeline(Node):
         statuses = []
         for node in reversed(self.sub_nodes):
             if isinstance(node, Service):
-                node.set_env(env.copy())
+                node.update_env(env.copy())
                 statuses.append(node.status())
         return math.prod(statuses)
