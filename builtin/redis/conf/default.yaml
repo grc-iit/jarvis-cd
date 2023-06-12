@@ -1,5 +1,0 @@
-SCAFFOLD: null
-SCAFFOLD_SHARED: false
-REDIS_SPACK:
-  package_name: redis
-REDIS_ROOT: ${SHARED_DIR}/redis_install

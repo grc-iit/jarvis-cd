@@ -1,0 +1,53 @@
+# CodeCoverage result can be found at https://coveralls.io/github/HDFGroup/hermes
+
+name: GitHub Actions
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+# events but only for the master branch
+on:
+  push:
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        description: 'Run the build with tmate debugging enabled'
+        required: false
+        default: false
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Debug
+  LOCAL: local
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-20.04
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - name: Get Sources
+        uses: actions/checkout@v2
+
+      - name: Setup python
+        uses: actions/setup-python@v4
+
+      - name: Install Apt Dependencies
+          run: bash ci/install_deps.sh
+
+      - name: Install Jarvis
+        run: bash ci/install_jarvis.sh
+
+      - name: Run pylint
+        run: bash ci/lint.sh
+
+      - name: Test
+        run: bash ci/run_tests.sh
+
+#      - name: Coveralls
+#        uses: coverallsapp/github-action@master
+#        with:
+#          path-to-lcov: lcov.info
+#          github-token: ${{ secrets.GITHUB_TOKEN }}
