@@ -125,6 +125,7 @@ class Hermes(Service):
                 latency = '5ms'
             else:
                 raise Exception(f'Unkown device type: {dev_type}')
+            mount = f'{mount}/hermes_data'
             hermes_server['devices'][custom_name] = {
                 'mount_point': mount,
                 'capacity': int(.1 * float(dev['avail'])),
@@ -135,6 +136,8 @@ class Hermes(Service):
                 'borg_capacity_thresh': [0.0, 1.0],
                 'slab_sizes': ['4KB', '16KB', '64KB', '1MB']
             }
+            Mkdir(mount, PsshExecInfo(hostfile=self.jarvis.hostfile,
+                                      env=self.env))
 
         # Get network Info
         net_info = rg.find_net_info(self.jarvis.hostfile)
@@ -170,6 +173,9 @@ class Hermes(Service):
         }
         if self.config['output_dir'] is not None:
             hermes_client['path_inclusions'].append(self.config['output_dir'])
+        Mkdir(hermes_client['path_inclusions'],
+              PsshExecInfo(hostfile=self.jarvis.hostfile,
+                           env=self.env))
         hermes_client_yaml = f'{self.shared_dir}/hermes_client.yaml'
         YamlFile(hermes_client_yaml).save(hermes_client)
         self.env['HERMES_CLIENT_CONF'] = hermes_client_yaml

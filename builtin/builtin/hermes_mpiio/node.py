@@ -38,7 +38,7 @@ class HermesMpiio(Interceptor):
         self.update_config(kwargs, rebuild=False)
         self.config['HERMES_MPIIO'] = self.find_library('hermes_mpiio')
         if self.config['HERMES_MPIIO'] is None:
-            raise Exception('')
+            raise Exception('Could not find hermes_mpiio')
         print(f'Found libhermes_mpiio.so at {self.config["HERMES_MPIIO"]}')
 
     def modify_env(self):

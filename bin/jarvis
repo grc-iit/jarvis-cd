@@ -363,6 +363,10 @@ class JarvisArgs(ArgParse):
             },
         ])
 
+        # jarvis pipeline update
+        self.add_menu('pipeline update', msg='Re-run configure on all nodes '
+                                             'in a pipeline')
+
         # jarvis pipeline append
         self.add_menu('pipeline append',
                       msg='Append a node to a pipeline',
@@ -617,13 +621,17 @@ class JarvisArgs(ArgParse):
         if node_id is None:
             node_id = self.kwargs['node_type']
         pipeline = Pipeline().load().\
-            append(self.kwargs['node_type'], node_id,
+            append(self.kwargs['node_type'],
+                   node_id_=node_id,
                    do_configure=False)
         node = pipeline.get_node(node_id)
         menu = node.configure_menu()
         args = NodeArgParse(args=self.remainder, menu=menu)
-        node.configure(**args.kwargs)
+        pipeline.configure(node_id, **args.kwargs)
         pipeline.save()
+
+    def pipeline_update(self):
+        Pipeline().load().update().save()
 
     def node_unlink(self):
         Pipeline().load().unlink(self.kwargs['node_id']).save()
