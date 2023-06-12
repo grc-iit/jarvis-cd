@@ -431,12 +431,12 @@ class SimpleNode(Node):
         of the constant to replace, right is the value to replace it with.
         :return: None
         """
-        with open(src, 'r') as fp:
+        with open(src, 'r', encoding='utf-8') as fp:
             text = fp.read()
         if replacements is not None:
             for const_name, replace in replacements:
                 text = text.replace(f'##{const_name}##', replace)
-        with open(dst, 'w') as fp:
+        with open(dst, 'w', encoding='utf-8') as fp:
             fp.write(text)
 
 
@@ -458,6 +458,9 @@ class Interceptor(SimpleNode):
 
 
 class Service(SimpleNode):
+    """
+    A long-running service.
+    """
     @abstractmethod
     def start(self):
         """

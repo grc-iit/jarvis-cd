@@ -1,8 +1,15 @@
+"""
+This module provides classes and methods to inject the MyRepo interceptor.
+MyRepo is ....
+"""
 from jarvis_cd.basic.node import Interceptor
 from jarvis_util import *
 
 
 class MyRepo(Interceptor):
+    """
+    This class provides methods to inject the MyRepo interceptor.
+    """
     def _init(self):
         """
         Initialize paths

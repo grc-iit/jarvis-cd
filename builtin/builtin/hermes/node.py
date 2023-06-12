@@ -1,4 +1,10 @@
+"""
+Hermes is an I/O buffering system. This file provides tools to configure
+and deploy Hermes alongside an application.
+"""
+
 from jarvis_cd.basic.node import Service
+#
 from jarvis_util import *
 import pandas as pd
 import subprocess
@@ -6,6 +12,9 @@ import time
 
 
 class Hermes(Service):
+    """
+    Provide methods to
+    """
     def _init(self):
         """
         Initialize paths
@@ -134,7 +143,7 @@ class Hermes(Service):
         domain = list(net_info['domain'].unique())[0]
         hostfile_path = self.jarvis.hostfile.path
         if hostfile_path is None:
-            hostfile_path = ""
+            hostfile_path = ''
         hermes_server['rpc'] = {
             'host_file': hostfile_path,
             'protocol': protocol,

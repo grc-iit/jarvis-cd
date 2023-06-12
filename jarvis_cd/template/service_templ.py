@@ -1,8 +1,16 @@
+"""
+This module provides classes and methods to launch the MyRepo service.
+MyRepo is ....
+"""
+
 from jarvis_cd.basic.node import Service
 from jarvis_util import *
 
 
 class MyRepo(Service):
+    """
+    This class provides methods to launch the MyRepo service.
+    """
     def _init(self):
         """
         Initialize paths
