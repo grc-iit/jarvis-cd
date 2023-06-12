@@ -160,7 +160,7 @@ class Hermes(Service):
             'flushing_mode': 'kAsync'
         }
         if self.config['output_dir'] is not None:
-            hermes_client['path_inclusions'] = self.config['output_dir']
+            hermes_client['path_inclusions'].append(self.config['output_dir'])
         hermes_client_yaml = f'{self.shared_dir}/hermes_client.yaml'
         YamlFile(hermes_client_yaml).save(hermes_client)
         self.env['HERMES_CLIENT_CONF'] = hermes_client_yaml

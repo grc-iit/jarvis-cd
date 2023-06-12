@@ -224,7 +224,8 @@ class Node(ABC):
         :param env: The environment dict
         :return:
         """
-        self.env.update(env)
+        env.update(self.env)
+        self.env = env
 
     def build_env(self, env_track_dict=None):
         """
@@ -407,7 +408,7 @@ class SimpleNode(Node):
         The kwargs to pack with default values
 
         :param kwargs: the key-word arguments to fill default values for
-        :param rebuild: whether to consider the old self.config or rebuild
+        :param rebuild: whether to reinitialize self.config
         from self.conifgure_menu
         :return:
         """
