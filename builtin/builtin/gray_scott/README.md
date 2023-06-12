@@ -44,8 +44,6 @@ jarvis pipeline create gray-scott-test
 Create the environment variables needed by Gray Scott
 ```bash
 spack load mpi
-ADIOSVM_PATH=/path/to/adiosvm
-GRAY_SCOTT_PATH=${ADIOSVM_PATH}/Tutorial/gs-mpiio/build
 export PATH="${GRAY_SCOTT_PATH}:$PATH"
 ```````````
 
