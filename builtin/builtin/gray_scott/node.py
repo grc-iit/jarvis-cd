@@ -114,7 +114,8 @@ class GrayScott(Application):
             adios_dir = os.path.join(os.getcwd(), 'gray-scott')
             self.config['output'] = os.path.join(adios_dir,
                                                  'data')
-            os.makedirs(adios_dir, exist_ok=True)
+            Mkdir(adios_dir, PsshExecInfo(hostfile=self.jarvis.hostfile,
+                                          env=self.env))
         settings_json = {
             'L': self.config['L'],
             'Du': self.config['Du'],
@@ -128,6 +129,9 @@ class GrayScott(Application):
             'output': self.config['output'],
             'adios_config': f'{self.shared_dir}/adios2.xml'
         }
+        output_dir = os.path.basename(self.config['output'])
+        Mkdir(output_dir, PsshExecInfo(hostfile=self.jarvis.hostfile,
+                                       env=self.env))
         JsonFile(self.settings_json_path).save(settings_json)
         self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
                                 self.adios2_xml_path)

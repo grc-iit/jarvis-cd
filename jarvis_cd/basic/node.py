@@ -535,6 +535,16 @@ class Pipeline(Node):
         node.update_env(self.env)
         node.configure(**kwargs)
 
+    def update(self):
+        """
+        Re-run configure on all sub-nodes.
+
+        :return:
+        """
+        for node in self.sub_nodes:
+            node.configure()
+        return self
+
     def run(self):
         self.start()
         self.stop()

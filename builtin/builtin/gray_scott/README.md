@@ -4,12 +4,14 @@ Gray-Scott is a 3D 7-Point stencil code
 
 ```bash
 git clone https://github.com/pnorbert/adiosvm
-cd adiosvm/Tutorial/gs-mpiio
+pushd adiosvm/Tutorial/gs-mpiio
 mkdir build
-cd build
+pushd build
 cmake ../ -DCMAKE_BUILD_TYPE=Release
 make -j8
 export GRAY_SCOTT_PATH=`pwd`
+popd
+popd
 ```
 
 # Gray Scott
