@@ -1,8 +1,16 @@
+"""
+This module provides classes and methods to inject the HermesMpiio interceptor.
+HermesMpiio intercepts the MPI I/O calls used by a native MPI program and
+routes it to Hermes.
+"""
 from jarvis_cd.basic.node import Interceptor
 from jarvis_util import *
 
 
 class HermesMpiio(Interceptor):
+    """
+    This class provides methods to inject the HermesMpiio interceptor.
+    """
     def _init(self):
         """
         Initialize paths
@@ -30,7 +38,7 @@ class HermesMpiio(Interceptor):
         self.update_config(kwargs, rebuild=False)
         self.config['HERMES_MPIIO'] = self.find_library('hermes_mpiio')
         if self.config['HERMES_MPIIO'] is None:
-            raise Exception("Failed to find hermes_mpiio")
+            raise Exception('')
         print(f'Found libhermes_mpiio.so at {self.config["HERMES_MPIIO"]}')
 
     def modify_env(self):

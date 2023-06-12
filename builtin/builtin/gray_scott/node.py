@@ -1,8 +1,16 @@
+"""
+This module provides classes and methods to launch the Gray Scott application.
+Gray Scott is a 3D 7-point stencil code for modeling the diffusion of two
+substances.
+"""
 from jarvis_cd.basic.node import Application
 from jarvis_util import *
 
 
 class GrayScott(Application):
+    """
+    This class provides methods to launch the GrayScott application.
+    """
     def _init(self):
         """
         Initialize paths
@@ -108,17 +116,17 @@ class GrayScott(Application):
                                                  'data')
             os.makedirs(adios_dir, exist_ok=True)
         settings_json = {
-            "L": self.config['L'],
-            "Du": self.config['Du'],
-            "Dv": self.config['Dv'],
-            "F": self.config['F'],
-            "k": self.config['k'],
-            "dt": self.config['dt'],
-            "plotgap": self.config['plotgap'],
-            "steps": self.config['steps'],
-            "noise": self.config['noise'],
-            "output": self.config['output'],
-            "adios_config": f'{self.shared_dir}/adios2.xml'
+            'L': self.config['L'],
+            'Du': self.config['Du'],
+            'Dv': self.config['Dv'],
+            'F': self.config['F'],
+            'k': self.config['k'],
+            'dt': self.config['dt'],
+            'plotgap': self.config['plotgap'],
+            'steps': self.config['steps'],
+            'noise': self.config['noise'],
+            'output': self.config['output'],
+            'adios_config': f'{self.shared_dir}/adios2.xml'
         }
         JsonFile(self.settings_json_path).save(settings_json)
         self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
@@ -133,8 +141,7 @@ class GrayScott(Application):
         """
         print(self.env['HERMES_CLIENT_CONF'])
         Exec(f'gray-scott {self.settings_json_path}',
-             MpiExecInfo(nprocs=1,
-             # MpiExecInfo(nprocs=self.config['nprocs'],
+             MpiExecInfo(nprocs=MpiExecInfo(nprocs=self.config['nprocs']),
                          ppn=self.config['ppn'],
                          hostfile=self.jarvis.hostfile,
                          env=self.env))
