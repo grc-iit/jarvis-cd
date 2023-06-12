@@ -8,6 +8,8 @@ cd adiosvm/Tutorial/gs-mpiio
 mkdir build
 cd build
 cmake ../ -DCMAKE_BUILD_TYPE=Release
+make -j8
+export GRAY_SCOTT_PATH=`pwd`
 ```
 
 # Gray Scott
@@ -106,9 +108,7 @@ jarvis pipeline create gs-hermes
 Create the environment variables needed by Hermes + Gray Scott
 ```bash
 spack load hermes
-ADIOSVM_PATH=/path/to/adiosvm
-GRAY_SCOTT_PATH=${ADIOSVM_PATH}/Tutorial/gs-mpiio
-export PATH="${GRAY_SCOTT_PATH}/build:$PATH"
+export PATH="${GRAY_SCOTT_PATH}:$PATH"
 ```
 
 Store the current environment in the pipeline.
