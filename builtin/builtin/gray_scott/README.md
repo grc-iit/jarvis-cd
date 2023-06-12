@@ -49,7 +49,7 @@ export PATH="${GRAY_SCOTT_PATH}:$PATH"
 
 Store the current environment in the pipeline.
 ```bash
-jarvis build env
+jarvis pipeline env build
 ```
 
 ## 4. Add Nodes to the Pipeline
@@ -63,14 +63,14 @@ jarvis pipeline append gray_scott
 
 Run the experiment
 ```bash
-jarvis run
+jarvis pipeline run
 ```
 
 ## 6. Clean Data
 
 Clean data produced by Gray Scott
 ```bash
-jarvis clean
+jarvis pipeline clean
 ```
 
 # Gray Scott With Hermes
@@ -83,7 +83,7 @@ done this for a different pipeline.
 
 If you are running distributed tests, set path to the hostfile you are  using.
 ```bash
-jarvis hostfile set 
+jarvis hostfile set /path/to/hostfile.txt
 ```
 
 Next, collect the resources from each of those nodes. Walkthrough will give
