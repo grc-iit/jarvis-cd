@@ -141,7 +141,7 @@ class GrayScott(Application):
         """
         print(self.env['HERMES_CLIENT_CONF'])
         Exec(f'gray-scott {self.settings_json_path}',
-             MpiExecInfo(nprocs=MpiExecInfo(nprocs=self.config['nprocs']),
+             MpiExecInfo(nprocs=self.config['nprocs'],
                          ppn=self.config['ppn'],
                          hostfile=self.jarvis.hostfile,
                          env=self.env))
