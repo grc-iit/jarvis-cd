@@ -1,0 +1,7 @@
+CONFIG_DIR: /tmp/jarvis
+CUR_PIPELINE: test_pipeline
+PRIVATE_DIR: /tmp/jarvis
+REPOS:
+- name: builtin
+  path: /home/lukemartinlogan/Documents/Projects/PhD/jarvis-cd/builtin
+SHARED_DIR: null

@@ -1,52 +1,45 @@
-# Jarvis-CD
+Jarvis-cd is a unified platform for deploying various applications, including
+storage systems and benchmarks. Many applications have complex configuration
+spaces and are difficult to deploy across different machines.
 
-Jarvis CD is a continuous deployment software.
+We provide a builtin repo which contains various applications to deploy.
+We refer to applications as "jarivs nodes" which can be connected to form
+"deployment pipelines".
+
+Check out our wiki [here](https://github.com/scs-lab/jarvis-cd/wiki) 
+for more details. 
 
 ## Dependencies
 
-### SCSPKG
-
-```
-git clone https://github.com/lukemartinlogan/scspkg.git
-cd /path/to/scspkg
-bash install.sh
-source ~/.bashrc
-```
-
-## Install Jarvis
-
-This install script will install jarvis for the particular user
-(it is not system-wide).
+Jarvis-CD depends on jarvis-util. jarvis-util contains functions to execute
+binaries in python and collect their output.
 
 ```bash
-cd /path/to/jarvis_cd
-bash install.sh
-source ~/.bashrc
+git clone https://github.com/scs-lab/jarvis-util.git
+cd jarvis-util
+python3 -m pip install -r requirements.txt
+python3 -m pip install -e .
 ```
 
-## General Commands
+## Installation
 
+### 1. Install the jarvis-cd python package
 ```bash
-jarvis [launcher] [operation] --conf /path/to/config
-#Initialize a service (e.g., may all
-jarvis lustre init --conf config.ini
-#Starts an already-initialized service
-jarvis lustre start --conf config.ini
-#Calls init + start
-jarvis lustre setup --conf config.ini
-jarvis lustre stop --conf config.ini
-jarvis lustre clean --conf config.ini
-jarvis lustre reset --conf config.ini
+cd /path/to/jarvis-cd
+python3 -m pip install -r requirements.txt
+python3 -m pip install -e .
 ```
 
-## Deploy Orangefs
-
+### 2. Generate the jarvis configuration file.
 ```bash
-# sample ini can be found and overriden at launchers/orangefs/default.ini
-jarvis orangefs start --conf config.ini
+jarvis init [CONFIG_DIR] [PRIVATE_DIR] [SHARED_DIR (optional)]
 ```
 
-## Undeploy Orangefs
-```bash
-jarvis orangefs stop --conf config.ini
-```
+* **CONFIG_DIR:** A directory where jarvis metadata for nodes and pipelines
+are stored. This directory can be anywhere that the current user can access.
+* **PRIVATE_DIR:** A directory which is common across all machines, but
+stores data locally to the machine. Some jarvis nodes require certain data to
+be stored per-machine. OrangeFS is an example.
+* **SHARED_DIR:** A directory which is common across all machines, where
+each machine has the same view of data in the directory. Not all jarvis
+nodes require a SHARED_DIR.
