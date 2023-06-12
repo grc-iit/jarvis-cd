@@ -3,6 +3,9 @@ from jarvis_util import *
 
 
 class Second(Interceptor):
+    def _init(self):
+        pass
+
     def _configure_menu(self):
         """
         Create a CLI menu for the configurator method.

@@ -37,9 +37,11 @@ jarvis init [CONFIG_DIR] [PRIVATE_DIR] [SHARED_DIR (optional)]
 
 * **CONFIG_DIR:** A directory where jarvis metadata for nodes and pipelines
 are stored. This directory can be anywhere that the current user can access.
+This can be stored local to a particular machine or on a PFS.
 * **PRIVATE_DIR:** A directory which is common across all machines, but
 stores data locally to the machine. Some jarvis nodes require certain data to
-be stored per-machine. OrangeFS is an example.
+be stored per-machine. OrangeFS is an example. /tmp for example is typically
+private.
 * **SHARED_DIR:** A directory which is common across all machines, where
 each machine has the same view of data in the directory. Not all jarvis
-nodes require a SHARED_DIR.
+nodes require a SHARED_DIR. The SHARED_DIR could be on a PFS, for example.

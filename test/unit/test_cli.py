@@ -41,8 +41,8 @@ class TestCli(TestCase):
     def test_jarvis_create_cd_rm(self):
         self.jarvis = JarvisManager.get_instance()
         # Create pipelines
-        Exec('jarvis create test_pipeline')
-        Exec('jarvis create test_pipeline2')
+        Exec('jarvis pipeline create test_pipeline')
+        Exec('jarvis pipeline create test_pipeline2')
         self.assertTrue(os.path.exists(
             f'{self.jarvis.config_dir}/test_pipeline'))
         self.assertTrue(os.path.exists(
@@ -58,12 +58,12 @@ class TestCli(TestCase):
         # Get path to the pipeline
         node = Exec('jarvis path test_pipeline',
                     LocalExecInfo(collect_output=True))
-        path = node.stdout.strip()
+        path = node.stdout['localhost'].strip()
         self.assertEqual(path, f'{self.jarvis.config_dir}/test_pipeline')
 
         # Delete the pipelines
-        Exec('jarvis destroy test_pipeline')
-        Exec('jarvis destroy test_pipeline2')
+        Exec('jarvis pipeline destroy test_pipeline')
+        Exec('jarvis pipeline destroy test_pipeline2')
         self.assertFalse(
             os.path.exists(f'{self.jarvis.config_dir}/test_pipeline'))
         self.assertFalse(
@@ -73,56 +73,56 @@ class TestCli(TestCase):
         self.jarvis = JarvisManager.get_instance()
 
         # Remove the pipeline
-        Exec('jarvis destroy test_pipeline')
+        Exec('jarvis pipeline destroy test_pipeline')
         self.assertTrue(
             not os.path.exists(f'{self.jarvis.config_dir}/test_pipeline'))
         self.rm_test_repo()
 
         # Create the pipeline
         self.add_test_repo()
-        Exec('jarvis create test_pipeline')
+        Exec('jarvis pipeline create test_pipeline')
         self.assertTrue(
             os.path.exists(f'{self.jarvis.config_dir}/test_pipeline'))
-        exec_node = Exec('jarvis append first --port=22 --devices=[[nvme,1]]',
+        exec_node = Exec('jarvis pipeline append first --port=22 --devices=[[nvme,1]]',
                          LocalExecInfo(collect_output=True))
         self.assertTrue(
             os.path.exists(f'{self.jarvis.config_dir}/test_pipeline/first'))
         config_dict = yaml.safe_load(exec_node.stdout['localhost'])
         self.assertTrue(config_dict['port'] == 22)
         self.assertTrue(config_dict['devices'] == [['nvme', 1]])
-        Exec('jarvis append second')
+        Exec('jarvis pipeline append second')
         self.assertTrue(
             os.path.exists(f'{self.jarvis.config_dir}/test_pipeline/second'))
-        Exec('jarvis append third')
+        Exec('jarvis pipeline append third')
         self.assertTrue(
             os.path.exists(f'{self.jarvis.config_dir}/test_pipeline/third'))
 
         # Start the pipeline
-        exec_node = Exec('jarvis start', LocalExecInfo(collect_output=True))
+        exec_node = Exec('jarvis pipeline start', LocalExecInfo(collect_output=True))
         expected_lines = ['first start',
                           'second modify_env',
                           'third start']
         self.verify_pipeline(exec_node.stdout, expected_lines)
 
         # Stop the pipeline
-        exec_node = Exec('jarvis stop', LocalExecInfo(collect_output=True))
+        exec_node = Exec('jarvis pipeline stop', LocalExecInfo(collect_output=True))
         expected_lines = ['third stop',
                           'first stop']
         self.verify_pipeline(exec_node.stdout, expected_lines)
 
         # Clean the pipeline
-        exec_node = Exec('jarvis clean', LocalExecInfo(collect_output=True))
+        exec_node = Exec('jarvis pipeline clean', LocalExecInfo(collect_output=True))
         expected_lines = ['third clean',
                           'first clean']
         self.verify_pipeline(exec_node.stdout, expected_lines)
 
         # Status the pipeline
-        exec_node = Exec('jarvis status', LocalExecInfo(collect_output=True))
+        exec_node = Exec('jarvis pipeline status', LocalExecInfo(collect_output=True))
         expected_lines = ['first status']
         self.verify_pipeline(exec_node.stdout, expected_lines)
 
         # Remove the pipeline
-        Exec('jarvis destroy test_pipeline')
+        Exec('jarvis pipeline destroy test_pipeline')
         self.assertTrue(
             not os.path.exists(f'{self.jarvis.config_dir}/test_pipeline'))
         self.rm_test_repo()
