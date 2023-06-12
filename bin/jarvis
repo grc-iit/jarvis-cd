@@ -42,6 +42,10 @@ class JarvisArgs(ArgParse):
             }
         ])
 
+        # jarvis bootstrap
+        self.add_menu('bootstrap',
+                      msg='Bootstrap jarvis from a particular machine')
+
         # jarvis bootstrap from
         self.add_menu('bootstrap from',
                       msg='Initialize jarvis from an existing machine')
@@ -70,6 +74,10 @@ class JarvisArgs(ArgParse):
                 'default': None
             },
         ])
+
+        # jarvis resource-graph
+        self.add_menu('resource-graph',
+                      msg='Resources to build a resource graph for a machine')
 
         # jarvis resource-graph init
         self.add_menu('resource-graph init',
@@ -184,6 +192,10 @@ class JarvisArgs(ArgParse):
         ])
 
     def define_repo_opts(self):
+        # jarvis repo
+        self.add_menu('repo',
+                      msg='Tools to manage the Jarvis repos')
+
         # jarvis repo add
         self.add_menu('repo add',
                       msg='Register a jarvis repo')
@@ -259,46 +271,6 @@ class JarvisArgs(ArgParse):
         ])
 
     def define_pipeline_opts(self):
-        # jarvis create
-        self.add_menu('create',
-                      msg='Create a pipeline')
-        self.add_args([
-            {
-                'name': 'pipeline_id',
-                'msg': 'A unique name for this pipeline',
-                'required': True,
-                'pos': True,
-                'default': None
-            },
-        ])
-
-        # jarvis list
-        self.add_menu('list',
-                      msg='List all created pipelines')
-        self.add_args([
-            {
-                'name': 'pipeline_id',
-                'msg': 'The pipeline to list. Default None to list the'
-                       'set of pipelines',
-                'required': False,
-                'pos': True,
-                'default': None
-            },
-        ])
-
-        # jarvis view nodes
-        self.add_menu('view nodes', msg="List all nodes in a pipeline.")
-        self.add_args([
-            {
-                'name': 'pipeline_id',
-                'msg': 'The pipeline to list. Default None to list the'
-                       'set of pipelines',
-                'required': False,
-                'pos': True,
-                'default': None
-            },
-        ])
-
         # jarvis cd
         self.add_menu('cd',
                       msg='Make all jarvis operations apply to a '
@@ -333,8 +305,52 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarvis delete
-        self.add_menu('destroy', msg='Delete a pipeline')
+        # jarvis pipeline
+        self.add_menu('pipeline',
+                      msg='Tools to create + edit a pipeline')
+
+        # jarvis pipeline list
+        self.add_menu('pipeline list',
+                      msg='List all created pipelines')
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'The pipeline to list. Default None to list the'
+                       'set of pipelines',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis pipeline create
+        self.add_menu('pipeline create',
+                      msg='Create a pipeline')
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'A unique name for this pipeline',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis pipeline print
+        self.add_menu('pipeline print', msg="List all nodes in a pipeline.")
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'The pipeline to list. Default None to list the'
+                       'set of pipelines',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis pipeline destroy
+        self.add_menu('pipeline destroy', msg='Delete a pipeline')
         self.add_args([
             {
                 'name': 'pipeline_id',
@@ -347,8 +363,8 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarvis append
-        self.add_menu('append',
+        # jarvis pipeline append
+        self.add_menu('pipeline append',
                       msg='Append a node to a pipeline',
                       keep_remainder=True)
         self.add_args([
@@ -370,8 +386,34 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarvis configure
-        self.add_menu('configure',
+        # pipeline env build
+        self.add_menu('pipeline env build',
+                      msg="Cache relevant environment vars. Use +ENV_VAR and"
+                          "-ENV_VAR in remainder list to indicate whether "
+                          "to track certain variables.",
+                      keep_remainder=True,
+                      remainder_as_kv=True)
+
+        # jarvis pipeline env scan
+        self.add_menu('pipeline env scan',
+                      msg="Reload environment vars. Use +ENV_VAR to indicate"
+                          "which variables to track.",
+                      keep_remainder=True,
+                      remainder_as_kv=True)
+
+        # jarvis pipeline env track
+        self.add_menu('pipeline env track',
+                      msg="Add or remove environment vars. Use +ENV_VAR and"
+                          "-ENV_VAR in remainder list to indicate whether "
+                          "to track certain variables.",
+                      keep_remainder=True)
+
+        # jarvis pipeline
+        self.add_menu('node',
+                      msg='Tools to edit nodes in a pipeline')
+
+        # jarvis node configure
+        self.add_menu('node configure',
                       msg="Configure a node in the pipeline",
                       keep_remainder=True)
         self.add_args([
@@ -385,8 +427,8 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarvis unlink
-        self.add_menu('unlink', msg="Unlink a node from the pipeline.")
+        # jarvis node unlink
+        self.add_menu('node unlink', msg="Unlink a node from the pipeline.")
         self.add_args([
             {
                 'name': 'node_id',
@@ -398,8 +440,8 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarvis remove
-        self.add_menu('remove', msg="Remove a node from the pipeline.")
+        # jarvis node remove
+        self.add_menu('node remove', msg="Remove a node from the pipeline.")
         self.add_args([
             {
                 'name': 'node_id',
@@ -410,44 +452,26 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarvis build env
-        self.add_menu('build env',
-                      msg="Cache relevant environment vars. Use +ENV_VAR and"
-                          "-ENV_VAR in remainder list to indicate whether "
-                          "to track certain variables.",
-                      keep_remainder=True,
-                      remainder_as_kv=True)
-
-        # jarvis track env
-        self.add_menu('scan env',
-                      msg="Reload environment vars. Use +ENV_VAR to indicate"
-                          "which variables to track.",
-                      keep_remainder=True,
-                      remainder_as_kv=True)
-
-        # jarvis scan env
-        self.add_menu('track env',
-                      msg="Add or remove environment vars. Use +ENV_VAR and"
-                          "-ENV_VAR in remainder list to indicate whether "
-                          "to track certain variables.",
-                      keep_remainder=True)
-
-        # jarvis [run/start/stop/clean/status]
-        self.add_menu('run',
+        # jarvis pipeline [run/start/stop/clean/status]
+        self.add_menu('pipeline run',
                       msg="Run + terminate a pipeline",
                       keep_remainder=True)
-        self.add_menu('start',
+        self.add_menu('pipeline start',
                       msg="Start a pipeline",
                       keep_remainder=True)
-        self.add_menu('stop',
+        self.add_menu('pipeline stop',
                       msg="Stop a pipeline",
                       keep_remainder=True)
-        self.add_menu('clean',
+        self.add_menu('pipeline clean',
                       msg="Clean a pipeline",
                       keep_remainder=True)
-        self.add_menu('status',
+        self.add_menu('pipeline status',
                       msg="Get the status of a pipeline",
                       keep_remainder=True)
+
+    """
+    INITIALIZATION CLI
+    """
 
     def init(self):
         self.jarvis.create(self.kwargs['CONFIG_DIR'],
@@ -459,6 +483,10 @@ class JarvisArgs(ArgParse):
 
     def bootstrap_list(self):
         self.jarvis.bootstrap_list()
+
+    """
+    RESOURCE GRAPH CLI
+    """
 
     def hostfile_set(self):
         self.jarvis.set_hostfile(self.kwargs['HOSTFILE'])
@@ -507,6 +535,10 @@ class JarvisArgs(ArgParse):
             self.kwargs['hosts'] = self.jarvis.hostfile
         del self.kwargs['hostfile']
 
+    """
+    REPO CLI
+    """
+
     def repo_add(self):
         self.jarvis.add_repo(self.kwargs['repo_path'])
         self.jarvis.save()
@@ -531,6 +563,10 @@ class JarvisArgs(ArgParse):
         else:
             self.jarvis.list_repos()
 
+    """
+    PIPELINE CLI
+    """
+
     def cd(self):
         self.jarvis.cd(self.kwargs['pipeline_id'])
         self.jarvis.save()
@@ -548,53 +584,54 @@ class JarvisArgs(ArgParse):
     def getcwd(self):
         print(self.jarvis.cur_pipeline)
 
-    def create(self):
+    def pipeline_list(self):
+        for pipeline_ctx in self.jarvis.list_pipelines():
+            print(pipeline_ctx)
+
+    def pipeline_create(self):
         pipeline_id = self.kwargs['pipeline_id']
         Pipeline().create(pipeline_id).save()
         self.jarvis.cd(pipeline_id)
         self.jarvis.save()
 
-    def destroy(self):
+    def pipeline_destroy(self):
         pipeline_id = self.kwargs['pipeline_id']
         Pipeline().load(pipeline_id).destroy()
         self.jarvis.save()
 
-    def list(self):
-        for pipeline_ctx in self.jarvis.list_pipelines():
-            print(pipeline_ctx)
-
-    def view_nodes(self):
+    def pipeline_print(self):
         pipeline_id = self.kwargs['pipeline_id']
         Pipeline().load(pipeline_id).view_nodes()
 
-    def build_env(self):
+    def pipeline_env_build(self):
         Pipeline().load().build_env(self.kwargs).save()
 
-    def track_env(self):
+    def pipeline_env_track(self):
         Pipeline().load().track_env(self.kwargs.keys()).save()
 
-    def scan_env(self):
+    def pipeline_env_scan(self):
         Pipeline().load().scan_env(self.kwargs).save()
 
-    def append(self):
+    def pipeline_append(self):
         node_id = self.kwargs['node_id']
         if node_id is None:
             node_id = self.kwargs['node_type']
         pipeline = Pipeline().load().\
-            append(self.kwargs['node_type'], node_id)
+            append(self.kwargs['node_type'], node_id,
+                   do_configure=False)
         node = pipeline.get_node(node_id)
         menu = node.configure_menu()
         args = NodeArgParse(args=self.remainder, menu=menu)
         node.configure(**args.kwargs)
         pipeline.save()
 
-    def unlink(self):
+    def node_unlink(self):
         Pipeline().load().unlink(self.kwargs['node_id']).save()
 
-    def remove(self):
+    def node_remove(self):
         Pipeline().load().remove(self.kwargs['node_id']).save()
 
-    def configure(self):
+    def node_configure(self):
         pipeline = Pipeline().load()
         node = pipeline.get_node(self.kwargs['node_id'])
         menu = node.configure_menu()
@@ -602,19 +639,19 @@ class JarvisArgs(ArgParse):
         node.configure(**args.kwargs)
         pipeline.save()
 
-    def run(self):
+    def pipeline_run(self):
         Pipeline().load().run()
 
-    def start(self):
+    def pipeline_start(self):
         Pipeline().load().start()
 
-    def stop(self):
+    def pipeline_stop(self):
         Pipeline().load().stop()
 
-    def clean(self):
+    def pipeline_clean(self):
         Pipeline().load().clean()
 
-    def status(self):
+    def pipeline_status(self):
         Pipeline().load().status()
 
 

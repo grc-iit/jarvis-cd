@@ -141,12 +141,13 @@ class Node(ABC):
         except FileNotFoundError:
             pass
 
-    def append(self, node_type, node_id=None, **kwargs):
+    def append(self, node_type, node_id=None, do_configure=True, **kwargs):
         """
         Create and append a node to the pipeline
 
         :param node_type: The type of node to create (e.g., OrangeFS)
         :param node_id: Semantic name of the node to create
+        :param do_configure: Whether to configure while appending
         :param kwargs: Any parameters the user want to configure in the node
         :return: self
         """
@@ -158,8 +159,9 @@ class Node(ABC):
             raise Exception(f'Cloud not find node: {node_type}')
         context = f'{self.context}.{node_id}'
         node.create(context)
-        node.update_env(self.env)
-        node.configure(**kwargs)
+        if do_configure:
+            node.update_env(self.env)
+            node.configure(**kwargs)
         self.sub_nodes.append(node)
         return self
 
