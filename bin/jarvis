@@ -493,7 +493,7 @@ class JarvisArgs(ArgParse):
     """
 
     def hostfile_set(self):
-        self.jarvis.set_hostfile(self.kwargs['HOSTFILE'])
+        self.jarvis.set_hostfile(self.kwargs['path'])
         pipelines = self.jarvis.list_pipelines()
         for pipeline in pipelines:
             Pipeline().load(pipeline).configure()
