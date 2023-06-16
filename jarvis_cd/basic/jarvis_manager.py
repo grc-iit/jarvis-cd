@@ -12,6 +12,7 @@ from jarvis_util.util.expand_env import expand_env
 from jarvis_util.util.hostfile import Hostfile
 from jarvis_util.introspect.system_info import ResourceGraph
 from jarvis_util.shell.pssh_exec import PsshExecInfo
+import getpass
 
 
 class JarvisManager:
@@ -30,25 +31,53 @@ class JarvisManager:
     def __init__(self):
         self.jarvis_root = str(
             pathlib.Path(__file__).parent.parent.parent.resolve())
+        # The current user
+        self.user = getpass.getuser()
+        # Where Jarvis stores pipeline data (per-user)
+        self.config_dir = None
+        # Where Jarvis stores data locally to a node (per-user)
+        self.private_dir = None
+        # Where Jarvis stores data in a shared directory (per-user)
+        self.shared_dir = None
+        # The current pipeline (per-user)
+        self.cur_pipeline = None
+        # The path to the global jarvis configuration (root user)
         self.jarvis_conf_path = os.path.join(self.jarvis_root,
                                              'config',
                                              'jarvis_config.yaml')
-        self.config_dir = None
-        self.private_dir = None
-        self.shared_dir = None
-        self.cur_pipeline = None
+        # The path to the user jarvis configuration (per-user)
+        self.jarvis_user_conf_path = os.path.join(self.jarvis_root,
+                                                  'config',
+                                                  self.user,
+                                                  'jarvis_config.yaml')
+        # The Jarvis configuration (per-user)
         self.jarvis_conf = None
-        self.resource_graph = None
-        self.hostfile = None
-        self.repos = []
+        #  The path to the jarvis resource graph (global across users)
         self.resource_graph_path = os.path.join(self.jarvis_root,
                                                 'config',
                                                 'resource_graph.yaml')
+        # The Jarvis resource graph (global across users)
+        self.resource_graph = None
+        self.hostfile = None
+        self.repos = []
         self.load()
+
+    def split_user_global_conf(self):
+        global_conf = {
+            'CONFIG_DIR': self.config_dir,
+            'PRIVATE_DIR': self.private_dir,
+            'SHARED_DIR': self.shared_dir,
+            'REPOS': self.repos,
+        }
+        user_conf = {
+            'HOSTFILE': self.hostfile.path,
+            'CUR_PIPELINE': self.cur_pipeline
+        }
+        return global_conf, user_conf
 
     def create(self, config_dir, private_dir, shared_dir=None):
         """
-        Create a new jarvis config under config/jarvis_config.yaml
+        Create a new root jarvis config under config/$USER/jarvis_config.yaml
 
         :param config_dir: the directory where jarvis stores pipeline
         metadata
@@ -59,17 +88,20 @@ class JarvisManager:
         :return: None
         """
         self.jarvis_conf = {
+            # Global parameters
             'CONFIG_DIR': config_dir,
             'PRIVATE_DIR': private_dir,
             'SHARED_DIR': shared_dir,
+            'REPOS': [],
+
+            # Per-user parameters
             'HOSTFILE': None,
             'CUR_PIPELINE': None,
-            'REPOS': [],
         }
         self.add_repo(f'{self.jarvis_root}/builtin')
         self.resource_graph = ResourceGraph()
         self.hostfile = Hostfile()
-        os.makedirs(f'{self.jarvis_root}/config', exist_ok=True)
+        os.makedirs(f'{self.jarvis_root}/config/{self.user}', exist_ok=True)
         self.save()
 
     def save(self):
@@ -78,11 +110,16 @@ class JarvisManager:
 
         :return: None
         """
+        # Update jarvis conf
         self.jarvis_conf['CUR_PIPELINE'] = self.cur_pipeline
         self.jarvis_conf['REPOS'] = self.repos
         self.jarvis_conf['HOSTFILE'] = self.hostfile.path
+        # Save global resource graph
         self.resource_graph.save(self.resource_graph_path)
-        YamlFile(self.jarvis_conf_path).save(self.jarvis_conf)
+        # Save global and per-user conf
+        global_conf, user_conf = self.split_user_global_conf()
+        YamlFile(self.jarvis_conf_path).save(global_conf)
+        YamlFile(self.jarvis_user_conf_path).save(user_conf)
 
     def load(self):
         """
@@ -92,21 +129,28 @@ class JarvisManager:
         """
         if not os.path.exists(self.jarvis_conf_path):
             return
-        self.jarvis_conf = YamlFile(self.jarvis_conf_path).load()
-        self.cur_pipeline = self.jarvis_conf['CUR_PIPELINE']
+        self.jarvis_conf = {}
+        # Read global jarvis conf
+        self.jarvis_conf.update(YamlFile(self.jarvis_conf_path).load())
         self.repos = self.jarvis_conf['REPOS']
-        self.config_dir = self.jarvis_conf['CONFIG_DIR']
-        self.private_dir = self.jarvis_conf['PRIVATE_DIR']
-        self.shared_dir = self.jarvis_conf['SHARED_DIR']
-        self.hostfile = Hostfile(hostfile=self.jarvis_conf['HOSTFILE'])
+        self.config_dir = f'{self.jarvis_conf["CONFIG_DIR"]}/{self.user}'
         os.makedirs(f'{self.config_dir}', exist_ok=True)
+        self.private_dir = f'{self.jarvis_conf["PRIVATE_DIR"]}/{self.user}'
         os.makedirs(f'{self.private_dir}', exist_ok=True)
-        if self.shared_dir is not None:
+        if self.jarvis_conf['SHARED_DIR'] is not None:
+            self.shared_dir = f'{self.jarvis_conf["SHARED_DIR"]}/{self.user}'
             os.makedirs(f'{self.shared_dir}', exist_ok=True)
+        # Read global resource graph
         if os.path.exists(self.resource_graph_path):
             self.resource_graph = ResourceGraph().load(self.resource_graph_path)
         else:
             self.resource_graph = ResourceGraph()
+        # Read user conf
+        if not os.path.exists(self.jarvis_user_conf_path):
+            return
+        self.jarvis_conf.update(YamlFile(self.jarvis_user_conf_path).load())
+        self.cur_pipeline = self.jarvis_conf['CUR_PIPELINE']
+        self.hostfile = Hostfile(hostfile=self.jarvis_conf['HOSTFILE'])
 
     def set_hostfile(self, path):
         """
