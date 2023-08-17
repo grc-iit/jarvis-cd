@@ -87,6 +87,9 @@ class JarvisManager:
         all nodes have the same view of the data
         :return: None
         """
+        self.config_dir = config_dir
+        self.private_dir = private_dir
+        self.shared_dir = shared_dir
         self.jarvis_conf = {
             # Global parameters
             'CONFIG_DIR': config_dir,
@@ -238,6 +241,10 @@ class JarvisManager:
         """
 
         repo_name = os.path.basename(path)
+        for repo in self.repos:
+            if repo['name'] == repo_name:
+                repo['path'] = path
+                return
         self.repos.insert(0, {
             'path': path,
             'name': repo_name
