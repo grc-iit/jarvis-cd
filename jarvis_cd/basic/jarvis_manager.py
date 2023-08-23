@@ -45,11 +45,6 @@ class JarvisManager:
         self.jarvis_conf_path = os.path.join(self.jarvis_root,
                                              'config',
                                              'jarvis_config.yaml')
-        # The path to the user jarvis configuration (per-user)
-        self.jarvis_user_conf_path = os.path.join(self.jarvis_root,
-                                                  'config',
-                                                  self.user,
-                                                  'jarvis_config.yaml')
         # The Jarvis configuration (per-user)
         self.jarvis_conf = None
         #  The path to the jarvis resource graph (global across users)
@@ -61,19 +56,6 @@ class JarvisManager:
         self.hostfile = None
         self.repos = []
         self.load()
-
-    def split_user_global_conf(self):
-        global_conf = {
-            'CONFIG_DIR': self.config_dir,
-            'PRIVATE_DIR': self.private_dir,
-            'SHARED_DIR': self.shared_dir,
-            'REPOS': self.repos,
-        }
-        user_conf = {
-            'HOSTFILE': self.hostfile.path,
-            'CUR_PIPELINE': self.cur_pipeline
-        }
-        return global_conf, user_conf
 
     def create(self, config_dir, private_dir, shared_dir=None):
         """
@@ -104,7 +86,7 @@ class JarvisManager:
         self.add_repo(f'{self.jarvis_root}/builtin')
         self.resource_graph = ResourceGraph()
         self.hostfile = Hostfile()
-        os.makedirs(f'{self.jarvis_root}/config/{self.user}', exist_ok=True)
+        os.makedirs(f'{self.jarvis_root}/config', exist_ok=True)
         self.save()
 
     def save(self):
@@ -120,9 +102,7 @@ class JarvisManager:
         # Save global resource graph
         self.resource_graph.save(self.resource_graph_path)
         # Save global and per-user conf
-        global_conf, user_conf = self.split_user_global_conf()
-        YamlFile(self.jarvis_conf_path).save(global_conf)
-        YamlFile(self.jarvis_user_conf_path).save(user_conf)
+        YamlFile(self.jarvis_conf_path).save(self.jarvis_conf)
 
     def load(self):
         """
@@ -148,10 +128,6 @@ class JarvisManager:
             self.resource_graph = ResourceGraph().load(self.resource_graph_path)
         else:
             self.resource_graph = ResourceGraph()
-        # Read user conf
-        if not os.path.exists(self.jarvis_user_conf_path):
-            return
-        self.jarvis_conf.update(YamlFile(self.jarvis_user_conf_path).load())
         self.cur_pipeline = self.jarvis_conf['CUR_PIPELINE']
         self.hostfile = Hostfile(hostfile=self.jarvis_conf['HOSTFILE'])
 
