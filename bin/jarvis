@@ -42,6 +42,10 @@ class JarvisArgs(ArgParse):
             }
         ])
 
+        # jarvis config print
+        self.add_menu('config print',
+                      msg='Print jarvis directories')
+
         # jarvis bootstrap
         self.add_menu('bootstrap',
                       msg='Bootstrap jarvis from a particular machine')
@@ -481,6 +485,9 @@ class JarvisArgs(ArgParse):
         self.jarvis.create(self.kwargs['CONFIG_DIR'],
                            self.kwargs['PRIVATE_DIR'],
                            self.kwargs['SHARED_DIR'])
+
+    def config_print(self):
+        self.jarvis.print_config()
 
     def bootstrap_from(self):
         self.jarvis.bootstrap_from(self.kwargs['MACHINE'])

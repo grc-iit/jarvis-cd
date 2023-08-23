@@ -69,9 +69,9 @@ class JarvisManager:
         all nodes have the same view of the data
         :return: None
         """
-        self.config_dir = config_dir
-        self.private_dir = private_dir
-        self.shared_dir = shared_dir
+        self.config_dir = expand_env(config_dir)
+        self.private_dir = expand_env(private_dir)
+        self.shared_dir = expand_env(shared_dir)
         self.jarvis_conf = {
             # Global parameters
             'CONFIG_DIR': config_dir,
@@ -116,12 +116,12 @@ class JarvisManager:
         # Read global jarvis conf
         self.jarvis_conf.update(YamlFile(self.jarvis_conf_path).load())
         self.repos = self.jarvis_conf['REPOS']
-        self.config_dir = f'{self.jarvis_conf["CONFIG_DIR"]}/{self.user}'
+        self.config_dir = expand_env(self.jarvis_conf["CONFIG_DIR"])
         os.makedirs(f'{self.config_dir}', exist_ok=True)
-        self.private_dir = f'{self.jarvis_conf["PRIVATE_DIR"]}/{self.user}'
+        self.private_dir = expand_env(self.jarvis_conf["PRIVATE_DIR"])
         os.makedirs(f'{self.private_dir}', exist_ok=True)
         if self.jarvis_conf['SHARED_DIR'] is not None:
-            self.shared_dir = f'{self.jarvis_conf["SHARED_DIR"]}/{self.user}'
+            self.shared_dir = expand_env(self.jarvis_conf["SHARED_DIR"])
             os.makedirs(f'{self.shared_dir}', exist_ok=True)
         # Read global resource graph
         if os.path.exists(self.resource_graph_path):
@@ -167,6 +167,11 @@ class JarvisManager:
         configs = os.listdir(f'{self.jarvis_root}/builtin/config')
         for config in configs:
             print(config)
+
+    def print_config(self):
+        print(self.config_dir)
+        print(self.shared_dir)
+        print(self.private_dir)
 
     def resource_graph_init(self):
         """
