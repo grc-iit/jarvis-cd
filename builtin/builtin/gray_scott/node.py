@@ -5,6 +5,7 @@ substances.
 """
 from jarvis_cd.basic.node import Application
 from jarvis_util import *
+import pathlib
 
 
 class GrayScott(Application):
@@ -167,4 +168,6 @@ class GrayScott(Application):
 
         :return: None
         """
-        Rm(self.config['output'])
+        output_dir = self.config['output'] + "*"
+        print(f'Removing {output_dir}')
+        Rm(output_dir)
