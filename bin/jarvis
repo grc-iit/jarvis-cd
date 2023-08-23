@@ -55,7 +55,7 @@ class JarvisArgs(ArgParse):
                       msg='Initialize jarvis from an existing machine')
         self.add_args([
             {
-                'name': 'MACHINE_NAME',
+                'name': 'MACHINE',
                 'msg': 'The machine to bootstrap from',
                 'required': True,
                 'pos': True
