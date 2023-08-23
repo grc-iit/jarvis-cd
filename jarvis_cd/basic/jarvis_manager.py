@@ -146,6 +146,7 @@ class JarvisManager:
         :param machine: The machine config to copy
         :return: None
         """
+        os.makedirs(f'{self.jarvis_root}/config', exist_ok=True)
         config_path = f'{self.jarvis_root}/builtin/config/{machine}.yaml'
         if os.path.exists(config_path):
             config = expand_env(YamlFile(config_path).load())
