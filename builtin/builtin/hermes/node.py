@@ -107,6 +107,8 @@ class Hermes(Service):
                                         count_per_node=count)
                         for dev_type, count in self.config['devices']]
             dev_df = sdf.concat(dev_list)
+        if len(dev_df) == 0:
+            raise Exception('Hermes needs at least on storage device')
 
         # Begin making Hermes config
         hermes_server = {
@@ -161,6 +163,7 @@ class Hermes(Service):
                     break
             if provider is None:
                 provider = opts[0]
+        print("Provider")
         net_info = net_info[lambda r: str(r['provider']) == provider,
                             ['provider', 'domain']]
         if len(net_info) == 0:
