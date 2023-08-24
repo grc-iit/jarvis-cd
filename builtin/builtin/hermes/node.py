@@ -150,7 +150,7 @@ class Hermes(Service):
                                       env=self.env))
 
         # Get network Info
-        net_info = rg.find_net_info(Hostfile())
+        net_info = rg.find_net_info()
         print(net_info)
         provider = self.config['provider']
         if provider is None:
