@@ -146,8 +146,8 @@ class Hermes(Service):
         # Get network Info
         net_info = rg.find_net_info(Hostfile())
         net_info = net_info[lambda r: r['provider'] == 'sockets']
-        protocol = net_info['provider'].unique().list()[0][0]
-        domain = net_info['domain'].unique().list()[0][0]
+        protocol = net_info[:, 'provider'].unique().list()[0][0]
+        domain = net_info[:, 'domain'].unique().list()[0][0]
         hostfile_path = self.jarvis.hostfile.path
         if hostfile_path is None:
             hostfile_path = ''
