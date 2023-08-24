@@ -1,19 +1,4 @@
 fs:
-- avail: 31675383808
-  block_size: '4096'
-  dev_type: ssd
-  device: /dev/sda2
-  fs_type: ext4
-  host: ares-comp-20-40g
-  model: LITEON CV1-SB32
-  mount: /
-  parent: /dev/sda
-  rota: false
-  sec_type: null
-  shared: false
-  size: 31675383808
-  tran: sata
-  uuid: b5a4bce5-434f-4479-9067-0a7a62fd60e3
 - avail: 107374182400
   block_size: null
   dev_type: hdd
@@ -59,21 +44,6 @@ fs:
   size: 512067475865
   tran: sata
   uuid: e004b698-1429-4f35-a665-3916df1a4cf0
-- avail: 314572800
-  block_size: '512'
-  dev_type: ssd
-  device: /dev/sda1
-  fs_type: vfat
-  host: ares-comp-20-40g
-  model: LITEON CV1-SB32
-  mount: /boot/efi
-  parent: /dev/sda
-  rota: false
-  sec_type: msdos
-  shared: false
-  size: 314572800
-  tran: sata
-  uuid: D5B9-74DF
 - avail: 1000190509056
   block_size: '4096'
   dev_type: hdd
