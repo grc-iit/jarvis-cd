@@ -153,7 +153,7 @@ class Hermes(Service):
         net_info = rg.find_net_info(Hostfile())
         provider = self.config['provider']
         if provider is None:
-            opts = list(net_info['provider'].unique().rows)
+            opts = net_info['provider'].unique().list()[0]
             order = ['sockets', 'tcp', 'verbs', 'ib']
             for opt in order:
                 if opt in opts:
@@ -162,7 +162,8 @@ class Hermes(Service):
             if provider is None:
                 provider = opts[0]
         print(net_info)
-        net_info = net_info[lambda r: r['provider'] == provider,
+        print(provider)
+        net_info = net_info[lambda r: str(r['provider']) == provider,
                             ['provider', 'domain']]
         print(net_info)
         net_info = net_info.rows[0]
