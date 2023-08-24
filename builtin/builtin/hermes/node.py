@@ -161,8 +161,11 @@ class Hermes(Service):
                     break
             if provider is None:
                 provider = opts[0]
+        print(net_info)
         net_info = net_info[lambda r: r['provider'] == provider,
-                            ['provider', 'domain']].rows[0]
+                            ['provider', 'domain']]
+        print(net_info)
+        net_info = net_info.rows[0]
         protocol = net_info[0]['provider']
         domain = net_info[0]['domain']
         hostfile_path = self.jarvis.hostfile.path
