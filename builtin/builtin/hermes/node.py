@@ -153,7 +153,7 @@ class Hermes(Service):
         net_info = rg.find_net_info()
         provider = self.config['provider']
         if provider is None:
-            opts = net_info['provider'].unique().list()[0]
+            opts = net_info['provider'].unique().list()
             order = ['sockets', 'tcp', 'udp', 'verbs', 'ib']
             for opt in order:
                 if opt in opts:
