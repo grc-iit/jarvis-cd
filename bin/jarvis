@@ -503,7 +503,7 @@ class JarvisArgs(ArgParse):
         self.jarvis.set_hostfile(self.kwargs['path'])
         pipelines = self.jarvis.list_pipelines()
         for pipeline in pipelines:
-            Pipeline().load(pipeline).configure().save()
+            Pipeline().load(pipeline).update().save()
         self.jarvis.save()
 
     def resource_graph_init(self):
