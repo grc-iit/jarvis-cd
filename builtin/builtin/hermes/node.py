@@ -6,7 +6,7 @@ and deploy Hermes alongside an application.
 from jarvis_cd.basic.node import Service
 #
 from jarvis_util import *
-import pandas as pd
+import jarvis_util.util.small_df as sdf
 import subprocess
 import time
 
@@ -100,7 +100,7 @@ class Hermes(Service):
                                         dev_types=dev_type,
                                         count_per_node=count)
                         for dev_type, count in self.config['devices']]
-            dev_df = pd.concat(dev_list)
+            dev_df = sdf.concat(dev_list)
 
         # Begin making Hermes config
         hermes_server = {
@@ -109,11 +109,13 @@ class Hermes(Service):
         }
 
         # Get storage info
-        devs = dev_df.to_dict('records')
+        devs = dev_df.rows
         for i, dev in enumerate(devs):
             dev_type = dev['dev_type']
             custom_name = f'{dev_type}_{i}'
             mount = os.path.expandvars(dev['mount'])
+            if len(mount) == 0:
+                continue
             if dev_type == 'nvme':
                 bandwidth = '1g'
                 latency = '60us'
@@ -124,11 +126,13 @@ class Hermes(Service):
                 bandwidth = '120MBps'
                 latency = '5ms'
             else:
-                raise Exception(f'Unkown device type: {dev_type}')
+                continue
+            if dev['avail'] is None:
+                dev['avail'] = .6 * dev['size']
             mount = f'{mount}/hermes_data'
             hermes_server['devices'][custom_name] = {
                 'mount_point': mount,
-                'capacity': int(.1 * float(dev['avail'])),
+                'capacity': int(.9 * float(dev['avail'])),
                 'block_size': '4kb',
                 'bandwidth': bandwidth,
                 'latency': latency,
@@ -141,9 +145,9 @@ class Hermes(Service):
 
         # Get network Info
         net_info = rg.find_net_info(self.jarvis.hostfile)
-        net_info = net_info[net_info.provider == 'sockets']
-        protocol = list(net_info['provider'].unique())[0]
-        domain = list(net_info['domain'].unique())[0]
+        net_info = net_info[lambda r: r['provider'] == 'sockets']
+        protocol = net_info['provider'].unique().list()[0][0]
+        domain = net_info['domain'].unique().list()[0][0]
         hostfile_path = self.jarvis.hostfile.path
         if hostfile_path is None:
             hostfile_path = ''
@@ -191,7 +195,6 @@ class Hermes(Service):
                                 LocalExecInfo(hostfile=self.jarvis.hostfile,
                                               env=self.env,
                                               exec_async=True))
-        print('Sleeping')
         time.sleep(self.config['sleep'])
         print('Done sleeping')
 

@@ -5,6 +5,7 @@ substances.
 """
 from jarvis_cd.basic.node import Application
 from jarvis_util import *
+import pathlib
 
 
 class GrayScott(Application):
@@ -111,7 +112,7 @@ class GrayScott(Application):
         """
         self.update_config(kwargs, rebuild=False)
         if self.config['output'] is None:
-            adios_dir = os.path.join(os.getcwd(), 'gray-scott')
+            adios_dir = os.path.join(self.shared_dir, 'gray-scott-output')
             self.config['output'] = os.path.join(adios_dir,
                                                  'data')
             Mkdir(adios_dir, PsshExecInfo(hostfile=self.jarvis.hostfile,
@@ -143,7 +144,7 @@ class GrayScott(Application):
 
         :return: None
         """
-        print(self.env['HERMES_CLIENT_CONF'])
+        # print(self.env['HERMES_CLIENT_CONF'])
         Exec(f'gray-scott {self.settings_json_path}',
              MpiExecInfo(nprocs=self.config['nprocs'],
                          ppn=self.config['ppn'],
@@ -166,4 +167,6 @@ class GrayScott(Application):
 
         :return: None
         """
-        Rm(self.config['output'])
+        output_dir = self.config['output'] + "*"
+        print(f'Removing {output_dir}')
+        Rm(output_dir)
