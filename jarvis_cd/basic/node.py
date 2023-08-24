@@ -63,6 +63,8 @@ class Node(ABC):
         :return: self
         """
 
+        if context is None:
+            context = ''
         self.context = context
         self.node_id = context.split('.')[-1]
         relpath = self.context.replace('.', '/')
