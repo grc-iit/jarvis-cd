@@ -6,7 +6,7 @@ and deploy Hermes alongside an application.
 from jarvis_cd.basic.node import Service
 #
 from jarvis_util import *
-import pandas as pd
+import jarvis_util.util.small_df as sdf
 import subprocess
 import time
 
@@ -100,7 +100,7 @@ class Hermes(Service):
                                         dev_types=dev_type,
                                         count_per_node=count)
                         for dev_type, count in self.config['devices']]
-            dev_df = pd.concat(dev_list)
+            dev_df = sdf.concat(dev_list)
 
         # Begin making Hermes config
         hermes_server = {
