@@ -67,6 +67,12 @@ class Hermes(Service):
                 'default': 8080
             },
             {
+                'name': 'provider',
+                'msg': 'The libfabric provider type to use (e.g., sockets)',
+                'type': None,
+                'default': 8080
+            },
+            {
                 'name': 'output_dir',
                 'msg': 'Where the application performs I/O',
                 'type': str,
@@ -145,9 +151,20 @@ class Hermes(Service):
 
         # Get network Info
         net_info = rg.find_net_info(Hostfile())
-        net_info = net_info[lambda r: r['provider'] == 'sockets']
-        protocol = net_info[:, 'provider'].unique().list()[0][0]
-        domain = net_info[:, 'domain'].unique().list()[0][0]
+        provider = self.config['provider']
+        if provider is None:
+            opts = list(net_info['provider'].unique().rows)
+            order = ['sockets', 'tcp', 'verbs', 'ib']
+            for opt in order:
+                if opt in opts:
+                    provider = opt
+                    break
+            if provider is None:
+                provider = opts[0]
+        net_info = net_info[lambda r: r['provider'] == provider,
+                            ['provider', 'domain']].rows[0]
+        protocol = net_info[0]['provider']
+        domain = net_info[0]['domain']
         hostfile_path = self.jarvis.hostfile.path
         if hostfile_path is None:
             hostfile_path = ''
