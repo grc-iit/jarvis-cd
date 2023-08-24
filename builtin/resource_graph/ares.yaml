@@ -84,11 +84,6 @@ net:
   host: ares-comp-20-40g
   provider: verbs
   speed: 0
-- domain: shm
-  fabric: shm
-  host: ares-comp-21-40g
-  provider: shm
-  speed: 0
 - domain: rocep47s0-xrc
   fabric: IB-0xfe80000000000000
   host: ares-comp-22-40g
