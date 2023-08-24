@@ -98,11 +98,10 @@ class Hermes(Service):
 
         if len(self.config['devices']) == 0:
             # Get all the fastest storage device mount points on machine
-            dev_df = rg.find_storage(common=True)
+            dev_df = rg.find_storage()
         else:
             # Get the storage devices for the user
-            dev_list = [rg.find_storage(common=True,
-                                        dev_types=dev_type,
+            dev_list = [rg.find_storage(dev_types=dev_type,
                                         count_per_node=count)
                         for dev_type, count in self.config['devices']]
             dev_df = sdf.concat(dev_list)
