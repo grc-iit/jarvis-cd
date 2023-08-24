@@ -163,6 +163,8 @@ class Hermes(Service):
                 provider = opts[0]
         net_info = net_info[lambda r: str(r['provider']) == provider,
                             ['provider', 'domain']]
+        if len(net_info) == 0:
+            raise Exception(f'Failed to find Hermes provider {provider}')
         net_info = net_info.rows[0]
         protocol = net_info['provider']
         domain = net_info['domain']
