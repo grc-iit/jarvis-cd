@@ -151,7 +151,6 @@ class Hermes(Service):
 
         # Get network Info
         net_info = rg.find_net_info()
-        print(net_info)
         provider = self.config['provider']
         if provider is None:
             opts = net_info['provider'].unique().list()[0]
