@@ -151,11 +151,11 @@ class Hermes(Service):
 
         # Get network Info
         net_info = rg.find_net_info(Hostfile())
+        print(net_info)
         provider = self.config['provider']
         if provider is None:
             opts = net_info['provider'].unique().list()[0]
             order = ['sockets', 'tcp', 'verbs', 'ib']
-            print(opts)
             for opt in order:
                 if opt in opts:
                     provider = opt
