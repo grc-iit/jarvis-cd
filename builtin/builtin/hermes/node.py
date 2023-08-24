@@ -126,7 +126,7 @@ class Hermes(Service):
                 bandwidth = '120MBps'
                 latency = '5ms'
             else:
-                raise Exception(f'Unkown device type: {dev_type}')
+                continue
             if dev['avail'] is None:
                 dev['avail'] = .6 * dev['size']
             mount = f'{mount}/hermes_data'
