@@ -155,13 +155,13 @@ class Hermes(Service):
         if provider is None:
             opts = net_info['provider'].unique().list()[0]
             order = ['sockets', 'tcp', 'verbs', 'ib']
+            print(opts)
             for opt in order:
                 if opt in opts:
                     provider = opt
                     break
             if provider is None:
                 provider = opts[0]
-        print(opts)
         print(net_info)
         print(provider)
         net_info = net_info[lambda r: str(r['provider']) == provider,
