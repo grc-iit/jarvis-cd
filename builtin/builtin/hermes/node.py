@@ -144,7 +144,7 @@ class Hermes(Service):
                                       env=self.env))
 
         # Get network Info
-        net_info = rg.find_net_info(self.jarvis.hostfile)
+        net_info = rg.find_net_info(Hostfile())
         net_info = net_info[lambda r: r['provider'] == 'sockets']
         protocol = net_info['provider'].unique().list()[0][0]
         domain = net_info['domain'].unique().list()[0][0]
