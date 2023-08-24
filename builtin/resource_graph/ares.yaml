@@ -5,7 +5,7 @@ fs:
   device: /dev/sdb1
   fs_size: null
   fs_type: xfs
-  host: ares-comp-19-40g
+  host: ares-comp-20-40g
   model: Samsung SSD 860
   mount: /mnt/ssd/${USER}
   parent: /dev/sdb
@@ -14,14 +14,14 @@ fs:
   shared: false
   size: 512067475865
   tran: sata
-  uuid: 45b6abb3-7786-4b68-95d0-a8fac92e0d70
+  uuid: fb1f2059-60d4-4f25-9e61-35b18977012b
 - avail: 214748364800
   block_size: null
   dev_type: hdd
   device: null
   fs_size: null
   fs_type: null
-  host: ares-comp-21-40g
+  host: ares-comp-19-40g
   model: null
   mount: ${HOME}
   parent: null
@@ -31,6 +31,22 @@ fs:
   size: 214748364800
   tran: sata
   uuid: null
+- avail: null
+  block_size: '4096'
+  dev_type: hdd
+  device: /dev/sdc1
+  fs_size: null
+  fs_type: xfs
+  host: ares-comp-22-40g
+  model: ST1000LM049-2GH1
+  mount: /mnt/hdd/${USER}
+  parent: /dev/sdc
+  rota: true
+  sec_type: null
+  shared: false
+  size: 1000190509056
+  tran: sata
+  uuid: e34a9f0e-bd2c-4134-8a64-3ce14e80f21d
 - avail: null
   block_size: '512'
   dev_type: nvme
@@ -47,22 +63,6 @@ fs:
   size: 256087425024
   tran: nvme
   uuid: cbc9b18c-fbb0-4ab7-a9fd-8cc719a93f64
-- avail: null
-  block_size: '4096'
-  dev_type: hdd
-  device: /dev/sdc1
-  fs_size: null
-  fs_type: xfs
-  host: ares-comp-19-40g
-  model: ST1000LM049-2GH1
-  mount: /mnt/hdd/${USER}
-  parent: /dev/sdc
-  rota: true
-  sec_type: null
-  shared: false
-  size: 1000190509056
-  tran: sata
-  uuid: 7857cbad-2e46-40c2-835a-b297bc5ee1d2
 hosts:
 - ares-comp-19-40g
 - ares-comp-20-40g
@@ -71,25 +71,50 @@ hosts:
 net:
 - domain: enp47s0np0
   fabric: 172.25.0.0/16
-  host: ares-comp-20-40g
-  provider: tcp
-  speed: 0
-- domain: enp47s0np0
-  fabric: 172.25.0.0/16
-  host: ares-comp-20-40g
-  provider: udp;ofi_rxd
+  host: ares-comp-19-40g
+  provider: sockets
   speed: 0
 - domain: iwo1
   fabric: Ethernet-iWARP
+  host: ares-comp-21-40g
+  provider: verbs;ofi_rxm
+  speed: 0
+- domain: rocep47s0-xrc
+  fabric: IB-0xfe80000000000000
   host: ares-comp-20-40g
   provider: verbs
+  speed: 0
+- domain: enp47s0np0
+  fabric: 172.25.0.0/16
+  host: ares-comp-22-40g
+  provider: tcp;ofi_rxm
   speed: 0
 - domain: rocep47s0-xrc
   fabric: IB-0xfe80000000000000
   host: ares-comp-22-40g
-  provider: verbs
+  provider: verbs;ofi_rxm
+  speed: 0
+- domain: enp47s0np0
+  fabric: 172.25.0.0/16
+  host: ares-comp-22-40g
+  provider: udp;ofi_rxd
+  speed: 0
+- domain: rocep47s0-dgram
+  fabric: IB-0xfe80000000000000
+  host: ares-comp-19-40g
+  provider: verbs;ofi_rxd
   speed: 0
 - domain: rocep47s0
+  fabric: IB-0xfe80000000000000
+  host: ares-comp-19-40g
+  provider: verbs;ofi_rxm
+  speed: 0
+- domain: iwo1
+  fabric: Ethernet-iWARP
+  host: ares-comp-19-40g
+  provider: verbs
+  speed: 0
+- domain: rocep47s0-dgram
   fabric: IB-0xfe80000000000000
   host: ares-comp-19-40g
   provider: verbs
@@ -97,25 +122,5 @@ net:
 - domain: rocep47s0
   fabric: IB-0xfe80000000000000
   host: ares-comp-22-40g
-  provider: verbs;ofi_rxm
-  speed: 0
-- domain: rocep47s0-dgram
-  fabric: IB-0xfe80000000000000
-  host: ares-comp-22-40g
-  provider: verbs;ofi_rxd
-  speed: 0
-- domain: iwo1
-  fabric: Ethernet-iWARP
-  host: ares-comp-21-40g
-  provider: verbs;ofi_rxm
-  speed: 0
-- domain: rocep47s0-dgram
-  fabric: IB-0xfe80000000000000
-  host: ares-comp-21-40g
   provider: verbs
-  speed: 0
-- domain: rocep47s0-xrc
-  fabric: IB-0xfe80000000000000
-  host: ares-comp-21-40g
-  provider: verbs;ofi_rxm
   speed: 0
