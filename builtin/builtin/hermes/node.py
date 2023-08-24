@@ -161,7 +161,7 @@ class Hermes(Service):
                     break
             if provider is None:
                 provider = opts[0]
-        print("Provider")
+        print(f'Provider: {provider}')
         net_info = net_info[lambda r: str(r['provider']) == provider,
                             ['provider', 'domain']]
         if len(net_info) == 0:
