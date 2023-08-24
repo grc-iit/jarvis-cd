@@ -69,8 +69,8 @@ class Hermes(Service):
             {
                 'name': 'provider',
                 'msg': 'The libfabric provider type to use (e.g., sockets)',
-                'type': None,
-                'default': 8080
+                'type': str,
+                'default': None
             },
             {
                 'name': 'output_dir',
