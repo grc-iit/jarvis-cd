@@ -69,11 +69,6 @@ hosts:
 - ares-comp-21-40g
 - ares-comp-22-40g
 net:
-- domain: lo
-  fabric: ''
-  host: ares-comp-21-40g
-  provider: tcp;ofi_rxm
-  speed: 0
 - domain: enp47s0np0
   fabric: 172.25.0.0/16
   host: ares-comp-20-40g
@@ -83,41 +78,11 @@ net:
   fabric: 172.25.0.0/16
   host: ares-comp-20-40g
   provider: udp;ofi_rxd
-  speed: 0
-- domain: lo
-  fabric: ''
-  host: ares-comp-21-40g
-  provider: sockets
-  speed: 0
-- domain: eno1
-  fabric: fe80
-  host: ares-comp-19-40g
-  provider: tcp
-  speed: 0
-- domain: enp47s0np0
-  fabric: fe80
-  host: ares-comp-21-40g
-  provider: tcp;ofi_rxm
-  speed: 0
-- domain: lo
-  fabric: ''
-  host: ares-comp-19-40g
-  provider: tcp
   speed: 0
 - domain: iwo1
   fabric: Ethernet-iWARP
   host: ares-comp-20-40g
   provider: verbs
-  speed: 0
-- domain: eno1
-  fabric: fe80
-  host: ares-comp-21-40g
-  provider: udp
-  speed: 0
-- domain: lo
-  fabric: ''
-  host: ares-comp-21-40g
-  provider: udp;ofi_rxd
   speed: 0
 - domain: shm
   fabric: shm
@@ -134,45 +99,20 @@ net:
   host: ares-comp-19-40g
   provider: verbs
   speed: 0
-- domain: enp47s0np0
-  fabric: fe80
-  host: ares-comp-21-40g
-  provider: sockets
-  speed: 0
 - domain: rocep47s0
   fabric: IB-0xfe80000000000000
   host: ares-comp-22-40g
   provider: verbs;ofi_rxm
-  speed: 0
-- domain: enp47s0np0
-  fabric: fe80
-  host: ares-comp-20-40g
-  provider: udp
   speed: 0
 - domain: rocep47s0-dgram
   fabric: IB-0xfe80000000000000
   host: ares-comp-22-40g
   provider: verbs;ofi_rxd
   speed: 0
-- domain: eno1
-  fabric: fe80
-  host: ares-comp-21-40g
-  provider: tcp;ofi_rxm
-  speed: 0
-- domain: eno1
-  fabric: fe80
-  host: ares-comp-21-40g
-  provider: sockets
-  speed: 0
 - domain: iwo1
   fabric: Ethernet-iWARP
   host: ares-comp-21-40g
   provider: verbs;ofi_rxm
-  speed: 0
-- domain: lo
-  fabric: ''
-  host: ares-comp-19-40g
-  provider: udp
   speed: 0
 - domain: rocep47s0-dgram
   fabric: IB-0xfe80000000000000
@@ -183,9 +123,4 @@ net:
   fabric: IB-0xfe80000000000000
   host: ares-comp-21-40g
   provider: verbs;ofi_rxm
-  speed: 0
-- domain: eno1
-  fabric: fe80
-  host: ares-comp-19-40g
-  provider: udp;ofi_rxd
   speed: 0
