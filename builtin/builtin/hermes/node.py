@@ -31,12 +31,6 @@ class Hermes(Service):
         """
         return [
             {
-                'name': 'walkthrough',
-                'msg': 'Use a terminal walkthrough to modify resource graph',
-                'type': bool,
-                'default': False,
-            },
-            {
                 'name': 'reinit',
                 'msg': 'Destroy previous configuration and rebuild',
                 'type': bool,
