@@ -27,15 +27,14 @@ jarvis resource-graph build +walkthrough
 
 ## 2. Create a Pipeline
 
-The Jarvis pipeline will store all configuration data needed by Gray Scott.
-
+The Jarvis pipeline will store all configuration data.
 ```bash
 jarvis pipeline create labstor-test
 ```
 
 ## 3. Load Environment
 
-Create the environment variables needed by Gray Scott
+Create the environment variables
 ```bash
 spack load labstor
 ```````````
@@ -47,7 +46,7 @@ jarvis pipeline env build
 
 ## 4. Add Nodes to the Pipeline
 
-Create a Jarvis pipeline with Gray Scott
+Create a Jarvis pipeline
 ```bash
 jarvis pipeline append labstor --sleep=10
 ```
@@ -61,7 +60,7 @@ jarvis pipeline run
 
 ## 6. Clean Data
 
-Clean data produced by Gray Scott
+Clean produced data
 ```bash
 jarvis pipeline clean
 ```
