@@ -152,7 +152,7 @@ class Hermes(Service):
         if len(hosts) > 1:
             net_info = rg.find_net_info(shared=True)
         else:
-            net_info = rg.find_net_info()
+            net_info = rg.find_net_info(shared=False)
         provider = self.config['provider']
         if provider is None:
             opts = net_info['provider'].unique().list()
