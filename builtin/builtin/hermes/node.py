@@ -95,6 +95,7 @@ class Hermes(Service):
 
     def _configure_server(self):
         rg = self.jarvis.resource_graph
+        hosts = self.jarvis.hostfile
 
         if len(self.config['devices']) == 0:
             # Get all the fastest storage device mount points on machine
@@ -150,7 +151,10 @@ class Hermes(Service):
                                       env=self.env))
 
         # Get network Info
-        net_info = rg.find_net_info()
+        if len(hosts) > 1:
+            net_info = rg.find_net_info(shared=True)
+        else:
+            net_info = rg.find_net_info()
         provider = self.config['provider']
         if provider is None:
             opts = net_info['provider'].unique().list()
