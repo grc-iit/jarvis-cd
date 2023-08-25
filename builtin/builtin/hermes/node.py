@@ -215,9 +215,9 @@ class Hermes(Service):
         :return: None
         """
         self.daemon_node = Exec('hermes_daemon',
-                                LocalExecInfo(hostfile=self.jarvis.hostfile,
-                                              env=self.env,
-                                              exec_async=True))
+                                PsshExecInfo(hostfile=self.jarvis.hostfile,
+                                             env=self.env,
+                                             exec_async=True))
         time.sleep(self.config['sleep'])
         print('Done sleeping')
 
