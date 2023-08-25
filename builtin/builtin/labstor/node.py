@@ -141,8 +141,8 @@ class Labstor(Service):
         """
         print('Stopping labstor')
         Exec('labstor_stop_runtime',
-             LocalExecInfo(hostfile=self.jarvis.hostfile,
-                           env=self.env))
+             PsshExecInfo(hostfile=self.jarvis.hostfile,
+                          env=self.env))
         print('Client Exited?')
         self.daemon_node.wait()
         print('Daemon Exited?')
