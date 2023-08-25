@@ -145,8 +145,6 @@ class GrayScott(Application):
         :return: None
         """
         # print(self.env['HERMES_CLIENT_CONF'])
-        print(self.jarvis.hostfile)
-        JutilManager.get_instance().debug_mpi_exec = True
         Exec(f'gray-scott {self.settings_json_path}',
              MpiExecInfo(nprocs=self.config['nprocs'],
                          ppn=self.config['ppn'],
