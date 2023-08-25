@@ -107,7 +107,11 @@ jarvis pipeline create gs-hermes
 
 Create the environment variables needed by Hermes + Gray Scott
 ```bash
-spack load hermes
+# On personal
+spack install hermes@master adios2
+spack load hermes adios2
+# On Ares
+module load hermes/master-feow7up adios2/2.9.0-mmkelnu
 export PATH="${GRAY_SCOTT_PATH}:$PATH"
 ```
 

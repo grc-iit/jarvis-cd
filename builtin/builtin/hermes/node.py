@@ -67,6 +67,12 @@ class Hermes(Service):
                 'default': 8080
             },
             {
+                'name': 'provider',
+                'msg': 'The libfabric provider type to use (e.g., sockets)',
+                'type': str,
+                'default': None
+            },
+            {
                 'name': 'output_dir',
                 'msg': 'Where the application performs I/O',
                 'type': str,
@@ -89,18 +95,19 @@ class Hermes(Service):
 
     def _configure_server(self):
         rg = self.jarvis.resource_graph
+        hosts = self.jarvis.hostfile
 
         if len(self.config['devices']) == 0:
             # Get all the fastest storage device mount points on machine
-            dev_df = rg.find_storage(common=True,
-                                     min_cap=SizeConv.to_int('40g'))
+            dev_df = rg.find_storage()
         else:
             # Get the storage devices for the user
-            dev_list = [rg.find_storage(common=True,
-                                        dev_types=dev_type,
+            dev_list = [rg.find_storage(dev_types=dev_type,
                                         count_per_node=count)
                         for dev_type, count in self.config['devices']]
             dev_df = sdf.concat(dev_list)
+        if len(dev_df) == 0:
+            raise Exception('Hermes needs at least on storage device')
 
         # Begin making Hermes config
         hermes_server = {
@@ -127,8 +134,6 @@ class Hermes(Service):
                 latency = '5ms'
             else:
                 continue
-            if dev['avail'] is None:
-                dev['avail'] = .6 * dev['size']
             mount = f'{mount}/hermes_data'
             hermes_server['devices'][custom_name] = {
                 'mount_point': mount,
@@ -144,10 +149,28 @@ class Hermes(Service):
                                       env=self.env))
 
         # Get network Info
-        net_info = rg.find_net_info(Hostfile())
-        net_info = net_info[lambda r: r['provider'] == 'sockets']
-        protocol = net_info['provider'].unique().list()[0][0]
-        domain = net_info['domain'].unique().list()[0][0]
+        if len(hosts) > 1:
+            net_info = rg.find_net_info(shared=True)
+        else:
+            net_info = rg.find_net_info(hosts, strip_ips=True, shared=False)
+        provider = self.config['provider']
+        if provider is None:
+            opts = net_info['provider'].unique().list()
+            order = ['sockets', 'tcp', 'udp', 'verbs', 'ib']
+            for opt in order:
+                if opt in opts:
+                    provider = opt
+                    break
+            if provider is None:
+                provider = opts[0]
+        print(f'Provider: {provider}')
+        net_info = net_info[lambda r: str(r['provider']) == provider,
+                            ['provider', 'domain']]
+        if len(net_info) == 0:
+            raise Exception(f'Failed to find Hermes provider {provider}')
+        net_info = net_info.rows[0]
+        protocol = net_info['provider']
+        domain = net_info['domain']
         hostfile_path = self.jarvis.hostfile.path
         if hostfile_path is None:
             hostfile_path = ''
@@ -192,9 +215,9 @@ class Hermes(Service):
         :return: None
         """
         self.daemon_node = Exec('hermes_daemon',
-                                LocalExecInfo(hostfile=self.jarvis.hostfile,
-                                              env=self.env,
-                                              exec_async=True))
+                                PsshExecInfo(hostfile=self.jarvis.hostfile,
+                                             env=self.env,
+                                             exec_async=True))
         time.sleep(self.config['sleep'])
         print('Done sleeping')
 

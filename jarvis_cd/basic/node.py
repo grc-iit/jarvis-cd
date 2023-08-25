@@ -62,7 +62,8 @@ class Node(ABC):
         this node. Indicates where configuration data is stored.
         :return: self
         """
-
+        if context is None:
+            context = ''
         self.context = context
         self.node_id = context.split('.')[-1]
         relpath = self.context.replace('.', '/')
@@ -97,6 +98,8 @@ class Node(ABC):
         self.context = context
         if self.context is None:
             self.context = self.jarvis.cur_pipeline
+        if self.context is None:
+            raise Exception("No pipeline currently selected")
         self.node_id = self.context.split('.')[-1]
         relpath = self.context.replace('.', '/')
         self.sub_nodes = []

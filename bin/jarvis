@@ -99,6 +99,10 @@ class JarvisArgs(ArgParse):
             },
         ])
 
+        # jarvis resource-graph build
+        self.add_menu('resource-graph prune',
+                      msg='An interactive CLI for modifying the resource graph')
+
         # jarvis resource-graph add storage
         self.add_menu('resource-graph add storage',
                       msg='Add a storage device or PFS to track')
@@ -518,6 +522,10 @@ class JarvisArgs(ArgParse):
         else:
             self.jarvis.resource_graph_build()
         self.jarvis.save()
+
+    def resource_graph_prune(self):
+        self.jarvis.resource_graph.walkthrough_prune(
+            PsshExecInfo(hostfile=self.jarvis.hostfile))
 
     def resource_graph_add_storage(self):
         self._resource_graph_hostfile()
