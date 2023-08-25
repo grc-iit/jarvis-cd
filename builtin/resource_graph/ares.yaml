@@ -1,5 +1,5 @@
 fs:
-- avail: 477G
+- avail: 512174850048
   block_size: '512'
   dev_type: ssd
   device: /dev/sdb1
@@ -41,28 +41,7 @@ fs:
   use%: null
   used: null
   uuid: null
-- avail: 932G
-  block_size: '4096'
-  dev_type: hdd
-  device: /dev/sdc1
-  fs_mount: /mnt/hdd
-  fs_size: 932G
-  fs_type: xfs
-  host: localhost
-  model: ST1000LM049-2GH1
-  mount: /mnt/hdd/${USER}
-  parent: /dev/sdc
-  partlabel: primary
-  partuuid: 50ba6cac-ffd2-4521-b9ff-fda1b9e4d58c
-  rota: true
-  sec_type: null
-  shared: false
-  size: 1000190509056
-  tran: sata
-  use%: 1%
-  used: 33M
-  uuid: 7857cbad-2e46-40c2-835a-b297bc5ee1d2
-- avail: 239G
+- avail: 256624295936
   block_size: '512'
   dev_type: nvme
   device: /dev/nvme0n1p1
@@ -83,10 +62,94 @@ fs:
   use%: 1%
   used: 261M
   uuid: cbc9b18c-fbb0-4ab7-a9fd-8cc719a93f64
+- avail: 1000727379968
+  block_size: '4096'
+  dev_type: hdd
+  device: /dev/sdc1
+  fs_mount: /mnt/hdd
+  fs_size: 932G
+  fs_type: xfs
+  host: localhost
+  model: ST1000LM049-2GH1
+  mount: /mnt/hdd/${USER}
+  parent: /dev/sdc
+  partlabel: primary
+  partuuid: 50ba6cac-ffd2-4521-b9ff-fda1b9e4d58c
+  rota: true
+  sec_type: null
+  shared: false
+  size: 1000190509056
+  tran: sata
+  use%: 1%
+  used: 33M
+  uuid: 7857cbad-2e46-40c2-835a-b297bc5ee1d2
 hosts:
 - localhost
 net:
-- domain: rocep47s0
+- domain: lo
+  fabric: 127.0.0.1/32
+  host: localhost
+  protocol: FI_PROTO_RXM
+  provider: tcp;ofi_rxm
+  shared: false
+  speed: 42949672960
+  type: FI_EP_RDM
+  version: '114.10'
+- domain: iwo1
+  fabric: Ethernet-iWARP
+  host: localhost
+  protocol: FI_PROTO_RXM
+  provider: verbs;ofi_rxm
+  shared: true
+  speed: 42949672960
+  type: FI_EP_RDM
+  version: '114.10'
+- domain: eno1
+  fabric: 172.20.0.0/16
+  host: localhost
+  protocol: FI_PROTO_UDP
+  provider: udp
+  shared: true
+  speed: 42949672960
+  type: FI_EP_DGRAM
+  version: '114.10'
+- domain: lo
+  fabric: 127.0.0.1/32
+  host: localhost
+  protocol: FI_PROTO_SOCK_TCP
+  provider: tcp
+  shared: false
+  speed: 42949672960
+  type: FI_EP_MSG
+  version: '114.10'
+- domain: lo
+  fabric: 127.0.0.1/32
+  host: localhost
+  protocol: FI_PROTO_UDP
+  provider: udp
+  shared: false
+  speed: 42949672960
+  type: FI_EP_DGRAM
+  version: '114.10'
+- domain: rocep47s0-dgram
+  fabric: IB-0xfe80000000000000
+  host: localhost
+  protocol: FI_PROTO_RXD
+  provider: verbs;ofi_rxd
+  shared: true
+  speed: 42949672960
+  type: FI_EP_RDM
+  version: '114.10'
+- domain: enp47s0np0
+  fabric: 172.25.0.0/16
+  host: localhost
+  protocol: FI_PROTO_RXD
+  provider: udp;ofi_rxd
+  shared: true
+  speed: 42949672960
+  type: FI_EP_RDM
+  version: '114.10'
+- domain: rocep47s0-xrc
   fabric: IB-0xfe80000000000000
   host: localhost
   protocol: FI_PROTO_RXM
@@ -95,23 +158,14 @@ net:
   speed: 42949672960
   type: FI_EP_RDM
   version: '114.10'
-- domain: enp47s0np0
-  fabric: 172.25.0.0/16
+- domain: eno1
+  fabric: 172.20.0.0/16
   host: localhost
   protocol: FI_PROTO_RXM
   provider: tcp;ofi_rxm
   shared: true
   speed: 42949672960
   type: FI_EP_RDM
-  version: '114.10'
-- domain: eno1
-  fabric: 172.20.0.0/16
-  host: localhost
-  protocol: FI_PROTO_UDP
-  provider: udp
-  shared: true
-  speed: 42949672960
-  type: FI_EP_DGRAM
   version: '114.10'
 - domain: lo
   fabric: 127.0.0.1/32
@@ -120,88 +174,7 @@ net:
   provider: sockets
   shared: false
   speed: 42949672960
-  type: FI_EP_RDM
-  version: '114.10'
-- domain: rocep47s0-xrc
-  fabric: IB-0xfe80000000000000
-  host: localhost
-  protocol: FI_PROTO_RDMA_CM_IB_XRC
-  provider: verbs
-  shared: true
-  speed: 42949672960
-  type: FI_EP_MSG
-  version: '114.10'
-- domain: eno1
-  fabric: 172.20.0.0/16
-  host: localhost
-  protocol: FI_PROTO_RXD
-  provider: udp;ofi_rxd
-  shared: true
-  speed: 42949672960
-  type: FI_EP_RDM
-  version: '114.10'
-- domain: eno1
-  fabric: 172.20.0.0/16
-  host: localhost
-  protocol: FI_PROTO_RXM
-  provider: tcp;ofi_rxm
-  shared: true
-  speed: 42949672960
-  type: FI_EP_RDM
-  version: '114.10'
-- domain: enp47s0np0
-  fabric: 172.25.0.0/16
-  host: localhost
-  protocol: FI_PROTO_RXD
-  provider: udp;ofi_rxd
-  shared: true
-  speed: 42949672960
-  type: FI_EP_RDM
-  version: '114.10'
-- domain: enp47s0np0
-  fabric: 172.25.0.0/16
-  host: localhost
-  protocol: FI_PROTO_SOCK_TCP
-  provider: sockets
-  shared: true
-  speed: 42949672960
-  type: FI_EP_RDM
-  version: '114.10'
-- domain: enp47s0np0
-  fabric: 172.25.0.0/16
-  host: localhost
-  protocol: FI_PROTO_UDP
-  provider: udp
-  shared: true
-  speed: 42949672960
   type: FI_EP_DGRAM
-  version: '114.10'
-- domain: eno1
-  fabric: 172.20.0.0/16
-  host: localhost
-  protocol: FI_PROTO_SOCK_TCP
-  provider: sockets
-  shared: true
-  speed: 42949672960
-  type: FI_EP_RDM
-  version: '114.10'
-- domain: lo
-  fabric: 127.0.0.1/32
-  host: localhost
-  protocol: FI_PROTO_RXM
-  provider: tcp;ofi_rxm
-  shared: false
-  speed: 42949672960
-  type: FI_EP_RDM
-  version: '114.10'
-- domain: rocep47s0
-  fabric: IB-0xfe80000000000000
-  host: localhost
-  protocol: FI_PROTO_RDMA_CM_IB_RC
-  provider: verbs
-  shared: true
-  speed: 42949672960
-  type: FI_EP_MSG
   version: '114.10'
 - domain: lo
   fabric: 127.0.0.1/32
@@ -221,23 +194,50 @@ net:
   speed: 42949672960
   type: FI_EP_DGRAM
   version: '114.10'
-- domain: lo
-  fabric: 127.0.0.1/32
-  host: localhost
-  protocol: FI_PROTO_UDP
-  provider: udp
-  shared: false
-  speed: 42949672960
-  type: FI_EP_DGRAM
-  version: '114.10'
-- domain: lo
-  fabric: 127.0.0.1/32
+- domain: eno1
+  fabric: 172.20.0.0/16
   host: localhost
   protocol: FI_PROTO_SOCK_TCP
   provider: tcp
-  shared: false
+  shared: true
   speed: 42949672960
   type: FI_EP_MSG
+  version: '114.10'
+- domain: enp47s0np0
+  fabric: 172.25.0.0/16
+  host: localhost
+  protocol: FI_PROTO_RXM
+  provider: tcp;ofi_rxm
+  shared: true
+  speed: 42949672960
+  type: FI_EP_RDM
+  version: '114.10'
+- domain: enp47s0np0
+  fabric: 172.25.0.0/16
+  host: localhost
+  protocol: FI_PROTO_UDP
+  provider: udp
+  shared: true
+  speed: 42949672960
+  type: FI_EP_DGRAM
+  version: '114.10'
+- domain: iwo1
+  fabric: Ethernet-iWARP
+  host: localhost
+  protocol: FI_PROTO_IWARP
+  provider: verbs
+  shared: true
+  speed: 42949672960
+  type: FI_EP_MSG
+  version: '114.10'
+- domain: enp47s0np0
+  fabric: 172.25.0.0/16
+  host: localhost
+  protocol: FI_PROTO_SOCK_TCP
+  provider: sockets
+  shared: true
+  speed: 42949672960
+  type: FI_EP_DGRAM
   version: '114.10'
 - domain: enp47s0np0
   fabric: 172.25.0.0/16
@@ -248,25 +248,7 @@ net:
   speed: 42949672960
   type: FI_EP_MSG
   version: '114.10'
-- domain: rocep47s0-dgram
-  fabric: IB-0xfe80000000000000
-  host: localhost
-  protocol: FI_PROTO_RXD
-  provider: verbs;ofi_rxd
-  shared: true
-  speed: 42949672960
-  type: FI_EP_RDM
-  version: '114.10'
-- domain: eno1
-  fabric: 172.20.0.0/16
-  host: localhost
-  protocol: FI_PROTO_SOCK_TCP
-  provider: tcp
-  shared: true
-  speed: 42949672960
-  type: FI_EP_MSG
-  version: '114.10'
-- domain: rocep47s0-xrc
+- domain: rocep47s0
   fabric: IB-0xfe80000000000000
   host: localhost
   protocol: FI_PROTO_RXM
@@ -274,4 +256,40 @@ net:
   shared: true
   speed: 42949672960
   type: FI_EP_RDM
+  version: '114.10'
+- domain: rocep47s0-xrc
+  fabric: IB-0xfe80000000000000
+  host: localhost
+  protocol: FI_PROTO_RDMA_CM_IB_XRC
+  provider: verbs
+  shared: true
+  speed: 42949672960
+  type: FI_EP_MSG
+  version: '114.10'
+- domain: eno1
+  fabric: 172.20.0.0/16
+  host: localhost
+  protocol: FI_PROTO_SOCK_TCP
+  provider: sockets
+  shared: true
+  speed: 42949672960
+  type: FI_EP_DGRAM
+  version: '114.10'
+- domain: eno1
+  fabric: 172.20.0.0/16
+  host: localhost
+  protocol: FI_PROTO_RXD
+  provider: udp;ofi_rxd
+  shared: true
+  speed: 42949672960
+  type: FI_EP_RDM
+  version: '114.10'
+- domain: rocep47s0
+  fabric: IB-0xfe80000000000000
+  host: localhost
+  protocol: FI_PROTO_RDMA_CM_IB_RC
+  provider: verbs
+  shared: true
+  speed: 42949672960
+  type: FI_EP_MSG
   version: '114.10'

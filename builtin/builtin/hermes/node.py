@@ -134,8 +134,6 @@ class Hermes(Service):
                 latency = '5ms'
             else:
                 continue
-            if dev['avail'] is None:
-                dev['avail'] = .6 * dev['size']
             mount = f'{mount}/hermes_data'
             hermes_server['devices'][custom_name] = {
                 'mount_point': mount,
