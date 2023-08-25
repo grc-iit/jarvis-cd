@@ -116,7 +116,7 @@ class Labstor(Service):
         # Save labstor configurations
         labstor_server_yaml = f'{self.shared_dir}/labstor_server.yaml'
         YamlFile(labstor_server_yaml).save(labstor_server)
-        self.env['LABSTOR_CONF'] = labstor_server_yaml
+        self.env['LABSTOR_SERVER_CONF'] = labstor_server_yaml
 
     def start(self):
         """
