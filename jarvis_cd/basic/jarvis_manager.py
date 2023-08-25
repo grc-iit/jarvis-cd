@@ -137,7 +137,10 @@ class JarvisManager:
 
         :return: None
         """
-        self.hostfile = Hostfile(hostfile=path)
+        if len(path) > 0:
+            self.hostfile = Hostfile(hostfile=path)
+        else:
+            self.hostfile = Hostfile()
 
     def bootstrap_from(self, machine):
         """

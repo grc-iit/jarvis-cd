@@ -6,6 +6,23 @@ Hermes is a multi-tiered I/O buffering platform.
 spack install labstor@master
 ```
 
+OR
+
+```bash 
+spack install mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
+yaml-cpp boost hermes_shm
+spack load mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
+yaml-cpp boost hermes_shm
+git clone https://github.com/lukemartinlogan/labstor.git
+cd labstor
+mkdir build
+cd build
+cmake ../
+make -j8
+export PATH="${PWD}/bin:$PATH"
+export LD_LIBRARY_PATH="${PWD}/bin:${LD_LIBRARY_PATH}"
+```
+
 # Labstor
 
 ## 1. Create a Resource Graph
