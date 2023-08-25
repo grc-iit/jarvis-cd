@@ -62,18 +62,6 @@ class Labstor(Service):
         rg = self.jarvis.resource_graph
         hosts = self.jarvis.hostfile
 
-        if len(self.config['devices']) == 0:
-            # Get all the fastest storage device mount points on machine
-            dev_df = rg.find_storage()
-        else:
-            # Get the storage devices for the user
-            dev_list = [rg.find_storage(dev_types=dev_type,
-                                        count_per_node=count)
-                        for dev_type, count in self.config['devices']]
-            dev_df = sdf.concat(dev_list)
-        if len(dev_df) == 0:
-            raise Exception('labstor needs at least on storage device')
-
         # Begin making labstor config
         labstor_server = {
             'work_orchestrator': {
