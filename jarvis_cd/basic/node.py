@@ -99,7 +99,7 @@ class Node(ABC):
         if self.context is None:
             self.context = self.jarvis.cur_pipeline
         if self.context is None:
-            raise Exception("No pipeline currently selected")
+            raise Exception('No pipeline currently selected')
         self.node_id = self.context.split('.')[-1]
         relpath = self.context.replace('.', '/')
         self.sub_nodes = []

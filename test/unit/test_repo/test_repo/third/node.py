@@ -1,8 +1,14 @@
+"""
+Third node example
+"""
 from jarvis_cd.basic.node import Application
 from jarvis_util import *
 
 
 class Third(Application):
+    """
+    Application example
+    """
     def _init(self):
         pass
 

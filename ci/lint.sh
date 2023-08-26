@@ -1,2 +1,2 @@
 #!/bin/bash
-pylint "${PWD}"/jarvis_util
+pylint "${PWD}/jarvis_cd" "${PWD}/test" # "${PWD}"/builtin
