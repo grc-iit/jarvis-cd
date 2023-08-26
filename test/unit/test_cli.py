@@ -60,9 +60,9 @@ class TestCli(TestCase):
         self.assertEqual(self.jarvis.cur_pipeline, 'test_pipeline')
 
         # Get path to the pipeline
-        node = Exec('jarvis path test_pipeline',
+        pkg = Exec('jarvis path test_pipeline',
                     LocalExecInfo(collect_output=True))
-        path = node.stdout['localhost'].strip()
+        path = pkg.stdout['localhost'].strip()
         self.assertEqual(path, f'{self.jarvis.config_dir}/test_pipeline')
 
         # Delete the pipelines
@@ -87,12 +87,12 @@ class TestCli(TestCase):
         Exec('jarvis pipeline create test_pipeline')
         self.assertTrue(
             os.path.exists(f'{self.jarvis.config_dir}/test_pipeline'))
-        exec_node = Exec('jarvis pipeline append first '
+        exec_pkg = Exec('jarvis pipeline append first '
                          '--port=22 --devices=[[nvme,1]]',
                          LocalExecInfo(collect_output=True))
         self.assertTrue(
             os.path.exists(f'{self.jarvis.config_dir}/test_pipeline/first'))
-        config_dict = yaml.safe_load(exec_node.stdout['localhost'])
+        config_dict = yaml.safe_load(exec_pkg.stdout['localhost'])
         self.assertTrue(config_dict['port'] == 22)
         self.assertTrue(config_dict['devices'] == [['nvme', 1]])
         Exec('jarvis pipeline append second')
@@ -103,32 +103,32 @@ class TestCli(TestCase):
             os.path.exists(f'{self.jarvis.config_dir}/test_pipeline/third'))
 
         # Start the pipeline
-        exec_node = Exec('jarvis pipeline start',
+        exec_pkg = Exec('jarvis pipeline start',
                          LocalExecInfo(collect_output=True))
         expected_lines = ['first start',
                           'second modify_env',
                           'third start']
-        self.verify_pipeline(exec_node.stdout, expected_lines)
+        self.verify_pipeline(exec_pkg.stdout, expected_lines)
 
         # Stop the pipeline
-        exec_node = Exec('jarvis pipeline stop',
+        exec_pkg = Exec('jarvis pipeline stop',
                          LocalExecInfo(collect_output=True))
         expected_lines = ['third stop',
                           'first stop']
-        self.verify_pipeline(exec_node.stdout, expected_lines)
+        self.verify_pipeline(exec_pkg.stdout, expected_lines)
 
         # Clean the pipeline
-        exec_node = Exec('jarvis pipeline clean',
+        exec_pkg = Exec('jarvis pipeline clean',
                          LocalExecInfo(collect_output=True))
         expected_lines = ['third clean',
                           'first clean']
-        self.verify_pipeline(exec_node.stdout, expected_lines)
+        self.verify_pipeline(exec_pkg.stdout, expected_lines)
 
         # Status the pipeline
-        exec_node = Exec('jarvis pipeline status',
+        exec_pkg = Exec('jarvis pipeline status',
                          LocalExecInfo(collect_output=True))
         expected_lines = ['first status']
-        self.verify_pipeline(exec_node.stdout, expected_lines)
+        self.verify_pipeline(exec_pkg.stdout, expected_lines)
 
         # Remove the pipeline
         Exec('jarvis pipeline destroy test_pipeline')

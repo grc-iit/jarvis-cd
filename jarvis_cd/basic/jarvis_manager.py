@@ -35,7 +35,7 @@ class JarvisManager:
         self.user = getpass.getuser()
         # Where Jarvis stores pipeline data (per-user)
         self.config_dir = None
-        # Where Jarvis stores data locally to a node (per-user)
+        # Where Jarvis stores data locally to a pkg (per-user)
         self.private_dir = None
         # Where Jarvis stores data in a shared directory (per-user)
         self.shared_dir = None
@@ -63,10 +63,10 @@ class JarvisManager:
 
         :param config_dir: the directory where jarvis stores pipeline
         metadata
-        :param private_dir: a directory which is shared on all nodes, but
-        stores data privately to the node
-        :param shared_dir: a directory which is shared on all nodes, where
-        all nodes have the same view of the data
+        :param private_dir: a directory which is shared on all pkgs, but
+        stores data privately to the pkg
+        :param shared_dir: a directory which is shared on all pkgs, where
+        all pkgs have the same view of the data
         :return: None
         """
         self.config_dir = expand_env(config_dir)
@@ -235,29 +235,29 @@ class JarvisManager:
             'name': repo_name
         })
 
-    def create_node(self, node_cls, node_type):
+    def create_pkg(self, pkg_cls, pkg_type):
         """
-        Creates the skeleton of a node within the primary repo.
+        Creates the skeleton of a pkg within the primary repo.
 
-        :param node_type: The name of the node to create
-        :param node_cls: The type of node to create (Service, Application, etc.)
+        :param pkg_type: The name of the pkg to create
+        :param pkg_cls: The type of pkg to create (Service, Application, etc.)
         :return: None
         """
         # load the template data
         tmpl_dir = f'{self.jarvis_root}/jarvis_cd/template'
-        with open(f'{tmpl_dir}/{node_cls}_templ.py',
+        with open(f'{tmpl_dir}/{pkg_cls}_templ.py',
                   encoding='utf-8') as fp:
             text = fp.read()
 
-        # Replace MyRepo with the node name
-        text = text.replace('MyRepo', to_camel_case(node_type))
+        # Replace MyRepo with the pkg name
+        text = text.replace('MyRepo', to_camel_case(pkg_type))
 
         # Write the specialized data
         repo_name = self.repos[0]['name']
         repo_dir = self.repos[0]['path']
-        node_path = f'{repo_dir}/{repo_name}/{node_type}'
-        os.makedirs(node_path, exist_ok=True)
-        with open(f'{node_path}/node.py', 'w',
+        pkg_path = f'{repo_dir}/{repo_name}/{pkg_type}'
+        os.makedirs(pkg_path, exist_ok=True)
+        with open(f'{pkg_path}/pkg.py', 'w',
                   encoding='utf-8') as fp:
             fp.write(text)
 
@@ -309,27 +309,27 @@ class JarvisManager:
 
     def list_repo(self, repo_name):
         """
-        List all of the nodes in a repo
+        List all of the pkgs in a repo
 
         :param repo_name: The repo to list
         :return: None
         """
         repo = self.get_repo(repo_name)
-        node_types = os.listdir(repo['path'])
-        for node_type in node_types:
-            print(node_type)
+        pkg_types = os.listdir(repo['path'])
+        for pkg_type in pkg_types:
+            print(pkg_type)
 
-    def construct_node(self, node_type):
+    def construct_pkg(self, pkg_type):
         """
-        Construct a node by searching repos for the node type
+        Construct a pkg by searching repos for the pkg type
 
-        :param node_type: The type of node to load (snake case).
-        :return: A object of type "node_type"
+        :param pkg_type: The type of pkg to load (snake case).
+        :return: A object of type "pkg_type"
         """
         for repo in self.repos:
-            cls = load_class(f'{repo["name"]}.{node_type}.node',
+            cls = load_class(f'{repo["name"]}.{pkg_type}.pkg',
                              self.repos[0]['path'],
-                             to_camel_case(node_type))
+                             to_camel_case(pkg_type))
             if cls is None:
                 continue
             return cls()

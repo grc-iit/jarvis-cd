@@ -2,7 +2,7 @@
 
 from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_util import *
-from jarvis_cd.basic.node import Pipeline, NodeArgParse
+from jarvis_cd.basic.pkg import Pipeline, PkgArgParse
 
 
 class JarvisArgs(ArgParse):
@@ -19,7 +19,7 @@ class JarvisArgs(ArgParse):
         self.add_args([
             {
                 'name': 'CONFIG_DIR',
-                'msg': 'A directory where jarvis metadata for nodes and '
+                'msg': 'A directory where jarvis metadata for pkgs and '
                        'pipelines are stored. This directory can be anywhere '
                        'that the current user can access.',
                 'required': True,
@@ -219,18 +219,18 @@ class JarvisArgs(ArgParse):
 
         # jarvis repo create
         self.add_menu('repo create',
-                      msg='Create a node in the primary repo')
+                      msg='Create a pkg in the primary repo')
         self.add_args([
             {
-                'name': 'node_type',
-                'msg': 'The name of the node to create',
+                'name': 'pkg_type',
+                'msg': 'The name of the pkg to create',
                 'required': True,
                 'pos': True,
                 'default': None
             },
             {
-                'name': 'node_cls',
-                'msg': 'The type of node to create',
+                'name': 'pkg_cls',
+                'msg': 'The type of pkg to create',
                 'required': True,
                 'pos': True,
                 'default': None,
@@ -267,7 +267,7 @@ class JarvisArgs(ArgParse):
 
         # jarvis repo list
         self.add_menu('repo list',
-                      msg='List the set of repos, or list the set of nodes')
+                      msg='List the set of repos, or list the set of pkgs')
         self.add_args([
             {
                 'name': 'repo_name',
@@ -297,7 +297,7 @@ class JarvisArgs(ArgParse):
 
         # jarvis path
         self.add_menu('path',
-                      msg='Get the path of a jarvis pipeline or node')
+                      msg='Get the path of a jarvis pipeline or pkg')
         self.add_args([
             {
                 'name': 'pipeline_id',
@@ -309,8 +309,8 @@ class JarvisArgs(ArgParse):
         ])
         self.add_args([
             {
-                'name': 'node_id',
-                'msg': 'The name of the node to get the path for',
+                'name': 'pkg_id',
+                'msg': 'The name of the pkg to get the path for',
                 'default': None
             },
         ])
@@ -347,7 +347,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline print
-        self.add_menu('pipeline print', msg="List all nodes in a pipeline.")
+        self.add_menu('pipeline print', msg="List all pkgs in a pipeline.")
         self.add_args([
             {
                 'name': 'pipeline_id',
@@ -374,26 +374,26 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline update
-        self.add_menu('pipeline update', msg='Re-run configure on all nodes '
+        self.add_menu('pipeline update', msg='Re-run configure on all pkgs '
                                              'in a pipeline')
 
         # jarvis pipeline append
         self.add_menu('pipeline append',
-                      msg='Append a node to a pipeline',
+                      msg='Append a pkg to a pipeline',
                       keep_remainder=True)
         self.add_args([
             {
-                'name': 'node_type',
-                'msg': 'The type of node being added to the pipeline',
+                'name': 'pkg_type',
+                'msg': 'The type of pkg being added to the pipeline',
                 'required': True,
                 'pos': True,
                 'default': None
             },
             {
-                'name': 'node_id',
-                'msg': 'The unique name of the node being added to '
+                'name': 'pkg_id',
+                'msg': 'The unique name of the pkg being added to '
                        'the pipeline. By default, will be equal to '
-                       'node_type',
+                       'pkg_type',
                 'required': False,
                 'pos': True,
                 'default': None
@@ -423,17 +423,17 @@ class JarvisArgs(ArgParse):
                       keep_remainder=True)
 
         # jarvis pipeline
-        self.add_menu('node',
-                      msg='Tools to edit nodes in a pipeline')
+        self.add_menu('pkg',
+                      msg='Tools to edit pkgs in a pipeline')
 
-        # jarvis node configure
-        self.add_menu('node configure',
-                      msg="Configure a node in the pipeline",
+        # jarvis pkg configure
+        self.add_menu('pkg configure',
+                      msg="Configure a pkg in the pipeline",
                       keep_remainder=True)
         self.add_args([
             {
-                'name': 'node_id',
-                'msg': 'The unique name of the node being added to '
+                'name': 'pkg_id',
+                'msg': 'The unique name of the pkg being added to '
                        'the pipeline.',
                 'required': True,
                 'pos': True,
@@ -441,12 +441,12 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarvis node unlink
-        self.add_menu('node unlink', msg="Unlink a node from the pipeline.")
+        # jarvis pkg unlink
+        self.add_menu('pkg unlink', msg="Unlink a pkg from the pipeline.")
         self.add_args([
             {
-                'name': 'node_id',
-                'msg': 'The unique name of the node being added to '
+                'name': 'pkg_id',
+                'msg': 'The unique name of the pkg being added to '
                        'the pipeline.',
                 'required': True,
                 'pos': True,
@@ -454,12 +454,12 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarvis node remove
-        self.add_menu('node remove', msg="Remove a node from the pipeline.")
+        # jarvis pkg remove
+        self.add_menu('pkg remove', msg="Remove a pkg from the pipeline.")
         self.add_args([
             {
-                'name': 'node_id',
-                'msg': 'The unique name of the node removed',
+                'name': 'pkg_id',
+                'msg': 'The unique name of the pkg removed',
                 'required': True,
                 'pos': True,
                 'default': None
@@ -566,9 +566,9 @@ class JarvisArgs(ArgParse):
         self.jarvis.save()
 
     def repo_create(self):
-        node_cls = self.kwargs['node_cls']
-        node_type = self.kwargs['node_type']
-        self.jarvis.create_node(node_cls, node_type)
+        pkg_cls = self.kwargs['pkg_cls']
+        pkg_type = self.kwargs['pkg_type']
+        self.jarvis.create_pkg(pkg_cls, pkg_type)
         self.jarvis.save()
 
     def repo_promote(self):
@@ -595,10 +595,10 @@ class JarvisArgs(ArgParse):
 
     def path(self):
         pipeline_id = self.kwargs['pipeline_id']
-        node_id = self.kwargs['node_id']
+        pkg_id = self.kwargs['pkg_id']
         pipeline = Pipeline().load(pipeline_id)
-        if node_id is not None:
-            path = pipeline.get_node(node_id).config_dir
+        if pkg_id is not None:
+            path = pipeline.get_pkg(pkg_id).config_dir
         else:
             path = pipeline.config_dir
         print(path)
@@ -623,10 +623,10 @@ class JarvisArgs(ArgParse):
 
     def pipeline_print(self):
         pipeline_id = self.kwargs['pipeline_id']
-        Pipeline().load(pipeline_id).view_nodes()
+        Pipeline().load(pipeline_id).view_pkgs()
 
     def pipeline_env_build(self):
-        Pipeline().load().build_env(self.kwargs).save()
+        Pipeline().load().build_env(self.kwargs).update().save()
 
     def pipeline_env_track(self):
         Pipeline().load().track_env(self.kwargs.keys()).save()
@@ -635,34 +635,34 @@ class JarvisArgs(ArgParse):
         Pipeline().load().scan_env(self.kwargs).save()
 
     def pipeline_append(self):
-        node_id = self.kwargs['node_id']
-        if node_id is None:
-            node_id = self.kwargs['node_type']
+        pkg_id = self.kwargs['pkg_id']
+        if pkg_id is None:
+            pkg_id = self.kwargs['pkg_type']
         pipeline = Pipeline().load().\
-            append(self.kwargs['node_type'],
-                   node_id_=node_id,
+            append(self.kwargs['pkg_type'],
+                   pkg_id_=pkg_id,
                    do_configure=False)
-        node = pipeline.get_node(node_id)
-        menu = node.configure_menu()
-        args = NodeArgParse(args=self.remainder, menu=menu)
-        pipeline.configure(node_id, **args.kwargs)
+        pkg = pipeline.get_pkg(pkg_id)
+        menu = pkg.configure_menu()
+        args = PkgArgParse(args=self.remainder, menu=menu)
+        pipeline.configure(pkg_id, **args.kwargs)
         pipeline.save()
 
     def pipeline_update(self):
         Pipeline().load().update().save()
 
-    def node_unlink(self):
-        Pipeline().load().unlink(self.kwargs['node_id']).save()
+    def pkg_unlink(self):
+        Pipeline().load().unlink(self.kwargs['pkg_id']).save()
 
-    def node_remove(self):
-        Pipeline().load().remove(self.kwargs['node_id']).save()
+    def pkg_remove(self):
+        Pipeline().load().remove(self.kwargs['pkg_id']).save()
 
-    def node_configure(self):
+    def pkg_configure(self):
         pipeline = Pipeline().load()
-        node = pipeline.get_node(self.kwargs['node_id'])
-        menu = node.configure_menu()
-        args = NodeArgParse(args=self.remainder, menu=menu)
-        node.configure(**args.kwargs)
+        pkg = pipeline.get_pkg(self.kwargs['pkg_id'])
+        menu = pkg.configure_menu()
+        args = PkgArgParse(args=self.remainder, menu=menu)
+        pkg.configure(**args.kwargs)
         pipeline.save()
 
     def pipeline_run(self):

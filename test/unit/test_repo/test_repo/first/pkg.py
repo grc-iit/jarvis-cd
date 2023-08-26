@@ -1,7 +1,7 @@
 """
-First node example
+First pkg example
 """
-from jarvis_cd.basic.node import Service
+from jarvis_cd.basic.pkg import Service
 from jarvis_util import *
 
 
@@ -72,7 +72,7 @@ class First(Service):
     def start(self):
         """
         Launch an application. E.g., OrangeFS will launch the servers, clients,
-        and metadata services on all necessary nodes.
+        and metadata services on all necessary pkgs.
 
         :return: None
         """

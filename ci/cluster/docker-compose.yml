@@ -1,21 +1,21 @@
 version: "3"
 
 services:
-  node1:
+  pkg1:
     build: .
     links:
-      - node2
+      - pkg2
     networks:
       - net
-    hostname: node1
+    hostname: pkg1
     stdin_open: true
     tty: true
 
-  node2:
+  pkg2:
     build: .
     networks:
       - net
-    hostname: node2
+    hostname: pkg2
     stdin_open: true
     tty: true
 

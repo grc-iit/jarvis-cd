@@ -1,4 +1,4 @@
-from jarvis_cd.basic.node import Service
+from jarvis_cd.basic.pkg import Service
 from jarvis_util import *
 import os
 
