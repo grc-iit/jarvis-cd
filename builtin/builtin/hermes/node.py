@@ -144,7 +144,7 @@ class Hermes(Service):
 
         # Get network Info
         if len(hosts) > 1:
-            net_info = rg.find_net_info(shared=True)
+            net_info = rg.find_net_info(hosts, strip_ips=True, shared=True)
         else:
             net_info = rg.find_net_info(hosts, strip_ips=True, shared=False)
         provider = self.config['provider']
