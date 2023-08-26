@@ -1,21 +1,25 @@
 """
-This module provides classes and methods to launch the Hermes2 service.
-Hermes2 is ....
+Hermes is an I/O buffering system. This file provides tools to configure
+and deploy Hermes alongside an application.
 """
 
-from jarvis_cd.basic.node import Service
+from jarvis_cd.basic.pkg import Service
+#
 from jarvis_util import *
+import jarvis_util.util.small_df as sdf
+import subprocess
+import time
 
 
-class Hermes2(Service):
+class Hermes(Service):
     """
-    This class provides methods to launch the Hermes2 service.
+    Provide methods to
     """
     def _init(self):
         """
         Initialize paths
         """
-        pass
+        self.daemon_pkg = None
 
     def _configure_menu(self):
         """
@@ -26,12 +30,6 @@ class Hermes2(Service):
         :return: List(dict)
         """
         return [
-            {
-                'name': 'walkthrough',
-                'msg': 'Use a terminal walkthrough to modify resource graph',
-                'type': bool,
-                'default': False,
-            },
             {
                 'name': 'reinit',
                 'msg': 'Destroy previous configuration and rebuild',
@@ -99,7 +97,7 @@ class Hermes2(Service):
         else:
             # Get the storage devices for the user
             dev_list = [rg.find_storage(dev_types=dev_type,
-                                        count_per_node=count)
+                                        count_per_pkg=count)
                         for dev_type, count in self.config['devices']]
             dev_df = sdf.concat(dev_list)
         if len(dev_df) == 0:
@@ -146,9 +144,11 @@ class Hermes2(Service):
 
         # Get network Info
         if len(hosts) > 1:
-            net_info = rg.find_net_info(shared=True)
+            net_info = rg.find_net_info(hosts, strip_ips=True, shared=True)
         else:
             net_info = rg.find_net_info(hosts, strip_ips=True, shared=False)
+        if len(net_info) == 0:
+            raise Exception(f'Failed to find any networks')
         provider = self.config['provider']
         if provider is None:
             opts = net_info['provider'].unique().list()
@@ -206,11 +206,11 @@ class Hermes2(Service):
     def start(self):
         """
         Launch an application. E.g., OrangeFS will launch the servers, clients,
-        and metadata services on all necessary nodes.
+        and metadata services on all necessary pkgs.
 
         :return: None
         """
-        self.daemon_node = Exec('labstor_runtime',
+        self.daemon_pkg = Exec('hermes_daemon',
                                 PsshExecInfo(hostfile=self.jarvis.hostfile,
                                              env=self.env,
                                              exec_async=True))
@@ -224,7 +224,14 @@ class Hermes2(Service):
 
         :return: None
         """
-        pass
+        Exec('finalize_hermes',
+             PsshExecInfo(hostfile=self.jarvis.hostfile,
+                          env=self.env))
+        if self.daemon_pkg is not None:
+            self.daemon_pkg.wait()
+        Kill('hermes_daemon',
+             PsshExecInfo(hostfile=self.jarvis.hostfile,
+                          env=self.env))
 
     def clean(self):
         """

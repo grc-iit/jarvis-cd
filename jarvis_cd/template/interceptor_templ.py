@@ -2,7 +2,7 @@
 This module provides classes and methods to inject the MyRepo interceptor.
 MyRepo is ....
 """
-from jarvis_cd.basic.node import Interceptor
+from jarvis_cd.basic.pkg import Interceptor
 from jarvis_util import *
 
 
@@ -43,7 +43,7 @@ class MyRepo(Interceptor):
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
 
-        :param kwargs: Configuration parameters for this node.
+        :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
         self.update_config(kwargs, rebuild=False)

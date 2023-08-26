@@ -3,7 +3,7 @@ This module provides classes and methods to launch the Labstor service.
 Labstor is ....
 """
 
-from jarvis_cd.basic.node import Service
+from jarvis_cd.basic.pkg import Service
 from jarvis_util import *
 
 
@@ -121,11 +121,11 @@ class Labstor(Service):
     def start(self):
         """
         Launch an application. E.g., OrangeFS will launch the servers, clients,
-        and metadata services on all necessary nodes.
+        and metadata services on all necessary pkgs.
 
         :return: None
         """
-        self.daemon_node = Exec('labstor_start_runtime',
+        self.daemon_pkg = Exec('labstor_start_runtime',
                                 PsshExecInfo(hostfile=self.jarvis.hostfile,
                                              env=self.env,
                                              exec_async=True))
@@ -144,7 +144,7 @@ class Labstor(Service):
              PsshExecInfo(hostfile=self.jarvis.hostfile,
                           env=self.env))
         print('Client Exited?')
-        self.daemon_node.wait()
+        self.daemon_pkg.wait()
         print('Daemon Exited?')
 
     def clean(self):

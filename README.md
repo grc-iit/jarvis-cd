@@ -3,7 +3,7 @@ storage systems and benchmarks. Many applications have complex configuration
 spaces and are difficult to deploy across different machines.
 
 We provide a builtin repo which contains various applications to deploy.
-We refer to applications as "jarivs nodes" which can be connected to form
+We refer to applications as "jarivs pkgs" which can be connected to form
 "deployment pipelines".
 
 Check out our wiki [here](https://github.com/scs-lab/jarvis-cd/wiki) 
@@ -35,13 +35,13 @@ python3 -m pip install -e .
 jarvis init [CONFIG_DIR] [PRIVATE_DIR] [SHARED_DIR (optional)]
 ```
 
-* **CONFIG_DIR:** A directory where jarvis metadata for nodes and pipelines
+* **CONFIG_DIR:** A directory where jarvis metadata for pkgs and pipelines
 are stored. This directory can be anywhere that the current user can access.
 This can be stored local to a particular machine or on a PFS.
 * **PRIVATE_DIR:** A directory which is common across all machines, but
-stores data locally to the machine. Some jarvis nodes require certain data to
+stores data locally to the machine. Some jarvis pkgs require certain data to
 be stored per-machine. OrangeFS is an example. /tmp for example is typically
 private.
 * **SHARED_DIR:** A directory which is common across all machines, where
 each machine has the same view of data in the directory. Not all jarvis
-nodes require a SHARED_DIR. The SHARED_DIR could be on a PFS, for example.
+pkgs require a SHARED_DIR. The SHARED_DIR could be on a PFS, for example.

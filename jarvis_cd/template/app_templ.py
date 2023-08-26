@@ -2,7 +2,7 @@
 This module provides classes and methods to launch the MyRepo application.
 MyRepo is ....
 """
-from jarvis_cd.basic.node import Application
+from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 
 
@@ -43,7 +43,7 @@ class MyRepo(Application):
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
 
-        :param kwargs: Configuration parameters for this node.
+        :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
         self.update_config(kwargs, rebuild=False)
@@ -51,7 +51,7 @@ class MyRepo(Application):
     def start(self):
         """
         Launch an application. E.g., OrangeFS will launch the servers, clients,
-        and metadata services on all necessary nodes.
+        and metadata services on all necessary pkgs.
 
         :return: None
         """

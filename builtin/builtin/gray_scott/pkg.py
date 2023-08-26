@@ -3,7 +3,7 @@ This module provides classes and methods to launch the Gray Scott application.
 Gray Scott is a 3D 7-point stencil code for modeling the diffusion of two
 substances.
 """
-from jarvis_cd.basic.node import Application
+from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 import pathlib
 
@@ -36,7 +36,7 @@ class GrayScott(Application):
             },
             {
                 'name': 'ppn',
-                'msg': 'Processes per node',
+                'msg': 'Processes per pkg',
                 'type': int,
                 'default': None,
             },
@@ -107,7 +107,7 @@ class GrayScott(Application):
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
 
-        :param kwargs: Configuration parameters for this node.
+        :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
         self.update_config(kwargs, rebuild=False)
@@ -140,7 +140,7 @@ class GrayScott(Application):
     def start(self):
         """
         Launch an application. E.g., OrangeFS will launch the servers, clients,
-        and metadata services on all necessary nodes.
+        and metadata services on all necessary pkgs.
 
         :return: None
         """

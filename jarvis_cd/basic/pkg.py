@@ -1,6 +1,6 @@
 """
 This module contains abstract base classes which represent the different
-node types in Jarvis.
+pkg types in Jarvis.
 """
 
 from abc import ABC, abstractmethod
@@ -16,7 +16,7 @@ import math
 import os
 
 
-class NodeArgParse(ArgParse):
+class pkgArgParse(ArgParse):
     def define_options(self):
         self.add_menu()
         self.add_args(self.custom_info['menu'])
@@ -25,10 +25,10 @@ class NodeArgParse(ArgParse):
         pass
 
 
-class Node(ABC):
+class pkg(ABC):
     """
-    Represents a generic Jarvis node. Includes methods to load configurations
-    and to specialize the node using a context.
+    Represents a generic Jarvis pkg. Includes methods to load configurations
+    and to specialize the pkg using a context.
     """
 
     def __init__(self):
@@ -41,8 +41,8 @@ class Node(ABC):
         self.jarvis = JarvisManager.get_instance()
         self.type = to_snake_case(self.__class__.__name__)
         self.context = None
-        self.node_id = None
-        """The node dir (e.g., ${JARVIS_ROOT}/builtin/orangefs)"""
+        self.pkg_id = None
+        """The pkg dir (e.g., ${JARVIS_ROOT}/builtin/orangefs)"""
         self.pkg_dir = str(
             pathlib.Path(inspect.getfile(self.__class__)).parent.resolve())
         self.config_dir = None
@@ -50,35 +50,35 @@ class Node(ABC):
         self.shared_dir = None
         self.config_path = None
         self.config = None
-        self.sub_nodes = None
+        self.sub_pkgs = None
         self.env_path = None
         self.env = None
 
     def create(self, context):
         """
-        Create a new node and its filesystem data
+        Create a new pkg and its filesystem data
 
         :param context: A dot-separated, globally unique identifier for
-        this node. Indicates where configuration data is stored.
+        this pkg. Indicates where configuration data is stored.
         :return: self
         """
         if context is None:
             context = ''
         self.context = context
-        self.node_id = context.split('.')[-1]
+        self.pkg_id = context.split('.')[-1]
         relpath = self.context.replace('.', '/')
         self.config_dir = f'{self.jarvis.config_dir}/{relpath}'
         self.private_dir = f'{self.jarvis.private_dir}/{relpath}'
         if self.jarvis.shared_dir is not None:
             self.shared_dir = f'{self.jarvis.shared_dir}/{relpath}'
-        self.config_path = f'{self.config_dir}/{self.node_id}.yaml'
+        self.config_path = f'{self.config_dir}/{self.pkg_id}.yaml'
         if os.path.exists(self.config_path):
             self.load(context)
             return self
         self.config = {
-            'sub_nodes': []
+            'sub_pkgs': []
         }
-        self.sub_nodes = []
+        self.sub_pkgs = []
         self.env_path = f'{self.config_dir}/env.yaml'
         self.env = {}
         os.makedirs(self.config_dir, exist_ok=True)
@@ -89,10 +89,10 @@ class Node(ABC):
 
     def load(self, context=None):
         """
-        Load the configuration of a node from the
+        Load the configuration of a pkg from the
 
         :param context: A dot-separated, globally unique identifier for
-        this node. Indicates where configuration data is stored.
+        this pkg. Indicates where configuration data is stored.
         :return: self
         """
         self.context = context
@@ -100,126 +100,126 @@ class Node(ABC):
             self.context = self.jarvis.cur_pipeline
         if self.context is None:
             raise Exception('No pipeline currently selected')
-        self.node_id = self.context.split('.')[-1]
+        self.pkg_id = self.context.split('.')[-1]
         relpath = self.context.replace('.', '/')
-        self.sub_nodes = []
+        self.sub_pkgs = []
         self.config_dir = f'{self.jarvis.config_dir}/{relpath}'
         self.private_dir = f'{self.jarvis.private_dir}/{relpath}'
         if self.jarvis.shared_dir is not None:
             self.shared_dir = f'{self.jarvis.shared_dir}/{relpath}'
-        self.config_path = f'{self.config_dir}/{self.node_id}.yaml'
+        self.config_path = f'{self.config_dir}/{self.pkg_id}.yaml'
         if not os.path.exists(self.config_path):
             return self
         self.config = YamlFile(self.config_path).load()
         self.env_path = f'{self.config_dir}/env.yaml'
         self.env = YamlFile(self.env_path).load()
-        for sub_node_type, sub_node_id in self.config['sub_nodes']:
-            sub_node = self.jarvis.construct_node(sub_node_type)
-            sub_node.load(f'{self.context}.{sub_node_id}')
-            self.sub_nodes.append(sub_node)
+        for sub_pkg_type, sub_pkg_id in self.config['sub_pkgs']:
+            sub_pkg = self.jarvis.construct_pkg(sub_pkg_type)
+            sub_pkg.load(f'{self.context}.{sub_pkg_id}')
+            self.sub_pkgs.append(sub_pkg)
         self._init()
         return self
 
     def save(self):
         """
-        Save a node and its sub-nodes
+        Save a pkg and its sub-pkgs
         :return: Self
         """
         YamlFile(self.config_path).save(self.config)
         YamlFile(self.env_path).save(self.env)
-        for node in self.sub_nodes:
-            node.save()
+        for pkg in self.sub_pkgs:
+            pkg.save()
         return self
 
     def destroy(self):
         """
-        Destroy a node and its sub-nodes
+        Destroy a pkg and its sub-pkgs
 
         :return: None
         """
-        for node in self.sub_nodes:
-            node.destroy()
+        for pkg in self.sub_pkgs:
+            pkg.destroy()
         try:
             shutil.rmtree(self.config_dir)
         except FileNotFoundError:
             pass
 
-    def append(self, node_type, node_id=None, do_configure=True, **kwargs):
+    def append(self, pkg_type, pkg_id=None, do_configure=True, **kwargs):
         """
-        Create and append a node to the pipeline
+        Create and append a pkg to the pipeline
 
-        :param node_type: The type of node to create (e.g., OrangeFS)
-        :param node_id: Semantic name of the node to create
+        :param pkg_type: The type of pkg to create (e.g., OrangeFS)
+        :param pkg_id: Semantic name of the pkg to create
         :param do_configure: Whether to configure while appending
-        :param kwargs: Any parameters the user want to configure in the node
+        :param kwargs: Any parameters the user want to configure in the pkg
         :return: self
         """
-        if node_id is None:
-            node_id = self._make_unique_name(node_type)
-        self.config['sub_nodes'].append([node_type, node_id])
-        node = self.jarvis.construct_node(node_type)
-        if node is None:
-            raise Exception(f'Cloud not find node: {node_type}')
-        context = f'{self.context}.{node_id}'
-        node.create(context)
+        if pkg_id is None:
+            pkg_id = self._make_unique_name(pkg_type)
+        self.config['sub_pkgs'].append([pkg_type, pkg_id])
+        pkg = self.jarvis.construct_pkg(pkg_type)
+        if pkg is None:
+            raise Exception(f'Cloud not find pkg: {pkg_type}')
+        context = f'{self.context}.{pkg_id}'
+        pkg.create(context)
         if do_configure:
-            node.update_env(self.env)
-            node.configure(**kwargs)
-        self.sub_nodes.append(node)
+            pkg.update_env(self.env)
+            pkg.configure(**kwargs)
+        self.sub_pkgs.append(pkg)
         return self
 
-    def _make_unique_name(self, node_type):
-        if self.get_node(node_type) is None:
-            return node_type
+    def _make_unique_name(self, pkg_type):
+        if self.get_pkg(pkg_type) is None:
+            return pkg_type
         count = 1
         while True:
-            new_name = f'{node_type}{count}'
-            if self.get_node(new_name) is not None:
+            new_name = f'{pkg_type}{count}'
+            if self.get_pkg(new_name) is not None:
                 count += 1
             return new_name
 
-    def remove(self, node_id):
+    def remove(self, pkg_id):
         """
-        Remove a node from the pipeline & delete its contents
+        Remove a pkg from the pipeline & delete its contents
 
-        :param node_id: The name of the node to remove
+        :param pkg_id: The name of the pkg to remove
         :return: self
         """
-        node = self.get_node(node_id)
-        node.destroy()
-        self.unlink(node_id)
+        pkg = self.get_pkg(pkg_id)
+        pkg.destroy()
+        self.unlink(pkg_id)
         return self
 
-    def unlink(self, node_id):
+    def unlink(self, pkg_id):
         """
-        Remove a node from the pipeline, but keep its contents in case
+        Remove a pkg from the pipeline, but keep its contents in case
         it gets added back.
 
-        :param node_id: The name of the node to remove
+        :param pkg_id: The name of the pkg to remove
         :return: self
         """
-        self.sub_nodes = [test_node for test_node in self.sub_nodes
-                          if test_node.node_id != node_id]
-        self.config['sub_nodes'] = [
-            [test_node_type, test_node_id]
-            for test_node_type, test_node_id in self.config['sub_nodes']
-            if test_node_id != node_id]
+        self.sub_pkgs = [test_pkg for test_pkg in self.sub_pkgs
+                          if test_pkg.pkg_id != pkg_id]
+        self.config['sub_pkgs'] = [
+            [test_pkg_type, test_pkg_id]
+            for test_pkg_type, test_pkg_id in self.config['sub_pkgs']
+            if test_pkg_id != pkg_id]
         return self
 
-    def get_node(self, node_id):
+    def get_pkg(self, pkg_id):
         """
-        Get a node in the pipeline.
+        Get a pkg in the pipeline.
 
-        :param node_id: The node id to find
-        :return: A node
+        :param pkg_id: The pkg id to find
+        :return: A pkg
         """
-        matches = [node for node in self.sub_nodes if node.node_id == node_id]
+        matches = [pkg for pkg in self.sub_pkgs if pkg.pkg_id == pkg_id]
         if len(matches) == 0:
             return None
         else:
             return matches[0]
 
-    def view_nodes(self):
+    def view_pkgs(self):
         print(self.to_string_pretty())
 
     def update_env(self, env):
@@ -234,7 +234,7 @@ class Node(ABC):
 
     def build_env(self, env_track_dict=None):
         """
-        Build the environment variable cache for this node.
+        Build the environment variable cache for this pkg.
 
         :param env_track_dict: a dict of booleans. Boolean indicates whether
         to track the environment variable, which are the keys of the dict.
@@ -346,9 +346,9 @@ class Node(ABC):
 
     def to_string_list_pretty(self, depth=0):
         space = ' ' * depth
-        info = [f'{space}{self.type} with name {self.node_id}']
-        for sub_node in self.sub_nodes:
-            info += sub_node.to_string_list_pretty(depth + 2)
+        info = [f'{space}{self.type} with name {self.pkg_id}']
+        for sub_pkg in self.sub_pkgs:
+            info += sub_pkg.to_string_list_pretty(depth + 2)
         return info
 
     @abstractmethod
@@ -362,9 +362,9 @@ class Node(ABC):
         pass
 
 
-class SimpleNode(Node):
+class Simplepkg(pkg):
     """
-    A SimpleNode represents a single program. A pipeline is not a SimpleNode
+    A Simplepkg represents a single program. A pipeline is not a Simplepkg
     because it represents a combination of multiple programs.
     """
 
@@ -445,7 +445,7 @@ class SimpleNode(Node):
             fp.write(text)
 
 
-class Interceptor(SimpleNode):
+class Interceptor(Simplepkg):
     """
     An interceptor is a library which routes function calls to a custom
     function. This typically requires modifications to various environment
@@ -462,7 +462,7 @@ class Interceptor(SimpleNode):
         pass
 
 
-class Service(SimpleNode):
+class Service(Simplepkg):
     """
     A long-running service.
     """
@@ -470,7 +470,7 @@ class Service(SimpleNode):
     def start(self):
         """
         Launch an application. E.g., OrangeFS will launch the servers, clients,
-        and metadata services on all necessary nodes.
+        and metadata services on all necessary pkgs.
 
         :return: None
         """
@@ -517,35 +517,35 @@ class Application(Service):
         return True
 
 
-class Pipeline(Node):
+class Pipeline(pkg):
     """
-    A pipeline connects the different node types together in a chain.
+    A pipeline connects the different pkg types together in a chain.
     """
     def _init(self):
         pass
 
-    def configure(self, node_id, **kwargs):
+    def configure(self, pkg_id, **kwargs):
         """
-        Configure a node in the pipeline
+        Configure a pkg in the pipeline
 
-        :param node_id: The semantic name of the node to configure
+        :param pkg_id: The semantic name of the pkg to configure
         :param config: Configuration parameters
         :return:
         """
-        node = self.get_node(node_id)
-        if node is None:
-            raise Exception(f'Cloud not find node: {node_id}')
-        node.update_env(self.env)
-        node.configure(**kwargs)
+        pkg = self.get_pkg(pkg_id)
+        if pkg is None:
+            raise Exception(f'Cloud not find pkg: {pkg_id}')
+        pkg.update_env(self.env)
+        pkg.configure(**kwargs)
 
     def update(self):
         """
-        Re-run configure on all sub-nodes.
+        Re-run configure on all sub-pkgs.
 
         :return:
         """
-        for node in self.sub_nodes:
-            node.configure()
+        for pkg in self.sub_pkgs:
+            pkg.configure()
         return self
 
     def run(self):
@@ -566,13 +566,13 @@ class Pipeline(Node):
         :return: None
         """
         env = self.env.copy()
-        for node in self.sub_nodes:
-            if isinstance(node, Service):
-                node.update_env(env)
-                node.start()
-            if isinstance(node, Interceptor):
-                node.update_env(env)
-                node.modify_env()
+        for pkg in self.sub_pkgs:
+            if isinstance(pkg, Service):
+                pkg.update_env(env)
+                pkg.start()
+            if isinstance(pkg, Interceptor):
+                pkg.update_env(env)
+                pkg.modify_env()
 
     def stop(self):
         """
@@ -581,10 +581,10 @@ class Pipeline(Node):
         :return: None
         """
         env = self.env.copy()
-        for node in reversed(self.sub_nodes):
-            if isinstance(node, Service):
-                node.update_env(env)
-                node.stop()
+        for pkg in reversed(self.sub_pkgs):
+            if isinstance(pkg, Service):
+                pkg.update_env(env)
+                pkg.stop()
 
     def clean(self):
         """
@@ -593,10 +593,10 @@ class Pipeline(Node):
         :return: None
         """
         env = LocalExecInfo().env
-        for node in reversed(self.sub_nodes):
-            if isinstance(node, Service):
-                node.update_env(env.copy())
-                node.clean()
+        for pkg in reversed(self.sub_pkgs):
+            if isinstance(pkg, Service):
+                pkg.update_env(env.copy())
+                pkg.clean()
 
     def status(self):
         """
@@ -606,8 +606,8 @@ class Pipeline(Node):
         """
         env = LocalExecInfo().env
         statuses = []
-        for node in reversed(self.sub_nodes):
-            if isinstance(node, Service):
-                node.update_env(env.copy())
-                statuses.append(node.status())
+        for pkg in reversed(self.sub_pkgs):
+            if isinstance(pkg, Service):
+                pkg.update_env(env.copy())
+                statuses.append(pkg.status())
         return math.prod(statuses)

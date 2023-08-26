@@ -36,7 +36,7 @@ If you are running distributed tests, set path to the hostfile you are  using.
 jarvis hostfile set /path/to/hostfile
 ```
 
-Next, collect the resources from each of those nodes. Walkthrough will give
+Next, collect the resources from each of those pkgs. Walkthrough will give
 a command line tutorial on how to build the hostfile.
 ```bash
 jarvis resource-graph build +walkthrough
@@ -61,7 +61,7 @@ Store the current environment in the pipeline.
 jarvis pipeline env build
 ```
 
-## 4. Add Nodes to the Pipeline
+## 4. Add pkgs to the Pipeline
 
 Create a Jarvis pipeline
 ```bash

@@ -1,13 +1,13 @@
 """
-Second node example
+Third pkg example
 """
-from jarvis_cd.basic.node import Interceptor
+from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 
 
-class Second(Interceptor):
+class Third(Application):
     """
-    Interceptor example
+    Application example
     """
     def _init(self):
         pass
@@ -33,10 +33,29 @@ class Second(Interceptor):
         """
         print(f'{kwargs}')
 
-    def modify_env(self):
+    def start(self):
         """
-        Modify the jarvis environment.
+        Launch an application. E.g., OrangeFS will launch the servers, clients,
+        and metadata services on all necessary pkgs.
 
         :return: None
         """
-        print('second modify_env')
+        print('third start')
+
+    def stop(self):
+        """
+        Stop a running application. E.g., OrangeFS will terminate the servers,
+        clients, and metadata services.
+
+        :return: None
+        """
+        print('third stop')
+
+    def clean(self):
+        """
+        Destroy all data for an application. E.g., OrangeFS will delete all
+        metadata and data directories in addition to the orangefs.xml file.
+
+        :return: None
+        """
+        print('third clean')
