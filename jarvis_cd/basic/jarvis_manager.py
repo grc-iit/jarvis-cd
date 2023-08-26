@@ -91,7 +91,7 @@ class JarvisManager:
 
     def save(self):
         """
-        Save the jarvis config to the config/ares.yaml
+        Save the jarvis config to config/jarvis_config.yaml
 
         :return: None
         """
@@ -106,7 +106,7 @@ class JarvisManager:
 
     def load(self):
         """
-        Load the jarvis config from the config/ares.yaml
+        Load the jarvis config from config/jarvis_config.yaml
 
         :return: None
         """
