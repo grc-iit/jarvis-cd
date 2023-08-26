@@ -116,12 +116,12 @@ class JarvisManager:
         # Read global jarvis conf
         self.jarvis_conf.update(YamlFile(self.jarvis_conf_path).load())
         self.repos = self.jarvis_conf['REPOS']
-        self.config_dir = expand_env(self.jarvis_conf["CONFIG_DIR"])
+        self.config_dir = expand_env(self.jarvis_conf['CONFIG_DIR'])
         os.makedirs(f'{self.config_dir}', exist_ok=True)
-        self.private_dir = expand_env(self.jarvis_conf["PRIVATE_DIR"])
+        self.private_dir = expand_env(self.jarvis_conf['PRIVATE_DIR'])
         os.makedirs(f'{self.private_dir}', exist_ok=True)
         if self.jarvis_conf['SHARED_DIR'] is not None:
-            self.shared_dir = expand_env(self.jarvis_conf["SHARED_DIR"])
+            self.shared_dir = expand_env(self.jarvis_conf['SHARED_DIR'])
             os.makedirs(f'{self.shared_dir}', exist_ok=True)
         # Read global resource graph
         if os.path.exists(self.resource_graph_path):

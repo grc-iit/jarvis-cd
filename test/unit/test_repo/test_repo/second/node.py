@@ -1,8 +1,14 @@
+"""
+Second node example
+"""
 from jarvis_cd.basic.node import Interceptor
 from jarvis_util import *
 
 
 class Second(Interceptor):
+    """
+    Interceptor example
+    """
     def _init(self):
         pass
 

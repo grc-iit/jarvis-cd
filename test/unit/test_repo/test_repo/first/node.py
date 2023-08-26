@@ -1,8 +1,14 @@
+"""
+First node example
+"""
 from jarvis_cd.basic.node import Service
 from jarvis_util import *
 
 
 class First(Service):
+    """
+    Service example
+    """
     def _init(self):
         pass
 
