@@ -9,3 +9,5 @@ popd || exit
 
 python3 -m pip install -r requirements.txt
 python3 -m pip install -e .
+
+jarvis init "${HOME}/jarvis-pipelines" "${HOME}/jarvis-pipelines" "${HOME}/jarvis-pipelines"
