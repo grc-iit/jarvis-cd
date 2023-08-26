@@ -292,6 +292,8 @@ class JarvisArgs(ArgParse):
                 'default': None
             },
         ])
+        self.add_menu('getcwd',
+                      msg='Get currently focused pipeline')
 
         # jarvis path
         self.add_menu('path',

@@ -31,12 +31,6 @@ class Hermes(Service):
         """
         return [
             {
-                'name': 'walkthrough',
-                'msg': 'Use a terminal walkthrough to modify resource graph',
-                'type': bool,
-                'default': False,
-            },
-            {
                 'name': 'reinit',
                 'msg': 'Destroy previous configuration and rebuild',
                 'type': bool,
@@ -150,9 +144,11 @@ class Hermes(Service):
 
         # Get network Info
         if len(hosts) > 1:
-            net_info = rg.find_net_info(shared=True)
+            net_info = rg.find_net_info(hosts, strip_ips=True, shared=True)
         else:
             net_info = rg.find_net_info(hosts, strip_ips=True, shared=False)
+        if len(net_info) == 0:
+            raise Exception(f'Failed to find any networks')
         provider = self.config['provider']
         if provider is None:
             opts = net_info['provider'].unique().list()

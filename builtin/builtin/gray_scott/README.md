@@ -112,6 +112,7 @@ spack install hermes@master adios2
 spack load hermes adios2
 # On Ares
 module load hermes/master-feow7up adios2/2.9.0-mmkelnu
+# export GRAY_SCOTT_PATH=${HOME}/adiosvm/Tutorial/gs-mpiio/build
 export PATH="${GRAY_SCOTT_PATH}:$PATH"
 ```
 
