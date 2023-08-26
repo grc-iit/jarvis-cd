@@ -2,7 +2,7 @@
 
 from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_util import *
-from jarvis_cd.basic.pkg import Pipeline, pkgArgParse
+from jarvis_cd.basic.pkg import Pipeline, PkgArgParse
 
 
 class JarvisArgs(ArgParse):
@@ -644,7 +644,7 @@ class JarvisArgs(ArgParse):
                    do_configure=False)
         pkg = pipeline.get_pkg(pkg_id)
         menu = pkg.configure_menu()
-        args = pkgArgParse(args=self.remainder, menu=menu)
+        args = PkgArgParse(args=self.remainder, menu=menu)
         pipeline.configure(pkg_id, **args.kwargs)
         pipeline.save()
 
@@ -661,7 +661,7 @@ class JarvisArgs(ArgParse):
         pipeline = Pipeline().load()
         pkg = pipeline.get_pkg(self.kwargs['pkg_id'])
         menu = pkg.configure_menu()
-        args = pkgArgParse(args=self.remainder, menu=menu)
+        args = PkgArgParse(args=self.remainder, menu=menu)
         pkg.configure(**args.kwargs)
         pipeline.save()
 

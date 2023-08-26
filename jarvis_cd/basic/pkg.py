@@ -16,7 +16,7 @@ import math
 import os
 
 
-class pkgArgParse(ArgParse):
+class PkgArgParse(ArgParse):
     def define_options(self):
         self.add_menu()
         self.add_args(self.custom_info['menu'])
@@ -25,7 +25,7 @@ class pkgArgParse(ArgParse):
         pass
 
 
-class pkg(ABC):
+class Pkg(ABC):
     """
     Represents a generic Jarvis pkg. Includes methods to load configurations
     and to specialize the pkg using a context.
@@ -362,9 +362,9 @@ class pkg(ABC):
         pass
 
 
-class Simplepkg(pkg):
+class SimplePkg(Pkg):
     """
-    A Simplepkg represents a single program. A pipeline is not a Simplepkg
+    A SimplePkg represents a single program. A pipeline is not a SimplePkg
     because it represents a combination of multiple programs.
     """
 
@@ -445,7 +445,7 @@ class Simplepkg(pkg):
             fp.write(text)
 
 
-class Interceptor(Simplepkg):
+class Interceptor(SimplePkg):
     """
     An interceptor is a library which routes function calls to a custom
     function. This typically requires modifications to various environment
@@ -462,7 +462,7 @@ class Interceptor(Simplepkg):
         pass
 
 
-class Service(Simplepkg):
+class Service(SimplePkg):
     """
     A long-running service.
     """
@@ -517,7 +517,7 @@ class Application(Service):
         return True
 
 
-class Pipeline(pkg):
+class Pipeline(Pkg):
     """
     A pipeline connects the different pkg types together in a chain.
     """
