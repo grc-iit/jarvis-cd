@@ -5,6 +5,7 @@ of all relevant paths needed by most jarvis repos.
 
 import pathlib
 import os
+from jarvis_util.shell.filesystem import Rm
 from jarvis_util.serialize.yaml_file import YamlFile
 from jarvis_util.util.import_mod import load_class
 from jarvis_util.util.naming import to_camel_case
@@ -12,6 +13,7 @@ from jarvis_util.util.expand_env import expand_env
 from jarvis_util.util.hostfile import Hostfile
 from jarvis_util.introspect.system_info import ResourceGraph
 from jarvis_util.shell.pssh_exec import PsshExecInfo
+from jarvis_util.shell.local_exec import LocalExecInfo
 import getpass
 
 
@@ -171,6 +173,16 @@ class JarvisManager:
         configs = os.listdir(f'{self.jarvis_root}/builtin/config')
         for config in configs:
             print(config)
+
+    def reset(self):
+        """
+        Destroy all pipelines and their data
+
+        :return: None
+        """
+        Rm(self.shared_dir, LocalExecInfo())
+        Rm(self.private_dir, PsshExecInfo(
+            hostfile=self.hostfile))
 
     def print_config(self):
         print(self.config_dir)
