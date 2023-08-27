@@ -232,19 +232,6 @@ class Pkg(ABC):
         env.update(self.env)
         self.env = env
 
-    def build_env(self, env_track_dict=None):
-        """
-        Build the environment variable cache for this pkg.
-
-        :param env_track_dict: a dict of booleans. Boolean indicates whether
-        to track the environment variable, which are the keys of the dict.
-        :return: self
-        """
-        exec_info = LocalExecInfo()
-        self.env = exec_info.basic_env
-        self.track_env(env_track_dict)
-        return self
-
     def track_env(self, env_track_dict=None):
         """
         Add and remove cached environment variables.
@@ -537,6 +524,20 @@ class Pipeline(Pkg):
             raise Exception(f'Cloud not find pkg: {pkg_id}')
         pkg.update_env(self.env)
         pkg.configure(**kwargs)
+
+    def build_env(self, env_track_dict=None):
+        """
+        Build the environment variable cache for this pkg.
+
+        :param env_track_dict: a dict of booleans. Boolean indicates whether
+        to track the environment variable, which are the keys of the dict.
+        :return: self
+        """
+        exec_info = LocalExecInfo()
+        self.env = exec_info.basic_env
+        self.track_env(env_track_dict)
+        self.update()
+        return self
 
     def update(self):
         """

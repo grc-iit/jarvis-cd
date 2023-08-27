@@ -22,9 +22,9 @@ make -j8
 popd
 
 scspkg create labstor
-scspkg prepend-env LABSTOR_PATH ${PWD}
-scspkg prepend-env PATH ${PWD}/bin
-scspkg prepend-env LD_LIBRARY_PATH ${PWD}/bin
+scspkg prepend-env labstor LABSTOR_PATH ${PWD}
+scspkg prepend-env labstor PATH ${PWD}/build/bin
+scspkg prepend-env labstor LD_LIBRARY_PATH ${PWD}/build/bin
 module load labstor
 ```
 
