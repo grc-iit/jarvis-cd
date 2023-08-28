@@ -125,7 +125,6 @@ class Labstor(Service):
 
         :return: None
         """
-        print(self.env['PATH'])
         self.daemon_pkg = Exec('labstor_start_runtime',
                                 PsshExecInfo(hostfile=self.jarvis.hostfile,
                                              env=self.env,

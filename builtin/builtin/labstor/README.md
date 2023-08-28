@@ -23,8 +23,8 @@ popd
 
 scspkg create labstor
 scspkg prepend-env labstor LABSTOR_PATH ${PWD}
-scspkg prepend-env labstor PATH ${PWD}/build/bin
-scspkg prepend-env labstor LD_LIBRARY_PATH ${PWD}/build/bin
+scspkg prepend-env labstor PATH ${PWD}/cmake-build-debug-gcc/bin
+scspkg prepend-env labstor LD_LIBRARY_PATH ${PWD}/cmake-build-debug-gcc/bin
 module load labstor
 ```
 
@@ -59,6 +59,10 @@ jarvis pipeline create labstor-test
 Create the environment variables
 ```bash
 spack load labstor
+# OR 
+spack load mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
+yaml-cpp boost hermes_shm
+module load labstor
 ```````````
 
 Store the current environment in the pipeline.
