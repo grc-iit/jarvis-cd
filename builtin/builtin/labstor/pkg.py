@@ -15,6 +15,7 @@ class Labstor(Service):
         """
         Initialize paths
         """
+        self.daemon_pkg = None
         pass
 
     def _configure_menu(self):
@@ -148,7 +149,8 @@ class Labstor(Service):
         #      PsshExecInfo(hostfile=self.jarvis.hostfile,
         #                   env=self.env))
         print('Client Exited?')
-        self.daemon_pkg.wait()
+        if self.daemon_pkg is not None:
+            self.daemon_pkg.wait()
         print('Daemon Exited?')
 
     def clean(self):
