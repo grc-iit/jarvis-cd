@@ -28,19 +28,19 @@ class PkgArgParse(ArgParse):
 class Pkg(ABC):
     """
     Represents a generic Jarvis pkg. Includes methods to load configurations
-    and to specialize the pkg using a context.
+    and to specialize the pkg using a global_id.
     """
 
     def __init__(self):
         """
         Initialize paths
 
-        :param requires_shared: Whether this repo requires the shared directory
+        :param pkg_type: The type of this package
         """
-
         self.jarvis = JarvisManager.get_instance()
-        self.type = to_snake_case(self.__class__.__name__)
-        self.context = None
+        self.pkg_type = to_snake_case(self.__class__.__name__)
+        self.root = None
+        self.global_id = None
         self.pkg_id = None
         """The pkg dir (e.g., ${JARVIS_ROOT}/builtin/orangefs)"""
         self.pkg_dir = str(
@@ -50,30 +50,52 @@ class Pkg(ABC):
         self.shared_dir = None
         self.config_path = None
         self.config = None
-        self.sub_pkgs = None
+        self.sub_pkgs = []
         self.env_path = None
         self.env = None
 
-    def create(self, context):
+    def _init_common(self, global_id, root):
         """
-        Create a new pkg and its filesystem data
+        Update paths in this package based on the global_id
 
-        :param context: A dot-separated, globally unique identifier for
-        this pkg. Indicates where configuration data is stored.
-        :return: self
+        :param global_id: The unique identifier for this package
+        :return: None
         """
-        if context is None:
-            context = ''
-        self.context = context
-        self.pkg_id = context.split('.')[-1]
-        relpath = self.context.replace('.', '/')
+        if root is None:
+            root = self
+        self.root = root
+        self.global_id = self._get_global_id(global_id)
+        id_split = self.global_id.split('.')
+        self.pkg_id = id_split[-1]
+        relpath = self.global_id.replace('.', '/')
         self.config_dir = f'{self.jarvis.config_dir}/{relpath}'
         self.private_dir = f'{self.jarvis.private_dir}/{relpath}'
         if self.jarvis.shared_dir is not None:
             self.shared_dir = f'{self.jarvis.shared_dir}/{relpath}'
         self.config_path = f'{self.config_dir}/{self.pkg_id}.yaml'
+        if len(id_split) > 1:
+            self.env_path = None
+        else:
+            self.env_path = f'{self.config_dir}/env.yaml'
+
+    def _get_global_id(self, global_id):
+        if global_id is None:
+            global_id = self.jarvis.cur_pipeline
+        if global_id is None:
+            raise Exception('No pipeline currently selected')
+        return global_id
+
+    def create(self, global_id):
+        """
+        Create a new pkg and its filesystem data
+
+        :param global_id: A dot-separated, globally unique identifier for
+        this pkg. Indicates where configuration data is stored.
+        :return: self
+        """
+        self._init_common(global_id, self.root)
         if os.path.exists(self.config_path):
-            self.load(context)
+            self.load(global_id, self.root)
             return self
         self.config = {
             'sub_pkgs': []
@@ -87,35 +109,26 @@ class Pkg(ABC):
         self._init()
         return self
 
-    def load(self, context=None):
+    def load(self, global_id=None, root=None):
         """
         Load the configuration of a pkg from the
 
-        :param context: A dot-separated, globally unique identifier for
+        :param global_id: A dot-separated, globally unique identifier for
         this pkg. Indicates where configuration data is stored.
+        :param root: The parent
         :return: self
         """
-        self.context = context
-        if self.context is None:
-            self.context = self.jarvis.cur_pipeline
-        if self.context is None:
-            raise Exception('No pipeline currently selected')
-        self.pkg_id = self.context.split('.')[-1]
-        relpath = self.context.replace('.', '/')
-        self.sub_pkgs = []
-        self.config_dir = f'{self.jarvis.config_dir}/{relpath}'
-        self.private_dir = f'{self.jarvis.private_dir}/{relpath}'
-        if self.jarvis.shared_dir is not None:
-            self.shared_dir = f'{self.jarvis.shared_dir}/{relpath}'
-        self.config_path = f'{self.config_dir}/{self.pkg_id}.yaml'
+        self._init_common(global_id, root)
         if not os.path.exists(self.config_path):
             return self
         self.config = YamlFile(self.config_path).load()
-        self.env_path = f'{self.config_dir}/env.yaml'
-        self.env = YamlFile(self.env_path).load()
+        if self.env_path is not None:
+            self.env = YamlFile(self.env_path).load()
+        else:
+            self.env = self.root.env
         for sub_pkg_type, sub_pkg_id in self.config['sub_pkgs']:
             sub_pkg = self.jarvis.construct_pkg(sub_pkg_type)
-            sub_pkg.load(f'{self.context}.{sub_pkg_id}')
+            sub_pkg.load(f'{self.global_id}.{sub_pkg_id}', self.root)
             self.sub_pkgs.append(sub_pkg)
         self._init()
         return self
@@ -125,8 +138,10 @@ class Pkg(ABC):
         Save a pkg and its sub-pkgs
         :return: Self
         """
+        self.config['pkg_type'] = self.pkg_type
         YamlFile(self.config_path).save(self.config)
-        YamlFile(self.env_path).save(self.env)
+        if self.env_path is not None:
+            YamlFile(self.env_path).save(self.env)
         for pkg in self.sub_pkgs:
             pkg.save()
         return self
@@ -160,8 +175,8 @@ class Pkg(ABC):
         pkg = self.jarvis.construct_pkg(pkg_type)
         if pkg is None:
             raise Exception(f'Cloud not find pkg: {pkg_type}')
-        context = f'{self.context}.{pkg_id}'
-        pkg.create(context)
+        global_id = f'{self.global_id}.{pkg_id}'
+        pkg.create(global_id)
         if do_configure:
             pkg.update_env(self.env)
             pkg.configure(**kwargs)
@@ -333,7 +348,7 @@ class Pkg(ABC):
 
     def to_string_list_pretty(self, depth=0):
         space = ' ' * depth
-        info = [f'{space}{self.type} with name {self.pkg_id}']
+        info = [f'{space}{self.pkg_type} with name {self.pkg_id}']
         for sub_pkg in self.sub_pkgs:
             info += sub_pkg.to_string_list_pretty(depth + 2)
         return info
