@@ -141,9 +141,12 @@ class Labstor(Service):
         :return: None
         """
         print('Stopping labstor')
-        Exec('labstor_stop_runtime',
+        Kill('labstor',
              PsshExecInfo(hostfile=self.jarvis.hostfile,
                           env=self.env))
+        # Exec('labstor_stop_runtime',
+        #      PsshExecInfo(hostfile=self.jarvis.hostfile,
+        #                   env=self.env))
         print('Client Exited?')
         self.daemon_pkg.wait()
         print('Daemon Exited?')

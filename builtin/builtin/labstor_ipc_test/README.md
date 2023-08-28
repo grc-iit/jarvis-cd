@@ -33,6 +33,8 @@ Create the environment variables
 ```bash
 spack load labstor
 # OR 
+spack load mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
+yaml-cpp boost hermes_shm
 module load labstor
 ```````````
 
