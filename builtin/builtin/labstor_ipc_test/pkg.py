@@ -1,14 +1,14 @@
 """
-This module provides classes and methods to launch the Hermes2IpcTest application.
-Hermes2IpcTest is ....
+This module provides classes and methods to launch the LabstorIpcTest application.
+LabstorIpcTest is ....
 """
 from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 
 
-class Hermes2IpcTest(Application):
+class LabstorIpcTest(Application):
     """
-    This class provides methods to launch the Hermes2IpcTest application.
+    This class provides methods to launch the LabstorIpcTest application.
     """
     def _init(self):
         """
@@ -24,19 +24,7 @@ class Hermes2IpcTest(Application):
 
         :return: List(dict)
         """
-        return [
-            {
-                'name': None,  # The name of the parameter
-                'msg': '',  # Describe this parameter
-                'type': str,  # What is the parameter type?
-                'default': None,  # What is the default value if not required?
-                # Does this parameter have specific valid inputs?
-                'choices': [],
-                # When type is list, what do the entries of the list mean?
-                # A list of dicts just like this one.
-                'args': [],
-            },
-        ]
+        return []
 
     def configure(self, **kwargs):
         """
@@ -55,7 +43,9 @@ class Hermes2IpcTest(Application):
 
         :return: None
         """
-        pass
+        Exec('test_ipc_exec TestIpc',
+             MpiExecInfo(hostfile=self.jarvis.hostfile,
+                         env=self.env))
 
     def stop(self):
         """
