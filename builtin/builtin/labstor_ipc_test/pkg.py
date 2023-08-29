@@ -26,7 +26,7 @@ class LabstorIpcTest(Application):
         """
         return [
             {
-                'name': 'TestCase',
+                'name': 'TEST_CASE',
                 'msg': 'Destroy previous configuration and rebuild',
                 'type': bool,
                 'default': 'TestIpc'
