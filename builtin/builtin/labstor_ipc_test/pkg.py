@@ -24,7 +24,14 @@ class LabstorIpcTest(Application):
 
         :return: List(dict)
         """
-        return []
+        return [
+            {
+                'name': 'TestCase',
+                'msg': 'Destroy previous configuration and rebuild',
+                'type': bool,
+                'default': 'TestIpc'
+            }
+        ]
 
     def configure(self, **kwargs):
         """
@@ -43,7 +50,7 @@ class LabstorIpcTest(Application):
 
         :return: None
         """
-        Exec('test_ipc_exec TestIpc',
+        Exec(f'test_ipc_exec {self.config["TEST_CASE"]}',
              MpiExecInfo(hostfile=self.jarvis.hostfile,
                          env=self.env))
 
