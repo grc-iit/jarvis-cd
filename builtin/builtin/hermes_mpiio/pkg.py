@@ -47,4 +47,4 @@ class HermesMpiio(Interceptor):
 
         :return: None
         """
-        self.prepend_path('LD_PRELOAD', self.config['HERMES_MPIIO'])
+        self.prepend_env('LD_PRELOAD', self.config['HERMES_MPIIO'])
