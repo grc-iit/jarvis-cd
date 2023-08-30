@@ -27,10 +27,10 @@ class SparkCluster(Service):
         """
         return [
             {
-                'name': None,  # The name of the parameter
+                'name': 'port',  # The name of the parameter
                 'msg': '',  # Describe this parameter
-                'type': str,  # What is the parameter type?
-                'default': None,  # What is the default value if not required?
+                'type': int,  # What is the parameter type?
+                'default': 7077,  # What is the default value if not required?
                 # Does this parameter have specific valid inputs?
                 'choices': [],
                 # When type is list, what do the entries of the list mean?
@@ -49,8 +49,8 @@ class SparkCluster(Service):
         """
         self.update_config(kwargs, rebuild=False)
         self.config['SPARK_SCRIPTS'] = self.env['SPARK_SCRIPTS']
-        self.env['SPARK_MASTER_HOST'] = self.hostfile.hosts[0]
-        self.env['SPARK_MASTER_PORT'] = 7077
+        self.env['SPARK_MASTER_HOST'] = self.jarvis.hostfile.hosts[0]
+        self.env['SPARK_MASTER_PORT'] = '7077'
 
     def start(self):
         """
@@ -62,12 +62,12 @@ class SparkCluster(Service):
         # Start the master node
         Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/start-master.sh',
              PsshExecInfo(env=self.env,
-                          hosts=self.hostfile.subset(1)))
+                          hosts=self.jarvis.hostfile.subset(1)))
         # Start the worker nodes
         Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/start-worker.sh '
              f'{self.env["SPARK_MASTER_HOST"]}',
              PsshExecInfo(env=self.env,
-                          hosts=self.hostfile))
+                          hosts=self.jarvis.hostfile))
 
     def stop(self):
         """
