@@ -1,5 +1,18 @@
 # Installation
 
+Manual build:
+```
+spack install
+scspkg create spark
+wget https://dlcdn.apache.org/spark/spark-3.4.1/spark-3.4.1.tgz
+tar -xzf spark-3.4.1.tgz
+cd spark-3.4.1
+./build/mvn -DskipTests clean package
+scspkg set-env spark SPARK_SCRIPTS ${PWD}
+module load spark
+```
+
+With spack (doesn't seem to work, sorry):
 ```
 spack install spark
 spack load spark
