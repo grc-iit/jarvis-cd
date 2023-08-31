@@ -14,7 +14,6 @@ class NyxLya(Application):
         """
         Initialize paths
         """
-        print(f"NyxLya: _init() is called---{self.pkg_dir}")
         self.inputs_path = f'{self.pkg_dir}/config/inputs'
         self.nyx_lya_path = None
 
