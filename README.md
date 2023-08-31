@@ -27,9 +27,9 @@ python3 -m pip install -r requirements.txt
 python3 -m pip install -e .
 ```
 
-## 0.2. Configuring Jarvis
+# 0.3. Configuring Jarvis
 
-## 0.2.1. Bootstrapping from a specific machine
+## 0.3.1. Bootstrapping from a specific machine
 
 Jarivs has been pre-configured on some machines. To bootstrap from
 one of them, run the following:
@@ -45,7 +45,7 @@ To check the set of available machines to bootstrap from, run:
 jarvis boostrap list
 ```
 
-## 0.2.2. Creating a new configuration
+## 0.3.2. Creating a new configuration
 
 A configuration can be generated as follows:
 ```bash
