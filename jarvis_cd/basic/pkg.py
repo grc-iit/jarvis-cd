@@ -279,7 +279,7 @@ class Pkg(ABC):
             self.env[key] = os.getenv(key)
         return self
 
-    def prepend_path(self, env_var, path):
+    def prepend_env(self, env_var, path):
         """
         Prepend a path to the an environment variable, such as LD_PRELOAD.
 
