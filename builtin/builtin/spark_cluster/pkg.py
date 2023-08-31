@@ -51,6 +51,7 @@ class SparkCluster(Service):
         self.config['SPARK_SCRIPTS'] = self.env['SPARK_SCRIPTS']
         self.env['SPARK_MASTER_HOST'] = self.jarvis.hostfile.hosts[0]
         self.env['SPARK_MASTER_PORT'] = '7077'
+        self.env['SPARK_WORKER_PORT'] = '7078'
 
     def start(self):
         """
@@ -63,11 +64,13 @@ class SparkCluster(Service):
         Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/start-master.sh',
              PsshExecInfo(env=self.env,
                           hosts=self.jarvis.hostfile.subset(1)))
+        time.sleep(1)
         # Start the worker nodes
         Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/start-worker.sh '
-             f'{self.env["SPARK_MASTER_HOST"]}',
+             f'{self.env["SPARK_MASTER_HOST"]}:{self.env["SPARK_MASTER_PORT"]}',
              PsshExecInfo(env=self.env,
                           hosts=self.jarvis.hostfile))
+        time.sleep(self.config['sleep'])
 
     def stop(self):
         """
@@ -76,7 +79,15 @@ class SparkCluster(Service):
 
         :return: None
         """
-        pass
+        # Start the master node
+        Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/stop-master.sh',
+             PsshExecInfo(env=self.env,
+                          hosts=self.jarvis.hostfile.subset(1)))
+        # Start the worker nodes
+        Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/stop-worker.sh '
+             f'{self.env["SPARK_MASTER_HOST"]}',
+             PsshExecInfo(env=self.env,
+                          hosts=self.jarvis.hostfile))
 
     def clean(self):
         """
