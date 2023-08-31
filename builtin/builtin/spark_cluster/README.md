@@ -2,12 +2,14 @@
 
 Manual build:
 ```
-spack install
+spack install openjdk@11
+spack load openjdk@11
 scspkg create spark
+cd `scspkg pkg-src spark`
 wget https://dlcdn.apache.org/spark/spark-3.4.1/spark-3.4.1.tgz
 tar -xzf spark-3.4.1.tgz
 cd spark-3.4.1
-./build/mvn -DskipTests clean package
+./build/mvn -T 16 -DskipTests clean package
 scspkg set-env spark SPARK_SCRIPTS ${PWD}
 module load spark
 ```
