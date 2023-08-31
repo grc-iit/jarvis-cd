@@ -20,7 +20,6 @@ python3 -m pip install -e .
 
 # 0.2. Installation
 
-## 0.2.1. Install the jarvis-cd python package
 ```bash
 cd /path/to/jarvis-cd
 python3 -m pip install -r requirements.txt
