@@ -13,6 +13,7 @@ cd spark-3.4.1
 scspkg set-env spark SPARK_SCRIPTS ${PWD}
 module load spark
 ```
+NOTE: this took 30min in Ares.
 
 With spack (doesn't seem to work, sorry):
 ```
