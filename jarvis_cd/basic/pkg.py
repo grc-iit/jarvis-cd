@@ -251,16 +251,22 @@ class Pkg(ABC):
         """
         Add and remove cached environment variables.
 
-        :param env_track_dict: a dict of booleans. Boolean indicates whether
-        to track the environment variable, which are the keys of the dict.
+        :param env_track_dict: a dict of booleans or strings. Boolean indicates
+        whether to track the environment variable, which are the keys
+        of the dict. String indicates track the variable and set to this value.
         :return: self
         """
         if env_track_dict is None:
             return
         for key, val in env_track_dict.items():
+            if isinstance(val, str):
+                self.env[key] = val
+                continue
             if val:
                 if key in os.environ:
                     self.env[key] = os.getenv(key)
+                else:
+                    self.env[key] = ''
             else:
                 if key in self.env:
                     del self.env[key]
