@@ -643,10 +643,16 @@ class JarvisArgs(ArgParse):
         Pipeline().load(pipeline_id).view_pkgs()
 
     def pipeline_env_build(self):
-        Pipeline().load().build_env(self.kwargs).update().save()
+        kwargs = {}
+        kwargs.update(self.kwargs)
+        kwargs.update(self.remainder_kv)
+        Pipeline().load().build_env(kwargs).update().save()
 
     def pipeline_env_track(self):
-        Pipeline().load().track_env(self.kwargs.keys()).save()
+        kwargs = {}
+        kwargs.update(self.kwargs)
+        kwargs.update(self.remainder_kv)
+        Pipeline().load().track_env(kwargs.keys()).save()
 
     def pipeline_env_scan(self):
         Pipeline().load().scan_env(self.kwargs).save()
