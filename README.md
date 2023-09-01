@@ -8,6 +8,7 @@ We refer to applications as "jarivs pkgs" which can be connected to form
 
 # 0.1 Dependencies
 
+## 0.1.1. Jarvis-Util
 Jarvis-CD depends on jarvis-util. jarvis-util contains functions to execute
 binaries in python and collect their output.
 
@@ -17,6 +18,21 @@ cd jarvis-util
 python3 -m pip install -r requirements.txt
 python3 -m pip install -e .
 ```
+
+## 0.1.2. Scspkg
+
+Scspkg is a tool for building modulefiles using a CLI. It's not strictly
+necessary for Jarvis to function, but many of the readmes use it to provide
+structure to manual installations.
+
+```bash
+git clone https://github.com/scs-lab/scspkg.git
+python3 -m pip install -r requirements.txt
+python3 -m pip install -e .
+echo "module use \`scspkg module dir\`" >> ~/.bashrc
+```
+
+The wiki for scspkg is [here](https://github.com/scs-lab/scspkg.git).
 
 # 0.2. Installation
 
