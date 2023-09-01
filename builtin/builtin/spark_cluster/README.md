@@ -10,7 +10,7 @@ wget https://dlcdn.apache.org/spark/spark-3.4.1/spark-3.4.1.tgz
 tar -xzf spark-3.4.1.tgz
 cd spark-3.4.1
 ./build/mvn -T 16 -DskipTests clean package
-scspkg set-env spark SPARK_SCRIPTS ${PWD}
+scspkg env set spark SPARK_SCRIPTS=${PWD}
 module load spark
 ```
 NOTE: this took 30min in Ares.
@@ -20,7 +20,7 @@ With spack (doesn't seem to work, sorry):
 spack install spark
 spack load spark
 scspkg create spark-env
-scspkg set-env spark-env SPARK_SCRIPTS `spack find --format "{PREFIX}" spark`
+scspkg env set spark-env SPARK_SCRIPTS=`spack find --format "{PREFIX}" spark`
 module load spark-env
 ```
 

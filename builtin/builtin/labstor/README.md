@@ -22,9 +22,9 @@ make -j8
 popd
 
 scspkg create labstor
-scspkg prepend-env labstor LABSTOR_PATH ${PWD}
-scspkg prepend-env labstor PATH ${PWD}/cmake-build-debug-gcc/bin
-scspkg prepend-env labstor LD_LIBRARY_PATH ${PWD}/cmake-build-debug-gcc/bin
+scspkg env prepend labstor LABSTOR_PATH ${PWD}
+scspkg env prepend labstor PATH ${PWD}/cmake-build-debug-gcc/bin
+scspkg env prepend labstor LD_LIBRARY_PATH ${PWD}/cmake-build-debug-gcc/bin
 module load labstor
 ```
 
