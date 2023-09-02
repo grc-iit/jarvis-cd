@@ -564,13 +564,19 @@ class Pipeline(Pkg):
         """
         Re-run configure on all sub-pkgs.
 
-        :return:
+        :return: self
         """
         for pkg in self.sub_pkgs:
+            pkg.env = self.env
             pkg.configure()
         return self
 
     def run(self):
+        """
+        Start and stop the pipeline
+
+        :return: None
+        """
         self.start()
         self.stop()
 
