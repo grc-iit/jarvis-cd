@@ -13,18 +13,19 @@ spack install mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
 yaml-cpp boost hermes_shm
 spack load mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
 yaml-cpp boost hermes_shm
+
 git clone https://github.com/lukemartinlogan/labstor.git
 cd labstor
 mkdir build
 cd build
 cmake ../
 make -j8
-popd
+cd ../
 
 scspkg create labstor
-scspkg env prepend labstor LABSTOR_PATH ${PWD}
-scspkg env prepend labstor PATH ${PWD}/cmake-build-debug-gcc/bin
-scspkg env prepend labstor LD_LIBRARY_PATH ${PWD}/cmake-build-debug-gcc/bin
+scspkg env set labstor LABSTOR_PATH=${PWD}
+scspkg env prepend labstor PATH ${PWD}/build/bin
+scspkg env prepend labstor LD_LIBRARY_PATH ${PWD}/build/bin
 module load labstor
 ```
 

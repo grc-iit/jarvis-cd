@@ -48,7 +48,7 @@ jarvis pipeline env build
 Create a Jarvis pipeline
 ```bash
 jarvis pipeline append labstor --sleep=10
-jarvis pipeline append labstor_ipc_test
+jarvis pipeline append labstor_ipc_test --TEST_CASE=TestHermesBucket
 ```
 
 ## 5. Run Experiment

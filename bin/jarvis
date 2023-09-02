@@ -646,7 +646,7 @@ class JarvisArgs(ArgParse):
         kwargs = {}
         kwargs.update(self.kwargs)
         kwargs.update(self.remainder_kv)
-        Pipeline().load().build_env(kwargs).update().save()
+        Pipeline().load().build_env(kwargs).save()
 
     def pipeline_env_track(self):
         kwargs = {}
