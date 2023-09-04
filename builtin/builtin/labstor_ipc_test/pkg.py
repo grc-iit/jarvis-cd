@@ -56,10 +56,14 @@ class LabstorIpcTest(Application):
         if self.config['TEST_CASE'] in test_ipc_execs:
             Exec(f'test_ipc_exec {self.config["TEST_CASE"]}',
                  MpiExecInfo(hostfile=self.jarvis.hostfile,
+                             nprocs=len(self.jarvis.hostfile),
+                             ppn=1,
                              env=self.env))
         elif self.config['TEST_CASE'] in test_hermes_execs:
             Exec(f'test_hermes_exec {self.config["TEST_CASE"]}',
                  MpiExecInfo(hostfile=self.jarvis.hostfile,
+                             nprocs=len(self.jarvis.hostfile),
+                             ppn=1,
                              env=self.env))
 
     def stop(self):
