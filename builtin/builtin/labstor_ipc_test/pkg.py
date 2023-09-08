@@ -52,7 +52,7 @@ class LabstorIpcTest(Application):
         """
         test_ipc_execs = ['TestIpc', 'TestIO']
         test_hermes_execs = [
-            'TestHermesPut', 'TestHermesPutGet',
+            'TestHermesPut1n', 'TestHermesPut', 'TestHermesPutGet',
             'TestHermesPartialPutGet', 'TestHermesBlobDestroy',
             'TestHermesBucketDestroy', 'TestHermesReorganizeBlob']
         print(self.config['TEST_CASE'])
