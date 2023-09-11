@@ -101,6 +101,12 @@ class JarvisArgs(ArgParse):
                 'type': bool,
                 'default': False
             },
+            {
+                'name': 'introspect',
+                'msg': 'Whether or not to do an introspect before building',
+                'type': bool,
+                'default': True
+            },
         ])
 
         # jarvis resource-graph build
@@ -535,9 +541,11 @@ class JarvisArgs(ArgParse):
 
     def resource_graph_build(self):
         walkthrough = self.kwargs['walkthrough']
+        introspect = self.kwargs['introspect']
         if walkthrough:
             self.jarvis.resource_graph.walkthrough_build(
-                PsshExecInfo(hostfile=self.jarvis.hostfile))
+                PsshExecInfo(hostfile=self.jarvis.hostfile),
+                introspect)
         else:
             self.jarvis.resource_graph_build()
         self.jarvis.save()
