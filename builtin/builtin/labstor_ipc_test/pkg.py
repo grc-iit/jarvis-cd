@@ -54,7 +54,8 @@ class LabstorIpcTest(Application):
         test_hermes_execs = [
             'TestHermesPut1n', 'TestHermesPut', 'TestHermesPutGet',
             'TestHermesPartialPutGet', 'TestHermesBlobDestroy',
-            'TestHermesBucketDestroy', 'TestHermesReorganizeBlob']
+            'TestHermesBucketDestroy', 'TestHermesReorganizeBlob',
+            'TestHermesBucketAppend']
         print(self.config['TEST_CASE'])
         if self.config['TEST_CASE'] in test_ipc_execs:
             Exec(f'test_ipc_exec {self.config["TEST_CASE"]}',
