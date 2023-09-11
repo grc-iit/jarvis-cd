@@ -109,7 +109,7 @@ class Labstor(Service):
             'protocol': protocol,
             'domain': domain,
             'port': self.config['port'],
-            'num_threads': 4
+            'num_threads': 32
         }
         if self.jarvis.hostfile.path is None:
             labstor_server['rpc']['host_names'] = self.jarvis.hostfile.hosts
