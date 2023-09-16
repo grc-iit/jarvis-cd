@@ -75,7 +75,7 @@ jarvis pipeline env build
 
 Create a Jarvis pipeline
 ```bash
-jarvis pipeline append hermes_run --sleep=10
+jarvis pipeline append hermes_run --sleep=5
 ```
 
 ## 5. Run Experiment
