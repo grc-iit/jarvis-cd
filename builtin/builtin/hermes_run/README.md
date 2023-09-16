@@ -1,9 +1,9 @@
-LabStor is a distributed semi-microkernel for building data processing services.
+Hermes 1.1 is built on top of a distributed microkernel for data services.
 
 # Installation
 
 ```bash
-spack install labstor@master
+spack install hermes@dev-1.1
 ```
 
 OR
@@ -14,19 +14,19 @@ yaml-cpp boost hermes_shm
 spack load mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
 yaml-cpp boost hermes_shm
 
-git clone https://github.com/lukemartinlogan/labstor.git
-cd labstor
+git clone https://github.com/lukemartinlogan/hermes.git -b hermes-1.1
+cd hermes
 mkdir build
 cd build
 cmake ../
 make -j8
 cd ../
 
-scspkg create labstor
-scspkg env set labstor LABSTOR_PATH=${PWD}
-scspkg env prepend labstor PATH ${PWD}/build/bin
-scspkg env prepend labstor LD_LIBRARY_PATH ${PWD}/build/bin
-module load labstor
+scspkg create hermes_run
+scspkg env set hermes_run HERMES_PATH=${PWD}
+scspkg env prepend hermes_run PATH ${PWD}/build/bin
+scspkg env prepend hermes_run LD_LIBRARY_PATH ${PWD}/build/bin
+module load hermes_run
 ```
 
 # Labstor
@@ -52,18 +52,18 @@ jarvis resource-graph build +walkthrough
 
 The Jarvis pipeline will store all configuration data.
 ```bash
-jarvis pipeline create labstor-test
+jarvis pipeline create hermes_run_test
 ```
 
 ## 3. Load Environment
 
 Create the environment variables
 ```bash
-spack load labstor
+spack load hermes@dev-1.1
 # OR 
 spack load mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
 yaml-cpp boost hermes_shm
-module load labstor
+module load hermes_run
 ```````````
 
 Store the current environment in the pipeline.
@@ -75,7 +75,7 @@ jarvis pipeline env build
 
 Create a Jarvis pipeline
 ```bash
-jarvis pipeline append labstor --sleep=10
+jarvis pipeline append hermes_run --sleep=10
 ```
 
 ## 5. Run Experiment

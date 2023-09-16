@@ -1,5 +1,5 @@
 """
-This module provides classes and methods to launch the Labstor service.
+This module provides classes and methods to launch the HermesRun service.
 Labstor is ....
 """
 
@@ -7,9 +7,9 @@ from jarvis_cd.basic.pkg import Service
 from jarvis_util import *
 
 
-class Labstor(Service):
+class HermesRun(Service):
     """
-    This class provides methods to launch the Labstor service.
+    This class provides methods to launch the HermesRun service.
     """
     def _init(self):
         """
@@ -63,7 +63,7 @@ class Labstor(Service):
         rg = self.jarvis.resource_graph
         hosts = self.jarvis.hostfile
 
-        # Begin making labstor config
+        # Begin making hermes_run config
         labstor_server = {
             'work_orchestrator': {
                 'max_workers': 4
@@ -97,7 +97,7 @@ class Labstor(Service):
         net_info = net_info[lambda r: str(r['provider']) == provider,
                             ['provider', 'domain']]
         if len(net_info) == 0:
-            raise Exception(f'Failed to find labstor provider {provider}')
+            raise Exception(f'Failed to find hermes_run provider {provider}')
         net_info = net_info.rows[0]
         protocol = net_info['provider']
         domain = net_info['domain']
@@ -114,7 +114,7 @@ class Labstor(Service):
         if self.jarvis.hostfile.path is None:
             labstor_server['rpc']['host_names'] = self.jarvis.hostfile.hosts
 
-        # Save labstor configurations
+        # Save hermes_run configurations
         labstor_server_yaml = f'{self.shared_dir}/labstor_server.yaml'
         YamlFile(labstor_server_yaml).save(labstor_server)
         self.env['LABSTOR_SERVER_CONF'] = labstor_server_yaml
@@ -141,8 +141,8 @@ class Labstor(Service):
 
         :return: None
         """
-        print('Stopping labstor')
-        Kill('labstor',
+        print('Stopping hermes_run')
+        Kill('hermes_run',
              PsshExecInfo(hostfile=self.jarvis.hostfile,
                           env=self.env))
         # Exec('labstor_stop_runtime',

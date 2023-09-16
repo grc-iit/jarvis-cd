@@ -127,7 +127,7 @@ Create a Jarvis pipeline with Hermes, the Hermes MPI-IO interceptor,
 and gray-scott
 ```bash
 jarvis pipeline append hermes --sleep=10 --output_dir=${HOME}/gray-scott
-jarvis pipeline append hermes_mpiio
+jarvis pipeline append hermes_api
 jarvis pipeline append gray_scott
 ```
 
