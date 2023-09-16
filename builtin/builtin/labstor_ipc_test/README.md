@@ -24,7 +24,7 @@ jarvis resource-graph build +walkthrough
 
 The Jarvis pipeline will store all configuration data.
 ```bash
-jarvis pipeline create hermes_run-ipc-test
+jarvis pipeline create hermes_run_ipc_test
 ```
 
 ## 3. Load Environment
@@ -48,7 +48,7 @@ jarvis pipeline env build
 Create a Jarvis pipeline
 ```bash
 jarvis pipeline append hermes_run --sleep=10
-jarvis pipeline append labstor_ipc_test --TEST_CASE=TestHermesBucket
+jarvis pipeline append labstor_ipc_test --TEST_CASE=TestHermesBucketAppend
 ```
 
 ## 5. Run Experiment

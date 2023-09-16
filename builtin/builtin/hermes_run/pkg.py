@@ -142,7 +142,7 @@ class HermesRun(Service):
         :return: None
         """
         print('Stopping hermes_run')
-        Kill('hermes_run',
+        Kill('labstor_start_runtime',
              PsshExecInfo(hostfile=self.jarvis.hostfile,
                           env=self.env))
         # Exec('labstor_stop_runtime',

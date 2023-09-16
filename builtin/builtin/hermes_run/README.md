@@ -15,7 +15,7 @@ spack load mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
 yaml-cpp boost hermes_shm
 
 git clone https://github.com/lukemartinlogan/hermes.git -b hermes-1.1
-**cd hermes**
+cd hermes
 mkdir build
 cd build
 cmake ../
@@ -75,7 +75,7 @@ jarvis pipeline env build
 
 Create a Jarvis pipeline
 ```bash
-jarvis pipeline append hermes_run --sleep=10
+jarvis pipeline append hermes_run --sleep=5
 ```
 
 ## 5. Run Experiment
@@ -144,7 +144,7 @@ jarvis pipeline env build
 Create a Jarvis pipeline
 ```bash
 jarvis pipeline append hermes_run --sleep=10
-jarvis pipeline append hermes_api +posix
+jarvis pipeline append hermes_api +posix -mpi
 jarvis pipeline append ior api=posix xfer=4k block=1m out=/tmp/test_hermes/ior.bin
 ```
 
