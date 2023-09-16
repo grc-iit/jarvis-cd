@@ -432,8 +432,11 @@ class SimplePkg(Pkg):
         :return:
         """
         default_args = ArgParse.default_kwargs(self.configure_menu())
+        print(default_args)
         if not rebuild:
             default_args.update(self.config)
+        default_args.update(kwargs)
+        print(kwargs)
         self.config = default_args
 
     @staticmethod
