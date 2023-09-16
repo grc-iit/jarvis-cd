@@ -146,7 +146,7 @@ class Hermes(Service):
         if len(hosts) > 1:
             net_info = rg.find_net_info(hosts, strip_ips=True, shared=True)
         else:
-            net_info = rg.find_net_info(hosts, strip_ips=True, shared=False)
+            net_info = rg.find_net_info(hosts, strip_ips=True)
         if len(net_info) == 0:
             raise Exception(f'Failed to find any networks')
         provider = self.config['provider']
@@ -227,8 +227,8 @@ class Hermes(Service):
         Exec('finalize_hermes',
              PsshExecInfo(hostfile=self.jarvis.hostfile,
                           env=self.env))
-        if self.daemon_pkg is not None:
-            self.daemon_pkg.wait()
+        # if self.daemon_pkg is not None:
+        #     self.daemon_pkg.wait()
         Kill('hermes_daemon',
              PsshExecInfo(hostfile=self.jarvis.hostfile,
                           env=self.env))
