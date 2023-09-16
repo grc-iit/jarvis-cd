@@ -434,7 +434,6 @@ class SimplePkg(Pkg):
         default_args = ArgParse.default_kwargs(self.configure_menu())
         if not rebuild:
             default_args.update(self.config)
-        default_args.update(kwargs)
         self.config = default_args
 
     @staticmethod
