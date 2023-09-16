@@ -28,12 +28,6 @@ class First(Service):
                 'default': False,
             },
             {
-                'name': 'reinit',
-                'msg': 'Destroy previous configuration and rebuild',
-                'type': bool,
-                'default': False
-            },
-            {
                 'name': 'devices',
                 'msg': 'Search for a number of devices to include',
                 'type': list,

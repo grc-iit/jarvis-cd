@@ -389,7 +389,13 @@ class SimplePkg(Pkg):
                 'msg': 'How much time to sleep during start (seconds)',
                 'type': int,
                 'default': 0,
-            }
+            },
+            {
+                'name': 'reinit',
+                'msg': 'Destroy previous configuration and rebuild',
+                'type': bool,
+                'default': False
+            },
         ]
         return menu
 

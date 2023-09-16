@@ -28,12 +28,6 @@ class HermesRun(Service):
         """
         return [
             {
-                'name': 'reinit',
-                'msg': 'Destroy previous configuration and rebuild',
-                'type': bool,
-                'default': False
-            },
-            {
                 'name': 'port',
                 'msg': 'The port to listen for data on',
                 'type': int,
