@@ -51,6 +51,24 @@ class HermesRun(Service):
                 'type': str,
                 'default': None
             },
+            {
+                'name': 'devices',
+                'msg': 'Search for a number of devices to include',
+                'type': list,
+                'default': [],
+                'args': [
+                    {
+                        'name': 'type',
+                        'msg': 'The type of the device being queried',
+                        'type': str
+                    },
+                    {
+                        'name': 'count',
+                        'msg': 'The number of devices being',
+                        'type': int
+                    }
+                ]
+            },
         ]
 
     def configure(self, **kwargs):
