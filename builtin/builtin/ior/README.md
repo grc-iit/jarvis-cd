@@ -3,33 +3,10 @@ LabStor is a distributed semi-microkernel for building data processing services.
 # Installation
 
 ```bash
-spack install labstor@master
+spack install ior mpi
 ```
 
-OR
-
-```bash 
-spack install mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
-yaml-cpp boost hermes_shm
-spack load mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
-yaml-cpp boost hermes_shm
-
-git clone https://github.com/lukemartinlogan/labstor.git
-cd labstor
-mkdir build
-cd build
-cmake ../
-make -j8
-cd ../
-
-scspkg create labstor
-scspkg env set labstor LABSTOR_PATH=${PWD}
-scspkg env prepend labstor PATH ${PWD}/build/bin
-scspkg env prepend labstor LD_LIBRARY_PATH ${PWD}/build/bin
-module load labstor
-```
-
-# Labstor
+# IOR
 
 ## 1. Create a Resource Graph
 
@@ -52,30 +29,21 @@ jarvis resource-graph build +walkthrough
 
 The Jarvis pipeline will store all configuration data.
 ```bash
-jarvis pipeline create labstor-test
+jarvis pipeline create ior
 ```
 
 ## 3. Load Environment
 
 Create the environment variables
 ```bash
-spack load labstor
-# OR 
-spack load mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
-yaml-cpp boost hermes_shm
-module load labstor
+spack load ior mpi
 ```````````
-
-Store the current environment in the pipeline.
-```bash
-jarvis pipeline env build
-```
 
 ## 4. Add pkgs to the Pipeline
 
 Create a Jarvis pipeline
 ```bash
-jarvis pipeline append labstor --sleep=10
+jarvis pipeline append ior
 ```
 
 ## 5. Run Experiment

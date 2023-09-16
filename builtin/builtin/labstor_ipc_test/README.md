@@ -24,18 +24,18 @@ jarvis resource-graph build +walkthrough
 
 The Jarvis pipeline will store all configuration data.
 ```bash
-jarvis pipeline create labstor-ipc-test
+jarvis pipeline create hermes_run-ipc-test
 ```
 
 ## 3. Load Environment
 
 Create the environment variables
 ```bash
-spack load labstor
+spack load hermes_run
 # OR 
 spack load mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
 yaml-cpp boost hermes_shm
-module load labstor
+module load hermes_run
 ```````````
 
 Store the current environment in the pipeline.
@@ -47,7 +47,7 @@ jarvis pipeline env build
 
 Create a Jarvis pipeline
 ```bash
-jarvis pipeline append labstor --sleep=10
+jarvis pipeline append hermes_run --sleep=10
 jarvis pipeline append labstor_ipc_test --TEST_CASE=TestHermesBucket
 ```
 
