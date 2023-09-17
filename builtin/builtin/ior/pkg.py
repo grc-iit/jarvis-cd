@@ -110,6 +110,11 @@ class Ior(Application):
             cmd.append('-r')
         if self.config['fpp']:
             cmd.append('-F')
+        if '.' in os.path.basename(self.config['out']):
+            os.makedirs(str(pathlib.Path(self.config['out']).parent),
+                        exist_ok=True)
+        else:
+            os.makedirs(self.config['out'], exist_ok=True)
         Exec(' '.join(cmd),
              MpiExecInfo(env=self.env,
                          hostfile=self.jarvis.hostfile,
