@@ -41,16 +41,11 @@ make -j8
 make install
 ```
 
-# 5.4. Setup Environment
+# 5.3. Creating a pipeline
 
-```bash
 ```
-
-# 5.3. Generating the Config File
-
-```bash
-cd ${HOME}
-mkdir orangefs
-cd orangefs
-pvfs2-genconfig
+module load orangefs
+jarvis pipeline create orangefs
+jarvis pipeline env build
+jarvis pipeline append orangefs mount=${HOME}/orangefs_client
 ```

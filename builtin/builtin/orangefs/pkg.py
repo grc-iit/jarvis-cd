@@ -4,12 +4,6 @@ import os
 
 
 class Orangefs(Service):
-    def _init(self):
-        """
-        Initialize paths
-        """
-        self.pfs_conf = None
-
     def _configure_menu(self):
         return [
             {
@@ -121,11 +115,11 @@ class Orangefs(Service):
             f'--storage {self.config["storage"]}',
             f'--metadata {self.config["metadata"]}',
             f'--logfile {self.config["log"]}',
-            self.pfs_conf
+            self.config['pfs_conf']
         ]
         pvfs_gen_cmd = " ".join(pvfs_gen_cmd)
         Exec(pvfs_gen_cmd, LocalExecInfo(env=self.env))
-        Pscp(self.pfs_conf,
+        Pscp(self.config['pfs_conf'],
              PsshExecInfo(hosts=self.jarvis.hostfile, env=self.env))
 
         # Create storage directories
@@ -154,8 +148,8 @@ class Orangefs(Service):
         # start pfs servers
         for host in self.server_hosts:
             server_start_cmds = [
-                f'pvfs2-server {self.pfs_conf} -f -a {host}',
-                f'pvfs2-server {self.pfs_conf} -a {host}'
+                f'pvfs2-server {self.config["pfs_conf"]} -f -a {host}',
+                f'pvfs2-server {self.config["pfs_conf"]} -a {host}'
             ]
             Exec(server_start_cmds, SshExecInfo(hosts=host,
                                                 env=self.env))
