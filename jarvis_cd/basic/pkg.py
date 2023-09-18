@@ -146,9 +146,18 @@ class Pkg(ABC):
             pkg.save()
         return self
 
+    def clear(self):
+        """
+        Destroy a pipeline's sub-pkgs
+
+        :return: None
+        """
+        for pkg in self.sub_pkgs:
+            pkg.destroy()
+
     def destroy(self):
         """
-        Destroy a pkg and its sub-pkgs
+        Destroy a pipeline and its sub-pkgs
 
         :return: None
         """

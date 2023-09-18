@@ -369,6 +369,20 @@ class JarvisArgs(ArgParse):
             },
         ])
 
+        # jarvis pipeline clear
+        self.add_menu('pipeline clear', msg='Clear a pipeline')
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'Delete the jarvis directories containing metadata'
+                       'for the pipeline. Will apply to current pipeline by'
+                       'default.',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
+
         # jarvis pipeline destroy
         self.add_menu('pipeline destroy', msg='Delete a pipeline')
         self.add_args([
@@ -639,6 +653,11 @@ class JarvisArgs(ArgParse):
         pipeline_id = self.kwargs['pipeline_id']
         Pipeline().create(pipeline_id).save()
         self.jarvis.cd(pipeline_id)
+        self.jarvis.save()
+
+    def pipeline_clear(self):
+        pipeline_id = self.kwargs['pipeline_id']
+        Pipeline().load(pipeline_id).clear()
         self.jarvis.save()
 
     def pipeline_destroy(self):
