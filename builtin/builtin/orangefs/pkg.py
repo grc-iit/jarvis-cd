@@ -91,14 +91,16 @@ class Orangefs(Service):
                                      shared=False)
         if len(dev_df) == 0:
             raise Exception('Could not find any storage devices :(')
+        storage_dir = os.path.expandvars(dev_df.rows[0]['mount'])
+        print(storage_dir)
 
         # Define paths
         self.config['pfs_conf'] = f'{self.private_dir}/orangefs.xml'
         self.config['pvfs2tab'] = f'{self.private_dir}/pvfs2tab'
         if self.config['mount'] is None:
             self.config['mount'] = f'{self.private_dir}/client'
-        self.config['storage'] = f'{dev_df["mount"]}/orangefs_storage'
-        self.config['metadata'] = f'{dev_df["mount"]}/orangefs_metadata'
+        self.config['storage'] = f'{storage_dir}/orangefs_storage'
+        self.config['metadata'] = f'{storage_dir}/orangefs_metadata'
         self.config['log'] = f'{self.private_dir}/orangefs_server.log'
 
         # generate PFS Gen config
