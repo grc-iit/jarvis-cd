@@ -115,8 +115,8 @@ class Orangefs(Service):
             '--quiet',
             f'--protocol {self.config["protocol"]}',
             proto_cmd,
-            f'--dist-name {self.config["stripe_dist"]}'
-            f'--dist-params strip_size: {self.config["stripe_size"]}'
+            f'--dist-name {self.config["stripe_dist"]}',
+            f'--dist-params strip_size: {self.config["stripe_size"]}',
             f'--ioservers {self.server_hosts.ip_str(sep=",")}',
             f'--metaservers {self.md_hosts.ip_str(sep=",")}',
             f'--storage {self.config["storage"]}',
