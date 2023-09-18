@@ -25,19 +25,19 @@ class Orangefs(Service):
             },
             {
                 'name': 'stripe_size',
-                'msg': 'The device to spawn orangefs over',
+                'msg': 'The stripe size',
                 'type': int,
                 'default': 65536,
             },
             {
                 'name': 'stripe_dist',
-                'msg': 'simple_stripe',
+                'msg': 'The striping distribution algorithm',
                 'type': str,
-                'default': None,
+                'default': 'simple_stripe',
             },
             {
                 'name': 'protocol',
-                'msg': 'The device to spawn orangefs over',
+                'msg': 'The network protocol (tcp/ib)',
                 'type': str,
                 'default': 'tcp',
                 'choices': ['tcp', 'ib']
