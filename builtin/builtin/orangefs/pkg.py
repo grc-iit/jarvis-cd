@@ -4,6 +4,11 @@ import os
 
 
 class Orangefs(Service):
+    def _init(self):
+        """
+        Initialize paths
+        """
+
     def _configure_menu(self):
         return [
             {
