@@ -143,7 +143,7 @@ jarvis pipeline env build
 
 Create a Jarvis pipeline
 ```bash
-jarvis pipeline append hermes_run --sleep=10
+jarvis pipeline append hermes_run --sleep=5
 jarvis pipeline append hermes_api +posix -mpi
 jarvis pipeline append ior api=posix xfer=4k block=1m out=/tmp/test_hermes/ior.bin
 ```

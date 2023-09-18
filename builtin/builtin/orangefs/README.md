@@ -1,5 +1,13 @@
 In this section we go over how to install and deploy OrangeFS.
 
+# 5.1. Install Various Dependencies
+
+```
+sudo apt update
+sudo apt install -y fuse
+sudo apt install gcc flex bison libssl-dev libdb-dev linux-headers-$(uname -r) perl make libldap2-dev libattr1-dev
+```
+
 # 5.1. Install OrangeFS (Linux)
 
 OrangeFS is located [on this website](http://www.orangefs.org/?gclid=CjwKCAjwgqejBhBAEiwAuWHioDo2uu8wel6WhiFqoBDgXMiVXc7nrykeE3sf3mIfDFVEt0_7SwRN8RoCdRYQAvD_BwE)
@@ -8,10 +16,10 @@ The official OrangeFS github is [here](https://github.com/waltligon/orangefs/rel
 ```bash
 scspkg create orangefs
 cd `scspkg pkg src orangefs`
-wget https://github.com/waltligon/orangefs/archive/refs/tags/v.2.9.8.tar.gz
-tar -xvzf v.2.9.8.tar.gz
-cd orangefs-v.2.9.8
-autoreconf -iv
+wget https://github.com/waltligon/orangefs/releases/download/v.2.10.0/orangefs-2.10.0.tar.gz
+tar -xvzf orangefs-2.10.0.tar.gz
+cd orangefs
+./prepare
 ./configure --prefix=`scspkg pkg root orangefs` --enable-shared --enable-fuse
 make -j8
 make install
