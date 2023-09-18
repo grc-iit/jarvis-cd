@@ -32,13 +32,13 @@ class Orangefs(Service):
             {
                 'name': 'stripe_dist',
                 'msg': 'simple_stripe',
-                'type': int,
+                'type': str,
                 'default': None,
             },
             {
                 'name': 'protocol',
                 'msg': 'The device to spawn orangefs over',
-                'type': int,
+                'type': str,
                 'default': 'tcp',
                 'choices': ['tcp', 'ib']
             },
@@ -125,6 +125,7 @@ class Orangefs(Service):
             self.config['pfs_conf']
         ]
         pvfs_gen_cmd = " ".join(pvfs_gen_cmd)
+        print(pvfs_gen_cmd)
         Exec(pvfs_gen_cmd, LocalExecInfo(env=self.env))
         Pscp(self.config['pfs_conf'],
              PsshExecInfo(hosts=self.jarvis.hostfile, env=self.env))
