@@ -662,12 +662,12 @@ class JarvisArgs(ArgParse):
 
     def pipeline_destroy(self):
         pipeline_id = self.kwargs['pipeline_id']
-        Pipeline().load(pipeline_id, with_config=False).destroy()
+        Pipeline().load(pipeline_id).destroy()
         self.jarvis.save()
 
     def pipeline_print(self):
         pipeline_id = self.kwargs['pipeline_id']
-        Pipeline().load(pipeline_id, with_config=False).view_pkgs()
+        Pipeline().load(pipeline_id).view_pkgs()
 
     def pipeline_env_build(self):
         kwargs = {}

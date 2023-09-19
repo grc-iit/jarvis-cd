@@ -124,16 +124,16 @@ class Pkg(ABC):
         self._init_common(global_id, root)
         if not os.path.exists(self.config_path):
             return self
-        if with_config:
-            self.config = YamlFile(self.config_path).load()
+        if not with_config:
+            return
+        self.config = YamlFile(self.config_path).load()
         if self.env_path is not None:
             self.env = YamlFile(self.env_path).load()
         else:
             self.env = self.root.env
         for sub_pkg_type, sub_pkg_id in self.config['sub_pkgs']:
             sub_pkg = self.jarvis.construct_pkg(sub_pkg_type)
-            sub_pkg.load(f'{self.global_id}.{sub_pkg_id}', self.root,
-                         with_config=with_config)
+            sub_pkg.load(f'{self.global_id}.{sub_pkg_id}', self.root)
             self.sub_pkgs.append(sub_pkg)
         self._init()
         return self
@@ -157,9 +157,13 @@ class Pkg(ABC):
 
         :return: None
         """
-        pkgs_tmp = list(self.sub_pkgs)
-        for pkg in pkgs_tmp:
-            self.remove(pkg.pkg_id)
+        try:
+            for path in os.path.listdir(self.confi_dir):
+                if os.path.isdir(path):
+                    shutil.rmtree(self.config_dir)
+            shutil.rmtree(self.config_path)
+        except FileNotFoundError:
+            pass
 
     def destroy(self):
         """
