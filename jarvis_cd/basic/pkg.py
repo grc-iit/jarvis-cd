@@ -160,8 +160,8 @@ class Pkg(ABC):
         try:
             for path in os.listdir(self.config_dir):
                 if os.path.isdir(path):
-                    shutil.rmtree(self.config_dir)
-            shutil.rmtree(self.config_path)
+                    shutil.rmtree(path)
+            os.remove(self.config_path)
         except FileNotFoundError:
             pass
 
