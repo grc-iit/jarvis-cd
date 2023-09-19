@@ -76,7 +76,6 @@ class Orangefs(Service):
 
         # Configure hosts
         self.md_hosts = self.jarvis.hostfile
-        print(self.config['md_hosts'])
         if self.config['md_hosts'] is None:
             count = int(len(self.md_hosts) / 4)
             if count < 1:
@@ -105,7 +104,6 @@ class Orangefs(Service):
         if len(dev_df) == 0:
             raise Exception('Could not find any storage devices :(')
         storage_dir = os.path.expandvars(dev_df.rows[0]['mount'])
-        print(storage_dir)
 
         # Define paths
         self.config['pfs_conf'] = f'{self.private_dir}/orangefs.xml'
@@ -140,7 +138,6 @@ class Orangefs(Service):
             self.config['pfs_conf']
         ]
         pvfs_gen_cmd = " ".join(pvfs_gen_cmd)
-        print(pvfs_gen_cmd)
         Exec(pvfs_gen_cmd, LocalExecInfo(env=self.env))
         Pscp(self.config['pfs_conf'],
              PsshExecInfo(hosts=self.jarvis.hostfile, env=self.env))
