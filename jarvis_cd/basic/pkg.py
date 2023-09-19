@@ -4,6 +4,7 @@ pkg types in Jarvis.
 """
 
 from abc import ABC, abstractmethod
+from jarvis_util.jutil_manager import JutilManager
 from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_util.util.naming import to_snake_case
 from jarvis_util.serialize.yaml_file import YamlFile
@@ -38,6 +39,7 @@ class Pkg(ABC):
         :param pkg_type: The type of this package
         """
         self.jarvis = JarvisManager.get_instance()
+        self.jutil = JutilManager.get_instance()
         self.pkg_type = to_snake_case(self.__class__.__name__)
         self.root = None
         self.global_id = None
