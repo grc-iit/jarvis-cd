@@ -169,11 +169,11 @@ class Pkg(ABC):
 
     def get_path(self, config=False, shared=False, private=False):
         if config:
-            return self.config
+            return self.config_dir
         if shared:
-            return self.shared
+            return self.shared_dir
         if private:
-            return self.private
+            return self.private_dir
         raise Exception('Config, shared, and private were all false')
 
     def destroy(self):
