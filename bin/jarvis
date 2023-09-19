@@ -316,12 +316,37 @@ class JarvisArgs(ArgParse):
                 'pos': True,
                 'default': None
             },
-        ])
-        self.add_args([
             {
                 'name': 'pkg_id',
                 'msg': 'The name of the pkg to get the path for',
+                'default': None,
+                'pos': True,
+                'required': False,
                 'default': None
+            },
+            {
+                'name': 'config',
+                'msg': 'Get the config directory path',
+                'required': False,
+                'type': bool,
+                'pos': False,
+                'default': True
+            },
+            {
+                'name': 'shared',
+                'msg': 'Get the shared directory path',
+                'required': False,
+                'type': bool,
+                'pos': False,
+                'default': False
+            },
+            {
+                'name': 'private',
+                'msg': 'Get the private directory path',
+                'required': False,
+                'type': bool,
+                'pos': False,
+                'default': False
             },
         ])
 
@@ -635,11 +660,14 @@ class JarvisArgs(ArgParse):
     def path(self):
         pipeline_id = self.kwargs['pipeline_id']
         pkg_id = self.kwargs['pkg_id']
+        config = self.kwargs['config']
+        shared = self.kwargs['shared']
+        private = self.kwargs['private']
         pipeline = Pipeline().load(pipeline_id, with_config=False)
         if pkg_id is not None:
-            path = pipeline.get_pkg(pkg_id).config_dir
+            path = pipeline.get_pkg(pkg_id).get_path(config, shared, private)
         else:
-            path = pipeline.config_dir
+            path = pipeline.get_path(config, shared, private)
         print(path)
 
     def getcwd(self):

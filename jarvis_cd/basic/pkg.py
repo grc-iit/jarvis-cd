@@ -167,6 +167,14 @@ class Pkg(ABC):
         except FileNotFoundError:
             pass
 
+    def get_path(self, config=False, shared=False, private=False):
+        if config:
+            return self.config
+        if shared:
+            return self.shared
+        if private:
+            return self.private
+
     def destroy(self):
         """
         Destroy a pipeline and its sub-pkgs
