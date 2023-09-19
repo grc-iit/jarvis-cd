@@ -127,8 +127,6 @@ class Orangefs(Service):
         pvfs_gen_cmd = " ".join(pvfs_gen_cmd)
         print(pvfs_gen_cmd)
         Exec(pvfs_gen_cmd, LocalExecInfo(env=self.env))
-
-        self.jutil.debug_scp = True
         Pscp(self.config['pfs_conf'],
              PsshExecInfo(hosts=self.jarvis.hostfile, env=self.env))
 
