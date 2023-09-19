@@ -166,6 +166,7 @@ class Orangefs(Service):
     def start(self):
         self._load_config()
         # start pfs servers
+        print("Starting the PFS servers")
         for host in self.server_hosts.list():
             host_ip = host.hosts_ip[0]
             server_start_cmds = [
@@ -179,11 +180,13 @@ class Orangefs(Service):
         self.status()
 
         # insert OFS kernel module
+        print("Inserting OrangeFS kernel module")
         Exec('modprobe orangefs', PsshExecInfo(sudo=True,
                                                hosts=self.client_hosts,
                                                env=self.env))
 
         # start pfs client
+        print("Starting the OrangeFS clients")
         for i, client in self.client_hosts.enumerate():
             metadata_server_ip = self.md_hosts.list()[
                 i % len(self.md_hosts)].hosts_ip[0]
