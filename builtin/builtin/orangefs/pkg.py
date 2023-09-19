@@ -128,6 +128,7 @@ class Orangefs(Service):
             f'--storage {self.config["storage"]}',
             f'--metadata {self.config["metadata"]}',
             f'--logfile {self.config["log"]}',
+            f'--fsname pfs',
             self.config['pfs_conf']
         ]
         pvfs_gen_cmd = " ".join(pvfs_gen_cmd)
