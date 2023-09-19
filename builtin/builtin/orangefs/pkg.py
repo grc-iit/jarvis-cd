@@ -183,7 +183,7 @@ class Orangefs(Service):
 
         # start pfs client
         for i, client in self.client_hosts.enumerate_ips():
-            metadata_server_ip = self.md_hosts.hostname_list()[
+            metadata_server_ip = self.md_hosts.ip_list()[
                 i % len(self.md_hosts)]
             start_client_cmd = 'mount -t pvfs2 {protocol}://{ip}:{port}/pfs {mount_point}'.format(
                     protocol=self.config['protocol'],
