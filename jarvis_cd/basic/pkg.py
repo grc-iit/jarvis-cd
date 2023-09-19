@@ -111,26 +111,29 @@ class Pkg(ABC):
         self._init()
         return self
 
-    def load(self, global_id=None, root=None):
+    def load(self, global_id=None, root=None, with_config=True):
         """
         Load the configuration of a pkg from the
 
         :param global_id: A dot-separated, globally unique identifier for
         this pkg. Indicates where configuration data is stored.
         :param root: The parent
+        :param with_config: Whether to load pkg configurations
         :return: self
         """
         self._init_common(global_id, root)
         if not os.path.exists(self.config_path):
             return self
-        self.config = YamlFile(self.config_path).load()
+        if with_config:
+            self.config = YamlFile(self.config_path).load()
         if self.env_path is not None:
             self.env = YamlFile(self.env_path).load()
         else:
             self.env = self.root.env
         for sub_pkg_type, sub_pkg_id in self.config['sub_pkgs']:
             sub_pkg = self.jarvis.construct_pkg(sub_pkg_type)
-            sub_pkg.load(f'{self.global_id}.{sub_pkg_id}', self.root)
+            sub_pkg.load(f'{self.global_id}.{sub_pkg_id}', self.root,
+                         with_config=with_config)
             self.sub_pkgs.append(sub_pkg)
         self._init()
         return self

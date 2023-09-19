@@ -635,7 +635,7 @@ class JarvisArgs(ArgParse):
     def path(self):
         pipeline_id = self.kwargs['pipeline_id']
         pkg_id = self.kwargs['pkg_id']
-        pipeline = Pipeline().load(pipeline_id)
+        pipeline = Pipeline().load(pipeline_id, with_config=False)
         if pkg_id is not None:
             path = pipeline.get_pkg(pkg_id).config_dir
         else:
@@ -657,17 +657,17 @@ class JarvisArgs(ArgParse):
 
     def pipeline_clear(self):
         pipeline_id = self.kwargs['pipeline_id']
-        Pipeline().load(pipeline_id).clear()
+        Pipeline().load(pipeline_id, with_config=False).clear()
         self.jarvis.save()
 
     def pipeline_destroy(self):
         pipeline_id = self.kwargs['pipeline_id']
-        Pipeline().load(pipeline_id).destroy()
+        Pipeline().load(pipeline_id, with_config=False).destroy()
         self.jarvis.save()
 
     def pipeline_print(self):
         pipeline_id = self.kwargs['pipeline_id']
-        Pipeline().load(pipeline_id).view_pkgs()
+        Pipeline().load(pipeline_id, with_config=False).view_pkgs()
 
     def pipeline_env_build(self):
         kwargs = {}
