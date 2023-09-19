@@ -23,6 +23,7 @@ cd orangefs
 ./configure --prefix=`scspkg pkg root orangefs` --enable-shared --enable-fuse
 make -j8
 make install
+scspkg env prepend orangefs ORANGEFS_PATH `scspkg pkg root orangefs`
 ```
 
 # 5.2. Using MPICH with OrangeFS
@@ -46,6 +47,6 @@ make install
 ```
 module load orangefs
 jarvis pipeline create orangefs
-jarvis pipeline env build
+jarvis pipeline env build +ORANGEFS_PATH
 jarvis pipeline append orangefs mount=${HOME}/orangefs_client
 ```

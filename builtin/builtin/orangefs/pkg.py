@@ -76,18 +76,19 @@ class Orangefs(Service):
 
         # Configure hosts
         self.md_hosts = self.jarvis.hostfile
+        print(self.config['md_hosts'])
         if self.config['md_hosts'] is None:
             count = int(len(self.md_hosts) / 4)
             if count < 1:
                 count = 1
             self.md_hosts = self.md_hosts.subset(count)
         else:
-            self.md_hosts = self.md_hosts.subset('md_hosts')
+            self.md_hosts = self.md_hosts.subset(self.config['md_hosts'])
         self.client_hosts = self.jarvis.hostfile
         self.server_hosts = self.jarvis.hostfile
-        self.config['client_hosts'] = self.client_hosts.hosts
-        self.config['server_hosts'] = self.server_hosts.hosts
-        self.config['md_hosts'] = self.md_hosts.hosts
+        self.config['client_host_set'] = self.client_hosts.hosts
+        self.config['server_host_set'] = self.server_hosts.hosts
+        self.config['md_host_set'] = self.md_hosts.hosts
 
         # Locate storage hardware
         dev_df = []
@@ -114,6 +115,7 @@ class Orangefs(Service):
         self.config['storage'] = f'{storage_dir}/orangefs_storage'
         self.config['metadata'] = f'{storage_dir}/orangefs_metadata'
         self.config['log'] = f'{self.private_dir}/orangefs_server.log'
+        self.config['client_log'] = f'{self.private_dir}/orangefs_client.log'
 
         # generate PFS Gen config
         if self.config['protocol'] == 'tcp':
@@ -166,7 +168,7 @@ class Orangefs(Service):
                 ),
                 f'chmod a+r {self.config["pvfs2tab"]}'
             ]
-            Exec(cmd, SshExecInfo(hosts=client))
+            Exec(cmds, SshExecInfo(hosts=client))
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
 
         # Initialize servers
@@ -180,9 +182,10 @@ class Orangefs(Service):
                 env=self.env))
 
     def _load_config(self):
-        self.client_hosts = Hostfile(all_hosts=self.config['client_hosts'])
-        self.server_hosts = Hostfile(all_hosts=self.config['server_hosts'])
-        self.md_hosts = Hostfile(all_hosts=self.config['md_hosts'])
+        self.client_hosts = Hostfile(all_hosts=self.config['client_host_set'])
+        self.server_hosts = Hostfile(all_hosts=self.config['server_host_set'])
+        self.md_hosts = Hostfile(all_hosts=self.config['md_host_set'])
+        self.ofs_path = self.env['ORANGEFS_PATH']
 
     def start(self):
         self._load_config()
@@ -210,14 +213,15 @@ class Orangefs(Service):
         for i, client in self.client_hosts.enumerate():
             metadata_server_ip = self.md_hosts.list()[
                 i % len(self.md_hosts)].hosts_ip[0]
-            start_client_cmd = 'mount -t pvfs2 {protocol}://{ip}:{port}/{name} {mount_point}'.format(
+            start_client_cmd = f'{self.ofs_path}/sbin/pvfs2-client -p {self.ofs_path}/sbin/pvfs2-client-core -L {self.config["client_log"]}'
+            mount_client = 'mount -t pvfs2 {protocol}://{ip}:{port}/{name} {mount_point}'.format(
                 protocol=self.config['protocol'],
                 port=self.config['port'],
                 ip=metadata_server_ip,
                 name=self.config['name'],
                 mount_point=self.config['mount'])
-            print(start_client_cmd)
-            Exec(start_client_cmd, SshExecInfo(
+            cmds = [start_client_cmd, mount_client]
+            Exec(cmds, SshExecInfo(
                 hosts=client,
                 env=self.env,
                 sudo=True))
@@ -231,7 +235,9 @@ class Orangefs(Service):
             f'killall -9 pvfs2-client',
             f'killall -9 pvfs2-client-core'
         ]
-        Exec(cmds, PsshExecInfo(hosts=self.client_hosts, env=self.env))
+        Exec(cmds, PsshExecInfo(hosts=self.client_hosts,
+                                env=self.env,
+                                sudo=True))
         Exec('killall -9 pvfs2-server',
              PsshExecInfo(hosts=self.server_hosts,
                           env=self.env))
@@ -258,7 +264,7 @@ class Orangefs(Service):
              PsshExecInfo(hosts=self.server_hosts,
                           env=self.env))
         verify_server_cmd = [
-            f'pvfs2-ping -m {self.config["mount"]}'
+            f'pvfs2-ping -m {self.config["mount"]} | grep \"appears to be correctly configured\"'
         ]
         Exec(verify_server_cmd,
              PsshExecInfo(hosts=self.client_hosts,
