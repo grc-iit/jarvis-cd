@@ -159,6 +159,16 @@ class Orangefs(Service):
             Exec(cmd, SshExecInfo(hosts=client))
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
 
+        # Initialize servers
+        for host in self.server_hosts.list():
+            host_ip = host.hosts_ip[0]
+            server_start_cmds = [
+                f'pvfs2-server {self.config["pfs_conf"]} -f -a {host_ip}',
+            ]
+            Exec(server_start_cmds, SshExecInfo(
+                hosts=host,
+                env=self.env))
+
     def _load_config(self):
         self.client_hosts = Hostfile(all_hosts=self.config['client_hosts'])
         self.server_hosts = Hostfile(all_hosts=self.config['server_hosts'])
@@ -171,7 +181,6 @@ class Orangefs(Service):
         for host in self.server_hosts.list():
             host_ip = host.hosts_ip[0]
             server_start_cmds = [
-                f'pvfs2-server {self.config["pfs_conf"]} -f -a {host_ip}',
                 f'pvfs2-server {self.config["pfs_conf"]} -a {host_ip}'
             ]
             Exec(server_start_cmds, SshExecInfo(
