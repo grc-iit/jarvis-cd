@@ -146,7 +146,7 @@ class Orangefs(Service):
 
         # Set pvfstab on clients
         for i, client in self.client_hosts.enumerate_ips():
-            metadata_server_ip = self.md_hosts.hostname_list()[
+            metadata_server_ip = self.md_hosts.ip_list()[
                 i % len(self.md_hosts)]
             cmd = 'echo "{protocol}://{ip}:{port}/pfs {mount_point} pvfs2 defaults,auto 0 0" > {client_pvfs2tab}'.format(
                 protocol=self.config['protocol'],
