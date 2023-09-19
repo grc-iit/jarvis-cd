@@ -145,7 +145,7 @@ class Orangefs(Service):
                                                     env=self.env))
 
         # Set pvfstab on clients
-        for i, client in self.client_hosts.hosts_ip.enumerate():
+        for i, client in self.client_hosts.enumerate_ips():
             metadata_server_ip = self.md_hosts.hostname_list()[
                 i % len(self.md_hosts)]
             cmd = 'echo "{protocol}://{ip}:{port}/pfs {mount_point} pvfs2 defaults,auto 0 0" > {client_pvfs2tab}'.format(
@@ -182,7 +182,7 @@ class Orangefs(Service):
                                                env=self.env))
 
         # start pfs client
-        for i, client in self.client_hosts.hosts_ip.enumerate():
+        for i, client in self.client_hosts.enumerate_ips():
             metadata_server_ip = self.md_hosts.hostname_list()[
                 i % len(self.md_hosts)]
             start_client_cmd = 'mount -t pvfs2 {protocol}://{ip}:{port}/pfs {mount_point}'.format(
