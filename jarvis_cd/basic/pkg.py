@@ -104,7 +104,8 @@ class Pkg(ABC):
         }
         self.sub_pkgs = []
         self.env_path = f'{self.config_dir}/env.yaml'
-        self.env = {}
+        if self.env is None:
+            self.env = {}
         os.makedirs(self.config_dir, exist_ok=True)
         if self.shared_dir is not None:
             os.makedirs(self.shared_dir, exist_ok=True)
@@ -113,7 +114,8 @@ class Pkg(ABC):
 
     def load(self, global_id=None, root=None, with_config=True):
         """
-        Load the configuration of a pkg from the
+        Load the configuration of a pkg from the filesystem. Will
+        create if it doesn't already exist.
 
         :param global_id: A dot-separated, globally unique identifier for
         this pkg. Indicates where configuration data is stored.
@@ -123,7 +125,7 @@ class Pkg(ABC):
         """
         self._init_common(global_id, root)
         if not os.path.exists(self.config_path):
-            return self
+            return self.create(global_id)
         if not with_config:
             return self
         self.config = YamlFile(self.config_path).load()
