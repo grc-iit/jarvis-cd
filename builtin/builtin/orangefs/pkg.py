@@ -185,6 +185,8 @@ class Orangefs(Service):
                 env=self.env))
 
     def _load_config(self):
+        if 'sudoenv' not in self.config:
+            self.config['sudoenv'] = True
         self.client_hosts = Hostfile(all_hosts=self.config['client_host_set'])
         self.server_hosts = Hostfile(all_hosts=self.config['server_host_set'])
         self.md_hosts = Hostfile(all_hosts=self.config['md_host_set'])
