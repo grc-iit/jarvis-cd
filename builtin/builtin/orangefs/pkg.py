@@ -252,3 +252,4 @@ class Orangefs(Service):
         Exec(verify_server_cmd,
              PsshExecInfo(hosts=self.client_hosts,
                           env=self.env))
+        return True
