@@ -79,9 +79,9 @@ class Orangefs(Service):
             self.md_hosts = self.md_hosts.subset('md_hosts')
         self.client_hosts = self.jarvis.hostfile
         self.server_hosts = self.jarvis.hostfile
-        self.config['client_hosts'] = self.client_hosts
-        self.config['server_hosts'] = self.server_hosts
-        self.config['md_hosts'] = self.md_hosts
+        self.config['client_hosts'] = self.client_hosts.hosts
+        self.config['server_hosts'] = self.server_hosts.hosts
+        self.config['md_hosts'] = self.md_hosts.hosts
 
         # Locate storage hardware
         dev_df = []
@@ -159,9 +159,9 @@ class Orangefs(Service):
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
 
     def _load_config(self):
-        self.client_hosts = self.config['client_hosts']
-        self.server_hosts = self.config['server_hosts']
-        self.md_hosts = self.config['md_hosts']
+        self.client_hosts = Hostfile(all_hosts=self.config['client_hosts'])
+        self.server_hosts = Hostfile(all_hosts=self.config['server_hosts'])
+        self.md_hosts = Hostfile(all_hosts=self.config['md_hosts'])
 
     def start(self):
         self._load_config()
