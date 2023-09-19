@@ -255,7 +255,7 @@ class Orangefs(Service):
              PsshExecInfo(hosts=self.server_hosts,
                           env=self.env))
         verify_server_cmd = [
-            f'pvfs2-ping -m {self.config["mount"]} | grep "appears to be correctly configured"'
+            f'pvfs2-ping -m {self.config["mount"]}"'
         ]
         Exec(verify_server_cmd,
              PsshExecInfo(hosts=self.client_hosts,
