@@ -174,6 +174,7 @@ class Pkg(ABC):
             return self.shared
         if private:
             return self.private
+        raise Exception('Config, shared, and private were all false')
 
     def destroy(self):
         """
