@@ -1,6 +1,7 @@
 from jarvis_cd.basic.pkg import Service
 from jarvis_util import *
 import os
+import time
 
 
 class Orangefs(Service):
@@ -66,6 +67,8 @@ class Orangefs(Service):
         """
         self.update_config(kwargs, rebuild=False)
         rg = self.jarvis.resource_graph
+
+        # Configure hosts
         self.md_hosts = self.jarvis.hostfile
         if self.config['md_hosts'] is None:
             count = int(len(self.md_hosts) / 4)
@@ -76,6 +79,9 @@ class Orangefs(Service):
             self.md_hosts = self.md_hosts.subset('md_hosts')
         self.client_hosts = self.jarvis.hostfile
         self.server_hosts = self.jarvis.hostfile
+        self.config['client_hosts'] = self.client_hosts
+        self.config['server_hosts'] = self.server_hosts
+        self.config['md_hosts'] = self.md_hosts
 
         # Locate storage hardware
         dev_df = []
@@ -152,7 +158,13 @@ class Orangefs(Service):
             Exec(cmd, SshExecInfo(hosts=client))
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
 
+    def _load_config(self):
+        self.client_hosts = self.config['client_hosts']
+        self.server_hosts = self.config['server_hosts']
+        self.md_hosts = self.config['md_hosts']
+
     def start(self):
+        self._load_config()
         # start pfs servers
         for host in self.server_hosts:
             server_start_cmds = [
@@ -161,28 +173,28 @@ class Orangefs(Service):
             ]
             Exec(server_start_cmds, SshExecInfo(hosts=host,
                                                 env=self.env))
-        Sleep(5)
-        self.Status()
+        time.sleep(5)
+        self.status()
 
         # insert OFS kernel module
-        Exec('modprobe orangefs', sudo=True)
+        Exec('modprobe orangefs', PsshExecInfo(sudo=True,
+                                               hosts=self.client_hosts,
+                                               env=self.env))
 
         # start pfs client
         for i, client in self.client_hosts.enumerate():
             metadata_server_ip = self.md_hosts.hostname_list()[
                 i % len(self.md_hosts)]
-            start_client_cmds = [
-                'mount -t pvfs2 {protocol}://{ip}:{port}/pfs {mount_point}'.format(
-                    pvfs2_fuse=pvfs2_fuse,
+            start_client_cmd = 'mount -t pvfs2 {protocol}://{ip}:{port}/pfs {mount_point}'.format(
                     protocol=self.config['protocol'],
                     port=self.config['port'],
                     ip=metadata_server_ip,
                     mount_point=self.config['mount'])
-            ]
-            Exec(start_client_cmds, SshExecInfo(hosts=client,
-                                                env=self.env))
+            Exec(start_client_cmd, SshExecInfo(hosts=client,
+                                               env=self.env))
 
     def stop(self):
+        self._load_config()
         cmds = [
             f'umount -l {self.config["mount"]}',
             f'umount -f {self.config["mount"]}',
@@ -199,6 +211,8 @@ class Orangefs(Service):
                           env=self.env))
 
     def clean(self):
+        self._load_config()
+
         Rm(self.config['mount'],
            PsshExecInfo(hosts=self.client_hosts,
                         env=self.env))
@@ -210,6 +224,7 @@ class Orangefs(Service):
                         env=self.env))
 
     def status(self):
+        self._load_config()
         Exec('mount | grep pvfs',
              PsshExecInfo(hosts=self.server_hosts,
                           env=self.env))
