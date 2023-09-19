@@ -177,7 +177,7 @@ class Orangefs(Service):
             Exec(server_start_cmds, SshExecInfo(
                 hosts=host,
                 env=self.env))
-        time.sleep(10)
+        time.sleep(5)
         self.status()
 
         # insert OFS kernel module
@@ -196,6 +196,7 @@ class Orangefs(Service):
                     port=self.config['port'],
                     ip=metadata_server_ip,
                     mount_point=self.config['mount'])
+            print(start_client_cmd)
             Exec(start_client_cmd, SshExecInfo(
                 hosts=client,
                 env=self.env,
