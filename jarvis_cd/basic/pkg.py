@@ -154,7 +154,8 @@ class Pkg(ABC):
 
         :return: None
         """
-        for pkg in self.sub_pkgs:
+        pkgs_tmp = list(self.sub_pkgs)
+        for pkg in pkgs_tmp:
             self.remove(pkg.pkg_id)
 
     def destroy(self):
