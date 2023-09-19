@@ -125,7 +125,7 @@ class Pkg(ABC):
         if not os.path.exists(self.config_path):
             return self
         if not with_config:
-            return
+            return self
         self.config = YamlFile(self.config_path).load()
         if self.env_path is not None:
             self.env = YamlFile(self.env_path).load()
