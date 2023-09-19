@@ -239,13 +239,17 @@ class Orangefs(Service):
             f'umount -l {self.config["mount"]}',
             f'umount -f {self.config["mount"]}',
             f'umount {self.config["mount"]}',
-            f'killall -9 pvfs2-client',
-            f'killall -9 pvfs2-client-core'
         ]
         Exec(cmds, PsshExecInfo(hosts=self.client_hosts,
                                 env=self.env,
                                 sudo=True,
                                 sudoenv=self.config['sudoenv']))
+        cmds = [
+            f'killall -9 pvfs2-client',
+            f'killall -9 pvfs2-client-core'
+        ]
+        Exec(cmds, PsshExecInfo(hosts=self.client_hosts,
+                                env=self.env))
         Exec('killall -9 pvfs2-server',
              PsshExecInfo(hosts=self.server_hosts,
                           env=self.env))
