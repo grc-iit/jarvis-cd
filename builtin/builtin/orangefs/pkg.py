@@ -176,7 +176,7 @@ class Orangefs(Service):
             Exec(server_start_cmds, SshExecInfo(
                 hosts=host,
                 env=self.env))
-        time.sleep(5)
+        time.sleep(10)
         self.status()
 
         # insert OFS kernel module
