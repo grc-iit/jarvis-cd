@@ -55,6 +55,12 @@ class Orangefs(Service):
                 'type': int,
                 'default': None,
             },
+            {
+                'name': 'name',
+                'msg': 'The name of the orangefs installation',
+                'type': int,
+                'default': 'orangefs',
+            },
         ]
 
     def configure(self, **kwargs):
@@ -128,7 +134,7 @@ class Orangefs(Service):
             f'--storage {self.config["storage"]}',
             f'--metadata {self.config["metadata"]}',
             f'--logfile {self.config["log"]}',
-            f'--fsname pfs',
+            f'--fsname {self.config["name"]}',
             self.config['pfs_conf']
         ]
         pvfs_gen_cmd = " ".join(pvfs_gen_cmd)
@@ -149,12 +155,13 @@ class Orangefs(Service):
         for i, client in self.client_hosts.enumerate():
             metadata_server_ip = self.md_hosts.list()[
                 i % len(self.md_hosts)].hosts_ip[0]
-            cmd = 'echo "{protocol}://{ip}:{port}/pfs {mount_point} pvfs2 defaults,auto 0 0" > {client_pvfs2tab}'.format(
+            cmd = 'echo "{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0" > {client_pvfs2tab}'.format(
                 protocol=self.config['protocol'],
                 port=self.config['port'],
                 ip=metadata_server_ip,
+                name=self.config['name'],
                 mount_point=self.config['mount'],
-                client_pvfs2tab=self.config['pvfs2tab']
+                client_pvfs2tab=self.config['pvfs2tab'],
             )
             Exec(cmd, SshExecInfo(hosts=client))
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
@@ -200,11 +207,12 @@ class Orangefs(Service):
         for i, client in self.client_hosts.enumerate():
             metadata_server_ip = self.md_hosts.list()[
                 i % len(self.md_hosts)].hosts_ip[0]
-            start_client_cmd = 'mount -t pvfs2 {protocol}://{ip}:{port}/pfs {mount_point}'.format(
-                    protocol=self.config['protocol'],
-                    port=self.config['port'],
-                    ip=metadata_server_ip,
-                    mount_point=self.config['mount'])
+            start_client_cmd = 'mount -t pvfs2 {protocol}://{ip}:{port}/{name} {mount_point}'.format(
+                protocol=self.config['protocol'],
+                port=self.config['port'],
+                ip=metadata_server_ip,
+                name=self.config['name'],
+                mount_point=self.config['mount'])
             print(start_client_cmd)
             Exec(start_client_cmd, SshExecInfo(
                 hosts=client,
