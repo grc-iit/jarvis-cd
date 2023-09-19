@@ -61,6 +61,12 @@ class Orangefs(Service):
                 'type': int,
                 'default': 'orangefs',
             },
+            {
+                'name': 'sudoenv',
+                'msg': 'Whether environment forwarding is supported for sudo',
+                'type': bool,
+                'default': True,
+            },
         ]
 
     def configure(self, **kwargs):
@@ -202,6 +208,7 @@ class Orangefs(Service):
         # insert OFS kernel module
         print("Inserting OrangeFS kernel module")
         Exec('modprobe orangefs', PsshExecInfo(sudo=True,
+                                               sudoenv=self.config['sudoenv'],
                                                hosts=self.client_hosts,
                                                env=self.env))
 
@@ -221,7 +228,8 @@ class Orangefs(Service):
             Exec(cmds, SshExecInfo(
                 hosts=client,
                 env=self.env,
-                sudo=True))
+                sudo=True,
+                sudoenv=self.config['sudoenv']))
 
     def stop(self):
         self._load_config()
@@ -234,7 +242,8 @@ class Orangefs(Service):
         ]
         Exec(cmds, PsshExecInfo(hosts=self.client_hosts,
                                 env=self.env,
-                                sudo=True))
+                                sudo=True,
+                                sudoenv=self.config['sudoenv']))
         Exec('killall -9 pvfs2-server',
              PsshExecInfo(hosts=self.server_hosts,
                           env=self.env))
