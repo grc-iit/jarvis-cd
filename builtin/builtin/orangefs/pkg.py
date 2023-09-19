@@ -155,14 +155,17 @@ class Orangefs(Service):
         for i, client in self.client_hosts.enumerate():
             metadata_server_ip = self.md_hosts.list()[
                 i % len(self.md_hosts)].hosts_ip[0]
-            cmd = 'echo "{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0" > {client_pvfs2tab}'.format(
-                protocol=self.config['protocol'],
-                port=self.config['port'],
-                ip=metadata_server_ip,
-                name=self.config['name'],
-                mount_point=self.config['mount'],
-                client_pvfs2tab=self.config['pvfs2tab'],
-            )
+            cmds = [
+                'echo "{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0" > {client_pvfs2tab}'.format(
+                    protocol=self.config['protocol'],
+                    port=self.config['port'],
+                    ip=metadata_server_ip,
+                    name=self.config['name'],
+                    mount_point=self.config['mount'],
+                    client_pvfs2tab=self.config['pvfs2tab'],
+                ),
+                f'chmod a+r {self.config["pvfs2tab"]}'
+            ]
             Exec(cmd, SshExecInfo(hosts=client))
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
 
@@ -170,7 +173,7 @@ class Orangefs(Service):
         for host in self.server_hosts.list():
             host_ip = host.hosts_ip[0]
             server_start_cmds = [
-                f'pvfs2-server {self.config["pfs_conf"]} -f -a {host_ip}',
+                f'pvfs2-server -f {self.config["pfs_conf"]} -a {host_ip}',
             ]
             Exec(server_start_cmds, SshExecInfo(
                 hosts=host,
