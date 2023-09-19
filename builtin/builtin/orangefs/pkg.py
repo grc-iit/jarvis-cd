@@ -197,7 +197,8 @@ class Orangefs(Service):
                     mount_point=self.config['mount'])
             Exec(start_client_cmd, SshExecInfo(
                 hosts=client,
-                env=self.env))
+                env=self.env,
+                sudo=True))
 
     def stop(self):
         self._load_config()
