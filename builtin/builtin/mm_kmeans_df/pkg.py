@@ -60,6 +60,9 @@ class MmKmeansDf(Application):
         :return: None
         """
         self.update_config(kwargs, rebuild=False)
+        self.path = self.config['path']
+        Mkdir(os.path.basename(self.path),
+              LocalExecInfo(env=self.env))
 
     def start(self):
         """
@@ -75,7 +78,6 @@ class MmKmeansDf(Application):
             self.config['window_size']
         ]
         cmd = ' '.join(cmd)
-        print(cmd)
         Exec(cmd, MpiExecInfo(nprocs=self.config['nprocs']))
 
     def stop(self):
