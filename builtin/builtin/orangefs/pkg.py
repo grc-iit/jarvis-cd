@@ -1,10 +1,12 @@
 from jarvis_cd.basic.pkg import Service
 from jarvis_util import *
+from .custom_kern import OrangefsCustomKern
+from .ares import OrangefsAres
 import os
 import time
 
 
-class Orangefs(Service):
+class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
     def _init(self):
         """
         Initialize paths
@@ -67,6 +69,12 @@ class Orangefs(Service):
                 'type': bool,
                 'default': True,
             },
+            {
+                'name': 'ares',
+                'msg': 'Whether we are using the orangefs on Ares',
+                'type': bool,
+                'default': False,
+            },
         ]
 
     def configure(self, **kwargs):
@@ -80,20 +88,27 @@ class Orangefs(Service):
         self.update_config(kwargs, rebuild=False)
         rg = self.jarvis.resource_graph
 
-        # Configure hosts
-        self.md_hosts = self.jarvis.hostfile
-        if self.config['md_hosts'] is None:
-            count = int(len(self.md_hosts) / 4)
-            if count < 1:
-                count = 1
-            self.md_hosts = self.md_hosts.subset(count)
-        else:
-            self.md_hosts = self.md_hosts.subset(self.config['md_hosts'])
+        # Configure and save hosts
         self.client_hosts = self.jarvis.hostfile
         self.server_hosts = self.jarvis.hostfile
+        self.md_hosts = self.jarvis.hostfile
+        if self.config['md_hosts'] is None:
+            self.md_hosts = self.server_hosts
+        else:
+            self.md_hosts = self.md_hosts.subset(self.config['md_hosts'])
         self.config['client_host_set'] = self.client_hosts.hosts
         self.config['server_host_set'] = self.server_hosts.hosts
         self.config['md_host_set'] = self.md_hosts.hosts
+        self.config['client_host_path'] = f'{self.private_dir}/client_hosts'
+        self.config['server_host_path'] = f'{self.private_dir}/server_hosts'
+        self.config['metadata_host_path'] = f'{self.private_dir}/metadata_hosts'
+        self.client_hosts.save(self.config['client_host_path'])
+        self.server_hosts.save(self.config['server_host_path'])
+        self.md_hosts.save(self.config['metadata_host_path'])
+        Pscp([self.config['client_host_path'],
+              self.config['server_host_path'],
+              self.config['metadata_host_path']],
+             PsshExecInfo(hosts=self.jarvis.hostfile, env=self.env))
 
         # Locate storage hardware
         dev_df = []
@@ -175,14 +190,15 @@ class Orangefs(Service):
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
 
         # Initialize servers
-        for host in self.server_hosts.list():
-            host_ip = host.hosts_ip[0]
-            server_start_cmds = [
-                f'pvfs2-server -f {self.config["pfs_conf"]} -a {host_ip}',
-            ]
-            Exec(server_start_cmds, SshExecInfo(
-                hosts=host,
-                env=self.env))
+        if not self.config['ares']:
+            for host in self.server_hosts.list():
+                host_ip = host.hosts_ip[0]
+                server_start_cmds = [
+                    f'pvfs2-server -f {self.config["pfs_conf"]} -a {host_ip}',
+                ]
+                Exec(server_start_cmds, SshExecInfo(
+                    hosts=host,
+                    env=self.env))
 
     def _load_config(self):
         if 'sudoenv' not in self.config:
@@ -195,67 +211,17 @@ class Orangefs(Service):
     def start(self):
         self._load_config()
         # start pfs servers
-        print("Starting the PFS servers")
-        for host in self.server_hosts.list():
-            host_ip = host.hosts_ip[0]
-            server_start_cmds = [
-                f'pvfs2-server {self.config["pfs_conf"]} -a {host_ip}'
-            ]
-            Exec(server_start_cmds, SshExecInfo(
-                hosts=host,
-                env=self.env))
-        time.sleep(5)
-        self.status()
-
-        # insert OFS kernel module
-        print("Inserting OrangeFS kernel module")
-        Exec('modprobe orangefs', PsshExecInfo(sudo=True,
-                                               sudoenv=self.config['sudoenv'],
-                                               hosts=self.client_hosts,
-                                               env=self.env))
-
-        # start pfs client
-        print("Starting the OrangeFS clients")
-        for i, client in self.client_hosts.enumerate():
-            metadata_server_ip = self.md_hosts.list()[
-                i % len(self.md_hosts)].hosts_ip[0]
-            start_client_cmd = f'{self.ofs_path}/sbin/pvfs2-client -p {self.ofs_path}/sbin/pvfs2-client-core -L {self.config["client_log"]}'
-            mount_client = 'mount -t pvfs2 {protocol}://{ip}:{port}/{name} {mount_point}'.format(
-                protocol=self.config['protocol'],
-                port=self.config['port'],
-                ip=metadata_server_ip,
-                name=self.config['name'],
-                mount_point=self.config['mount'])
-            cmds = [start_client_cmd, mount_client]
-            Exec(cmds, SshExecInfo(
-                hosts=client,
-                env=self.env,
-                sudo=True,
-                sudoenv=self.config['sudoenv']))
+        if self.config['ares']:
+            self.ares_start()
+        else:
+            self.custom_start()
 
     def stop(self):
         self._load_config()
-        cmds = [
-            f'umount -l {self.config["mount"]}',
-            f'umount -f {self.config["mount"]}',
-            f'umount {self.config["mount"]}',
-        ]
-        Exec(cmds, PsshExecInfo(hosts=self.client_hosts,
-                                env=self.env,
-                                sudo=True,
-                                sudoenv=self.config['sudoenv']))
-        cmds = [
-            f'killall -9 pvfs2-client',
-            f'killall -9 pvfs2-client-core'
-        ]
-        Exec(cmds, PsshExecInfo(hosts=self.client_hosts,
-                                env=self.env))
-        Exec('killall -9 pvfs2-server',
-             PsshExecInfo(hosts=self.server_hosts,
-                          env=self.env))
-        Exec('pgrep -la pvfs2-server',
-             PsshExecInfo(hosts=self.client_hosts,
-                          env=self.env))
+        if self.config['ares']:
+            self.ares_stop()
+        else:
+            self.custom_stop()
 
     def clean(self):
         self._load_config()
