@@ -25,7 +25,10 @@ scspkg env prepend LD_LIBRARY_PATH ${MM_PATH}/build/bin
 # 5.2. Run KMeans Sort
 
 ```
+spack load --only dependencies hermes@dev-1.1
+module load hermes_run
 module load mega_mmap
+module load spark
 jarvis pipeline create mm_sort
 jarvis pipeline env build +MM_PATH
 jarvis pipeline append mm_sort path=${HOME}/mm_data
