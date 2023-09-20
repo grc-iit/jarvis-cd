@@ -105,9 +105,9 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
         self.client_hosts.save(self.config['client_host_path'])
         self.server_hosts.save(self.config['server_host_path'])
         self.md_hosts.save(self.config['metadata_host_path'])
-        Pscp([self.config['client_host_path'],
-              self.config['server_host_path'],
-              self.config['metadata_host_path']],
+        Pscp([self.config['client_hosts_path'],
+              self.config['server_hosts_path'],
+              self.config['metadata_hosts_path']],
              PsshExecInfo(hosts=self.jarvis.hostfile, env=self.env))
 
         # Locate storage hardware

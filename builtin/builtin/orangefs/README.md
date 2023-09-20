@@ -1,4 +1,6 @@
 In this section we go over how to install and deploy OrangeFS.
+NOTE: if running in Ares, OrangeFS is already installed, so skip
+to section 5.3.
 
 # 5.1. Install Various Dependencies
 
@@ -44,6 +46,15 @@ make install
 
 # 5.3. Creating a pipeline
 
+In Ares:
+```
+module load orangefs
+jarvis pipeline create orangefs
+jarvis pipeline env build +ORANGEFS_PATH
+jarvis pipeline append orangefs mount=${HOME}/orangefs_client +ares
+```
+
+In a machine where you have root access:
 ```
 module load orangefs
 jarvis pipeline create orangefs
