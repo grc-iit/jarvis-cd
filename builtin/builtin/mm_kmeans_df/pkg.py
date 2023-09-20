@@ -61,7 +61,7 @@ class MmKmeansDf(Application):
         """
         self.update_config(kwargs, rebuild=False)
         self.path = self.config['path']
-        Mkdir(os.path.basename(self.path),
+        Mkdir(str(pathlib.Path(self.path).parent),
               LocalExecInfo(env=self.env))
 
     def start(self):
