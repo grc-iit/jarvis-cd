@@ -96,4 +96,4 @@ class MmKmeansDf(Application):
 
         :return: None
         """
-        Rm(self.config['path'])
+        Rm(f'{self.config["path"]}*')
