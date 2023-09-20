@@ -27,7 +27,7 @@ class MmSort(Application):
         return [
             {
                 'name': 'path',
-                'msg': 'The output path',
+                'msg': 'The input data path',
                 'type': str,
                 'default': None,
             },
@@ -50,6 +50,12 @@ class MmSort(Application):
                 'default': 'spark',
                 'choices': ['spark', 'mmap', 'mega']
             },
+            {
+                'name': 'scratch',
+                'msg': 'Where spark buffers data',
+                'type': str,
+                'default': '${HOME}/sparktmp/',
+            },
         ]
 
     def configure(self, **kwargs):
@@ -61,6 +67,9 @@ class MmSort(Application):
         :return: None
         """
         self.update_config(kwargs, rebuild=False)
+        self.config['scratch'] = os.path.expandvars(self.config['scratch'])
+        Mkdir(self.config['scratch'],
+              PsshExecInfo(hosts=self.jarvis.hostfile))
 
     def start(self):
         """
@@ -72,7 +81,11 @@ class MmSort(Application):
         if self.config['api'] == 'spark':
             cmd = [
                 'spark-submit',
-                f'--driver-memory {self.config["memory"]}',
+                f'--driver-memory 2g',
+                f'--executor-memory {self.config["memory"]}',
+                f'--conf spark.speculation=false',
+                f'--conf spark.storage.replication=1',
+                f'--conf spark.local.dir={self.config["scratch"]}',
                 f'{self.env["MM_PATH"]}/benchmark/parallel_sort.py',
                 self.config['path']
             ]
