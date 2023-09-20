@@ -75,6 +75,7 @@ class MmKmeansDf(Application):
             self.config['window_size']
         ]
         cmd = ' '.join(cmd)
+        print(cmd)
         Exec(cmd, MpiExecInfo(nprocs=self.config['nprocs']))
 
     def stop(self):
