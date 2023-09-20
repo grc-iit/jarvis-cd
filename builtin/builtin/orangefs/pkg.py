@@ -99,12 +99,12 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
         self.config['client_host_set'] = self.client_hosts.hosts
         self.config['server_host_set'] = self.server_hosts.hosts
         self.config['md_host_set'] = self.md_hosts.hosts
-        self.config['client_host_path'] = f'{self.private_dir}/client_hosts'
-        self.config['server_host_path'] = f'{self.private_dir}/server_hosts'
-        self.config['metadata_host_path'] = f'{self.private_dir}/metadata_hosts'
-        self.client_hosts.save(self.config['client_host_path'])
-        self.server_hosts.save(self.config['server_host_path'])
-        self.md_hosts.save(self.config['metadata_host_path'])
+        self.config['client_hosts_path'] = f'{self.private_dir}/client_hosts'
+        self.config['server_hosts_path'] = f'{self.private_dir}/server_hosts'
+        self.config['metadata_hosts_path'] = f'{self.private_dir}/metadata_hosts'
+        self.client_hosts.save(self.config['client_hosts_path'])
+        self.server_hosts.save(self.config['server_hosts_path'])
+        self.md_hosts.save(self.config['metadata_hosts_path'])
         Pscp([self.config['client_hosts_path'],
               self.config['server_hosts_path'],
               self.config['metadata_hosts_path']],
