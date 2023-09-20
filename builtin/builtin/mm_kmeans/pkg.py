@@ -72,7 +72,10 @@ class MmKmeans(Application):
         if self.config['api'] == 'spark':
             cmd = [
                 'spark-submit',
-                f'--driver-memory {self.config["memory"]}',
+                f'--driver-memory 2g',
+                f'--executor-memory {self.config["memory"]}',
+                f'--conf spark.speculation=false',
+                f'--conf spark.storage.replication=1',
                 f'{self.env["MM_PATH"]}/benchmark/kmeans.py',
                 self.config['path']
             ]
