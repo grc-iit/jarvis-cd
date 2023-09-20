@@ -27,7 +27,7 @@ class MmKmeans(Application):
         return [
             {
                 'name': 'path',
-                'msg': 'The output path',
+                'msg': 'The input data path',
                 'type': str,
                 'default': None,
             },
@@ -50,6 +50,12 @@ class MmKmeans(Application):
                 'default': 'spark',
                 'choices': ['spark', 'mmap', 'mega']
             },
+            {
+                'name': 'scratch',
+                'msg': 'Where spark buffers data',
+                'type': str,
+                'default': '${HOME}/sparktmp/',
+            },
         ]
 
     def configure(self, **kwargs):
@@ -61,6 +67,9 @@ class MmKmeans(Application):
         :return: None
         """
         self.update_config(kwargs, rebuild=False)
+        self.config['scratch'] = os.path.expandvars(self.config['scratch'])
+        Mkdir(self.config['scratch'],
+              PsshExecInfo(hosts=self.jarvis.hostfile))
 
     def start(self):
         """
@@ -76,6 +85,7 @@ class MmKmeans(Application):
                 f'--executor-memory {self.config["memory"]}',
                 f'--conf spark.speculation=false',
                 f'--conf spark.storage.replication=1',
+                f'--conf spark.local.dir={self.config["scratch"]}',
                 f'{self.env["MM_PATH"]}/benchmark/kmeans.py',
                 self.config['path']
             ]
