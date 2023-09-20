@@ -73,7 +73,7 @@ class MmSort(Application):
             cmd = [
                 'spark-submit',
                 f'--driver-memory {self.config["memory"]}',
-                f'python3 {self.env["MM_PATH"]}/benchmark/parallel_sort.py',
+                f'{self.env["MM_PATH"]}/benchmark/parallel_sort.py',
                 self.config['path']
             ]
             cmd = ' '.join(cmd)

@@ -11,6 +11,7 @@ tar -xzf spark-3.4.1.tgz
 cd spark-3.4.1
 ./build/mvn -T 16 -DskipTests clean package
 scspkg env set spark SPARK_SCRIPTS=${PWD}
+scspkg env prepend spark PATH "${PWD}/bin"
 module load spark
 ```
 NOTE: this took 30min in Ares.
@@ -36,7 +37,7 @@ jarvis pipeline create spark
 # Build the Jarvis environment
 
 ```
-jarvis pipeline env build SPARK_SCRIPTS=${SPARK_SCRIPTS}
+jarvis pipeline env build +SPARK_SCRIPTS
 ```
 
 # Append the Spark Cluster Pkg

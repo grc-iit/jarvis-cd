@@ -27,7 +27,8 @@ scspkg env prepend LD_LIBRARY_PATH ${MM_PATH}/build/bin
 ```
 module load mega_mmap
 jarvis pipeline create kmeans
-jarvis pipeline env build
-jarvis pipeline append mm_kmeans path=${HOME}/mm_data memory=1g
+jarvis pipeline env build +MM_PATH +SPARK_SCRIPTS
+jarvis pipeline append spark_cluster
+jarvis pipeline append mm_kmeans path=${HOME}/mm_data memory=40g
 jarvis pipeline run
 ```
