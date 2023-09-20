@@ -68,8 +68,14 @@ class MmKmeansDf(Application):
 
         :return: None
         """
-        Exec(f'kmeans_df {self.config["path"]} {self.config["df_size"]} {self.config["window_size"]}',
-             MpiExecInfo(nprocs=self.config['nprocs']))
+        cmd = [
+            'kmeans_df',
+            self.config['path'],
+            self.config['df_size'],
+            self.config['window_size']
+        ]
+        cmd = ' '.join(cmd)
+        Exec(cmd, MpiExecInfo(nprocs=self.config['nprocs']))
 
     def stop(self):
         """
