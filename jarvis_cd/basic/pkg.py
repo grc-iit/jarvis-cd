@@ -119,7 +119,7 @@ class Pkg(ABC):
 
         :param global_id: A dot-separated, globally unique identifier for
         this pkg. Indicates where configuration data is stored.
-        :param root: The parent
+        :param root: The parent package
         :param with_config: Whether to load pkg configurations
         :return: self
         """
@@ -579,6 +579,7 @@ class Pipeline(Pkg):
         pkg = self.get_pkg(pkg_id)
         if pkg is None:
             raise Exception(f'Cloud not find pkg: {pkg_id}')
+        print(self.env)
         pkg.update_env(self.env)
         pkg.configure(**kwargs)
 
