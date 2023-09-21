@@ -87,7 +87,7 @@ class HermesRun(Service):
                 'max_workers': 4
             },
             'queue_manager': {
-                'queue_depth': 256,
+                'queue_depth': 8192,
                 'max_lanes': 16,
                 'max_queues': 1024,
                 'shm_allocator': 'kScalablePageAllocator',
