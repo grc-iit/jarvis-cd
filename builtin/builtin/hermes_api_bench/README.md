@@ -6,6 +6,8 @@ native API
 
 ```bash
 spack install hermes@master
+OR 
+spack install hermes@dev-1.1
 ```
 
 # Usage
@@ -13,7 +15,8 @@ spack install hermes@master
 ```
 spack load hermes
 jarvis pipeline create hermes_bench
-jarvis pipeline append hermes_run --sleep=5
+jarvis pipeline env build
+jarvis pipeline append hermes --sleep=5
 jarvis pipeline append hermes_bench
 jarvis pipeline run
 ```
