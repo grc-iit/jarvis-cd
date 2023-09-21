@@ -63,6 +63,12 @@ class HermesApiBench(Application):
                 'type': int,
                 'default': 1,
             },
+            {
+                'name': 'nprocs',
+                'msg': 'The number of processes to spawn',
+                'type': int,
+                'default': 1,
+            },
         ]
 
     def configure(self, **kwargs):

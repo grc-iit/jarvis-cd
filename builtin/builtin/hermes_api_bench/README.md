@@ -17,7 +17,7 @@ spack load hermes
 jarvis pipeline create hermes_bench
 jarvis pipeline env build
 jarvis pipeline append hermes --sleep=5
-jarvis pipeline append hermes_bench
+jarvis pipeline append hermes_api_bench
 jarvis pipeline run
 ```
 

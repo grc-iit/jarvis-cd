@@ -740,7 +740,10 @@ class JarvisArgs(ArgParse):
         pkg = pipeline.get_pkg(self.kwargs['pkg_id'])
         menu = pkg.configure_menu()
         args = PkgArgParse(args=self.remainder, menu=menu)
-        pkg.configure(**args.real_kwargs)
+        if args.kwargs['reinit']:
+            pkg.configure(**args.kwargs)
+        else:
+            pkg.configure(**args.real_kwargs)
         pipeline.save()
 
     def pipeline_run(self):
