@@ -89,7 +89,7 @@ class HermesApiBench(Application):
         :return: None
         """
         mode = self.config['mode']
-        cmd = ['hermes_api_bench',]
+        cmd = [f'hermes_api_bench {mode}']
         if mode == 'putget':
             cmd += [
                 self.config['blob_size'],
