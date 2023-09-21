@@ -723,7 +723,6 @@ class JarvisArgs(ArgParse):
         pkg = pipeline.get_pkg(pkg_id)
         menu = pkg.configure_menu()
         args = PkgArgParse(args=self.remainder, menu=menu)
-        print(args.kwargs)
         pipeline.configure(pkg_id, **args.kwargs)
         pipeline.save()
 

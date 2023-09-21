@@ -579,7 +579,6 @@ class Pipeline(Pkg):
         pkg = self.get_pkg(pkg_id)
         if pkg is None:
             raise Exception(f'Cloud not find pkg: {pkg_id}')
-        print(self.env)
         pkg.update_env(self.env)
         pkg.configure(**kwargs)
 
