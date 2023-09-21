@@ -36,14 +36,14 @@ class HermesApiBench(Application):
             {
                 'name': 'blobs_per_rank',
                 'msg': 'The number of blobs to create per-rank',
-                'type': int,
-                'default': 1,
+                'type': str,
+                'default': '1',
             },
             {
                 'name': 'btks_per_rank',
                 'msg': 'The number of buckets to create per-rank',
-                'type': int,
-                'default': 1,
+                'type': str,
+                'default': '1',
             },
             {
                 'name': 'blob_size',
@@ -60,14 +60,14 @@ class HermesApiBench(Application):
             {
                 'name': 'blobs_per_bkt',
                 'msg': 'The number of blobs to create in a single bucket',
-                'type': int,
-                'default': 1,
+                'type': str,
+                'default': '1',
             },
             {
                 'name': 'nprocs',
                 'msg': 'The number of processes to spawn',
-                'type': int,
-                'default': 1,
+                'type': str,
+                'default': '1',
             },
         ]
 
