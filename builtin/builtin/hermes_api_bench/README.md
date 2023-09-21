@@ -24,7 +24,7 @@ jarvis pipeline run
 ## PutGet benchmark
 
 ```
-jarvis pkg configure hermes_bench \
+jarvis pkg configure hermes_api_bench \
 mode=putget \
 blob_size=1m \
 blobs_per_rank=64 \
@@ -34,7 +34,7 @@ nprocs=64
 ## PartialPutGet benchmark
 
 ```
-jarvis pkg configure hermes_bench \
+jarvis pkg configure hermes_api_bench \
 mode=pputget \
 blobs_per_rank=64 \
 blob_size=1m \
@@ -45,7 +45,7 @@ nprocs=64
 ## Create Bucket benchmark
 
 ```
-jarvis pkg configure hermes_bench \
+jarvis pkg configure hermes_api_bench \
 mode=create_bkt \
 bkts_per_rank=1024 \
 nprocs=64
@@ -54,7 +54,7 @@ nprocs=64
 ## Get Bucket benchmark
 
 ```
-jarvis pkg configure hermes_bench \
+jarvis pkg configure hermes_api_bench \
 mode=get_bkt \
 bkts_per_rank=1024 \
 nprocs=64
@@ -63,7 +63,7 @@ nprocs=64
 ## Delete Bucket benchmark
 
 ```
-jarvis pkg configure hermes_bench \
+jarvis pkg configure hermes_api_bench \
 mode=del_bkt \
 bkts_per_rank=1024 \
 blobs_per_bkt=1024 \
