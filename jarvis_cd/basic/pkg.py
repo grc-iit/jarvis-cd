@@ -359,7 +359,8 @@ class Pkg(ABC):
             f'lib{lib_name}.so',
         ]
         for name in name_opts:
-            exec = Exec(f'cc -print-file-name={name}', LocalExecInfo())
+            exec = Exec(f'cc -print-file-name={name}',
+                        LocalExecInfo(env=self.env))
             res = exec.stdout['localhost'].strip()
             if res != name:
                 return res
