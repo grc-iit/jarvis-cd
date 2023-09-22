@@ -28,12 +28,6 @@ class HermesRun(Service):
         """
         return [
             {
-                'name': 'reinit',
-                'msg': 'Destroy previous configuration and rebuild',
-                'type': bool,
-                'default': False
-            },
-            {
                 'name': 'port',
                 'msg': 'The port to listen for data on',
                 'type': int,
@@ -44,6 +38,30 @@ class HermesRun(Service):
                 'msg': 'The libfabric provider type to use (e.g., sockets)',
                 'type': str,
                 'default': None
+            },
+            {
+                'name': 'include',
+                'msg': 'Specify paths to include',
+                'type': str,
+                'default': None
+            },
+            {
+                'name': 'devices',
+                'msg': 'Search for a number of devices to include',
+                'type': list,
+                'default': [],
+                'args': [
+                    {
+                        'name': 'type',
+                        'msg': 'The type of the device being queried',
+                        'type': str
+                    },
+                    {
+                        'name': 'count',
+                        'msg': 'The number of devices being',
+                        'type': int
+                    }
+                ]
             },
         ]
 
@@ -69,7 +87,7 @@ class HermesRun(Service):
                 'max_workers': 4
             },
             'queue_manager': {
-                'queue_depth': 256,
+                'queue_depth': 8192,
                 'max_lanes': 16,
                 'max_queues': 1024,
                 'shm_allocator': 'kScalablePageAllocator',
@@ -78,11 +96,71 @@ class HermesRun(Service):
             }
         }
 
+        # Begin making Hermes config
+        hermes_server = {
+            'devices': {},
+            'rpc': {}
+        }
+
+        # Begin making Hermes client config
+        hermes_client = {
+            'path_inclusions': ['/tmp/test_hermes'],
+            'path_exclusions': ['/'],
+            'file_page_size': '1024KB'
+        }
+        if self.config['include'] is not None:
+            hermes_client['path_inclusions'].append(self.config['include'])
+
+        # Get storage info
+        if len(self.config['devices']) == 0:
+            # Get all the fastest storage device mount points on machine
+            dev_df = rg.find_storage()
+        else:
+            # Get the storage devices for the user
+            dev_list = [rg.find_storage(dev_types=dev_type,
+                                        count_per_pkg=count)
+                        for dev_type, count in self.config['devices']]
+            dev_df = sdf.concat(dev_list)
+        if len(dev_df) == 0:
+            raise Exception('Hermes needs at least on storage device')
+        devs = dev_df.rows
+        for i, dev in enumerate(devs):
+            dev_type = dev['dev_type']
+            custom_name = f'{dev_type}_{i}'
+            mount = os.path.expandvars(dev['mount'])
+            if len(mount) == 0:
+                continue
+            if dev_type == 'nvme':
+                bandwidth = '1g'
+                latency = '60us'
+            elif dev_type == 'ssd':
+                bandwidth = '500MBps'
+                latency = '400us'
+            elif dev_type == 'hdd':
+                bandwidth = '120MBps'
+                latency = '5ms'
+            else:
+                continue
+            mount = f'{mount}/hermes_data'
+            hermes_server['devices'][custom_name] = {
+                'mount_point': mount,
+                'capacity': int(.9 * float(dev['avail'])),
+                'block_size': '4kb',
+                'bandwidth': bandwidth,
+                'latency': latency,
+                'is_shared_device': dev['shared'],
+                'borg_capacity_thresh': [0.0, 1.0],
+                'slab_sizes': ['4KB', '16KB', '64KB', '1MB']
+            }
+            Mkdir(mount, PsshExecInfo(hostfile=self.jarvis.hostfile,
+                                      env=self.env))
+
         # Get network Info
         if len(hosts) > 1:
             net_info = rg.find_net_info(shared=True)
         else:
-            net_info = rg.find_net_info(hosts, strip_ips=True, shared=False)
+            # net_info = rg.find_net_info(hosts, strip_ips=True)
+            net_info = rg.find_net_info(hosts)
         provider = self.config['provider']
         if provider is None:
             opts = net_info['provider'].unique().list()
@@ -111,13 +189,31 @@ class HermesRun(Service):
             'port': self.config['port'],
             'num_threads': 32
         }
+        hermes_server['rpc'] = {
+            'host_file': hostfile_path,
+            'protocol': protocol,
+            'domain': domain,
+            'port': self.config['port'],
+            'num_threads': 4
+        }
         if self.jarvis.hostfile.path is None:
             labstor_server['rpc']['host_names'] = self.jarvis.hostfile.hosts
+            hermes_server['rpc']['host_names'] = self.jarvis.hostfile.hosts
 
         # Save hermes_run configurations
         labstor_server_yaml = f'{self.shared_dir}/labstor_server.yaml'
         YamlFile(labstor_server_yaml).save(labstor_server)
         self.env['LABSTOR_SERVER_CONF'] = labstor_server_yaml
+
+        # Save Hermes configurations
+        hermes_server_yaml = f'{self.shared_dir}/hermes_server.yaml'
+        YamlFile(hermes_server_yaml).save(hermes_server)
+        self.env['HERMES_CONF'] = hermes_server_yaml
+
+        # Save Hermes client configurations
+        hermes_client_yaml = f'{self.shared_dir}/hermes_client.yaml'
+        YamlFile(hermes_client_yaml).save(hermes_client)
+        self.env['HERMES_CLIENT_CONF'] = hermes_client_yaml
 
     def start(self):
         """
@@ -127,6 +223,8 @@ class HermesRun(Service):
         :return: None
         """
         print(self.env['LABSTOR_SERVER_CONF'])
+        print(self.env['HERMES_CONF'])
+        print(self.env['HERMES_CLIENT_CONF'])
         self.daemon_pkg = Exec('labstor_start_runtime',
                                 PsshExecInfo(hostfile=self.jarvis.hostfile,
                                              env=self.env,
@@ -142,7 +240,7 @@ class HermesRun(Service):
         :return: None
         """
         print('Stopping hermes_run')
-        Kill('labstor_start_runtime',
+        Kill('labstor',
              PsshExecInfo(hostfile=self.jarvis.hostfile,
                           env=self.env))
         # Exec('labstor_stop_runtime',

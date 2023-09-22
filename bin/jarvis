@@ -316,12 +316,37 @@ class JarvisArgs(ArgParse):
                 'pos': True,
                 'default': None
             },
-        ])
-        self.add_args([
             {
                 'name': 'pkg_id',
                 'msg': 'The name of the pkg to get the path for',
+                'default': None,
+                'pos': True,
+                'required': False,
                 'default': None
+            },
+            {
+                'name': 'config',
+                'msg': 'Get the config directory path',
+                'required': False,
+                'type': bool,
+                'pos': False,
+                'default': True
+            },
+            {
+                'name': 'shared',
+                'msg': 'Get the shared directory path',
+                'required': False,
+                'type': bool,
+                'pos': False,
+                'default': False
+            },
+            {
+                'name': 'private',
+                'msg': 'Get the private directory path',
+                'required': False,
+                'type': bool,
+                'pos': False,
+                'default': False
             },
         ])
 
@@ -363,6 +388,20 @@ class JarvisArgs(ArgParse):
                 'name': 'pipeline_id',
                 'msg': 'The pipeline to list. Default None to list the'
                        'set of pipelines',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis pipeline clear
+        self.add_menu('pipeline clear', msg='Clear a pipeline')
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'Delete the jarvis directories containing metadata'
+                       'for the pipeline. Will apply to current pipeline by'
+                       'default.',
                 'required': False,
                 'pos': True,
                 'default': None
@@ -621,11 +660,14 @@ class JarvisArgs(ArgParse):
     def path(self):
         pipeline_id = self.kwargs['pipeline_id']
         pkg_id = self.kwargs['pkg_id']
-        pipeline = Pipeline().load(pipeline_id)
+        config = self.kwargs['config']
+        shared = self.kwargs['shared']
+        private = self.kwargs['private']
+        pipeline = Pipeline().load(pipeline_id, with_config=False)
         if pkg_id is not None:
-            path = pipeline.get_pkg(pkg_id).config_dir
+            path = pipeline.get_pkg(pkg_id).get_path(config, shared, private)
         else:
-            path = pipeline.config_dir
+            path = pipeline.get_path(config, shared, private)
         print(path)
 
     def getcwd(self):
@@ -639,6 +681,11 @@ class JarvisArgs(ArgParse):
         pipeline_id = self.kwargs['pipeline_id']
         Pipeline().create(pipeline_id).save()
         self.jarvis.cd(pipeline_id)
+        self.jarvis.save()
+
+    def pipeline_clear(self):
+        pipeline_id = self.kwargs['pipeline_id']
+        Pipeline().load(pipeline_id, with_config=False).clear()
         self.jarvis.save()
 
     def pipeline_destroy(self):
@@ -693,7 +740,10 @@ class JarvisArgs(ArgParse):
         pkg = pipeline.get_pkg(self.kwargs['pkg_id'])
         menu = pkg.configure_menu()
         args = PkgArgParse(args=self.remainder, menu=menu)
-        pkg.configure(**args.kwargs)
+        if args.kwargs['reinit']:
+            pkg.configure(**args.kwargs)
+        else:
+            pkg.configure(**args.real_kwargs)
         pipeline.save()
 
     def pipeline_run(self):

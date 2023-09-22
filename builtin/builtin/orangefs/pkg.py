@@ -1,130 +1,250 @@
 from jarvis_cd.basic.pkg import Service
 from jarvis_util import *
+from .custom_kern import OrangefsCustomKern
+from .ares import OrangefsAres
 import os
+import time
 
 
-class Orangefs(Service):
+class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
     def _init(self):
         """
         Initialize paths
         """
-        self.pfs_conf = None
 
-    def default_configure(self):
-        config = {
-            'server': {
-                'pvfs2_protocol': 'tcp',
-                'pvfs2_port': 3334,
-                'distribution_name': 'simple_stripe',
-                'stripe_size': 65536,
-                'storage_dir': 'orangefs_data/data',
-                'log': f'{self.private_dir}/orangefs_server.log'
+    def _configure_menu(self):
+        return [
+            {
+                'name': 'port',
+                'msg': 'The port to listen for data on',
+                'type': int,
+                'default': 3334
             },
-            'client': {
-                'pvfs2tab': f'{self.private_dir}/pvfs2tab',
-                'mountpoint': f'{self.private_dir}/orangefs_data/client'
+            {
+                'name': 'dev_type',
+                'msg': 'The device to spawn orangefs over',
+                'type': str,
+                'default': None,
             },
-            'metadata': {
-                f'{self.config_dir}/orangefs_data/metadata'
-            }
-        }
-        return config
+            {
+                'name': 'stripe_size',
+                'msg': 'The stripe size',
+                'type': int,
+                'default': 65536,
+            },
+            {
+                'name': 'stripe_dist',
+                'msg': 'The striping distribution algorithm',
+                'type': str,
+                'default': 'simple_stripe',
+            },
+            {
+                'name': 'protocol',
+                'msg': 'The network protocol (tcp/ib)',
+                'type': str,
+                'default': 'tcp',
+                'choices': ['tcp', 'ib']
+            },
+            {
+                'name': 'mount',
+                'msg': 'Where to mount orangefs clients',
+                'type': str,
+                'default': None,
+            },
+            {
+                'name': 'md_hosts',
+                'msg': 'The number of metadata management servers to spawn',
+                'type': int,
+                'default': None,
+            },
+            {
+                'name': 'name',
+                'msg': 'The name of the orangefs installation',
+                'type': int,
+                'default': 'orangefs',
+            },
+            {
+                'name': 'sudoenv',
+                'msg': 'Whether environment forwarding is supported for sudo',
+                'type': bool,
+                'default': True,
+            },
+            {
+                'name': 'ares',
+                'msg': 'Whether we are using the orangefs on Ares',
+                'type': bool,
+                'default': False,
+            },
+        ]
 
     def configure(self, **kwargs):
-        self.default_configure()
-        self.config.update(config)
-        self.pfs_conf = f'{self.private_dir}/orangefs.xml'
-        
+        """
+        Converts the Jarvis configuration to application-specific configuration.
+        E.g., OrangeFS produces an orangefs.xml file.
+
+        :param kwargs: Configuration parameters for this pkg.
+        :return: None
+        """
+        self.update_config(kwargs, rebuild=False)
+        rg = self.jarvis.resource_graph
+
+        # Configure and save hosts
+        self.client_hosts = self.jarvis.hostfile
+        self.server_hosts = self.jarvis.hostfile
+        self.md_hosts = self.jarvis.hostfile
+        if self.config['md_hosts'] is None:
+            self.md_hosts = self.server_hosts
+        else:
+            self.md_hosts = self.md_hosts.subset(self.config['md_hosts'])
+        self.config['client_host_set'] = self.client_hosts.hosts
+        self.config['server_host_set'] = self.server_hosts.hosts
+        self.config['md_host_set'] = self.md_hosts.hosts
+        self.config['client_hosts_path'] = f'{self.private_dir}/client_hosts'
+        self.config['server_hosts_path'] = f'{self.private_dir}/server_hosts'
+        self.config['metadata_hosts_path'] = f'{self.private_dir}/metadata_hosts'
+        self.client_hosts.save(self.config['client_hosts_path'])
+        self.server_hosts.save(self.config['server_hosts_path'])
+        self.md_hosts.save(self.config['metadata_hosts_path'])
+        Pscp([self.config['client_hosts_path'],
+              self.config['server_hosts_path'],
+              self.config['metadata_hosts_path']],
+             PsshExecInfo(hosts=self.jarvis.hostfile, env=self.env))
+
+        # Locate storage hardware
+        dev_df = []
+        if self.config['dev_type'] is None:
+            dev_types = ['hdd', 'ssd', 'nvme', 'dimm']
+            for dev_type in dev_types:
+                dev_df = rg.find_storage(dev_types=[dev_type],
+                                         shared=False)
+                if len(dev_df) != 0:
+                    break
+        else:
+            dev_df = rg.find_storage(dev_types=[self.config['dev_type']],
+                                     shared=False)
+        if len(dev_df) == 0:
+            raise Exception('Could not find any storage devices :(')
+        storage_dir = os.path.expandvars(dev_df.rows[0]['mount'])
+
+        # Define paths
+        self.config['pfs_conf'] = f'{self.private_dir}/orangefs.xml'
+        self.config['pvfs2tab'] = f'{self.private_dir}/pvfs2tab'
+        if self.config['mount'] is None:
+            self.config['mount'] = f'{self.private_dir}/client'
+        self.config['storage'] = f'{storage_dir}/orangefs_storage'
+        self.config['metadata'] = f'{storage_dir}/orangefs_metadata'
+        self.config['log'] = f'{self.private_dir}/orangefs_server.log'
+        self.config['client_log'] = f'{self.private_dir}/orangefs_client.log'
+
         # generate PFS Gen config
-        if self.config['server']['pvfs2_protocol'] == 'tcp':
-            proto_cmd = f'--tcpport {self.config["server"]["pvfs2_port"]}'
-        elif self.config['server']['pvfs2_protocol'] == 'ib':
-            proto_cmd = f'--ibport {self.config["server"]["pvfs2_port"]}'
+        if self.config['protocol'] == 'tcp':
+            proto_cmd = f'--tcpport {self.config["port"]}'
+        elif self.config['protocol'] == 'ib':
+            proto_cmd = f'--ibport {self.config["port"]}'
         else:
             raise Exception("Protocol must be either tcp or ib")
         pvfs_gen_cmd = [
             'pvfs2-genconfig',
             '--quiet',
-            f'--protocol {self.config["server"]["pvfs2_protocol"]}',
+            f'--protocol {self.config["protocol"]}',
             proto_cmd,
-            f'--dist-name {self.config["server"]["distribution_name"]}'
-            f'--dist-params strip_size: {self.config["server"]["STRIPE_SIZE"]}'
+            f'--dist-name {self.config["stripe_dist"]}',
+            f'--dist-params \"strip_size: {self.config["stripe_size"]}\"',
             f'--ioservers {self.server_hosts.ip_str(sep=",")}',
             f'--metaservers {self.md_hosts.ip_str(sep=",")}',
-            f'--storage {self.config["server"]["storage_dir"]}',
-            f'--metadata {self.config["metadata"]["meta_dir"]}',
-            f'--logfile {self.config["server"]["log"]}',
-            self.pfs_conf
+            f'--storage {self.config["storage"]}',
+            f'--metadata {self.config["metadata"]}',
+            f'--logfile {self.config["log"]}',
+            f'--fsname {self.config["name"]}',
+            self.config['pfs_conf']
         ]
         pvfs_gen_cmd = " ".join(pvfs_gen_cmd)
-        Exec(pvfs_gen_cmd)
-        Pscp(self.pfs_conf, ExecInfo(hostfile=self.config['hostfile']))
+        Exec(pvfs_gen_cmd, LocalExecInfo(env=self.env))
+        Pscp(self.config['pfs_conf'],
+             PsshExecInfo(hosts=self.jarvis.hostfile, env=self.env))
 
-        #Create storage directories
-        Mkdir(self.config['client']['mount_point'], hosts=self.client_hosts)
-        Mkdir(self.config['server']['storage_dir'], hosts=self.server_hosts)
-        Mkdir(self.config['metadata']['meta_dir'], hosts=self.md_hosts)
+        # Create storage directories
+        Mkdir(self.config['mount'],
+              PsshExecInfo(hosts=self.client_hosts, env=self.env))
+        Mkdir(self.config['storage'], PsshExecInfo(hosts=self.server_hosts,
+                                                   env=self.env))
+        Mkdir(self.config['metadata'], PsshExecInfo(hosts=self.md_hosts,
+                                                    env=self.env))
 
-        #set pvfstab on clients
+        # Set pvfstab on clients
         for i, client in self.client_hosts.enumerate():
-            metadata_server_ip = self.md_hosts.hostname_list()[i % len(self.md_hosts)]
-            cmd = "echo '{protocol}://{ip}:{port}/pfs {mount_point} pvfs2 defaults,auto 0 0' > {client_pvfs2tab}".format(
-                protocol=self.config['server']['pvfs2_protocol'],
-                port=self.config['server']['pvfs2_port'],
-                ip=metadata_server_ip,
-                mount_point=self.config['client']['mount_point'],
-                client_pvfs2tab=self.config['client']['PVFS2TAB']
-            )
-            Exec(cmd, SshExecInfo(hosts=client))
+            metadata_server_ip = self.md_hosts.list()[
+                i % len(self.md_hosts)].hosts_ip[0]
+            cmds = [
+                'echo "{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0" > {client_pvfs2tab}'.format(
+                    protocol=self.config['protocol'],
+                    port=self.config['port'],
+                    ip=metadata_server_ip,
+                    name=self.config['name'],
+                    mount_point=self.config['mount'],
+                    client_pvfs2tab=self.config['pvfs2tab'],
+                ),
+                f'chmod a+r {self.config["pvfs2tab"]}'
+            ]
+            Exec(cmds, SshExecInfo(hosts=client))
+        self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
+
+        # Initialize servers
+        if not self.config['ares']:
+            for host in self.server_hosts.list():
+                host_ip = host.hosts_ip[0]
+                server_start_cmds = [
+                    f'pvfs2-server -f {self.config["pfs_conf"]} -a {host_ip}',
+                ]
+                Exec(server_start_cmds, SshExecInfo(
+                    hosts=host,
+                    env=self.env))
+
+    def _load_config(self):
+        if 'sudoenv' not in self.config:
+            self.config['sudoenv'] = True
+        self.client_hosts = Hostfile(all_hosts=self.config['client_host_set'])
+        self.server_hosts = Hostfile(all_hosts=self.config['server_host_set'])
+        self.md_hosts = Hostfile(all_hosts=self.config['md_host_set'])
+        self.ofs_path = self.env['ORANGEFS_PATH']
 
     def start(self):
+        self._load_config()
         # start pfs servers
-        for host in self.server_hosts:
-            pvfs2_server = os.path.join(self.orangefs_root,"sbin","pvfs2-server")
-            server_start_cmds = [
-                f"{pvfs2_server} {self.pfs_conf} -f -a {host}",
-                f"{pvfs2_server} {self.pfs_conf} -a {host}"
-            ]
-            Exec(server_start_cmds, hosts=host)
-        Sleep(5)
-        self.Status()
-
-        # start pfs client
-        pvfs2_fuse = os.path.join(self.orangefs_root, "bin", "pvfs2fuse")
-        for i,client in self.client_hosts.enumerate():
-            metadata_server_ip = self.md_hosts.hostname_list()[i % len(self.md_hosts)]
-            start_client_cmds = [
-                "{pvfs2_fuse} -o fs_spec={protocol}://{ip}:{port}/pfs {mount_point}".format(
-                    pvfs2_fuse=pvfs2_fuse,
-                    protocol=self.config['server']['pvfs2_protocol'],
-                    port=self.config['server']['pvfs2_port'],
-                    ip=metadata_server_ip,
-                    mount_point=self.config['client']['mount_point'])
-            ]
-            Exec(start_client_cmds, hosts=client)
+        if self.config['ares']:
+            self.ares_start()
+        else:
+            self.custom_start()
 
     def stop(self):
-        cmds = [
-            f"umount -l {self.config['client']['mount_point']}",
-            f"umount -f {self.config['client']['mount_point']}",
-            f"umount {self.config['client']['mount_point']}",
-            f"killall -9 pvfs2-client",
-            f"killall -9 pvfs2-client-core"
-        ]
-        Exec(cmds, hosts=self.client_hosts, sudo=True)
-        Exec("killall -9 pvfs2-server", sudo=True, hosts=self.server_hosts)
-        Exec("pgrep -la pvfs2-server", hosts=self.client_hosts)
+        self._load_config()
+        if self.config['ares']:
+            self.ares_stop()
+        else:
+            self.custom_stop()
 
     def clean(self):
-        Rm(self.config['client']['mount_point'], hosts=self.client_hosts)
-        Rm(self.config['server']['storage_dir'], hosts=self.server_hosts)
-        Rm(self.config['metadata']['meta_dir'], hosts=self.md_hosts)
+        self._load_config()
+
+        Rm(self.config['mount'],
+           PsshExecInfo(hosts=self.client_hosts,
+                        env=self.env))
+        Rm(self.config['storage'],
+           PsshExecInfo(hosts=self.server_hosts,
+                        env=self.env))
+        Rm(self.config['metadata'],
+           PsshExecInfo(hosts=self.md_hosts,
+                        env=self.env))
 
     def status(self):
-        Exec("mount | grep pvfs", hosts=self.server_hosts)
+        self._load_config()
+        Exec('mount | grep pvfs',
+             PsshExecInfo(hosts=self.server_hosts,
+                          env=self.env))
         verify_server_cmd = [
-            f"export PVFS2TAB_FILE={self.config['client']['PVFS2TAB']}",
-            f"pvfs2-ping -m {self.config['client']['mount_point']} | grep 'appears to be correctly configured'"
+            f'pvfs2-ping -m {self.config["mount"]} | grep \"appears to be correctly configured\"'
         ]
-        verify_server_cmd = ';'.join(verify_server_cmd)
-        Exec(verify_server_cmd, hosts=self.client_hosts)
+        Exec(verify_server_cmd,
+             PsshExecInfo(hosts=self.client_hosts,
+                          env=self.env))
+        return True

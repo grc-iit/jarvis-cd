@@ -1,4 +1,14 @@
 In this section we go over how to install and deploy OrangeFS.
+NOTE: if running in Ares, OrangeFS is already installed, so skip
+to section 5.3.
+
+# 5.1. Install Various Dependencies
+
+```
+sudo apt update
+sudo apt install -y fuse
+sudo apt install gcc flex bison libssl-dev libdb-dev linux-headers-$(uname -r) perl make libldap2-dev libattr1-dev
+```
 
 # 5.1. Install OrangeFS (Linux)
 
@@ -8,13 +18,14 @@ The official OrangeFS github is [here](https://github.com/waltligon/orangefs/rel
 ```bash
 scspkg create orangefs
 cd `scspkg pkg src orangefs`
-wget https://github.com/waltligon/orangefs/archive/refs/tags/v.2.9.8.tar.gz
-tar -xvzf v.2.9.8.tar.gz
-cd orangefs-v.2.9.8
-autoreconf -iv
+wget https://github.com/waltligon/orangefs/releases/download/v.2.10.0/orangefs-2.10.0.tar.gz
+tar -xvzf orangefs-2.10.0.tar.gz
+cd orangefs
+./prepare
 ./configure --prefix=`scspkg pkg root orangefs` --enable-shared --enable-fuse
 make -j8
 make install
+scspkg env prepend orangefs ORANGEFS_PATH `scspkg pkg root orangefs`
 ```
 
 # 5.2. Using MPICH with OrangeFS
@@ -33,16 +44,20 @@ make -j8
 make install
 ```
 
-# 5.4. Setup Environment
+# 5.3. Creating a pipeline
 
-```bash
+In Ares:
+```
+module load orangefs
+jarvis pipeline create orangefs
+jarvis pipeline env build +ORANGEFS_PATH
+jarvis pipeline append orangefs mount=${HOME}/orangefs_client +ares
 ```
 
-# 5.3. Generating the Config File
-
-```bash
-cd ${HOME}
-mkdir orangefs
-cd orangefs
-pvfs2-genconfig
+In a machine where you have root access:
+```
+module load orangefs
+jarvis pipeline create orangefs
+jarvis pipeline env build +ORANGEFS_PATH
+jarvis pipeline append orangefs mount=${HOME}/orangefs_client
 ```

@@ -4,6 +4,7 @@ pkg types in Jarvis.
 """
 
 from abc import ABC, abstractmethod
+from jarvis_util.jutil_manager import JutilManager
 from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_util.util.naming import to_snake_case
 from jarvis_util.serialize.yaml_file import YamlFile
@@ -38,6 +39,7 @@ class Pkg(ABC):
         :param pkg_type: The type of this package
         """
         self.jarvis = JarvisManager.get_instance()
+        self.jutil = JutilManager.get_instance()
         self.pkg_type = to_snake_case(self.__class__.__name__)
         self.root = None
         self.global_id = None
@@ -102,24 +104,29 @@ class Pkg(ABC):
         }
         self.sub_pkgs = []
         self.env_path = f'{self.config_dir}/env.yaml'
-        self.env = {}
+        if self.env is None:
+            self.env = {}
         os.makedirs(self.config_dir, exist_ok=True)
         if self.shared_dir is not None:
             os.makedirs(self.shared_dir, exist_ok=True)
         self._init()
         return self
 
-    def load(self, global_id=None, root=None):
+    def load(self, global_id=None, root=None, with_config=True):
         """
-        Load the configuration of a pkg from the
+        Load the configuration of a pkg from the filesystem. Will
+        create if it doesn't already exist.
 
         :param global_id: A dot-separated, globally unique identifier for
         this pkg. Indicates where configuration data is stored.
-        :param root: The parent
+        :param root: The parent package
+        :param with_config: Whether to load pkg configurations
         :return: self
         """
         self._init_common(global_id, root)
         if not os.path.exists(self.config_path):
+            return self.create(global_id)
+        if not with_config:
             return self
         self.config = YamlFile(self.config_path).load()
         if self.env_path is not None:
@@ -146,9 +153,32 @@ class Pkg(ABC):
             pkg.save()
         return self
 
+    def clear(self):
+        """
+        Destroy a pipeline's sub-pkgs
+
+        :return: None
+        """
+        try:
+            for path in os.listdir(self.config_dir):
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+            os.remove(self.config_path)
+        except FileNotFoundError:
+            pass
+
+    def get_path(self, config=False, shared=False, private=False):
+        if shared:
+            return self.shared_dir
+        if private:
+            return self.private_dir
+        if config:
+            return self.config_dir
+        raise Exception('Config, shared, and private were all false')
+
     def destroy(self):
         """
-        Destroy a pkg and its sub-pkgs
+        Destroy a pipeline and its sub-pkgs
 
         :return: None
         """
@@ -389,7 +419,13 @@ class SimplePkg(Pkg):
                 'msg': 'How much time to sleep during start (seconds)',
                 'type': int,
                 'default': 0,
-            }
+            },
+            {
+                'name': 'reinit',
+                'msg': 'Destroy previous configuration and rebuild',
+                'type': bool,
+                'default': False
+            },
         ]
         return menu
 
