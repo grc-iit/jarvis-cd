@@ -4,12 +4,13 @@ pkg types in Jarvis.
 """
 
 from abc import ABC, abstractmethod
-from jarvis_util.jutil_manager import JutilManager
 from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_util.util.naming import to_snake_case
 from jarvis_util.serialize.yaml_file import YamlFile
 from jarvis_util.shell.local_exec import LocalExecInfo
+from jarvis_util.shell.exec import Exec
 from jarvis_util.util.argparse import ArgParse
+from jarvis_util.jutil_manager import JutilManager
 import inspect
 import pathlib
 import shutil
