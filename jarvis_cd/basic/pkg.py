@@ -354,23 +354,29 @@ class Pkg(ABC):
         a string for a single variable.
         :return: string or None
         """
-        if env_vars is None:
-            env_vars = ['LD_LIBRARY_PATH']
         name_opts = [
             f'{lib_name}.so',
             f'lib{lib_name}.so',
         ]
-        for env_var in env_vars:
-            if env_var not in self.env:
-                continue
-            paths = self.env[env_var].split(':')
-            for path in paths:
-                if not os.path.exists(path):
-                    continue
-                filenames = os.listdir(path)
-                for name_opt in name_opts:
-                    if name_opt in filenames:
-                        return f'{path}/{name_opt}'
+        for name in name_opts:
+            exec = Exec(f'cc -print-file-name={name}', LocalExecInfo())
+            res = exec.stdout['localhost'].strip()
+            if res != name:
+                return res
+        # if env_vars is None:
+        #     env_vars = ['LD_LIBRARY_PATH']
+
+        # for env_var in env_vars:
+        #     if env_var not in self.env:
+        #         continue
+        #     paths = self.env[env_var].split(':')
+        #     for path in paths:
+        #         if not os.path.exists(path):
+        #             continue
+        #         filenames = os.listdir(path)
+        #         for name_opt in name_opts:
+        #             if name_opt in filenames:
+        #                 return f'{path}/{name_opt}'
         return None
 
     def __str__(self):
