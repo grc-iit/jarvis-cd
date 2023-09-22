@@ -361,9 +361,11 @@ class Pkg(ABC):
         ]
         for name in name_opts:
             exec = Exec(f'cc -print-file-name={name}',
-                        LocalExecInfo(env=self.env))
+                        LocalExecInfo(env=self.env,
+                                      hide_output=True,
+                                      collect_output=True))
             res = exec.stdout['localhost'].strip()
-            if res != name:
+            if len(res) and res != name:
                 return res
         # if env_vars is None:
         #     env_vars = ['LD_LIBRARY_PATH']
