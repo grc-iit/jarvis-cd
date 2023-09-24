@@ -43,8 +43,8 @@ nprocs=64
 ```
 jarvis pkg configure hermes_api_bench \
 mode=create_bkt \
-bkts_per_rank=1024 \
-nprocs=64
+bkts_per_rank=256 \
+nprocs=192
 ```
 
 ## Get Bucket benchmark

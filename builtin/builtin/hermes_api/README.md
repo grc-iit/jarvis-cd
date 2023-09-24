@@ -10,6 +10,6 @@ Check either the hermes or hermes_run jarvis package.
 ```bash
 jarvis pipeline create hermes
 jarvis pipeline append hermes --sleep=5
-jarvis pipeline append hermes_api +posix -mpich
+jarvis pipeline append hermes_api +posix
 jarvis pipeline run
 ```
