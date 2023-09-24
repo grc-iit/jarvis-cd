@@ -218,9 +218,9 @@ class Hermes(Service):
 
         :return: None
         """
-        Exec('finalize_hermes',
-             PsshExecInfo(hostfile=self.jarvis.hostfile,
-                          env=self.env))
+        # Exec('finalize_hermes',
+        #      PsshExecInfo(hostfile=self.jarvis.hostfile,
+        #                   env=self.env))
         # if self.daemon_pkg is not None:
         #     self.daemon_pkg.wait()
         Kill('hermes_daemon',
