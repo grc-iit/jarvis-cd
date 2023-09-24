@@ -5,6 +5,8 @@ Hermes is a multi-tiered I/O buffering platform.
 ```bash
 spack install hermes@master
 OR
+spack install hermes_shm
+spack load hermes_shm
 git clone https://github.com/lukemartinlogan/hermes.git -b hermes-1.0 hermes-1.0
 cd hermes
 mkdir build

@@ -1,6 +1,10 @@
 
 This is unit tests validates LabStor's ability to handle message transfers.
 
+# Installation
+
+Check the hermes_run package.
+
 # Labstor
 
 ## 1. Create a Resource Graph

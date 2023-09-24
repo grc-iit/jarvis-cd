@@ -4,11 +4,7 @@ native API
 
 # Installation
 
-```bash
-spack install hermes@master
-OR 
-spack install hermes@dev-1.1
-```
+Check the hermes_run jarvis package.
 
 # Usage
 
