@@ -61,7 +61,7 @@ class Hermes(Service):
                 'default': None
             },
             {
-                'name': 'output_dir',
+                'name': 'output',
                 'msg': 'Where the application performs I/O',
                 'type': str,
                 'default': None
@@ -188,8 +188,8 @@ class Hermes(Service):
             'base_adapter_mode': 'kDefault',
             'flushing_mode': 'kAsync'
         }
-        if self.config['output_dir'] is not None:
-            hermes_client['path_inclusions'].append(self.config['output_dir'])
+        if self.config['output'] is not None:
+            hermes_client['path_inclusions'].append(self.config['output'])
         Mkdir(hermes_client['path_inclusions'],
               PsshExecInfo(hostfile=self.jarvis.hostfile,
                            env=self.env))

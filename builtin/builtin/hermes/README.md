@@ -19,6 +19,7 @@ scspkg create hermes
 scspkg env set hermes HERMES_PATH=${PWD}
 scspkg env prepend hermes PATH ${PWD}/build/bin
 scspkg env prepend hermes LD_LIBRARY_PATH ${PWD}/build/bin
+scspkg env prepend hermes LIBRARY_PATH ${PWD}/build/bin
 module load hermes
 ```
 
