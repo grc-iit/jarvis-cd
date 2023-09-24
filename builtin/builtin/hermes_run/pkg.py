@@ -46,6 +46,12 @@ class HermesRun(Service):
                 'default': None
             },
             {
+                'name': 'threads',
+                'msg': 'the number of rpc threads to create',
+                'type': int,
+                'default': 32
+            },
+            {
                 'name': 'devices',
                 'msg': 'Search for a number of devices to include',
                 'type': list,
@@ -187,14 +193,14 @@ class HermesRun(Service):
             'protocol': protocol,
             'domain': domain,
             'port': self.config['port'],
-            'num_threads': 32
+            'num_threads': self.config['threads']
         }
         hermes_server['rpc'] = {
             'host_file': hostfile_path,
             'protocol': protocol,
             'domain': domain,
             'port': self.config['port'],
-            'num_threads': 4
+            'num_threads': self.config['threads']
         }
         if self.jarvis.hostfile.path is None:
             labstor_server['rpc']['host_names'] = self.jarvis.hostfile.hosts
