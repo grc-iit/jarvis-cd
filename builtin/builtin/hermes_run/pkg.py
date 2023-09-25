@@ -68,7 +68,7 @@ class HermesRun(Service):
                         'type': int
                     }
                 ]
-            },
+            }
         ]
 
     def configure(self, **kwargs):

@@ -22,9 +22,9 @@ jarvis pipeline run
 ```
 jarvis pkg configure hermes_api_bench \
 mode=putget \
-blob_size=1m \
-blobs_per_rank=16 \
-nprocs=192
+blob_size=4k \
+blobs_per_rank=1024 \
+nprocs=128
 ```
 
 ## PartialPutGet benchmark
