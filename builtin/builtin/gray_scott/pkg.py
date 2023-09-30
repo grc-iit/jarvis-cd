@@ -36,7 +36,7 @@ class GrayScott(Application):
             },
             {
                 'name': 'ppn',
-                'msg': 'Processes per pkg',
+                'msg': 'Processes per node',
                 'type': int,
                 'default': None,
             },
@@ -100,6 +100,13 @@ class GrayScott(Application):
                 'type': str,
                 'default': None,
             },
+            {
+                'name': 'engine',
+                'msg': 'Engien to be used',
+                'choices': ['bp5','hermes'],
+                'type': str,
+                'default': None,
+            },
         ]
 
     def configure(self, **kwargs):
@@ -134,8 +141,15 @@ class GrayScott(Application):
         Mkdir(output_dir, PsshExecInfo(hostfile=self.jarvis.hostfile,
                                        env=self.env))
         JsonFile(self.settings_json_path).save(settings_json)
-        self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
+
+        if lower(self.config['engine']) == 'bp5':
+            self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
                                 self.adios2_xml_path)
+        elif lower(self.config['engine']) == 'hermes':
+            self.copy_template_file(f'{self.pkg_dir}/config/hermes.xml',
+                                    self.adios2_xml_path)
+        else:
+            raise Exception('Engine not defined')
 
     def start(self):
         """
