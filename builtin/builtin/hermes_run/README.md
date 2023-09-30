@@ -9,11 +9,8 @@ spack install hermes@dev-1.1
 OR
 
 ```bash 
-spack install mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
-yaml-cpp boost hermes_shm
-spack load mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
-yaml-cpp boost hermes_shm
-
+spack install hermes_shm
+spack load hermes_shm
 git clone https://github.com/lukemartinlogan/hermes.git -b hermes-1.1
 cd hermes
 mkdir build
@@ -26,6 +23,7 @@ scspkg create hermes_run
 scspkg env set hermes_run HERMES_PATH=${PWD}
 scspkg env prepend hermes_run PATH ${PWD}/build/bin
 scspkg env prepend hermes_run LD_LIBRARY_PATH ${PWD}/build/bin
+scspkg env prepend hermes_run LIBRARY_PATH ${PWD}/build/bin
 module load hermes_run
 ```
 

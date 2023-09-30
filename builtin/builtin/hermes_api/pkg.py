@@ -30,7 +30,7 @@ class HermesApi(Interceptor):
                 'name': 'mpi',
                 'msg': 'Intercept MPI-IO',
                 'type': bool,
-                'default': True
+                'default': False
             },
             {
                 'name': 'posix',
@@ -61,21 +61,27 @@ class HermesApi(Interceptor):
         :return: None
         """
         self.update_config(kwargs, rebuild=False)
+        has_one = False
         if self.config['mpi']:
             self.config['HERMES_MPIIO'] = self.find_library('hermes_mpi')
             if self.config['HERMES_MPIIO'] is None:
                 raise Exception('Could not find hermes_mpi')
             print(f'Found libhermes_mpiio.so at {self.config["HERMES_MPIIO"]}')
+            has_one = True
         if self.config['posix']:
             self.config['HERMES_POSIX'] = self.find_library('hermes_posix')
             if self.config['HERMES_POSIX'] is None:
                 raise Exception('Could not find hermes_posix')
             print(f'Found libhermes_posix.so at {self.config["HERMES_POSIX"]}')
+            has_one = True
         if self.config['stdio']:
             self.config['HERMES_STDIO'] = self.find_library('hermes_stdio')
             if self.config['HERMES_STDIO'] is None:
                 raise Exception('Could not find hermes_posix')
             print(f'Found libhermes_stdio.so at {self.config["HERMES_STDIO"]}')
+            has_one = True
+        if not has_one:
+            raise Exception('Hermes API not selected')
 
     def modify_env(self):
         """

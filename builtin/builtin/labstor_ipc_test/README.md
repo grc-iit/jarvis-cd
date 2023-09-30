@@ -1,6 +1,10 @@
 
 This is unit tests validates LabStor's ability to handle message transfers.
 
+# Installation
+
+Check the hermes_run package.
+
 # Labstor
 
 ## 1. Create a Resource Graph
@@ -33,8 +37,7 @@ Create the environment variables
 ```bash
 spack load hermes_run
 # OR 
-spack load mochi-thallium~cereal@0.10.1 cereal catch2@3.0.1 mpich \
-yaml-cpp boost hermes_shm
+spack load hermes_shm
 module load hermes_run
 ```````````
 
@@ -48,7 +51,13 @@ jarvis pipeline env build
 Create a Jarvis pipeline
 ```bash
 jarvis pipeline append hermes_run --sleep=10
-jarvis pipeline append labstor_ipc_test --TEST_CASE=TestHermesBucketAppend
+jarvis pipeline append labstor_ipc_test \
+TEST_CASE=TestHermesBucketAppend
+```
+
+```
+jarvis pkg configure labstor_ipc_test \
+TEST_CASE=TestIpc
 ```
 
 ## 5. Run Experiment

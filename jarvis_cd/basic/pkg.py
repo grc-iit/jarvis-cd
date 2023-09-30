@@ -4,12 +4,13 @@ pkg types in Jarvis.
 """
 
 from abc import ABC, abstractmethod
-from jarvis_util.jutil_manager import JutilManager
 from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_util.util.naming import to_snake_case
 from jarvis_util.serialize.yaml_file import YamlFile
 from jarvis_util.shell.local_exec import LocalExecInfo
+from jarvis_util.shell.exec import Exec
 from jarvis_util.util.argparse import ArgParse
+from jarvis_util.jutil_manager import JutilManager
 import inspect
 import pathlib
 import shutil
@@ -160,7 +161,8 @@ class Pkg(ABC):
         :return: None
         """
         try:
-            for path in os.listdir(self.config_dir):
+            for dir_name in os.listdir(self.config_dir):
+                path = os.path.join(self.config_dir, dir_name)
                 if os.path.isdir(path):
                     shutil.rmtree(path)
             os.remove(self.config_path)
@@ -354,23 +356,32 @@ class Pkg(ABC):
         a string for a single variable.
         :return: string or None
         """
-        if env_vars is None:
-            env_vars = ['LD_LIBRARY_PATH']
         name_opts = [
             f'{lib_name}.so',
             f'lib{lib_name}.so',
         ]
-        for env_var in env_vars:
-            if env_var not in self.env:
-                continue
-            paths = self.env[env_var].split(':')
-            for path in paths:
-                if not os.path.exists(path):
-                    continue
-                filenames = os.listdir(path)
-                for name_opt in name_opts:
-                    if name_opt in filenames:
-                        return f'{path}/{name_opt}'
+        for name in name_opts:
+            exec = Exec(f'cc -print-file-name={name}',
+                        LocalExecInfo(env=self.env,
+                                      hide_output=True,
+                                      collect_output=True))
+            res = exec.stdout['localhost'].strip()
+            if len(res) and res != name:
+                return res
+        # if env_vars is None:
+        #     env_vars = ['LD_LIBRARY_PATH']
+
+        # for env_var in env_vars:
+        #     if env_var not in self.env:
+        #         continue
+        #     paths = self.env[env_var].split(':')
+        #     for path in paths:
+        #         if not os.path.exists(path):
+        #             continue
+        #         filenames = os.listdir(path)
+        #         for name_opt in name_opts:
+        #             if name_opt in filenames:
+        #                 return f'{path}/{name_opt}'
         return None
 
     def __str__(self):

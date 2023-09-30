@@ -4,11 +4,7 @@ native API
 
 # Installation
 
-```bash
-spack install hermes@master
-OR 
-spack install hermes@dev-1.1
-```
+Check the hermes_run jarvis package.
 
 # Usage
 
@@ -26,9 +22,9 @@ jarvis pipeline run
 ```
 jarvis pkg configure hermes_api_bench \
 mode=putget \
-blob_size=1m \
-blobs_per_rank=64 \
-nprocs=64
+blob_size=4k \
+blobs_per_rank=1024 \
+nprocs=128
 ```
 
 ## PartialPutGet benchmark
@@ -47,8 +43,8 @@ nprocs=64
 ```
 jarvis pkg configure hermes_api_bench \
 mode=create_bkt \
-bkts_per_rank=1024 \
-nprocs=64
+bkts_per_rank=256 \
+nprocs=192
 ```
 
 ## Get Bucket benchmark

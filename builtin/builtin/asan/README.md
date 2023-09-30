@@ -3,13 +3,13 @@ interceptors (MPI-IO, STDIO, POSIX, and VFD) provided in Hermes.
 
 # Installation
 
-Check either the hermes or hermes_run jarvis package.
-
-# Usage
+```bash
+spack install hermes@master
+```
 
 ```bash
 jarvis pipeline create hermes
 jarvis pipeline append hermes --sleep=5
-jarvis pipeline append hermes_api +posix
+jarvis pipeline append hermes_api +posix -mpich
 jarvis pipeline run
 ```

@@ -40,7 +40,7 @@ class HermesApiBench(Application):
                 'default': '1',
             },
             {
-                'name': 'btks_per_rank',
+                'name': 'bkts_per_rank',
                 'msg': 'The number of buckets to create per-rank',
                 'type': str,
                 'default': '1',

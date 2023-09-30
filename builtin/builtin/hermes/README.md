@@ -5,6 +5,8 @@ Hermes is a multi-tiered I/O buffering platform.
 ```bash
 spack install hermes@master
 OR
+spack install hermes_shm
+spack load hermes_shm
 git clone https://github.com/lukemartinlogan/hermes.git -b hermes-1.0 hermes-1.0
 cd hermes
 mkdir build
@@ -17,6 +19,7 @@ scspkg create hermes
 scspkg env set hermes HERMES_PATH=${PWD}
 scspkg env prepend hermes PATH ${PWD}/build/bin
 scspkg env prepend hermes LD_LIBRARY_PATH ${PWD}/build/bin
+scspkg env prepend hermes LIBRARY_PATH ${PWD}/build/bin
 module load hermes
 ```
 
