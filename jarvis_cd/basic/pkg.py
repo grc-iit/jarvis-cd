@@ -161,7 +161,8 @@ class Pkg(ABC):
         :return: None
         """
         try:
-            for path in os.listdir(self.config_dir):
+            for dir_name in os.listdir(self.config_dir):
+                path = os.path.join(self.config_dir, dir_name)
                 if os.path.isdir(path):
                     shutil.rmtree(path)
             os.remove(self.config_path)
