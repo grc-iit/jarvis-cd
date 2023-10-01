@@ -127,7 +127,7 @@ class GrayScott(Application):
             'plotgap': self.config['plotgap'],
             'steps': self.config['steps'],
             'noise': self.config['noise'],
-            'output': f'{self.config["output"]}/data.bp',
+            'output': f'{self.config["output"]}',
             'adios_config': self.adios2_xml_path
         }
         Mkdir(self.config['output'],

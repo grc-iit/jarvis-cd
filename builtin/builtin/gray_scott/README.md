@@ -15,7 +15,7 @@ export GRAY_SCOTT_PATH=`pwd`
 scspkg env set gray_scott GRAY_SCOTT_PATH="${GRAY_SCOTT_PATH}"
 scspkg env prepend gray_scott PATH "${GRAY_SCOTT_PATH}"
 module load gray_scott
-spack load mpi
+spack load mpi adios2
 ```
 
 # Gray Scott
