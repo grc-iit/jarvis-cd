@@ -56,6 +56,7 @@ class Pkg(ABC):
         self.sub_pkgs = []
         self.env_path = None
         self.env = None
+        self.mod_env = None
 
     def _init_common(self, global_id, root):
         """
@@ -88,12 +89,13 @@ class Pkg(ABC):
             raise Exception('No pipeline currently selected')
         return global_id
 
-    def create(self, global_id):
+    def create(self, global_id, config_only=False):
         """
         Create a new pkg and its filesystem data
 
         :param global_id: A dot-separated, globally unique identifier for
         this pkg. Indicates where configuration data is stored.
+        :param config_only: recreate only the config
         :return: self
         """
         self._init_common(global_id, self.root)
@@ -125,15 +127,15 @@ class Pkg(ABC):
         :return: self
         """
         self._init_common(global_id, root)
+        if self.env_path is not None and os.path.exists(self.env_path):
+            self.env = YamlFile(self.env_path).load()
+        elif self.root is not None:
+            self.env = self.root.env
         if not os.path.exists(self.config_path):
             return self.create(global_id)
         if not with_config:
             return self
         self.config = YamlFile(self.config_path).load()
-        if self.env_path is not None:
-            self.env = YamlFile(self.env_path).load()
-        else:
-            self.env = self.root.env
         for sub_pkg_type, sub_pkg_id in self.config['sub_pkgs']:
             sub_pkg = self.jarvis.construct_pkg(sub_pkg_type)
             sub_pkg.load(f'{self.global_id}.{sub_pkg_id}', self.root)
@@ -269,15 +271,17 @@ class Pkg(ABC):
     def view_pkgs(self):
         print(self.to_string_pretty())
 
-    def update_env(self, env):
+    def update_env(self, env, mod_env=None):
         """
         Update the current environment for this program
 
         :param env: The environment dict
+        :param mod_env: The modified environment dict
         :return:
         """
         env.update(self.env)
         self.env = env
+        self.mod_env = mod_env
 
     def track_env(self, env_track_dict=None):
         """
@@ -325,15 +329,19 @@ class Pkg(ABC):
         :param path: The path to prepend
         :return:
         """
-        if env_var in self.env:
-            cur_env = self.env[env_var]
+        if env_var == 'LD_PRELOAD':
+            env = self.mod_env
+        else:
+            env = self.env
+        if env_var in env:
+            cur_env = env[env_var]
         else:
             cur_env = os.getenv(env_var)
 
         if cur_env is None or len(cur_env) == 0:
-            self.env[env_var] = path
+            env[env_var] = path
         else:
-            self.env[env_var] = f'{path}:{cur_env}'
+            env[env_var] = f'{path}:{cur_env}'
 
     def setenv(self, env_var, val):
         """
@@ -368,20 +376,20 @@ class Pkg(ABC):
             res = exec.stdout['localhost'].strip()
             if len(res) and res != name:
                 return res
-        # if env_vars is None:
-        #     env_vars = ['LD_LIBRARY_PATH']
+        if env_vars is None:
+            env_vars = ['LD_LIBRARY_PATH']
 
-        # for env_var in env_vars:
-        #     if env_var not in self.env:
-        #         continue
-        #     paths = self.env[env_var].split(':')
-        #     for path in paths:
-        #         if not os.path.exists(path):
-        #             continue
-        #         filenames = os.listdir(path)
-        #         for name_opt in name_opts:
-        #             if name_opt in filenames:
-        #                 return f'{path}/{name_opt}'
+        for env_var in env_vars:
+            if env_var not in self.env:
+                continue
+            paths = self.env[env_var].split(':')
+            for path in paths:
+                if not os.path.exists(path):
+                    continue
+                filenames = os.listdir(path)
+                for name_opt in name_opts:
+                    if name_opt in filenames:
+                        return f'{path}/{name_opt}'
         return None
 
     def __str__(self):
@@ -640,13 +648,13 @@ class Pipeline(Pkg):
 
         :return: None
         """
-        env = self.env.copy()
+        self.mod_env = self.env.copy()
         for pkg in self.sub_pkgs:
             if isinstance(pkg, Service):
-                pkg.update_env(env)
+                pkg.update_env(self.env, self.mod_env)
                 pkg.start()
             if isinstance(pkg, Interceptor):
-                pkg.update_env(env)
+                pkg.update_env(self.env, self.mod_env)
                 pkg.modify_env()
 
     def stop(self):
@@ -655,10 +663,9 @@ class Pipeline(Pkg):
 
         :return: None
         """
-        env = self.env.copy()
         for pkg in reversed(self.sub_pkgs):
             if isinstance(pkg, Service):
-                pkg.update_env(env)
+                pkg.update_env(self.env, self.mod_env)
                 pkg.stop()
 
     def clean(self):
@@ -667,10 +674,9 @@ class Pipeline(Pkg):
 
         :return: None
         """
-        env = LocalExecInfo().env
         for pkg in reversed(self.sub_pkgs):
             if isinstance(pkg, Service):
-                pkg.update_env(env.copy())
+                pkg.update_env(self.env, self.mod_env)
                 pkg.clean()
 
     def status(self):
@@ -679,10 +685,9 @@ class Pipeline(Pkg):
 
         :return: None
         """
-        env = LocalExecInfo().env
         statuses = []
         for pkg in reversed(self.sub_pkgs):
             if isinstance(pkg, Service):
-                pkg.update_env(env.copy())
+                pkg.update_env(self.env, self.mod_env)
                 statuses.append(pkg.status())
         return math.prod(statuses)
