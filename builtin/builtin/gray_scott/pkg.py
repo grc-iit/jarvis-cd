@@ -128,7 +128,7 @@ class GrayScott(Application):
             'steps': self.config['steps'],
             'noise': self.config['noise'],
             'output': f'{self.config["output"]}/data.bp',
-            'adios_config': f'{self.shared_dir}/adios2.xml'
+            'adios_config': self.adios2_xml_path
         }
         Mkdir(self.config['output'],
               PsshExecInfo(hostfile=self.jarvis.hostfile,
