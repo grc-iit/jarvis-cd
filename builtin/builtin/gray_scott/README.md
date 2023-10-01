@@ -3,15 +3,19 @@ Gray-Scott is a 3D 7-Point stencil code
 # Installation
 
 ```bash
+scspkg create gray-scott
+cd `scspkg pkg src gray-scott`
 git clone https://github.com/pnorbert/adiosvm
-pushd adiosvm/Tutorial/gs-mpiio
+cd adiosvm/Tutorial/gs-mpiio
 mkdir build
 pushd build
 cmake ../ -DCMAKE_BUILD_TYPE=Release
 make -j8
 export GRAY_SCOTT_PATH=`pwd`
-popd
-popd
+scspkg env set gray_scott GRAY_SCOTT_PATH="${GRAY_SCOTT_PATH}"
+scspkg env prepend gray_scott PATH "${GRAY_SCOTT_PATH}"
+module load gray_scott
+spack load mpi
 ```
 
 # Gray Scott
@@ -20,8 +24,8 @@ popd
 
 Create the environment variables needed by Gray Scott
 ```bash
+module load gray_scott
 spack load mpi
-export PATH="${GRAY_SCOTT_PATH}:$PATH"
 ```````````
 
 ## 1. Create a Resource Graph

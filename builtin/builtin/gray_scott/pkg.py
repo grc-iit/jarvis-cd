@@ -16,7 +16,7 @@ class GrayScott(Application):
         """
         Initialize paths
         """
-        self.adios2_xml_path = f'{self.pkg_dir}/config/adios2.xml'
+        self.adios2_xml_path = f'{self.shared_dir}/config/adios2.xml'
         self.settings_json_path = f'{self.shared_dir}/settings-files.json'
 
     def _configure_menu(self):
@@ -127,12 +127,12 @@ class GrayScott(Application):
             'plotgap': self.config['plotgap'],
             'steps': self.config['steps'],
             'noise': self.config['noise'],
-            'output': self.config['output'],
+            'output': f'{self.config["output"]}/data.bp',
             'adios_config': f'{self.shared_dir}/adios2.xml'
         }
-        output_dir = os.path.basename(self.config['output'])
-        Mkdir(output_dir, PsshExecInfo(hostfile=self.jarvis.hostfile,
-                                       env=self.env))
+        Mkdir(self.config['output'],
+              PsshExecInfo(hostfile=self.jarvis.hostfile,
+                           env=self.env))
         JsonFile(self.settings_json_path).save(settings_json)
         self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
                                 self.adios2_xml_path)
