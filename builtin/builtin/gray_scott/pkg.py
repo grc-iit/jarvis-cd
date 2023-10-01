@@ -149,7 +149,7 @@ class GrayScott(Application):
              MpiExecInfo(nprocs=self.config['nprocs'],
                          ppn=self.config['ppn'],
                          hostfile=self.jarvis.hostfile,
-                         env=self.env))
+                         env=self.mod_env))
 
     def stop(self):
         """
