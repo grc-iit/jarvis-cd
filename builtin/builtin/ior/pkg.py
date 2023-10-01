@@ -116,7 +116,7 @@ class Ior(Application):
         else:
             os.makedirs(self.config['out'], exist_ok=True)
         Exec(' '.join(cmd),
-             MpiExecInfo(env=self.env,
+             MpiExecInfo(env=self.mod_env,
                          hostfile=self.jarvis.hostfile,
                          nprocs=self.config['nprocs']))
 
