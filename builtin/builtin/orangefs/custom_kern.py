@@ -6,7 +6,7 @@ class OrangefsCustomKern:
         # start pfs servers
         print("Starting the PFS servers")
         for host in self.server_hosts.list():
-            host_ip = host.hosts_ip[0]
+            host_ip = host.hosts[0]
             server_start_cmds = [
                 f'pvfs2-server {self.config["pfs_conf"]} -a {host_ip}'
             ]
@@ -28,7 +28,7 @@ class OrangefsCustomKern:
         print("Starting the OrangeFS clients")
         for i, client in self.client_hosts.enumerate():
             metadata_server_ip = self.md_hosts.list()[
-                i % len(self.md_hosts)].hosts_ip[0]
+                i % len(self.md_hosts)].hosts[0]
             start_client_cmd = f'{self.ofs_path}/sbin/pvfs2-client -p {self.ofs_path}/sbin/pvfs2-client-core -L {self.config["client_log"]}'
             mount_client = 'mount -t pvfs2 {protocol}://{ip}:{port}/{name} {mount_point}'.format(
                 protocol=self.config['protocol'],
