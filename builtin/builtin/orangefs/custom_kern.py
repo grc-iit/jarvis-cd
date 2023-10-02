@@ -14,7 +14,7 @@ class OrangefsCustomKern:
             print(server_start_cmds)
             print(f"PVFS2TAB: {self.env['PVFS2TAB_FILE']}")
             Exec(server_start_cmds,
-                 SshExecInfo(hosts=host,
+                 SshExecInfo(hostfile=host,
                              env=self.env))
 
         # insert OFS kernel module
