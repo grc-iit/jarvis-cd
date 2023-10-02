@@ -175,7 +175,7 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
 
         # Set pvfstab on clients
         metadata_server_ip = self.md_hosts.list()[0].hosts[0]
-        with open(self.config['pvfs2tab'], 'w', 'utf-8') as fp:
+        with open(self.config['pvfs2tab'], 'w', encoding='utf-8') as fp:
             fp.write(
                 '{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0\n'.format(
                     protocol=self.config['protocol'],
