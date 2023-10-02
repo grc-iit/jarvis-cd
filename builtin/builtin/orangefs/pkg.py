@@ -150,8 +150,8 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
             proto_cmd,
             f'--dist-name {self.config["stripe_dist"]}',
             f'--dist-params \"strip_size: {self.config["stripe_size"]}\"',
-            f'--ioservers {self.server_hosts.ip_str(sep=",")}',
-            f'--metaservers {self.md_hosts.ip_str(sep=",")}',
+            f'--ioservers {self.server_hosts.host_str(sep=",")}',
+            f'--metaservers {self.md_hosts.host_str(sep=",")}',
             f'--storage {self.config["storage"]}',
             f'--metadata {self.config["metadata"]}',
             f'--logfile {self.config["log"]}',
@@ -174,7 +174,7 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
         # Set pvfstab on clients
         for i, client in self.client_hosts.enumerate():
             metadata_server_ip = self.md_hosts.list()[
-                i % len(self.md_hosts)].hosts_ip[0]
+                i % len(self.md_hosts)].hosts[0]
             pvfs2tab_tmp = f'{self.private_dir}/pvfs2tab_{i}'
             with open(pvfs2tab_tmp, 'w') as fp:
                 fp.write('{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0'.format(
@@ -192,7 +192,7 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
         # Initialize servers
         if not self.config['ares']:
             for host in self.server_hosts.list():
-                host_ip = host.hosts_ip[0]
+                host_ip = host.hosts[0]
                 server_start_cmds = [
                     f'pvfs2-server -f {self.config["pfs_conf"]} -a {host_ip}',
                 ]
