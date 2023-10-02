@@ -184,7 +184,7 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
                     name=self.config['name'],
                     mount_point=self.config['mount'],
                     client_pvfs2tab=self.config['pvfs2tab']))
-        Pscp([(self.config['pvfs2tab'], self.config['pvfs2tab'])],
+        Pscp(self.config['pvfs2tab'],
              PsshExecInfo(hosts=self.jarvis.hostfile))
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
 

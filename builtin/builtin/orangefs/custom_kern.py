@@ -8,21 +8,12 @@ class OrangefsCustomKern:
         for host in self.server_hosts.list():
             host_ip = host.hosts[0]
             server_start_cmds = [
-                f'pvfs2-server -f -a {host_ip}  {self.config["pfs_conf"]}'
-            ]
-            Exec(server_start_cmds, SshExecInfo(
-                hosts=host,
-                env=self.env))
-        for host in self.server_hosts.list():
-            host_ip = host.hosts[0]
-            server_start_cmds = [
                 f'pvfs2-server -f -a {host_ip}  {self.config["pfs_conf"]}',
                 f'pvfs2-server -a {host_ip} {self.config["pfs_conf"]}'
             ]
-            Exec(server_start_cmds, SshExecInfo(
-                hosts=host,
-                env=self.env))
-        time.sleep(5)
+            Exec(server_start_cmds,
+                 SshExecInfo(hosts=host,
+                             env=self.env))
         self.status()
 
         # insert OFS kernel module
@@ -43,11 +34,11 @@ class OrangefsCustomKern:
             name=self.config['name'],
             mount_point=self.config['mount'])
         cmds = [start_client_cmd, mount_client]
-        Exec(cmds, PsshExecInfo(
-            hostfile=self.client_hosts,
-            env=self.env,
-            sudo=True,
-            sudoenv=self.config['sudoenv']))
+        Exec(cmds,
+             PsshExecInfo(hostfile=self.client_hosts,
+                          env=self.env,
+                          sudo=True,
+                          sudoenv=self.config['sudoenv']))
 
     def custom_stop(self):
         Exec(f'umount -t pvfs2 {self.config["mount"]}',
