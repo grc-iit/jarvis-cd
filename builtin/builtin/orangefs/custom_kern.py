@@ -11,6 +11,8 @@ class OrangefsCustomKern:
                 f'pvfs2-server -f -a {host_ip}  {self.config["pfs_conf"]}',
                 f'pvfs2-server -a {host_ip} {self.config["pfs_conf"]}'
             ]
+            print(server_start_cmds)
+            print(f"PVFS2TAB: {self.env['PVFS2TAB_FILE']}")
             Exec(server_start_cmds,
                  SshExecInfo(hosts=host,
                              env=self.env))
