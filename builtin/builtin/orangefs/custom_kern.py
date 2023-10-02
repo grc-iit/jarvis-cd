@@ -14,7 +14,7 @@ class OrangefsCustomKern:
             Exec(server_start_cmds,
                  SshExecInfo(hosts=host,
                              env=self.env))
-        self.status()
+        # self.status()
 
         # insert OFS kernel module
         print("Inserting OrangeFS kernel module")
