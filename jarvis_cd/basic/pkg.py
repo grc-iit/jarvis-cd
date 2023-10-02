@@ -210,7 +210,7 @@ class Pkg(ABC):
         self.config['sub_pkgs'].append([pkg_type, pkg_id])
         pkg = self.jarvis.construct_pkg(pkg_type)
         if pkg is None:
-            raise Exception(f'Cloud not find pkg: {pkg_type}')
+            raise Exception(f'Could not find pkg: {pkg_type}')
         global_id = f'{self.global_id}.{pkg_id}'
         pkg.create(global_id)
         if do_configure:
@@ -601,7 +601,7 @@ class Pipeline(Pkg):
         """
         pkg = self.get_pkg(pkg_id)
         if pkg is None:
-            raise Exception(f'Cloud not find pkg: {pkg_id}')
+            raise Exception(f'Could not find pkg: {pkg_id}')
         pkg.update_env(self.env)
         pkg.configure(**kwargs)
 

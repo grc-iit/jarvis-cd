@@ -342,7 +342,7 @@ class JarvisManager:
         """
         for repo in self.repos:
             cls = load_class(f'{repo["name"]}.{pkg_type}.pkg',
-                             self.repos[0]['path'],
+                             repo['path'],
                              to_camel_case(pkg_type))
             if cls is None:
                 continue
