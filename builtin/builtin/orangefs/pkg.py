@@ -166,8 +166,8 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
              PsshExecInfo(hosts=self.jarvis.hostfile, env=self.env))
 
         # Create storage directories
-        Mkdir(self.config['mount'],
-              PsshExecInfo(hosts=self.client_hosts, env=self.env))
+        Mkdir(self.config['mount'], PsshExecInfo(hosts=self.client_hosts,
+                                                 env=self.env))
         Mkdir(self.config['storage'], PsshExecInfo(hosts=self.server_hosts,
                                                    env=self.env))
         Mkdir(self.config['metadata'], PsshExecInfo(hosts=self.md_hosts,

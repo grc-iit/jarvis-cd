@@ -14,7 +14,6 @@ class OrangefsCustomKern:
             Exec(server_start_cmds,
                  SshExecInfo(hosts=host,
                              env=self.env))
-        # self.status()
 
         # insert OFS kernel module
         print("Inserting OrangeFS kernel module")
@@ -39,6 +38,8 @@ class OrangefsCustomKern:
                           env=self.env,
                           sudo=True,
                           sudoenv=self.config['sudoenv']))
+
+        self.status()
 
     def custom_stop(self):
         Exec(f'umount -t pvfs2 {self.config["mount"]}',
