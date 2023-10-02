@@ -174,21 +174,18 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
                                                     env=self.env))
 
         # Set pvfstab on clients
-        for i, client in self.client_hosts.enumerate():
-            metadata_server_ip = self.md_hosts.list()[
-                i % len(self.md_hosts)].hosts[0]
-            pvfs2tab_tmp = f'{self.private_dir}/pvfs2tab_{i}'
-            with open(pvfs2tab_tmp, 'w') as fp:
-                fp.write('{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0'.format(
+        metadata_server_ip = self.md_hosts.list()[0].hosts[0]
+        with open(self.config['pvfs2tab'], 'w') as fp:
+            fp.write(
+                '{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0'.format(
                     protocol=self.config['protocol'],
                     port=self.config['port'],
                     ip=metadata_server_ip,
                     name=self.config['name'],
                     mount_point=self.config['mount'],
                     client_pvfs2tab=self.config['pvfs2tab']))
-            Scp([(pvfs2tab_tmp, self.config['pvfs2tab'])],
-                SshExecInfo(hosts=client))
-            print(f'Creating pvfs2tab on {client}')
+        Pscp([(self.config['pvfs2tab'], self.config['pvfs2tab'])],
+             PsshExecInfo(hosts=self.jarvis.hostfile))
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
 
     def _load_config(self):
