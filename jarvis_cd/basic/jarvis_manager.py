@@ -123,7 +123,7 @@ class JarvisManager:
         os.makedirs(f'{self.config_dir}', exist_ok=True)
         self.private_dir = expand_env(self.jarvis_conf['PRIVATE_DIR'])
         Mkdir(self.private_dir,
-              PsshExecInfo(hostfile=self.jarvis.hostfile))
+              PsshExecInfo(hostfile=self.hostfile))
         if self.jarvis_conf['SHARED_DIR'] is not None:
             self.shared_dir = expand_env(self.jarvis_conf['SHARED_DIR'])
             os.makedirs(f'{self.shared_dir}', exist_ok=True)
