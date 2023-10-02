@@ -93,7 +93,7 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
         self.server_hosts = self.jarvis.hostfile
         self.md_hosts = self.jarvis.hostfile
         if self.config['md_hosts'] is None:
-            self.md_hosts = self.md_hosts.subset(1)
+            self.md_hosts = self.server_hosts
         else:
             self.md_hosts = self.md_hosts.subset(self.config['md_hosts'])
         self.config['client_host_set'] = self.client_hosts.hosts
