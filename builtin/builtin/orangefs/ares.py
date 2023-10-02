@@ -5,7 +5,7 @@ class OrangefsAres:
     def ares_start(self):
         # start pfs servers
         cmd = [
-            f'{self.pkg_dir}/ares-orangefs-deploy',
+            f'{self.pkg_dir}/ares_bash/ares-orangefs-deploy',
             self.config['pfs_conf'],
             self.config['server_hosts_path'],
             self.config['client_hosts_path'],
@@ -17,7 +17,7 @@ class OrangefsAres:
 
     def ares_stop(self):
         cmd = [
-            f'{self.pkg_dir}/ares-orangefs-terminate',
+            f'{self.pkg_dir}/ares_bash/ares-orangefs-terminate',
             self.config['pfs_conf'],
             self.config['server_hosts_path'],
             self.config['client_hosts_path'],
