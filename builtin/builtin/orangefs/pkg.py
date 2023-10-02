@@ -175,18 +175,17 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
         for i, client in self.client_hosts.enumerate():
             metadata_server_ip = self.md_hosts.list()[
                 i % len(self.md_hosts)].hosts_ip[0]
-            cmds = [
-                'echo "{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0" > {client_pvfs2tab}'.format(
+            pvfs2tab_tmp = f'{self.private_dir}/pvfs2tab_{i}'
+            with open(pvfs2tab_tmp) as fp:
+                fp.write('{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0'.format(
                     protocol=self.config['protocol'],
                     port=self.config['port'],
                     ip=metadata_server_ip,
                     name=self.config['name'],
                     mount_point=self.config['mount'],
-                    client_pvfs2tab=self.config['pvfs2tab'],
-                ),
-                f'chmod a+r {self.config["pvfs2tab"]}'
-            ]
-            Exec(cmds, SshExecInfo(hosts=client))
+                    client_pvfs2tab=self.config['pvfs2tab']))
+            Scp([(pvfs2tab_tmp, self.config['pvfs2tab'])],
+                SshExecInfo(hosts=client))
             print(f'Creating pvfs2tab on {client}')
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
 
