@@ -52,12 +52,6 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
                 'default': None,
             },
             {
-                'name': 'md_hosts',
-                'msg': 'The number of metadata management servers to spawn',
-                'type': int,
-                'default': None,
-            },
-            {
                 'name': 'name',
                 'msg': 'The name of the orangefs installation',
                 'type': int,
@@ -87,15 +81,13 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
         """
         self.update_config(kwargs, rebuild=False)
         rg = self.jarvis.resource_graph
+        if self.config['ares']:
+            self.config['sudoenv'] = False
 
         # Configure and save hosts
         self.client_hosts = self.jarvis.hostfile
         self.server_hosts = self.jarvis.hostfile
         self.md_hosts = self.jarvis.hostfile
-        if self.config['md_hosts'] is None:
-            self.md_hosts = self.server_hosts
-        else:
-            self.md_hosts = self.md_hosts.subset(self.config['md_hosts'])
         self.config['client_host_set'] = self.client_hosts.hosts
         self.config['server_host_set'] = self.server_hosts.hosts
         self.config['md_host_set'] = self.md_hosts.hosts
@@ -150,8 +142,8 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
             proto_cmd,
             f'--dist-name {self.config["stripe_dist"]}',
             f'--dist-params \"strip_size: {self.config["stripe_size"]}\"',
-            f'--ioservers {self.server_hosts.ip_str(sep=",")}',
-            f'--metaservers {self.md_hosts.ip_str(sep=",")}',
+            f'--ioservers {self.server_hosts.host_str(sep=",")}',
+            f'--metaservers {self.md_hosts.host_str(sep=",")}',
             f'--storage {self.config["storage"]}',
             f'--metadata {self.config["metadata"]}',
             f'--logfile {self.config["log"]}',
@@ -164,41 +156,28 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
              PsshExecInfo(hosts=self.jarvis.hostfile, env=self.env))
 
         # Create storage directories
-        Mkdir(self.config['mount'],
-              PsshExecInfo(hosts=self.client_hosts, env=self.env))
+        Mkdir(self.config['mount'], PsshExecInfo(hosts=self.client_hosts,
+                                                 env=self.env))
         Mkdir(self.config['storage'], PsshExecInfo(hosts=self.server_hosts,
                                                    env=self.env))
         Mkdir(self.config['metadata'], PsshExecInfo(hosts=self.md_hosts,
                                                     env=self.env))
 
         # Set pvfstab on clients
-        for i, client in self.client_hosts.enumerate():
-            metadata_server_ip = self.md_hosts.list()[
-                i % len(self.md_hosts)].hosts_ip[0]
-            cmds = [
-                'echo "{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0" > {client_pvfs2tab}'.format(
+        mdm_ip = self.md_hosts.list()[0].hosts[0]
+        with open(self.config['pvfs2tab'], 'w', encoding='utf-8') as fp:
+            fp.write(
+                '{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0\n'.format(
                     protocol=self.config['protocol'],
                     port=self.config['port'],
-                    ip=metadata_server_ip,
+                    ip=mdm_ip,
                     name=self.config['name'],
                     mount_point=self.config['mount'],
-                    client_pvfs2tab=self.config['pvfs2tab'],
-                ),
-                f'chmod a+r {self.config["pvfs2tab"]}'
-            ]
-            Exec(cmds, SshExecInfo(hosts=client))
+                    client_pvfs2tab=self.config['pvfs2tab']))
+        Pscp(self.config['pvfs2tab'],
+             PsshExecInfo(hosts=self.jarvis.hostfile,
+                          env=self.env))
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
-
-        # Initialize servers
-        if not self.config['ares']:
-            for host in self.server_hosts.list():
-                host_ip = host.hosts_ip[0]
-                server_start_cmds = [
-                    f'pvfs2-server -f {self.config["pfs_conf"]} -a {host_ip}',
-                ]
-                Exec(server_start_cmds, SshExecInfo(
-                    hosts=host,
-                    env=self.env))
 
     def _load_config(self):
         if 'sudoenv' not in self.config:
@@ -211,10 +190,7 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
     def start(self):
         self._load_config()
         # start pfs servers
-        if self.config['ares']:
-            self.ares_start()
-        else:
-            self.custom_start()
+        self.custom_start()
 
     def stop(self):
         self._load_config()
@@ -226,10 +202,10 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
     def clean(self):
         self._load_config()
 
-        Rm(self.config['mount'],
+        Rm([self.config['mount'], self.config['client_log']],
            PsshExecInfo(hosts=self.client_hosts,
                         env=self.env))
-        Rm(self.config['storage'],
+        Rm([self.config['storage'], self.config['log']],
            PsshExecInfo(hosts=self.server_hosts,
                         env=self.env))
         Rm(self.config['metadata'],

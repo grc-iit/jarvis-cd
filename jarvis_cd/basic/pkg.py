@@ -11,6 +11,8 @@ from jarvis_util.shell.local_exec import LocalExecInfo
 from jarvis_util.shell.exec import Exec
 from jarvis_util.util.argparse import ArgParse
 from jarvis_util.jutil_manager import JutilManager
+from jarvis_util.shell.filesystem import Mkdir
+from jarvis_util.shell.pssh_exec import PsshExecInfo
 import inspect
 import pathlib
 import shutil
@@ -208,7 +210,7 @@ class Pkg(ABC):
         self.config['sub_pkgs'].append([pkg_type, pkg_id])
         pkg = self.jarvis.construct_pkg(pkg_type)
         if pkg is None:
-            raise Exception(f'Cloud not find pkg: {pkg_type}')
+            raise Exception(f'Could not find pkg: {pkg_type}')
         global_id = f'{self.global_id}.{pkg_id}'
         pkg.create(global_id)
         if do_configure:
@@ -480,6 +482,8 @@ class SimplePkg(Pkg):
         from self.conifgure_menu
         :return:
         """
+        Mkdir(self.private_dir,
+              PsshExecInfo(hostfile=self.jarvis.hostfile))
         default_args = ArgParse.default_kwargs(self.configure_menu())
         if not rebuild:
             default_args.update(self.config)
@@ -597,7 +601,7 @@ class Pipeline(Pkg):
         """
         pkg = self.get_pkg(pkg_id)
         if pkg is None:
-            raise Exception(f'Cloud not find pkg: {pkg_id}')
+            raise Exception(f'Could not find pkg: {pkg_id}')
         pkg.update_env(self.env)
         pkg.configure(**kwargs)
 
