@@ -26,22 +26,20 @@ class OrangefsCustomKern:
 
         # start pfs client
         print("Starting the OrangeFS clients")
-        for i, client in self.client_hosts.enumerate():
-            metadata_server_ip = self.md_hosts.list()[
-                i % len(self.md_hosts)].hosts[0]
-            start_client_cmd = f'{self.ofs_path}/sbin/pvfs2-client -p {self.ofs_path}/sbin/pvfs2-client-core -L {self.config["client_log"]}'
-            mount_client = 'mount -t pvfs2 {protocol}://{ip}:{port}/{name} {mount_point}'.format(
-                protocol=self.config['protocol'],
-                port=self.config['port'],
-                ip=metadata_server_ip,
-                name=self.config['name'],
-                mount_point=self.config['mount'])
-            cmds = [start_client_cmd, mount_client]
-            Exec(cmds, SshExecInfo(
-                hosts=client,
-                env=self.env,
-                sudo=True,
-                sudoenv=self.config['sudoenv']))
+        metadata_server_ip = self.md_hosts.list()[0].hosts[0]
+        start_client_cmd = f'{self.ofs_path}/sbin/pvfs2-client -p {self.ofs_path}/sbin/pvfs2-client-core -L {self.config["client_log"]}'
+        mount_client = 'mount -t pvfs2 {protocol}://{ip}:{port}/{name} {mount_point}'.format(
+            protocol=self.config['protocol'],
+            port=self.config['port'],
+            ip=metadata_server_ip,
+            name=self.config['name'],
+            mount_point=self.config['mount'])
+        cmds = [start_client_cmd, mount_client]
+        Exec(cmds, PsshExecInfo(
+            hostfile=self.client_hosts,
+            env=self.env,
+            sudo=True,
+            sudoenv=self.config['sudoenv']))
 
     def custom_stop(self):
         Exec(f'umount -t pvfs2 {self.config["mount"]}',
