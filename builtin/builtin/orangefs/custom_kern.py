@@ -16,17 +16,6 @@ class OrangefsCustomKern:
             Exec(server_start_cmds,
                  SshExecInfo(hostfile=host,
                              env=self.env))
-        for host in self.server_hosts.list():
-            host_ip = host.hosts[0]
-            server_start_cmds = [
-                f'pvfs2-server -f -a {host_ip}  {self.config["pfs_conf"]}',
-                f'pvfs2-server -a {host_ip} {self.config["pfs_conf"]}'
-            ]
-            print(server_start_cmds)
-            print(f"PVFS2TAB: {self.env['PVFS2TAB_FILE']}")
-            Exec(server_start_cmds,
-                 SshExecInfo(hostfile=host,
-                             env=self.env))
         self.status()
 
         # insert OFS kernel module
