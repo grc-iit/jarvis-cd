@@ -44,15 +44,11 @@ class OrangefsCustomKern:
                 sudoenv=self.config['sudoenv']))
 
     def custom_stop(self):
-        cmds = [
-            f'umount -l {self.config["mount"]}',
-            f'umount -f {self.config["mount"]}',
-            f'umount {self.config["mount"]}',
-        ]
-        Exec(cmds, PsshExecInfo(hosts=self.client_hosts,
-                                env=self.env,
-                                sudo=True,
-                                sudoenv=self.config['sudoenv']))
+        Exec(f'umount -t pvfs2 {self.config["mount"]}',
+             PsshExecInfo(hosts=self.client_hosts,
+                          env=self.env,
+                          sudo=True,
+                          sudoenv=self.config['sudoenv']))
         cmds = [
             f'killall -9 pvfs2-client',
             f'killall -9 pvfs2-client-core'
