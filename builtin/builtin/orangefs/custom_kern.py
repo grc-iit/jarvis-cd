@@ -18,7 +18,6 @@ class OrangefsCustomKern:
 
         # insert OFS kernel module
         print("Inserting OrangeFS kernel module")
-        print(f"SUDOENV: {self.config['sudoenv']}")
         Exec('modprobe orangefs', PsshExecInfo(sudo=True,
                                                sudoenv=self.config['sudoenv'],
                                                hosts=self.client_hosts,
