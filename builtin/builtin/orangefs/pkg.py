@@ -211,10 +211,7 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
     def start(self):
         self._load_config()
         # start pfs servers
-        if self.config['ares']:
-            self.ares_start()
-        else:
-            self.custom_start()
+        self.custom_start()
 
     def stop(self):
         self._load_config()

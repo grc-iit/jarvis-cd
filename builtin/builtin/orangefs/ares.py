@@ -2,10 +2,7 @@ from jarvis_util import *
 from .custom_kern import OrangefsCustomKern
 
 
-class OrangefsAres(OrangefsCustomKern):
-    def ares_start(self):
-        self.custom_start()
-
+class OrangefsAres:
     def ares_stop(self):
         cmd = [
             f'{self.ofs_path}/sbin/ares-orangefs-terminate',
