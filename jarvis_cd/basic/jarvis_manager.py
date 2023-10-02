@@ -16,6 +16,7 @@ from jarvis_util.shell.filesystem import Mkdir
 from jarvis_util.shell.pssh_exec import PsshExecInfo
 from jarvis_util.shell.local_exec import LocalExecInfo
 import getpass
+import yaml
 
 
 class JarvisManager:
@@ -187,9 +188,7 @@ class JarvisManager:
             hostfile=self.hostfile))
 
     def print_config(self):
-        print(self.config_dir)
-        print(self.shared_dir)
-        print(self.private_dir)
+        print(yaml.dump(self.jarvis_conf))
 
     def resource_graph_init(self):
         """
