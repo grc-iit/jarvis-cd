@@ -87,6 +87,8 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
         """
         self.update_config(kwargs, rebuild=False)
         rg = self.jarvis.resource_graph
+        if self.config['ares']:
+            self.config['sudoenv'] = False
 
         # Configure and save hosts
         self.client_hosts = self.jarvis.hostfile
