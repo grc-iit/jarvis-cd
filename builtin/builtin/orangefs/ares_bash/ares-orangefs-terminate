@@ -1,0 +1,32 @@
+#!/bin/bash
+
+if [ $# -eq 0 ]
+then
+	echo "$(basename $0) <conf file> <server list> <client list> <mount_loc>"
+	exit 0
+fi
+
+conf_file=$1
+server_loc=$2
+client_loc=$3
+client_dir=$4
+
+server_dir=$(awk '$1 ~ /DataStorageSpace/ {print $2}' $conf_file )
+meta_dir=$(awk '$1 ~ /MetadataStorageSpace/ {print $2}' $conf_file )
+
+echo "Server termination"
+parallel-ssh -h ${server_loc} "killall pvfs2-server"
+parallel-ssh -h ${server_loc} "rm -rf ${server_dir}"
+parallel-ssh -h ${server_loc} "rm -rf ${meta_dir}"
+echo "Report"
+parallel-ssh -h ${server_loc} -i "(ps -aef | grep pvfs2 | grep -v grep) || echo 'cleanup correct'"
+
+echo "Client termination"
+parallel-ssh -h ${client_loc} "sudo umount -t pvfs2 ${client_dir}"
+parallel-ssh -h ${client_loc} "sudo ${ORANGEFS_PATH}/sbin/kill-pvfs2-client"
+parallel-ssh -h ${client_loc} "sudo rmmod orangefs"
+parallel-ssh -h ${server_loc} "rm -rf ${client_dir}"
+echo "Report"
+parallel-ssh -h ${client_loc} -i "(ps -aef | grep pvfs2 | grep -v grep) || echo 'Client kill correct'"
+parallel-ssh -h ${client_loc} -i "(mount | grep pvfs2) || echo 'umount correct'"
+parallel-ssh -h ${client_loc} -i "(lsmod | grep orangefs) || echo 'KMod removed correct'"
