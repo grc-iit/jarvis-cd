@@ -12,6 +12,7 @@ from jarvis_util.util.naming import to_camel_case
 from jarvis_util.util.expand_env import expand_env
 from jarvis_util.util.hostfile import Hostfile
 from jarvis_util.introspect.system_info import ResourceGraph
+from jarvis_util.shell.filesystem import Mkdir
 from jarvis_util.shell.pssh_exec import PsshExecInfo
 from jarvis_util.shell.local_exec import LocalExecInfo
 import getpass
@@ -121,7 +122,8 @@ class JarvisManager:
         self.config_dir = expand_env(self.jarvis_conf['CONFIG_DIR'])
         os.makedirs(f'{self.config_dir}', exist_ok=True)
         self.private_dir = expand_env(self.jarvis_conf['PRIVATE_DIR'])
-        os.makedirs(f'{self.private_dir}', exist_ok=True)
+        Mkdir(self.private_dir,
+              PsshExecInfo(hostfile=self.jarvis.hostfile))
         if self.jarvis_conf['SHARED_DIR'] is not None:
             self.shared_dir = expand_env(self.jarvis_conf['SHARED_DIR'])
             os.makedirs(f'{self.shared_dir}', exist_ok=True)

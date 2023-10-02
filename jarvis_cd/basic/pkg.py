@@ -480,6 +480,8 @@ class SimplePkg(Pkg):
         from self.conifgure_menu
         :return:
         """
+        Mkdir(self.private_dir,
+              PsshExecInfo(hostfile=self.jarvis.hostfile))
         default_args = ArgParse.default_kwargs(self.configure_menu())
         if not rebuild:
             default_args.update(self.config)
