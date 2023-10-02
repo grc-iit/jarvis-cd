@@ -191,16 +191,6 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
             print(f'Creating pvfs2tab on {client}')
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
 
-        # Initialize servers
-        for host in self.server_hosts.list():
-            host_ip = host.hosts[0]
-            server_start_cmds = [
-                f'pvfs2-server -f {self.config["pfs_conf"]} -a {host_ip}',
-            ]
-            Exec(server_start_cmds, SshExecInfo(
-                hosts=host,
-                env=self.env))
-
     def _load_config(self):
         if 'sudoenv' not in self.config:
             self.config['sudoenv'] = True

@@ -8,6 +8,7 @@ class OrangefsCustomKern:
         for host in self.server_hosts.list():
             host_ip = host.hosts[0]
             server_start_cmds = [
+                f'pvfs2-server -f {self.config["pfs_conf"]} -a {host_ip}',
                 f'pvfs2-server {self.config["pfs_conf"]} -a {host_ip}'
             ]
             Exec(server_start_cmds, SshExecInfo(
