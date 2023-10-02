@@ -187,6 +187,7 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
                 f'chmod a+r {self.config["pvfs2tab"]}'
             ]
             Exec(cmds, SshExecInfo(hosts=client))
+            print(f'Creating pvfs2tab on {client}')
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
 
         # Initialize servers
