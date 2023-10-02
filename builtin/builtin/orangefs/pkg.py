@@ -52,12 +52,6 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
                 'default': None,
             },
             {
-                'name': 'md_hosts',
-                'msg': 'The number of metadata management servers to spawn',
-                'type': int,
-                'default': None,
-            },
-            {
                 'name': 'name',
                 'msg': 'The name of the orangefs installation',
                 'type': int,
@@ -94,10 +88,6 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
         self.client_hosts = self.jarvis.hostfile
         self.server_hosts = self.jarvis.hostfile
         self.md_hosts = self.jarvis.hostfile
-        if self.config['md_hosts'] is None:
-            self.md_hosts = self.server_hosts
-        else:
-            self.md_hosts = self.md_hosts.subset(self.config['md_hosts'])
         self.config['client_host_set'] = self.client_hosts.hosts
         self.config['server_host_set'] = self.server_hosts.hosts
         self.config['md_host_set'] = self.md_hosts.hosts
