@@ -12,6 +12,7 @@ class OrangefsAres:
             self.config['mount'],
         ]
         cmd = ' '.join(cmd)
+        print(cmd)
         Exec(cmd, LocalExecInfo(env=self.env))
 
     def ares_stop(self):
@@ -23,4 +24,5 @@ class OrangefsAres:
             self.config['mount'],
         ]
         cmd = ' '.join(cmd)
+        print(cmd)
         Exec(cmd, LocalExecInfo(env=self.env))
