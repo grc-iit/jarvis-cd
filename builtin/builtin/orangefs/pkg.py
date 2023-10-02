@@ -176,7 +176,7 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
             metadata_server_ip = self.md_hosts.list()[
                 i % len(self.md_hosts)].hosts_ip[0]
             pvfs2tab_tmp = f'{self.private_dir}/pvfs2tab_{i}'
-            with open(pvfs2tab_tmp) as fp:
+            with open(pvfs2tab_tmp, 'w') as fp:
                 fp.write('{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0'.format(
                     protocol=self.config['protocol'],
                     port=self.config['port'],
