@@ -154,11 +154,11 @@ class OrangefsFuse(Service):
 
         # Set pvfstab on clients
         for i, client in self.client_hosts.enumerate():
-            metadata_server_ip = self.md_hosts.hostname_list()[i % len(self.md_hosts)]
+            mdm_ip = self.md_hosts.hostname_list()[i % len(self.md_hosts)]
             cmd = 'echo "{protocol}://{ip}:{port}/pfs {mount_point} pvfs2 defaults,auto 0 0" > {client_pvfs2tab}'.format(
                 protocol=self.config['protocol'],
                 port=self.config['port'],
-                ip=metadata_server_ip,
+                ip=mdm_ip,
                 mount_point=self.config['mount'],
                 client_pvfs2tab=self.config['pvfs2tab']
             )
@@ -179,13 +179,13 @@ class OrangefsFuse(Service):
         # start pfs client
         # pvfs2_fuse = os.path.join(self.orangefs_root, "bin", "pvfs2fuse")
         for i,client in self.client_hosts.enumerate():
-            metadata_server_ip = self.md_hosts.hostname_list()[i % len(self.md_hosts)]
+            mdm_ip = self.md_hosts.hostname_list()[i % len(self.md_hosts)]
             start_client_cmds = [
                 "pvfs2fuse -o fs_spec={protocol}://{ip}:{port}/pfs {mount_point}".format(
                     pvfs2_fuse=pvfs2_fuse,
                     protocol=self.config['protocol'],
                     port=self.config['port'],
-                    ip=metadata_server_ip,
+                    ip=mdm_ip,
                     mount_point=self.config['mount'])
             ]
             Exec(start_client_cmds, hosts=client)

@@ -16,6 +16,7 @@ class OrangefsCustomKern:
             Exec(server_start_cmds,
                  SshExecInfo(hostfile=host,
                              env=self.env))
+        self.status()
 
         # insert OFS kernel module
         print("Inserting OrangeFS kernel module")
@@ -26,12 +27,12 @@ class OrangefsCustomKern:
 
         # start pfs client
         print("Starting the OrangeFS clients")
-        metadata_server_ip = self.md_hosts.list()[0].hosts[0]
+        mdm_ip = self.md_hosts.list()[0].hosts[0]
         start_client_cmd = f'{self.ofs_path}/sbin/pvfs2-client -p {self.ofs_path}/sbin/pvfs2-client-core -L {self.config["client_log"]}'
         mount_client = 'mount -t pvfs2 {protocol}://{ip}:{port}/{name} {mount_point}'.format(
             protocol=self.config['protocol'],
             port=self.config['port'],
-            ip=metadata_server_ip,
+            ip=mdm_ip,
             name=self.config['name'],
             mount_point=self.config['mount'])
         cmds = [start_client_cmd, mount_client]
@@ -40,8 +41,6 @@ class OrangefsCustomKern:
                           env=self.env,
                           sudo=True,
                           sudoenv=self.config['sudoenv']))
-
-        self.status()
 
     def custom_stop(self):
         Exec(f'umount -t pvfs2 {self.config["mount"]}',

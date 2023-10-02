@@ -164,18 +164,19 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
                                                     env=self.env))
 
         # Set pvfstab on clients
-        metadata_server_ip = self.md_hosts.list()[0].hosts[0]
+        mdm_ip = self.md_hosts.list()[0].hosts[0]
         with open(self.config['pvfs2tab'], 'w', encoding='utf-8') as fp:
             fp.write(
                 '{protocol}://{ip}:{port}/{name} {mount_point} pvfs2 defaults,auto 0 0\n'.format(
                     protocol=self.config['protocol'],
                     port=self.config['port'],
-                    ip=metadata_server_ip,
+                    ip=mdm_ip,
                     name=self.config['name'],
                     mount_point=self.config['mount'],
                     client_pvfs2tab=self.config['pvfs2tab']))
         Pscp(self.config['pvfs2tab'],
-             PsshExecInfo(hosts=self.jarvis.hostfile))
+             PsshExecInfo(hosts=self.jarvis.hostfile,
+                          env=self.env))
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
 
     def _load_config(self):
