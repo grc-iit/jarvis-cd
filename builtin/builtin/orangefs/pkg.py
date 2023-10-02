@@ -226,10 +226,10 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
     def clean(self):
         self._load_config()
 
-        Rm(self.config['mount'],
+        Rm([self.config['mount'], self.config['client_log']],
            PsshExecInfo(hosts=self.client_hosts,
                         env=self.env))
-        Rm(self.config['storage'],
+        Rm([self.config['storage'], self.config['log']],
            PsshExecInfo(hosts=self.server_hosts,
                         env=self.env))
         Rm(self.config['metadata'],
