@@ -134,7 +134,11 @@ class JarvisManager:
         else:
             self.resource_graph = ResourceGraph()
         self.cur_pipeline = self.jarvis_conf['CUR_PIPELINE']
-        self.hostfile = Hostfile(hostfile=self.jarvis_conf['HOSTFILE'])
+        try:
+            self.hostfile = Hostfile(hostfile=self.jarvis_conf['HOSTFILE'])
+        except Exception as e:
+            print(f'Failed to open hostfile {self.jarvis_conf["HOSTFILE"]}')
+            self.hostfile = Hostfile()
 
     def set_hostfile(self, path):
         """
