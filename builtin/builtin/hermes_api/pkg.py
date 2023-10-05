@@ -63,7 +63,7 @@ class HermesApi(Interceptor):
         self.update_config(kwargs, rebuild=False)
         has_one = False
         if self.config['mpi']:
-            self.config['HERMES_MPIIO'] = self.find_library('hermes_mpi')
+            self.config['HERMES_MPIIO'] = self.find_library('hermes_mpiio')
             if self.config['HERMES_MPIIO'] is None:
                 raise Exception('Could not find hermes_mpi')
             print(f'Found libhermes_mpiio.so at {self.config["HERMES_MPIIO"]}')
