@@ -69,6 +69,12 @@ class HermesApiBench(Application):
                 'type': str,
                 'default': '1',
             },
+            {
+                'name': 'ppn',
+                'msg': 'The number of processes per node',
+                'type': int,
+                'default': None,
+            },
         ]
 
     def configure(self, **kwargs):
@@ -117,7 +123,8 @@ class HermesApiBench(Application):
         cmd = ' '.join(cmd)
         Exec(cmd, MpiExecInfo(nprocs=self.config['nprocs'],
                               env=self.env,
-                              hosts=self.jarvis.hostfile))
+                              hosts=self.jarvis.hostfile,
+                              ppn=self.config['ppn']))
 
     def stop(self):
         """
