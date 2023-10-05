@@ -28,6 +28,12 @@ class HermesRun(Service):
         """
         return [
             {
+                'name': 'ram',
+                'msg': 'Amount of RAM to use for buffering',
+                'type': str,
+                'default': None
+            },
+            {
                 'name': 'port',
                 'msg': 'The port to listen for data on',
                 'type': int,
@@ -160,6 +166,18 @@ class HermesRun(Service):
             }
             Mkdir(mount, PsshExecInfo(hostfile=self.jarvis.hostfile,
                                       env=self.env))
+        if 'ram' in self.config and self.config['ram'] is not None:
+            hermes_server['devices']['ram'] = {
+                'mount_point': '',
+                'capacity': self.config['ram'],
+                'block_size': '4kb',
+                'bandwidth': '40GBps',
+                'latency': '100ns',
+                'is_shared_device': False,
+                'borg_capacity_thresh': [0.0, 1.0],
+                'slab_sizes': ['256', '512', '1KB',
+                               '4KB', '16KB', '64KB', '1MB']
+            }
 
         # Get network Info
         if len(hosts) > 1:
