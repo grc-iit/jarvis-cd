@@ -71,6 +71,12 @@ class Ior(Application):
                 'default': 1,
             },
             {
+                'name': 'ppn',
+                'msg': 'The number of processes per node',
+                'type': int,
+                'default': None,
+            },
+            {
                 'name': 'out',
                 'msg': 'Path to the output file',
                 'type': str,
@@ -118,7 +124,8 @@ class Ior(Application):
         Exec(' '.join(cmd),
              MpiExecInfo(env=self.mod_env,
                          hostfile=self.jarvis.hostfile,
-                         nprocs=self.config['nprocs']))
+                         nprocs=self.config['nprocs'],
+                         ppn=self.config['ppn']))
 
     def stop(self):
         """
