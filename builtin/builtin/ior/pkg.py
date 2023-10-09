@@ -82,6 +82,12 @@ class Ior(Application):
                 'type': str,
                 'default': '/tmp/ior.bin',
             },
+            {
+                'name': 'log',
+                'msg': 'Path to IOR output log',
+                'type': str,
+                'default': None,
+            },
         ]
 
     def configure(self, **kwargs):
@@ -125,7 +131,8 @@ class Ior(Application):
              MpiExecInfo(env=self.mod_env,
                          hostfile=self.jarvis.hostfile,
                          nprocs=self.config['nprocs'],
-                         ppn=self.config['ppn']))
+                         ppn=self.config['ppn'],
+                         pipe_stdout=self.config['log']))
 
     def stop(self):
         """
