@@ -62,6 +62,7 @@ class LabstorIpcTest(Application):
         test_latency_execs = ['TestRoundTripLatency',
                               'TestHshmQueueAllocateEmplacePop',
                               'TestWorkerLatency']
+        test_ping_pong = ['TestPingPong']
         print(self.config['TEST_CASE'])
         if self.config['TEST_CASE'] in test_ipc_execs:
             Exec(f'test_ipc_exec {self.config["TEST_CASE"]}',
@@ -78,6 +79,11 @@ class LabstorIpcTest(Application):
         elif self.config['TEST_CASE'] in test_latency_execs:
             Exec(f'test_performance_exec {self.config["TEST_CASE"]}',
                  LocalExecInfo(env=self.env))
+        elif self.config['TEST_CASE'] in test_ping_pong:
+            Exec(f'test_ping_pong_exec {self.config["TEST_CASE"]}',
+                MpiExecInfo(nprocs=2,
+                            ppn=2,
+                            env=self.env))
 
     def stop(self):
         """
