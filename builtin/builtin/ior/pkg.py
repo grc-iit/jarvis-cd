@@ -127,12 +127,12 @@ class Ior(Application):
                         exist_ok=True)
         else:
             os.makedirs(self.config['out'], exist_ok=True)
+        # pipe_stdout=self.config['log']
         Exec(' '.join(cmd),
              MpiExecInfo(env=self.mod_env,
                          hostfile=self.jarvis.hostfile,
                          nprocs=self.config['nprocs'],
-                         ppn=self.config['ppn'],
-                         pipe_stdout=self.config['log']))
+                         ppn=self.config['ppn']))
 
     def stop(self):
         """
