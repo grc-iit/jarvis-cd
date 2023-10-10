@@ -50,7 +50,6 @@ class LabstorIpcTest(Application):
 
         :return: None
         """
-        test_latency_execs = ['TestRoundTripLatency']
         test_ipc_execs = ['TestIpc', 'TestIO']
         test_hermes_execs = [
             'TestHermesPut1n', 'TestHermesPut', 'TestHermesPutGet',
@@ -60,6 +59,8 @@ class LabstorIpcTest(Application):
             'TestHermesConnect', 'TestHermesGetContainedBlobIds',
             'TestHermesMultiGetBucket'
         ]
+        test_latency_execs = ['TestRoundTripLatency',
+                              'TestHshmQueueAllocateEmplacePop']
         print(self.config['TEST_CASE'])
         if self.config['TEST_CASE'] in test_ipc_execs:
             Exec(f'test_ipc_exec {self.config["TEST_CASE"]}',
