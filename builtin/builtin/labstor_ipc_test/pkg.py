@@ -80,7 +80,7 @@ class LabstorIpcTest(Application):
             Exec(f'test_performance_exec {self.config["TEST_CASE"]}',
                  LocalExecInfo(env=self.env))
         elif self.config['TEST_CASE'] in test_ping_pong:
-            Exec(f'test_ping_pong_exec {self.config["TEST_CASE"]}',
+            Exec(f'test_ping_pong_exec',
                 MpiExecInfo(nprocs=2,
                             ppn=2,
                             env=self.env))
