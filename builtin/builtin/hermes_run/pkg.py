@@ -100,7 +100,7 @@ class HermesRun(Service):
             },
             'queue_manager': {
                 'queue_depth': 8192,
-                'max_lanes': 16,
+                'max_lanes': 1,
                 'max_queues': 1024,
                 'shm_allocator': 'kScalablePageAllocator',
                 'shm_name': 'labstor_shm',
