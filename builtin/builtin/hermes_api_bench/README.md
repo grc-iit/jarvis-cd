@@ -23,8 +23,8 @@ jarvis pipeline run
 jarvis pkg configure hermes_api_bench \
 mode=putget \
 blob_size=4k \
-blobs_per_rank=1024 \
-nprocs=128
+blobs_per_rank=16 \
+nprocs=2
 ```
 
 ## PartialPutGet benchmark
@@ -44,7 +44,7 @@ nprocs=64
 jarvis pkg configure hermes_api_bench \
 mode=create_bkt \
 bkts_per_rank=256 \
-nprocs=192
+nprocs=16
 ```
 
 ## Get Bucket benchmark

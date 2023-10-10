@@ -50,6 +50,7 @@ class LabstorIpcTest(Application):
 
         :return: None
         """
+        test_latency_execs = ['TestRoundTripLatency']
         test_ipc_execs = ['TestIpc', 'TestIO']
         test_hermes_execs = [
             'TestHermesPut1n', 'TestHermesPut', 'TestHermesPutGet',
@@ -72,6 +73,9 @@ class LabstorIpcTest(Application):
                              nprocs=len(self.jarvis.hostfile),
                              ppn=1,
                              env=self.env))
+        elif self.config['TEST_CASE'] in test_latency_execs:
+            Exec(f'test_performance_exec {self.config["TEST_CASE"]}',
+                 LocalExecInfo(env=self.env))
 
     def stop(self):
         """
