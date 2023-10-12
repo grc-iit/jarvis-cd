@@ -57,7 +57,7 @@ NOTE: Jarvis must be installed from the compute nodes in Ares, NOT the master no
 
 To check the set of available machines to bootstrap from, run:
 ```bash
-jarvis boostrap list
+jarvis bootstrap list
 ```
 
 ## 0.3.2. Creating a new configuration
