@@ -57,7 +57,7 @@ class LabstorIpcTest(Application):
             'TestHermesBucketDestroy', 'TestHermesReorganizeBlob',
             'TestHermesBucketAppend', 'TestHermesBucketAppend1n',
             'TestHermesConnect', 'TestHermesGetContainedBlobIds',
-            'TestHermesMultiGetBucket'
+            'TestHermesMultiGetBucket', 'TestHermesDataOp'
         ]
         test_latency_execs = ['TestRoundTripLatency',
                               'TestHshmQueueAllocateEmplacePop',
