@@ -448,6 +448,13 @@ class JarvisArgs(ArgParse):
                 'pos': True,
                 'default': None
             },
+            {
+                'name': 'conf',
+                'msg': 'Should be run the configure step on the pkg',
+                'required': False,
+                'pos': True,
+                'default': True
+            },
         ])
 
         # pipeline env build
@@ -828,10 +835,11 @@ class JarvisArgs(ArgParse):
             append(self.kwargs['pkg_type'],
                    pkg_id_=pkg_id,
                    do_configure=False)
-        pkg = pipeline.get_pkg(pkg_id)
-        menu = pkg.configure_menu()
-        args = PkgArgParse(args=self.remainder, menu=menu)
-        pipeline.configure(pkg_id, **args.kwargs)
+        if self.kwargs['conf']:
+            pkg = pipeline.get_pkg(pkg_id)
+            menu = pkg.configure_menu()
+            args = PkgArgParse(args=self.remainder, menu=menu)
+            pipeline.configure(pkg_id, **args.kwargs)
         pipeline.save()
 
     def pipeline_update(self):
