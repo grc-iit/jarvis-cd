@@ -454,7 +454,8 @@ class JarvisArgs(ArgParse):
                 'msg': 'Should be run the configure step on the pkg',
                 'required': False,
                 'pos': False,
-                'default': True
+                'default': True,
+                'type': bool
             },
         ])
 
