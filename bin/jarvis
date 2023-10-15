@@ -929,7 +929,7 @@ class JarvisArgs(ArgParse):
             pipeline.configure(pkg_id, **args.kwargs)
         else:
             pkg.update_env(pipeline.env)
-            pkg.update_config(**args.kwargs)
+            pkg.update_config(args.kwargs)
         pipeline.save()
 
     def pipeline_update(self):
