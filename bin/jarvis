@@ -920,9 +920,9 @@ class JarvisArgs(ArgParse):
         pipeline.append(self.kwargs['pkg_type'],
                    pkg_id_=pkg_id,
                    do_configure=False)
+        print(self.reminder)
         pkg = pipeline.get_pkg(pkg_id)
         menu = pkg.configure_menu()
-        print(self.remainder)
         args = PkgArgParse(args=self.remainder, menu=menu)
         if self.kwargs['conf']:
             pipeline.configure(pkg_id, **args.kwargs)
