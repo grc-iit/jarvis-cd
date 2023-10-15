@@ -535,6 +535,13 @@ class JarvisArgs(ArgParse):
                 'pos': True,
                 'default': None
             },
+            {
+                'name': 'slurm_host',
+                'msg': 'The pipeline name to be run',
+                'required': False,
+                'pos': True,
+                'default': False
+            },
         ])
 
         self.add_menu('pipeline start',
@@ -877,13 +884,13 @@ class JarvisArgs(ArgParse):
 
     def pipeline_sbatch(self):
         slurm_info = SlurmExecInfo(
-            job_name=self.kwargs['job-name'],
-            num_nodes=self.kwargs['nodes'],
+            job_name=self.kwargs['job_name'],
+            num_nodes=self.kwargs['nnodes'],
             ppn=self.kwargs['ppn'],
-            cpus_per_task=self.kwargs['cpus-per-task'],
+            cpus_per_task=self.kwargs['cpus_per_task'],
             time=self.kwargs['time'],
             partition=self.kwargs['partition'],
-            mail_type=self.kwargs['mail-type'],
+            mail_type=self.kwargs['mail_type'],
             mail_user=self.kwargs['mail_user'],
             pipe_stdout=self.kwargs['output_file'],
             pipe_stderr=self.kwargs['error_file'],
