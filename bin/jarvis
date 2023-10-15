@@ -922,6 +922,7 @@ class JarvisArgs(ArgParse):
                    do_configure=False)
         pkg = pipeline.get_pkg(pkg_id)
         menu = pkg.configure_menu()
+        print(self.remainder)
         args = PkgArgParse(args=self.remainder, menu=menu)
         if self.kwargs['conf']:
             pipeline.configure(pkg_id, **args.kwargs)
