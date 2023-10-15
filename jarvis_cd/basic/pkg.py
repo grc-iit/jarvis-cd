@@ -661,7 +661,7 @@ class Pipeline(Pkg):
         to track the environment variable, which are the keys of the dict.
         :return: self
         """
-        static_env_path = os.path.join(self.jarvis.env_dir, env_name)
+        static_env_path = os.path.join(self.jarvis.env_dir, f'{env_name}.yaml')
         self.env = YamlFile(static_env_path).load()
         self.track_env(env_track_dict)
         return self
