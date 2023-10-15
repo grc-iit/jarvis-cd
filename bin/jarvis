@@ -453,8 +453,9 @@ class JarvisArgs(ArgParse):
                 'name': 'conf',
                 'msg': 'Should be run the configure step on the pkg',
                 'required': False,
-                'pos': True,
-                'default': True
+                'pos': False,
+                'default': True,
+                'type': bool
             },
         ])
 
@@ -496,6 +497,14 @@ class JarvisArgs(ArgParse):
                 'required': True,
                 'pos': True,
                 'default': None
+            },
+            {
+                'name': 'conf',
+                'msg': 'Should be run the configure step on the pkg',
+                'required': False,
+                'pos': False,
+                'default': True,
+                'type': bool
             },
         ])
 
@@ -540,8 +549,9 @@ class JarvisArgs(ArgParse):
                 'name': 'slurm_host',
                 'msg': 'The pipeline name to be run',
                 'required': False,
-                'pos': True,
-                'default': False
+                'pos': False,
+                'default': False,
+                'type': bool
             },
         ])
 
@@ -565,49 +575,49 @@ class JarvisArgs(ArgParse):
                 'name': 'job_name',
                 'msg': 'The name given to this job',
                 'required': True,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'nnodes',
                 'msg': 'The number of nodes to execute the pipeline on',
                 'required': True,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'ppn',
                 'msg': 'The number of processes per node',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'cpus_per_task',
                 'msg': 'Advise the Slurm controller that ensuing job will require ncpus number of processors per task',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'time',
                 'msg': 'Maximum time aloted to the job',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'partition',
                 'msg': 'The partition in which to allocate the nodes',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': 'compute'
             },
             {
                 'name': 'mail_type',
                 'msg': 'When to email users of the status of the job',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None,
                 'choices': ['NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL']
             },
@@ -615,42 +625,42 @@ class JarvisArgs(ArgParse):
                 'name': 'mail_user',
                 'msg': 'What email to use',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None,
             },
             {
                 'name': 'output_file',
                 'msg': 'File to write all output messages',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'error_file',
                 'msg': 'File to write all error messages',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'memory',
                 'msg': 'Amount of memory to request for the job',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'gres',
                 'msg': 'A comma-delimited list of generic consumable resources, like gpus',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'exclusive',
                 'msg': 'Request the nodes exclusively',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': True
             },
         ])
@@ -907,17 +917,21 @@ class JarvisArgs(ArgParse):
 
     def pipeline_append(self):
         pkg_id = self.kwargs['pkg_id']
+        pipeline = Pipeline().load()
         if pkg_id is None:
             pkg_id = self.kwargs['pkg_type']
-        pipeline = Pipeline().load().\
-            append(self.kwargs['pkg_type'],
+        pipeline.append(self.kwargs['pkg_type'],
                    pkg_id_=pkg_id,
                    do_configure=False)
+        print(f'remainder: {self.remainder}')
+        pkg = pipeline.get_pkg(pkg_id)
+        menu = pkg.configure_menu()
+        args = PkgArgParse(args=self.remainder, menu=menu)
         if self.kwargs['conf']:
-            pkg = pipeline.get_pkg(pkg_id)
-            menu = pkg.configure_menu()
-            args = PkgArgParse(args=self.remainder, menu=menu)
             pipeline.configure(pkg_id, **args.kwargs)
+        else:
+            pkg.update_env(pipeline.env)
+            pkg.update_config(args.kwargs)
         pipeline.save()
 
     def pipeline_update(self):
@@ -934,21 +948,26 @@ class JarvisArgs(ArgParse):
         pkg = pipeline.get_pkg(self.kwargs['pkg_id'])
         menu = pkg.configure_menu()
         args = PkgArgParse(args=self.remainder, menu=menu)
-        if args.kwargs['reinit']:
-            pkg.configure(**args.kwargs)
+        if self.kwargs['conf']:
+            if args.kwargs['reinit']:
+                pkg.configure(**args.kwargs)
+            else:
+                pkg.configure(**args.real_kwargs)
         else:
-            pkg.configure(**args.real_kwargs)
+            pkg.update_env(pipeline.env)
+            pkg.update_config(**args.kwargs)
         pipeline.save()
 
     def pipeline_run(self):
         pipeline_name = self.kwargs['pipeline_name']
         if self.kwargs['slurm_host']:
-            file_location = f'{self.kwargs["CONFIG_DIR"]}/{pipeline_name}/slurm_{pipeline_name}_hostfile'
-            Exec('scontrol show hostnames $SLURM_JOB_NODELIST > {file_location}', LocalExecInfo())
+            file_location = f'{self.jarvis.config_dir}/{pipeline_name}/slurm_{pipeline_name}_hostfile'
+            print(f'Writing hostfile to: {file_location}')
+            Exec(f'scontrol show hostnames $SLURM_JOB_NODELIST > {file_location}', LocalExecInfo())
             self.jarvis.set_hostfile(file_location)
             Pipeline().load(pipeline_name).update().save()  # this calls the config step
 
-        if pipeline_name is not None:
+        if pipeline_name is None:
             Pipeline().load().run()  # run current pipeline
         else:
             Pipeline().load(pipeline_name).run()
