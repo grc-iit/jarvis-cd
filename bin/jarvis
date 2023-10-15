@@ -453,7 +453,7 @@ class JarvisArgs(ArgParse):
                 'name': 'conf',
                 'msg': 'Should be run the configure step on the pkg',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': True
             },
         ])
@@ -496,6 +496,13 @@ class JarvisArgs(ArgParse):
                 'required': True,
                 'pos': True,
                 'default': None
+            },
+            {
+                'name': 'conf',
+                'msg': 'Should be run the configure step on the pkg',
+                'required': False,
+                'pos': False,
+                'default': True
             },
         ])
 
@@ -907,20 +914,20 @@ class JarvisArgs(ArgParse):
 
     def pipeline_append(self):
         pkg_id = self.kwargs['pkg_id']
-        conf = self.kwargs['conf']
-        del self.kwargs['conf']
-        del self.remainder['conf']
+        pipeline = Pipeline().load()
         if pkg_id is None:
             pkg_id = self.kwargs['pkg_type']
-        pipeline = Pipeline().load().\
-            append(self.kwargs['pkg_type'],
+        pipeline.append(self.kwargs['pkg_type'],
                    pkg_id_=pkg_id,
                    do_configure=False)
-        if conf:
-            pkg = pipeline.get_pkg(pkg_id)
-            menu = pkg.configure_menu()
-            args = PkgArgParse(args=self.remainder, menu=menu)
+        pkg = pipeline.get_pkg(pkg_id)
+        menu = pkg.configure_menu()
+        args = PkgArgParse(args=self.remainder, menu=menu)
+        if self.kwargs['conf']:
             pipeline.configure(pkg_id, **args.kwargs)
+        else:
+            pkg.update_env(pipeline.env)
+            pkg.update_config(**args.kwargs)
         pipeline.save()
 
     def pipeline_update(self):
@@ -937,10 +944,14 @@ class JarvisArgs(ArgParse):
         pkg = pipeline.get_pkg(self.kwargs['pkg_id'])
         menu = pkg.configure_menu()
         args = PkgArgParse(args=self.remainder, menu=menu)
-        if args.kwargs['reinit']:
-            pkg.configure(**args.kwargs)
+        if self.kwargs['conf']:
+            if args.kwargs['reinit']:
+                pkg.configure(**args.kwargs)
+            else:
+                pkg.configure(**args.real_kwargs)
         else:
-            pkg.configure(**args.real_kwargs)
+            pkg.update_env(pipeline.env)
+            pkg.update_config(**args.kwargs)
         pipeline.save()
 
     def pipeline_run(self):
