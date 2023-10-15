@@ -907,13 +907,16 @@ class JarvisArgs(ArgParse):
 
     def pipeline_append(self):
         pkg_id = self.kwargs['pkg_id']
+        conf = self.kwargs['conf']
+        del self.kwargs['conf']
+        del self.remainder['conf']
         if pkg_id is None:
             pkg_id = self.kwargs['pkg_type']
         pipeline = Pipeline().load().\
             append(self.kwargs['pkg_type'],
                    pkg_id_=pkg_id,
                    do_configure=False)
-        if self.kwargs['conf']:
+        if conf:
             pkg = pipeline.get_pkg(pkg_id)
             menu = pkg.configure_menu()
             args = PkgArgParse(args=self.remainder, menu=menu)
