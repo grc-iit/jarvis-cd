@@ -82,6 +82,12 @@ class Ior(Application):
                 'type': str,
                 'default': '/tmp/ior.bin',
             },
+            {
+                'name': 'log',
+                'msg': 'Path to IOR output log',
+                'type': str,
+                'default': None,
+            },
         ]
 
     def configure(self, **kwargs):
@@ -121,6 +127,7 @@ class Ior(Application):
                         exist_ok=True)
         else:
             os.makedirs(self.config['out'], exist_ok=True)
+        # pipe_stdout=self.config['log']
         Exec(' '.join(cmd),
              MpiExecInfo(env=self.mod_env,
                          hostfile=self.jarvis.hostfile,

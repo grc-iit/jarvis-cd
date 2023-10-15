@@ -285,6 +285,32 @@ class Pkg(ABC):
         self.env = env
         self.mod_env = mod_env
 
+    @staticmethod
+    def _track_env(env, env_track_dict=None):
+        """
+        Add and remove cached environment variables.
+
+        :param env_track_dict: a dict of booleans or strings. Boolean indicates
+        whether to track the environment variable, which are the keys
+        of the dict. String indicates track the variable and set to this value.
+        :return: None
+        """
+        if env_track_dict is None:
+            return
+        for key, val in env_track_dict.items():
+            if isinstance(val, str):
+                env[key] = val
+                continue
+            if val:
+                if key in os.environ:
+                    env[key] = os.getenv(key)
+                else:
+                    env[key] = ''
+            else:
+                if key in env:
+                    del env[key]
+        return env
+
     def track_env(self, env_track_dict=None):
         """
         Add and remove cached environment variables.
@@ -294,20 +320,7 @@ class Pkg(ABC):
         of the dict. String indicates track the variable and set to this value.
         :return: self
         """
-        if env_track_dict is None:
-            return
-        for key, val in env_track_dict.items():
-            if isinstance(val, str):
-                self.env[key] = val
-                continue
-            if val:
-                if key in os.environ:
-                    self.env[key] = os.getenv(key)
-                else:
-                    self.env[key] = ''
-            else:
-                if key in self.env:
-                    del self.env[key]
+        self.env = self._track_env(self.env, env_track_dict)
         return self
 
     def scan_env(self, rescan_list=None):
@@ -621,6 +634,58 @@ class Pipeline(Pkg):
         self.env = exec_info.basic_env
         self.track_env(env_track_dict)
         self.update()
+        return self
+
+    def build_static_env(self, env_name, env_track_dict=None):
+        """
+        Build a global environment cache that can be re-used across pipelines
+
+        :param env_name: The name of the environment to create
+        :param env_track_dict: a dict of booleans. Boolean indicates whether
+        to track the environment variable, which are the keys of the dict.
+        :return: self
+        """
+        exec_info = LocalExecInfo()
+        self.env = exec_info.basic_env
+        self.track_env(env_track_dict)
+        static_env_path = os.path.join(self.jarvis.env_dir, f'{env_name}.yaml')
+        YamlFile(static_env_path).save(self.env)
+        return self
+
+    def copy_static_env(self, env_name, env_track_dict=None):
+        """
+        Copy a cached environment to this pipeline
+
+        :param env_name: The name of the environment to create
+        :param env_track_dict: a dict of booleans. Boolean indicates whether
+        to track the environment variable, which are the keys of the dict.
+        :return: self
+        """
+        static_env_path = os.path.join(self.jarvis.env_dir, env_name)
+        self.env = YamlFile(static_env_path).load()
+        self.track_env(env_track_dict)
+        return self
+
+    def destroy_static_env(self, env_name):
+        """
+        Destroy a static environment file
+
+        :param env_name: The name of the environment to create
+        :return: self
+        """
+        static_env_path = os.path.join(self.jarvis.env_dir, f'{env_name}.yaml')
+        os.remove(static_env_path)
+        return self
+
+    def list_static_env(self):
+        """
+        Destroy a static environment file
+
+        :param env_name: The name of the environment to create
+        """
+        envs = os.listdir(self.jarvis.env_dir)
+        for env in envs:
+            print(env)
         return self
 
     def update(self):

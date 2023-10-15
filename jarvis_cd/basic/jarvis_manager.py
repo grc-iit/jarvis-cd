@@ -39,6 +39,8 @@ class JarvisManager:
         self.user = getpass.getuser()
         # Where Jarvis stores pipeline data (per-user)
         self.config_dir = None
+        # The path to named Jarvis environment caches
+        self.env_dir = None
         # Where Jarvis stores data locally to a pkg (per-user)
         self.private_dir = None
         # Where Jarvis stores data in a shared directory (per-user)
@@ -121,7 +123,9 @@ class JarvisManager:
         self.jarvis_conf.update(YamlFile(self.jarvis_conf_path).load())
         self.repos = self.jarvis_conf['REPOS']
         self.config_dir = expand_env(self.jarvis_conf['CONFIG_DIR'])
+        self.env_dir = os.path.join(self.config_dir, 'env')
         os.makedirs(f'{self.config_dir}', exist_ok=True)
+        os.makedirs(f'{self.env_dir}', exist_ok=True)
         self.private_dir = expand_env(self.jarvis_conf['PRIVATE_DIR'])
         Mkdir(self.private_dir,
               PsshExecInfo(hostfile=self.hostfile))
