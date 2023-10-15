@@ -2,6 +2,7 @@
 
 from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_util import *
+from jarvis_util.shell.slurm_exec import SlurmExec, SlurmExecInfo
 from jarvis_cd.basic.pkg import Pipeline, PkgArgParse
 
 
@@ -35,8 +36,8 @@ class JarvisArgs(ArgParse):
             {
                 'name': 'SHARED_DIR',
                 'msg': 'A directory which is common across all machines, '
-                         'where each machine has the same view of data '
-                         'in the directory',
+                       'where each machine has the same view of data '
+                       'in the directory',
                 'default': None,
                 'pos': True
             }
@@ -519,6 +520,16 @@ class JarvisArgs(ArgParse):
         self.add_menu('pipeline run',
                       msg="Run + terminate a pipeline",
                       keep_remainder=True)
+        self.add_args([
+            {
+                'name': 'pipeline_name',
+                'msg': 'The pipeline name to be run',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
+
         self.add_menu('pipeline start',
                       msg="Start a pipeline",
                       keep_remainder=True)
@@ -531,6 +542,103 @@ class JarvisArgs(ArgParse):
         self.add_menu('pipeline status',
                       msg="Get the status of a pipeline",
                       keep_remainder=True)
+
+        # jarvis pipeline sbatch
+        self.add_menu('pipeline sbatch', msg="Run the current pipeline through sbatch")
+        self.add_args([
+            {
+                'name': 'job_name',
+                'msg': 'The name given to this job',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'nnodes',
+                'msg': 'The number of nodes to execute the pipeline on',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'ppn',
+                'msg': 'The number of processes per node',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'cpus_per_task',
+                'msg': 'Advise the Slurm controller that ensuing job will require ncpus number of processors per task',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'time',
+                'msg': 'Maximum time aloted to the job',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'partition',
+                'msg': 'The partition in which to allocate the nodes',
+                'required': False,
+                'pos': True,
+                'default': 'compute'
+            },
+            {
+                'name': 'mail_type',
+                'msg': 'When to email users of the status of the job',
+                'required': False,
+                'pos': True,
+                'default': None,
+                'choices': ['NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL']
+            },
+            {
+                'name': 'mail_user',
+                'msg': 'What email to use',
+                'required': False,
+                'pos': True,
+                'default': None,
+            },
+            {
+                'name': 'output_file',
+                'msg': 'File to write all output messages',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'error_file',
+                'msg': 'File to write all error messages',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'memory',
+                'msg': 'Amount of memory to request for the job',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'gres',
+                'msg': 'A comma-delimited list of generic consumable resources, like gpus',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'exclusive',
+                'msg': 'Request the nodes exclusively',
+                'required': False,
+                'pos': True,
+                'default': True
+            },
+        ])
 
     """
     INITIALIZATION CLI
@@ -716,7 +824,7 @@ class JarvisArgs(ArgParse):
         pkg_id = self.kwargs['pkg_id']
         if pkg_id is None:
             pkg_id = self.kwargs['pkg_type']
-        pipeline = Pipeline().load().\
+        pipeline = Pipeline().load(). \
             append(self.kwargs['pkg_type'],
                    pkg_id_=pkg_id,
                    do_configure=False)
@@ -747,7 +855,34 @@ class JarvisArgs(ArgParse):
         pipeline.save()
 
     def pipeline_run(self):
-        Pipeline().load().run()
+        pipeline_name = self.kwargs['pipeline_name']
+        if self.kwargs['slurm_host']:
+            self.jarvis.set_hostfile(self.kwargs['path'])
+            Pipeline().load(pipeline_name).update().save()
+
+        if pipeline_name is not None:
+            Pipeline().load().run()  # run current pipeline
+        else:
+            Pipeline().load(pipeline_name).run()
+
+    def pipeline_sbatch(self):
+        slurm_info = SlurmExecInfo(
+            job_name=self.kwargs['job-name'],
+            num_nodes=self.kwargs['nodes'],
+            ppn=self.kwargs['ppn'],
+            cpus_per_task=self.kwargs['cpus-per-task'],
+            time=self.kwargs['time'],
+            partition=self.kwargs['partition'],
+            mail_type=self.kwargs['mail-type'],
+            mail_user=self.kwargs['mail_user'],
+            pipe_stdout=self.kwargs['output_file'],
+            pipe_stderr=self.kwargs['error_file'],
+            mem=self.kwargs['memory'],
+            gres=self.kwargs['gres'],
+            exclusive=self.kwargs['exclusive']
+        )
+        pipeline_name = Pipeline().load().global_id
+        SlurmExec(f'jarvis pipeline run {pipeline_name} +slurm_host', slurm_info)
 
     def pipeline_start(self):
         Pipeline().load().start()
@@ -765,4 +900,3 @@ class JarvisArgs(ArgParse):
 if __name__ == '__main__':
     args = JarvisArgs()
     args.process_args()
-
