@@ -550,7 +550,8 @@ class JarvisArgs(ArgParse):
                 'msg': 'The pipeline name to be run',
                 'required': False,
                 'pos': True,
-                'default': False
+                'default': False,
+                'type': bool
             },
         ])
 
@@ -961,7 +962,8 @@ class JarvisArgs(ArgParse):
         pipeline_name = self.kwargs['pipeline_name']
         if self.kwargs['slurm_host']:
             file_location = f'{self.kwargs["CONFIG_DIR"]}/{pipeline_name}/slurm_{pipeline_name}_hostfile'
-            Exec('scontrol show hostnames $SLURM_JOB_NODELIST > {file_location}', LocalExecInfo())
+            print(f'Writing hostfile to: {file_location}')
+            Exec(f'scontrol show hostnames $SLURM_JOB_NODELIST > {file_location}', LocalExecInfo())
             self.jarvis.set_hostfile(file_location)
             Pipeline().load(pipeline_name).update().save()  # this calls the config step
 
