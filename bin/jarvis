@@ -967,7 +967,7 @@ class JarvisArgs(ArgParse):
             self.jarvis.set_hostfile(file_location)
             Pipeline().load(pipeline_name).update().save()  # this calls the config step
 
-        if pipeline_name is not None:
+        if pipeline_name is None:
             Pipeline().load().run()  # run current pipeline
         else:
             Pipeline().load(pipeline_name).run()
