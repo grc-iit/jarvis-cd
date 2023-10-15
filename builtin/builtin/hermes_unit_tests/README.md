@@ -51,7 +51,7 @@ jarvis pipeline env build
 Create a Jarvis pipeline
 ```bash
 jarvis pipeline append hermes_run --sleep=10
-jarvis pipeline append labstor_ipc_test \
+jarvis pipeline append hermes_unit_tests \
 TEST_CASE=TestHermesBucketAppend
 ```
 

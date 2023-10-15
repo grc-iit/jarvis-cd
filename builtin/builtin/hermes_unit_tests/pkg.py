@@ -6,7 +6,7 @@ from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 
 
-class LabstorIpcTest(Application):
+class HermesUnitTests(Application):
     """
     This class provides methods to launch the LabstorIpcTest application.
     """
@@ -57,7 +57,8 @@ class LabstorIpcTest(Application):
             'TestHermesBucketDestroy', 'TestHermesReorganizeBlob',
             'TestHermesBucketAppend', 'TestHermesBucketAppend1n',
             'TestHermesConnect', 'TestHermesGetContainedBlobIds',
-            'TestHermesMultiGetBucket', 'TestHermesDataOp'
+            'TestHermesMultiGetBucket', 'TestHermesDataOp',
+            'TestHermesCollectMetadata'
         ]
         test_latency_execs = ['TestRoundTripLatency',
                               'TestHshmQueueAllocateEmplacePop',
