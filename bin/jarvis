@@ -503,7 +503,8 @@ class JarvisArgs(ArgParse):
                 'msg': 'Should be run the configure step on the pkg',
                 'required': False,
                 'pos': False,
-                'default': True
+                'default': True,
+                'type': bool
             },
         ])
 
@@ -573,49 +574,49 @@ class JarvisArgs(ArgParse):
                 'name': 'job_name',
                 'msg': 'The name given to this job',
                 'required': True,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'nnodes',
                 'msg': 'The number of nodes to execute the pipeline on',
                 'required': True,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'ppn',
                 'msg': 'The number of processes per node',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'cpus_per_task',
                 'msg': 'Advise the Slurm controller that ensuing job will require ncpus number of processors per task',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'time',
                 'msg': 'Maximum time aloted to the job',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'partition',
                 'msg': 'The partition in which to allocate the nodes',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': 'compute'
             },
             {
                 'name': 'mail_type',
                 'msg': 'When to email users of the status of the job',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None,
                 'choices': ['NONE', 'BEGIN', 'END', 'FAIL', 'REQUEUE', 'ALL']
             },
@@ -623,42 +624,42 @@ class JarvisArgs(ArgParse):
                 'name': 'mail_user',
                 'msg': 'What email to use',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None,
             },
             {
                 'name': 'output_file',
                 'msg': 'File to write all output messages',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'error_file',
                 'msg': 'File to write all error messages',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'memory',
                 'msg': 'Amount of memory to request for the job',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'gres',
                 'msg': 'A comma-delimited list of generic consumable resources, like gpus',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': None
             },
             {
                 'name': 'exclusive',
                 'msg': 'Request the nodes exclusively',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': True
             },
         ])
