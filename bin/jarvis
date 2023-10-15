@@ -857,8 +857,10 @@ class JarvisArgs(ArgParse):
     def pipeline_run(self):
         pipeline_name = self.kwargs['pipeline_name']
         if self.kwargs['slurm_host']:
-            self.jarvis.set_hostfile(self.kwargs['path'])
-            Pipeline().load(pipeline_name).update().save()
+            file_location = f'{self.kwargs["CONFIG_DIR"]}/{pipeline_name}/slurm_{pipeline_name}_hostfile'
+            Exec('scontrol show hostnames $SLURM_JOB_NODELIST > {file_location}', LocalExecInfo())
+            self.jarvis.set_hostfile(file_location)
+            Pipeline().load(pipeline_name).update().save()  # this calls the config step
 
         if pipeline_name is not None:
             Pipeline().load().run()  # run current pipeline
