@@ -549,7 +549,7 @@ class JarvisArgs(ArgParse):
                 'name': 'slurm_host',
                 'msg': 'The pipeline name to be run',
                 'required': False,
-                'pos': True,
+                'pos': False,
                 'default': False,
                 'type': bool
             },
