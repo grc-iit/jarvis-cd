@@ -920,7 +920,7 @@ class JarvisArgs(ArgParse):
         pipeline.append(self.kwargs['pkg_type'],
                    pkg_id_=pkg_id,
                    do_configure=False)
-        print(self.reminder)
+        print(f'remainder: self.remainder')
         pkg = pipeline.get_pkg(pkg_id)
         menu = pkg.configure_menu()
         args = PkgArgParse(args=self.remainder, menu=menu)
