@@ -1,6 +1,6 @@
 """
 This module provides classes and methods to launch the HermesRun service.
-Labstor is ....
+hrun is ....
 """
 
 from jarvis_cd.basic.pkg import Service
@@ -94,22 +94,18 @@ class HermesRun(Service):
         hosts = self.jarvis.hostfile
 
         # Begin making hermes_run config
-        labstor_server = {
+        hermes_server = {
             'work_orchestrator': {
                 'max_workers': 4
             },
             'queue_manager': {
                 'queue_depth': 8192,
-                'max_lanes': 16,
+                'max_lanes': 1,
                 'max_queues': 1024,
                 'shm_allocator': 'kScalablePageAllocator',
-                'shm_name': 'labstor_shm',
+                'shm_name': 'hrun_shm',
                 'shm_size': '0g'
-            }
-        }
-
-        # Begin making Hermes config
-        hermes_server = {
+            },
             'devices': {},
             'rpc': {}
         }
@@ -206,7 +202,7 @@ class HermesRun(Service):
         hostfile_path = self.jarvis.hostfile.path
         if hostfile_path is None:
             hostfile_path = ''
-        labstor_server['rpc'] = {
+        hermes_server['rpc'] = {
             'host_file': hostfile_path,
             'protocol': protocol,
             'domain': domain,
@@ -221,15 +217,10 @@ class HermesRun(Service):
             'num_threads': self.config['threads']
         }
         if self.jarvis.hostfile.path is None:
-            labstor_server['rpc']['host_names'] = self.jarvis.hostfile.hosts
+            hermes_server['rpc']['host_names'] = self.jarvis.hostfile.hosts
             hermes_server['rpc']['host_names'] = self.jarvis.hostfile.hosts
 
-        # Save hermes_run configurations
-        labstor_server_yaml = f'{self.shared_dir}/labstor_server.yaml'
-        YamlFile(labstor_server_yaml).save(labstor_server)
-        self.env['LABSTOR_SERVER_CONF'] = labstor_server_yaml
-
-        # Save Hermes configurations
+        # Save hermes configurations
         hermes_server_yaml = f'{self.shared_dir}/hermes_server.yaml'
         YamlFile(hermes_server_yaml).save(hermes_server)
         self.env['HERMES_CONF'] = hermes_server_yaml
@@ -246,10 +237,9 @@ class HermesRun(Service):
 
         :return: None
         """
-        print(self.env['LABSTOR_SERVER_CONF'])
         print(self.env['HERMES_CONF'])
         print(self.env['HERMES_CLIENT_CONF'])
-        self.daemon_pkg = Exec('labstor_start_runtime',
+        self.daemon_pkg = Exec('hrun_start_runtime',
                                 PsshExecInfo(hostfile=self.jarvis.hostfile,
                                              env=self.env,
                                              exec_async=True))
@@ -264,10 +254,10 @@ class HermesRun(Service):
         :return: None
         """
         print('Stopping hermes_run')
-        Kill('labstor',
+        Kill('hrun',
              PsshExecInfo(hostfile=self.jarvis.hostfile,
                           env=self.env))
-        # Exec('labstor_stop_runtime',
+        # Exec('hrun_stop_runtime',
         #      PsshExecInfo(hostfile=self.jarvis.hostfile,
         #                   env=self.env))
         print('Client Exited?')

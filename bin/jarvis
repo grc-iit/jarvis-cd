@@ -11,6 +11,7 @@ class JarvisArgs(ArgParse):
         self.define_init_opts()
         self.define_pipeline_opts()
         self.define_repo_opts()
+        self.define_env_opts()
 
     def define_init_opts(self):
         # jarvis init
@@ -532,6 +533,54 @@ class JarvisArgs(ArgParse):
                       msg="Get the status of a pipeline",
                       keep_remainder=True)
 
+    def define_env_opts(self):
+        # jarvis env build
+        self.add_menu('env build',
+                      msg="Create a custom environment.",
+                      keep_remainder=True,
+                      remainder_as_kv=True)
+        self.add_args([
+            {
+                'name': 'env_name',
+                'msg': 'The name of the environment to create',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis env destroy
+        self.add_menu('env destroy',
+                      msg="Destroy a custom environment.")
+        self.add_args([
+            {
+                'name': 'env_name',
+                'msg': 'The name of the environment to destroy',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis env list
+        self.add_menu('env list',
+                      msg="List all custom environments.")
+
+        # jarvis pipeline env copy
+        self.add_menu('pipeline env copy',
+                      msg="Copy and modify a custom environment.",
+                      keep_remainder=True,
+                      remainder_as_kv=True)
+        self.add_args([
+            {
+                'name': 'env_name',
+                'msg': 'The name of the environment to create',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
     """
     INITIALIZATION CLI
     """
@@ -650,6 +699,22 @@ class JarvisArgs(ArgParse):
             self.jarvis.list_repos()
 
     """
+    ENV CLI
+    """
+
+    def env_build(self):
+        kwargs = {}
+        kwargs.update(self.kwargs)
+        kwargs.update(self.remainder_kv)
+        Pipeline().build_static_env(kwargs['env_name'], kwargs)
+
+    def env_destroy(self):
+        Pipeline().destroy_static_env(self.kwargs['env_name'])
+
+    def env_list(self):
+        Pipeline().list_static_env()
+
+    """
     PIPELINE CLI
     """
 
@@ -702,6 +767,12 @@ class JarvisArgs(ArgParse):
         kwargs.update(self.kwargs)
         kwargs.update(self.remainder_kv)
         Pipeline().load().build_env(kwargs).save()
+
+    def pipeline_env_copy(self):
+        kwargs = {}
+        kwargs.update(self.kwargs)
+        kwargs.update(self.remainder_kv)
+        Pipeline().load().copy_static_env(kwargs['env_name'], kwargs).save()
 
     def pipeline_env_track(self):
         kwargs = {}
