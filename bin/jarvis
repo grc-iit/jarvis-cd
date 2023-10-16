@@ -973,6 +973,11 @@ class JarvisArgs(ArgParse):
             Pipeline().load(pipeline_name).run()
 
     def pipeline_sbatch(self):
+        pipeline_name = Pipeline().load().global_id
+        if not self.kwargs['job_name']:
+            job_name = f'{pipeline_name}_{self.kwargs["nnodes"]}'
+            print(f'No name set for the job. Setting it to {job_name}')
+            self.kwargs['job_name'] = job_name
         slurm_info = SlurmExecInfo(
             job_name=self.kwargs['job_name'],
             num_nodes=self.kwargs['nnodes'],
@@ -988,7 +993,6 @@ class JarvisArgs(ArgParse):
             gres=self.kwargs['gres'],
             exclusive=self.kwargs['exclusive']
         )
-        pipeline_name = Pipeline().load().global_id
         SlurmExec(f'jarvis pipeline run {pipeline_name} +slurm_host', slurm_info)
 
     def pipeline_start(self):
