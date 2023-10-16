@@ -8,6 +8,8 @@ setuptools.setup(
     author="Luke Logan",
     author_email="llogan@hawk.iit.edu",
     description="Create basic for applications",
+    long_description=open('README.md').read(),
+    long_description_content_type='text/markdown',
     url="https://github.com/scs-lab/jarvis-cd",
     classifiers = [
         "Programming Language :: Python",
@@ -20,5 +22,12 @@ setuptools.setup(
         "Topic :: Software Development :: Libraries :: Python Modules",
         "Topic :: Application Configuration",
     ],
-    long_description=""
+    install_requires=[
+        'pyyaml',
+        'pylint==2.15.0',
+        'coverage==5.5',
+        'coverage-lcov==0.2.4',
+        'pytest==6.2.5',
+        'jarvis-util @ git+https://github.com/scs-lab/jarvis-util.git#egg=jarvis-util'
+    ]
 )
