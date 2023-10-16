@@ -567,6 +567,21 @@ class JarvisArgs(ArgParse):
         self.add_menu('pipeline status',
                       msg="Get the status of a pipeline",
                       keep_remainder=True)
+        self.add_menu('pipeline load',
+                      msg="Load a pipeline from a file",
+                      keep_remainder=True)
+        self.add_args([
+            {
+                'name': 'path',
+                'msg': 'Path to the file or folder to load the pipeline',
+                'required': True,
+                'pos': True,
+                'default': None
+            }
+        ])
+        self.add_menu('pipeline save',
+                      msg="Save the current pipeline",
+                      keep_remainder=True)
 
         # jarvis pipeline sbatch
         self.add_menu('pipeline sbatch', msg="Run the current pipeline through sbatch")
@@ -1005,6 +1020,12 @@ class JarvisArgs(ArgParse):
         Pipeline().load().clean()
 
     def pipeline_status(self):
+        Pipeline().load().status()
+
+    def pipeline_load(self):
+        Pipeline().load().status()
+
+    def pipeline_save(self):
         Pipeline().load().status()
 
 
