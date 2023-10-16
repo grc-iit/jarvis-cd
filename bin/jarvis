@@ -3,6 +3,7 @@
 from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_util import *
 from jarvis_util.shell.slurm_exec import SlurmExec, SlurmExecInfo
+from jarvis_util.shell.pbs_exec import PbsExec, PbsExecInfo
 from jarvis_cd.basic.pkg import Pipeline, PkgArgParse
 
 
@@ -553,6 +554,14 @@ class JarvisArgs(ArgParse):
                 'default': False,
                 'type': bool
             },
+            {
+                'name': 'pbs_host',
+                'msg': 'The pipeline name to be run',
+                'required': False,
+                'pos': False,
+                'default': False,
+                'type': bool
+            },
         ])
 
         self.add_menu('pipeline start',
@@ -566,6 +575,21 @@ class JarvisArgs(ArgParse):
                       keep_remainder=True)
         self.add_menu('pipeline status',
                       msg="Get the status of a pipeline",
+                      keep_remainder=True)
+        self.add_menu('pipeline load',
+                      msg="Load a pipeline from a file",
+                      keep_remainder=True)
+        self.add_args([
+            {
+                'name': 'path',
+                'msg': 'Path to the file or folder to load the pipeline',
+                'required': True,
+                'pos': True,
+                'default': None
+            }
+        ])
+        self.add_menu('pipeline save',
+                      msg="Save the current pipeline",
                       keep_remainder=True)
 
         # jarvis pipeline sbatch
@@ -662,6 +686,60 @@ class JarvisArgs(ArgParse):
                 'required': False,
                 'pos': False,
                 'default': True
+            },
+        ])
+
+        self.add_menu('pipeline pbs', msg="Run the current pipeline through pbs")
+        self.add_args([
+            {
+                'name': 'nnodes',
+                'msg': 'The number of nodes to execute the pipeline on',
+                'required': True,
+                'pos': False,
+                'default': 1
+            },
+            {
+                'name': 'system',
+                'msg': 'The type of system to allocate the nodes on',
+                'required': False,
+                'pos': False,
+                'default': 'polaris'
+            },
+            {
+                'name': 'filesystems',
+                'msg': 'The filesystem to be used (e.g. home:grand)',
+                'required': False,
+                'pos': False,
+                'default': 'home:grand'
+            },
+            {
+                'name': 'walltime',
+                'msg': 'Maximum time allotted to the job',
+                'required': False,
+                'pos': False,
+                'default': '00:10:00'
+            },
+            {
+                'name': 'account',
+                'msg': 'Account used for job submission',
+                'required': False,
+                'pos': False,
+                'default': 'VeloC'
+            },
+            {
+                'name': 'queue',
+                'msg': 'Queue in which to submit the job',
+                'required': False,
+                'pos': False,
+                'default': 'debug-scaling'
+            },
+            {
+                'name': 'interactive',
+                'msg': 'Submit the job in interactive mode',
+                'required': False,
+                'pos': False,
+                'default': False,
+                'type': bool
             },
         ])
 
@@ -962,8 +1040,11 @@ class JarvisArgs(ArgParse):
         pipeline_name = self.kwargs['pipeline_name']
         if self.kwargs['slurm_host']:
             file_location = f'{self.jarvis.config_dir}/{pipeline_name}/slurm_{pipeline_name}_hostfile'
-            print(f'Writing hostfile to: {file_location}')
             Exec(f'scontrol show hostnames $SLURM_JOB_NODELIST > {file_location}', LocalExecInfo())
+            self.jarvis.set_hostfile(file_location)
+            Pipeline().load(pipeline_name).update().save()  # this calls the config step
+        if self.kwargs['pbs_host']:
+            file_location = os.environ.get('PBS_NODEFILE')
             self.jarvis.set_hostfile(file_location)
             Pipeline().load(pipeline_name).update().save()  # this calls the config step
 
@@ -973,6 +1054,11 @@ class JarvisArgs(ArgParse):
             Pipeline().load(pipeline_name).run()
 
     def pipeline_sbatch(self):
+        pipeline_name = Pipeline().load().global_id
+        if not self.kwargs['job_name']:
+            job_name = f'{pipeline_name}_{self.kwargs["nnodes"]}'
+            print(f'No name set for the job. Setting it to {job_name}')
+            self.kwargs['job_name'] = job_name
         slurm_info = SlurmExecInfo(
             job_name=self.kwargs['job_name'],
             num_nodes=self.kwargs['nnodes'],
@@ -988,8 +1074,20 @@ class JarvisArgs(ArgParse):
             gres=self.kwargs['gres'],
             exclusive=self.kwargs['exclusive']
         )
-        pipeline_name = Pipeline().load().global_id
         SlurmExec(f'jarvis pipeline run {pipeline_name} +slurm_host', slurm_info)
+
+    def pipeline_pbs(self):
+        pipeline_name = Pipeline().load().global_id
+        pbs_info = PbsExecInfo(
+            nnodes=self.kwargs['nnodes'],
+            system=self.kwargs['system'],
+            filesystems=self.kwargs['filesystems'],
+            walltime=self.kwargs['walltime'],
+            account=self.kwargs['account'],
+            queue=self.kwargs['queue'],
+            interactive=self.kwargs['interactive']
+        )
+        PbsExec(f'jarvis pipeline run {pipeline_name} +pbs_host', pbs_info)
 
     def pipeline_start(self):
         Pipeline().load().start()
@@ -1001,6 +1099,12 @@ class JarvisArgs(ArgParse):
         Pipeline().load().clean()
 
     def pipeline_status(self):
+        Pipeline().load().status()
+
+    def pipeline_load(self):
+        Pipeline().load().status()
+
+    def pipeline_save(self):
         Pipeline().load().status()
 
 
