@@ -741,6 +741,14 @@ class JarvisArgs(ArgParse):
                 'default': False,
                 'type': bool
             },
+            {
+                'name': 'env_vars',
+                'msg': 'Environmental variables to pass through PBS. '
+                       'Comma separated list of strings of the form variable or variable=value',
+                'required': False,
+                'pos': False,
+                'default': 'E'
+            },
         ])
 
     def define_env_opts(self):
