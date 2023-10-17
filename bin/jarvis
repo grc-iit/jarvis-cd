@@ -747,7 +747,7 @@ class JarvisArgs(ArgParse):
                        'Comma separated list of strings of the form variable or variable=value',
                 'required': False,
                 'pos': False,
-                'default': 'E'
+                'default': None
             },
         ])
 
