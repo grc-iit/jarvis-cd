@@ -741,6 +741,14 @@ class JarvisArgs(ArgParse):
                 'default': False,
                 'type': bool
             },
+            {
+                'name': 'env_vars',
+                'msg': 'Environmental variables to pass through PBS. '
+                       'Comma separated list of strings of the form variable or variable=value',
+                'required': False,
+                'pos': False,
+                'default': None
+            },
         ])
 
     def define_env_opts(self):
@@ -1077,7 +1085,10 @@ class JarvisArgs(ArgParse):
         SlurmExec(f'jarvis pipeline run {pipeline_name} +slurm_host', slurm_info)
 
     def pipeline_pbs(self):
-        pipeline_name = Pipeline().load().global_id
+        pipeline = Pipeline().load()
+        pipeline_name = pipeline.global_id
+        num_nodes = self.kwargs['nnodes']
+        script_location = f'{pipeline.config_dir}/{pipeline_name}_{num_nodes}.sh'
         pbs_info = PbsExecInfo(
             nnodes=self.kwargs['nnodes'],
             system=self.kwargs['system'],
@@ -1085,7 +1096,8 @@ class JarvisArgs(ArgParse):
             walltime=self.kwargs['walltime'],
             account=self.kwargs['account'],
             queue=self.kwargs['queue'],
-            interactive=self.kwargs['interactive']
+            interactive=self.kwargs['interactive'],
+            bash_script=script_location
         )
         PbsExec(f'jarvis pipeline run {pipeline_name} +pbs_host', pbs_info)
 
