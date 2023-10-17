@@ -1089,7 +1089,6 @@ class JarvisArgs(ArgParse):
         pipeline_name = pipeline.global_id
         num_nodes = self.kwargs['nnodes']
         script_location = f'{pipeline.config_dir}/{pipeline_name}_{num_nodes}.sh'
-        Chmod(script_location, "+x")
         pbs_info = PbsExecInfo(
             nnodes=self.kwargs['nnodes'],
             system=self.kwargs['system'],
