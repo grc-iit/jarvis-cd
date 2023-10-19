@@ -222,7 +222,9 @@ class JarvisManager:
 
         :return: List of pipelines
         """
-        return os.listdir(self.config_dir)
+        pipelines = os.listdir(self.config_dir)
+        pipelines.remove('env')
+        return pipelines
 
     def cd(self, pipeline_id):
         """
