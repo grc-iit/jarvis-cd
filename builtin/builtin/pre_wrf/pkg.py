@@ -1,16 +1,16 @@
 """
-This module provides classes and methods to launch the Wrf application.
-Wrf is ....
+This module provides classes and methods to launch the PreWrf application.
+PreWrf is ....
 """
 from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
+from jarvis_util.shell.filesystem import Chmod
 
 
-class Wrf(Application):
+class PreWrf(Application):
     """
-        This class provides methods to launch the Wrf application.
-        """
-
+    This class provides methods to launch the PreWrf application.
+    """
     def _init(self):
         """
         Initialize paths
@@ -27,36 +27,23 @@ class Wrf(Application):
         """
         return [
             {
-                'name': 'nprocs',
-                'msg': 'Number of processes',
-                'type': int,
-                'default': 1,
-            },
-            {
-                'name': 'ppn',
-                'msg': 'The number of processes per node',
-                'type': int,
-                'default': None,
-            },
-            {
                 'name': 'wrf_location',
                 'msg': 'The location of wrf.exe',
                 'type': str,
                 'default': None,
             },
             {
-                'name': 'wrf_output',
-                'msg': 'The location of output file',
+                'name': 'dataset_location',
+                'msg': 'The location of dataset',
                 'type': str,
                 'default': None,
             },
             {
-                'name': 'engine',
-                'msg': 'The engine type for adios2, such as BP4, BP5, SST',
+                'name': 'dataset_size',
+                'msg': 'The size of dataset, small, medium and large',
                 'type': str,
-                'default': 'BP4',
+                'default': 'small',
             },
-
         ]
 
     def configure(self, **kwargs):
@@ -68,14 +55,10 @@ class Wrf(Application):
         :return: None
         """
         self.update_config(kwargs, rebuild=False)
-        output_location = self.config['wrf_output']
-        if output_location[-1] != '/':
-            output_location += '/'
-        output_location += 'wrfout_d01_2019-11-26_12:00:00'
-        print(output_location)
-        replacement = [("wrfout_d01_2019-11-26_12:00:00", output_location), ("EngineType", self.config['engine'])]
-        self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
-                                f'{self.config["wrf_location"]}/adios2.xml', replacement)
+        replacement = [('dataset_location', self.config['dataset_location']),
+                       ('wrf_location', self.config['wrf_location'])]
+        self.copy_template_file(f'{self.pkg_dir}/config/download.sh',
+                                f'{self.config["dataset_location"]}/download.sh', replacement)
 
     def start(self):
         """
@@ -84,13 +67,9 @@ class Wrf(Application):
 
         :return: None
         """
-        Exec('./wrf.exe',
-             MpiExecInfo(nprocs=self.config['nprocs'],
-                         ppn=self.config['ppn'],
-                         hostfile=self.jarvis.hostfile,
-                         env=self.mod_env,
-                         cwd=self.config['wrf_location']))
-
+        bash_path = f'{self.config["dataset_location"]}/download.sh'
+        Chmod(bash_path, '+x')
+        Exec(bash_path)
         pass
 
     def stop(self):

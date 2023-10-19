@@ -1,16 +1,15 @@
 """
-This module provides classes and methods to launch the Wrf application.
-Wrf is ....
+This module provides classes and methods to launch the PostWrf application.
+PostWrf is ....
 """
 from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 
 
-class Wrf(Application):
+class PostWrf(Application):
     """
-        This class provides methods to launch the Wrf application.
-        """
-
+    This class provides methods to launch the PostWrf application.
+    """
     def _init(self):
         """
         Initialize paths
@@ -38,12 +37,7 @@ class Wrf(Application):
                 'type': int,
                 'default': None,
             },
-            {
-                'name': 'wrf_location',
-                'msg': 'The location of wrf.exe',
-                'type': str,
-                'default': None,
-            },
+
             {
                 'name': 'wrf_output',
                 'msg': 'The location of output file',
@@ -56,7 +50,6 @@ class Wrf(Application):
                 'type': str,
                 'default': 'BP4',
             },
-
         ]
 
     def configure(self, **kwargs):
@@ -72,10 +65,9 @@ class Wrf(Application):
         if output_location[-1] != '/':
             output_location += '/'
         output_location += 'wrfout_d01_2019-11-26_12:00:00'
-        print(output_location)
         replacement = [("wrfout_d01_2019-11-26_12:00:00", output_location), ("EngineType", self.config['engine'])]
         self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
-                                f'{self.config["wrf_location"]}/adios2.xml', replacement)
+                                f'{self.config["wrf_output"]}/adios2.xml', replacement)
 
     def start(self):
         """
@@ -84,13 +76,12 @@ class Wrf(Application):
 
         :return: None
         """
-        Exec('./wrf.exe',
+        Exec('python3 ./plot.py ',
              MpiExecInfo(nprocs=self.config['nprocs'],
                          ppn=self.config['ppn'],
                          hostfile=self.jarvis.hostfile,
                          env=self.mod_env,
-                         cwd=self.config['wrf_location']))
-
+                         cwd=self.config['wrf_output']))
         pass
 
     def stop(self):
