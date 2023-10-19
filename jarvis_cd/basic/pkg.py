@@ -138,8 +138,6 @@ class Pkg(ABC):
         if not with_config:
             return self
         self.config = YamlFile(self.config_path).load()
-        print(self.config_path)
-        print(self.config)
         for sub_pkg_type, sub_pkg_id in self.config['sub_pkgs']:
             sub_pkg = self.jarvis.construct_pkg(sub_pkg_type)
             sub_pkg.load(f'{self.global_id}.{sub_pkg_id}', self.root)
