@@ -202,6 +202,7 @@ class HermesRun(Service):
         hostfile_path = self.jarvis.hostfile.path
         if hostfile_path is None:
             hostfile_path = ''
+            domain = ''
         hermes_server['rpc'] = {
             'host_file': hostfile_path,
             'protocol': protocol,
