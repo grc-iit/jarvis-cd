@@ -76,6 +76,9 @@ class Wrf(Application):
         replacement = [("wrfout_d01_2019-11-26_12:00:00", output_location), ("EngineType", self.config['engine'])]
         self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
                                 f'{self.config["wrf_location"]}/adios2.xml', replacement)
+        replacement2 = ["Path_to_output", output_location]
+        self.copy_template_file(f'{self.pkg_dir}/config/namelist.input',
+                                f'{self.config["wrf_location"]}/namelist.input', replacement2)
 
     def start(self):
         """
