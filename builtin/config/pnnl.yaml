@@ -1,0 +1,8 @@
+CONFIG_DIR: ${HOME}/jarvis-pipelines
+CUR_PIPELINE: null
+HOSTFILE: null
+PRIVATE_DIR: /tmp/jarvis
+REPOS:
+- name: builtin
+  path: ${HOME}/jarvis-cd/builtin
+SHARED_DIR: ${HOME}/jarvis-pipelines
