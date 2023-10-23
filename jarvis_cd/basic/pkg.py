@@ -480,16 +480,14 @@ class Pkg(ABC):
         }
 
         if self.config and self.pkg_type is not 'pipeline':
+            print(self.pkg_type)
             detail_config['pkg_config'] = self.config
 
-        subpkgs_dict = {}
+        # Now, after all the main package details are added, add the sub-packages
         for pkg in self.sub_pkgs:
+            # Assuming pkg has a method to return its name
             sub_pkg_name = pkg.pkg_id
-            subpkgs_dict[sub_pkg_name] = pkg.to_dict()
-
-        # Merge the two dictionaries
-        # With pout this the order is inverted with the subpkgs first
-        detail_config = {**detail_config, **subpkgs_dict}
+            detail_config[sub_pkg_name] = pkg.to_dict()
 
         return detail_config
 
