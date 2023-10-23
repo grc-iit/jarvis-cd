@@ -165,14 +165,15 @@ class Pkg(ABC):
         pipeline_conf = self.to_dict()
         yaml = YamlFile(f'{self.config_dir}/{self.pkg_id}_detailed.yaml')
 
+        yaml.save(pipeline_conf)
         # Convert sub-packages to YAML
-        subpkgs_keys = set(pipeline_conf.keys()) - {'pkg_name', 'pkg_type', 'pkg_config'}
-        print(subpkgs_keys)
-        [yaml.save({key: pipeline_conf[key]}) for key in subpkgs_keys]
-
-        main_keys = ['pkg_name', 'pkg_type']
-        main_data = {key: pipeline_conf[key] for key in main_keys if key in pipeline_conf}
-        yaml.save(main_data)
+        # subpkgs_keys = set(pipeline_conf.keys()) - {'pkg_name', 'pkg_type', 'pkg_config'}
+        # print(subpkgs_keys)
+        # [yaml.save({key: pipeline_conf[key]}) for key in subpkgs_keys]
+        #
+        # main_keys = ['pkg_name', 'pkg_type']
+        # main_data = {key: pipeline_conf[key] for key in main_keys if key in pipeline_conf}
+        # yaml.save(main_data)
 
 
 
@@ -483,19 +484,18 @@ class Pkg(ABC):
         return info
 
     def to_dict(self):
-        detail_config = {
-            'pkg_name': self.pkg_id,
-            'pkg_type': self.pkg_type,
-        }
-
-        if self.config:
-            detail_config['pkg_config'] = self.config
-
+        detail_config = {}
         # Now, after all the main package details are added, add the sub-packages
         for pkg in self.sub_pkgs:
             # Assuming pkg has a method to return its name
             sub_pkg_name = pkg.pkg_id
             detail_config[sub_pkg_name] = pkg.to_dict()
+
+        if self.config:
+            detail_config['pkg_config'] = self.config
+
+        detail_config['pkg_name'] = self.pkg_id
+        detail_config['pkg_type'] = self.pkg_type
 
         return detail_config
 
