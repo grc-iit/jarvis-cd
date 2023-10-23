@@ -482,9 +482,13 @@ class Pkg(ABC):
         if self.config and self.pkg_type is not 'pipeline':
             detail_config['pkg_config'] = self.config
 
+        subpkgs_dict = {}
         for pkg in self.sub_pkgs:
             sub_pkg_name = pkg.pkg_id
-            detail_config[sub_pkg_name] = pkg.to_dict()
+            subpkgs_dict[sub_pkg_name] = pkg.to_dict()
+
+        # Merge the two dictionaries
+        detail_config = {**detail_config, **subpkgs_dict}
 
         return detail_config
 
