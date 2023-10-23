@@ -163,8 +163,16 @@ class Pkg(ABC):
         :return: Self
         """
         pipeline_conf = self.to_dict()
-        print(pipeline_conf)
-        YamlFile(f'{self.config_dir}/{self.pkg_id}_detailed.yaml').save(pipeline_conf)
+        yaml = YamlFile(f'{self.config_dir}/{self.pkg_id}_detailed.yaml')
+
+        main_keys = ['pkg_name', 'pkg_type']
+        main_data = {key: pipeline_conf[key] for key in main_keys if key in pipeline_conf}
+        yaml.save(main_data)
+
+        # Convert sub-packages to YAML
+        subpkgs_keys = set(pipeline_conf.keys()) - {'pkg_name', 'pkg_type', 'pkg_config'}
+        [yaml.save({key: pipeline_conf[key]}) for key in subpkgs_keys]
+
 
 
     def clear(self):
