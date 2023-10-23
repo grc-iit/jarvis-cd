@@ -166,7 +166,9 @@ class Pkg(ABC):
         yaml = YamlFile(f'{self.config_dir}/{self.pkg_id}_detailed.yaml')
 
         print(pipeline_conf.keys())
-        yaml.save(pipeline_conf)
+        yaml.save({'pkg_name': pipeline_conf['pkg_name']})
+        yaml.save({'pkg_type': pipeline_conf['pkg_type']})
+        print(set(pipeline_conf.keys()) - {'pkg_name', 'pkg_type', 'pkg_config'})
 
     def clear(self):
         """
