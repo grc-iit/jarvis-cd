@@ -488,6 +488,7 @@ class Pkg(ABC):
             subpkgs_dict[sub_pkg_name] = pkg.to_dict()
 
         # Merge the two dictionaries
+        # With pout this the order is inverted with the subpkgs first
         detail_config = {**detail_config, **subpkgs_dict}
 
         return detail_config
