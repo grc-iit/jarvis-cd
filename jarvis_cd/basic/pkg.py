@@ -168,7 +168,9 @@ class Pkg(ABC):
         print(pipeline_conf.keys())
         yaml.append({'pkg_name': pipeline_conf['pkg_name']})
         yaml.append({'pkg_type': pipeline_conf['pkg_type']})
-        print(set(pipeline_conf.keys()) - {'pkg_name', 'pkg_type', 'pkg_config'})
+        subpkg_keys = set(pipeline_conf.keys()) - {'pkg_name', 'pkg_type', 'pkg_config'}
+        for key in subpkg_keys:
+            yaml.append({key: pipeline_conf[key]})
 
     def clear(self):
         """
