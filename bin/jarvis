@@ -1301,7 +1301,7 @@ class JarvisArgs(ArgParse):
         pipeline_name = pipeline.global_id
         file_path = f'{self.jarvis.config_dir}/{pipeline_name}/pipeline_def.yaml'
 
-        pipeline.save()
+        pipeline.save_detailed()
 
     # def to_string_list_pretty(self, depth=0):
     #     space = ' ' * depth

@@ -157,6 +157,16 @@ class Pkg(ABC):
             pkg.save()
         return self
 
+    def save_detailed(self):
+        """
+        Save a pkg and its sub-pkgs
+        :return: Self
+        """
+        pipeline_conf = self.to_dict()
+        print(pipeline_conf)
+        YamlFile(f'{self.config_dir}/{self.pkg_id}_detailed.yaml').save(pipeline_conf)
+
+
     def clear(self):
         """
         Destroy a pipeline's sub-pkgs
@@ -462,6 +472,21 @@ class Pkg(ABC):
         for sub_pkg in self.sub_pkgs:
             info += sub_pkg.to_string_list_pretty(depth + 2)
         return info
+
+    def to_dict(self):
+        detail_config = {
+            'pkg_name': self.pkg_id,
+            'pkg_type': self.pkg_type,
+        }
+
+        if self.config:
+            detail_config['pkg_config'] = self.config
+
+        for pkg in self.sub_pkgs:
+            sub_pkg_name = pkg.pkg_id()
+            detail_config[sub_pkg_name] = pkg.to_dict()
+
+        return detail_config
 
     @abstractmethod
     def _init(self):
