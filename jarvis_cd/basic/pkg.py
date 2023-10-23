@@ -487,7 +487,7 @@ class Pkg(ABC):
             'pkg_type': self.pkg_type,
         }
 
-        if self.config and self.pkg_type is not 'pipeline':
+        if self.config:
             print(self.pkg_type)
             detail_config['pkg_config'] = self.config
 
