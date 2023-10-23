@@ -483,7 +483,7 @@ class Pkg(ABC):
             detail_config['pkg_config'] = self.config
 
         for pkg in self.sub_pkgs:
-            sub_pkg_name = pkg.pkg_id()
+            sub_pkg_name = pkg.pkg_id
             detail_config[sub_pkg_name] = pkg.to_dict()
 
         return detail_config
