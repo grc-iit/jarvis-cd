@@ -108,6 +108,7 @@ class Ior(Application):
 
         :return: None
         """
+        print(self.config)
         cmd = [
             'ior',
             '-k',
