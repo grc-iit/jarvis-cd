@@ -1159,7 +1159,9 @@ class JarvisArgs(ArgParse):
         ]
         if slurm_info.host_suffix is not None:
             slurm_cmd.append(f'host_suffix={slurm_info.host_suffix}')
-        SlurmExec(' '.join(slurm_cmd), slurm_info)
+        slurm_cmd = ' '.join(slurm_cmd)
+        print(slurm_cmd)
+        SlurmExec(slurm_cmd, slurm_info)
 
     def pipeline_pbs(self):
         pipeline = Pipeline().load()
