@@ -91,13 +91,12 @@ class Pkg(ABC):
             raise Exception('No pipeline currently selected')
         return global_id
 
-    def create(self, global_id, config_only=False):
+    def create(self, global_id):
         """
         Create a new pkg and its filesystem data
 
         :param global_id: A dot-separated, globally unique identifier for
         this pkg. Indicates where configuration data is stored.
-        :param config_only: recreate only the config
         :return: self
         """
         self._init_common(global_id, self.root)
@@ -650,6 +649,29 @@ class Pipeline(Pkg):
         self.track_env(env_track_dict)
         static_env_path = os.path.join(self.jarvis.env_dir, f'{env_name}.yaml')
         YamlFile(static_env_path).save(self.env)
+        return self
+
+    def from_yaml(self, path, do_configure=True):
+        """
+        Create a pipeline from a YAML file
+
+        :param path:
+        :param do_configure: Whether to append and configure
+        :return: self
+        """
+        config = YamlFile(path).load()
+        pipeline_id = config['name']
+        self.create(pipeline_id)
+        self.clear()
+        if 'env' in config:
+            self.copy_static_env(config['env'])
+        for sub_pkg in config['pkgs']:
+            pkg_type = sub_pkg['pkg_type']
+            pkg_name = sub_pkg['pkg_name']
+            del sub_pkg['pkg_type']
+            del sub_pkg['pkg_name']
+            self.append(pkg_type, pkg_name,
+                        do_configure, **sub_pkg)
         return self
 
     def copy_static_env(self, env_name, env_track_dict=None):

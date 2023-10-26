@@ -384,6 +384,39 @@ class JarvisArgs(ArgParse):
             },
         ])
 
+        # jarvis pipeline yaml
+        self.add_menu('pipeline yaml',
+                      msg='Create a pipeline from a yaml schema')
+        self.add_args([
+            {
+                'name': 'path',
+                'msg': 'The pipeline schema file path',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'conf',
+                'msg': 'Whether to configure the pipeline immediately',
+                'required': False,
+                'pos': False,
+                'default': True
+            },
+        ])
+
+        # jarvis pipeline yaml
+        self.add_menu('pipeline iterate',
+                      msg='Create a pipeline from a yaml schema and iterate')
+        self.add_args([
+            {
+                'name': 'path',
+                'msg': 'The pipeline schema file path',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
         # jarvis pipeline print
         self.add_menu('pipeline print', msg="List all pkgs in a pipeline.")
         self.add_args([
@@ -397,8 +430,8 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarvis pipeline clear
-        self.add_menu('pipeline clear', msg='Clear a pipeline')
+        # jarvis pipeline reset
+        self.add_menu('pipeline reset', msg='Clear a pipeline')
         self.add_args([
             {
                 'name': 'pipeline_id',
@@ -966,7 +999,30 @@ class JarvisArgs(ArgParse):
         self.jarvis.cd(pipeline_id)
         self.jarvis.save()
 
-    def pipeline_clear(self):
+    def pipeline_yaml(self):
+        path = self.kwargs['path']
+        pipeline = Pipeline().from_yaml(path).save()
+        self.jarvis.cd(pipeline.global_id)
+        self.jarvis.save()
+
+    def pipeline_iterate(self):
+        # path = self.kwargs['path']
+        # params = YamlFile(path).load()
+        # case_list = []
+        # for key, val_list in params.items():
+        #     if isinstance(val_list, list):
+        #         case_list.append([(key, val) for val in val_list])
+        # cases = itertools.product(*case_list)
+        # for case in cases:
+        #     key = case[0]
+        #     val = case[1]
+        #     params[key] = val
+        #     pipeline = Pipeline().from_dict(path).save()
+        # self.jarvis.cd(pipeline.global_id)
+        # self.jarvis.save()
+        pass
+
+    def pipeline_reset(self):
         pipeline_id = self.kwargs['pipeline_id']
         Pipeline().load(pipeline_id, with_config=False).clear()
         self.jarvis.save()
