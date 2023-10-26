@@ -104,6 +104,5 @@ class HermesApi(Interceptor):
         if self.config['vfd']:
             plugin_path_parent = (
                 str(pathlib.Path(self.config['HERMES_VFD']).parent))
-            print(f'Setting HDF5_PLUGIN_PATH={plugin_path_parent}')
             self.setenv('HDF5_PLUGIN_PATH', plugin_path_parent)
             self.setenv('HDF5_DRIVER', 'hdf5_hermes_vfd')
