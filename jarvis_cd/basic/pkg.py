@@ -651,7 +651,7 @@ class Pipeline(Pkg):
         YamlFile(static_env_path).save(self.env)
         return self
 
-    def from_yaml(self, path, do_configure=True):
+    def from_dict(self, config, do_configure=True):
         """
         Create a pipeline from a YAML file
 
@@ -659,7 +659,6 @@ class Pipeline(Pkg):
         :param do_configure: Whether to append and configure
         :return: self
         """
-        config = YamlFile(path).load()
         pipeline_id = config['name']
         self.create(pipeline_id)
         self.clear()
@@ -673,6 +672,17 @@ class Pipeline(Pkg):
             self.append(pkg_type, pkg_name,
                         do_configure, **sub_pkg)
         return self
+
+    def from_yaml(self, path, do_configure=True):
+        """
+        Create a pipeline from a YAML file
+
+        :param path:
+        :param do_configure: Whether to append and configure
+        :return: self
+        """
+        config = YamlFile(path).load()
+        return self.from_dict(config, do_configure)
 
     def copy_static_env(self, env_name, env_track_dict=None):
         """
