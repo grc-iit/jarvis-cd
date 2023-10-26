@@ -80,6 +80,12 @@ class HermesApi(Interceptor):
                 raise Exception('Could not find hermes_posix')
             print(f'Found libhermes_stdio.so at {self.config["HERMES_STDIO"]}')
             has_one = True
+        if self.config['vfd']:
+            self.config['HERMES_VFD'] = self.find_library('hdf5_hermes_vfd')
+            if self.config['HERMES_VFD'] is None:
+                raise Exception('Could not find hdf5_hermes_vfd')
+            print(f'Found libhdf5_hermes_vfd.so at {self.config["HERMES_VFD"]}')
+            has_one = True
         if not has_one:
             raise Exception('Hermes API not selected')
 
@@ -95,3 +101,8 @@ class HermesApi(Interceptor):
             self.prepend_env('LD_PRELOAD', self.config['HERMES_POSIX'])
         if self.config['stdio']:
             self.prepend_env('LD_PRELOAD', self.config['HERMES_STDIO'])
+        if self.config['vfd']:
+            plugin_path_parent = (
+                str(pathlib.Path(self.config['HERMES_VFD']).parent))
+            self.setenv('HDF5_PLUGIN_PATH', plugin_path_parent)
+            self.setenv('HDF5_DRIVER', 'hdf5_hermes_vfd')
