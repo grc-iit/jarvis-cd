@@ -1154,8 +1154,12 @@ class JarvisArgs(ArgParse):
             exclusive=self.kwargs['exclusive'],
             host_suffix=self.kwargs['host_suffix']
         )
-        SlurmExec(f'jarvis pipeline run {pipeline_name} +slurm_host host_suffix={slurm_info.host_suffix}',
-                  slurm_info)
+        slurm_cmd = [
+            f'jarvis pipeline run {pipeline_name} +slurm_host'
+        ]
+        if slurm_info.host_suffix is not None:
+            slurm_cmd.append(f'host_suffix={slurm_info.host_suffix}')
+        SlurmExec(' '.join(slurm_cmd), slurm_info)
 
     def pipeline_pbs(self):
         pipeline = Pipeline().load()
