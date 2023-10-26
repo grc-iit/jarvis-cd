@@ -11,6 +11,9 @@ class JarvisArgs(ArgParse):
     def define_options(self):
         self.jarvis = JarvisManager.get_instance()
         self.jutil = JutilManager.get_instance()
+        self.jutil.debug_local_exec = True
+        self.jutil.debug_mpi_exec = True
+        self.jutil.debug_slurm = True
         self.define_init_opts()
         self.define_pipeline_opts()
         self.define_repo_opts()
