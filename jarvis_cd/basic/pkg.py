@@ -729,6 +729,7 @@ class Pipeline(Pkg):
             if isinstance(pkg, Interceptor):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.modify_env()
+                self.mod_env.update(self.env)
 
     def stop(self):
         """
