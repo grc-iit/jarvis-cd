@@ -295,7 +295,7 @@ class Pkg(ABC):
         :return: None
         """
         if env_track_dict is None:
-            return
+            return env
         for key, val in env_track_dict.items():
             if isinstance(val, str):
                 env[key] = val

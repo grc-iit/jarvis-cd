@@ -195,6 +195,7 @@ class HermesRun(Service):
         net_info = net_info[lambda r: str(r['provider']) == provider,
                             ['provider', 'domain']]
         if len(net_info) == 0:
+            print(net_info)
             raise Exception(f'Failed to find hermes_run provider {provider}')
         net_info = net_info.rows[0]
         protocol = net_info['provider']
