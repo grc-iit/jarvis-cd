@@ -1143,7 +1143,7 @@ class JarvisArgs(ArgParse):
     def pipeline_env_scan(self):
         Pipeline().load().scan_env(self.kwargs).save()
 
-    def maybe_configure(self, pipeline, pkg):
+    def maybe_configure(self, pipeline, pkg_id):
         pkg = pipeline.get_pkg(pkg_id)
         menu = pkg.configure_menu()
         args = PkgArgParse(args=self.remainder, menu=menu)
@@ -1160,19 +1160,19 @@ class JarvisArgs(ArgParse):
         if pkg_id is None:
             pkg_id = self.kwargs['pkg_type']
         pipeline.append(self.kwargs['pkg_type'],
-                   pkg_id_=pkg_id,
-                   do_configure=False)
-        self.maybe_configure(pipeline, pkg)
+                        pkg_id=pkg_id,
+                        do_configure=False)
+        self.maybe_configure(pipeline, pkg_id)
 
-    def pipeline_append(self):
+    def pipeline_prepend(self):
         pkg_id = self.kwargs['pkg_id']
         pipeline = Pipeline().load()
         if pkg_id is None:
             pkg_id = self.kwargs['pkg_type']
         pipeline.prepend(self.kwargs['pkg_type'],
-                        pkg_id_=pkg_id,
-                        do_configure=False)
-        self.maybe_configure(pipeline, pkg)
+                         pkg_id=pkg_id,
+                         do_configure=False)
+        self.maybe_configure(pipeline, pkg_id)
 
     def pipeline_insert(self):
         at_id = self.kwargs['at_id']
@@ -1182,9 +1182,9 @@ class JarvisArgs(ArgParse):
             pkg_id = self.kwargs['pkg_type']
         pipeline.insert(self.kwargs['at_id'],
                         self.kwargs['pkg_type'],
-                        pkg_id_=pkg_id,
+                        pkg_id=pkg_id,
                         do_configure=False)
-        self.maybe_configure(pipeline, pkg)
+        self.maybe_configure(pipeline, pkg_id)
 
     def pipeline_update(self):
         Pipeline().load().update().save()

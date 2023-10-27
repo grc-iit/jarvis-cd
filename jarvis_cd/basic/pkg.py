@@ -207,14 +207,18 @@ class Pkg(ABC):
         """
         if pkg_id is None:
             pkg_id = self._make_unique_name(pkg_type)
-        if at_id is None:
+        off = 0
+        if at_id is None or len(self.config['sub_pkgs']) == 0:
             self.config['sub_pkgs'].append([pkg_type, pkg_id])
+            off = -1
         else:
-            off = 0
-            for sub_pkg_type, sub_pkg_id in self.config['sub_pkgs']:
-                if sub_pkg_id == pkg_id:
-                    break
-                off += 1
+            if isinstance(at_id, int):
+                off = at_id
+            else:
+                for sub_pkg_type, sub_pkg_id in self.config['sub_pkgs']:
+                    if sub_pkg_id == at_id:
+                        break
+                    off += 1
             self.config['sub_pkgs'].insert(off, [pkg_type, pkg_id])
         pkg = self.jarvis.construct_pkg(pkg_type)
         if pkg is None:
@@ -224,7 +228,7 @@ class Pkg(ABC):
         if do_configure:
             pkg.update_env(self.env)
             pkg.configure(**kwargs)
-        self.sub_pkgs.append(pkg)
+        self.sub_pkgs.insert(off, pkg)
         return self
 
     def append(self, pkg_type, pkg_id=None, do_configure=True, **kwargs):
@@ -237,7 +241,7 @@ class Pkg(ABC):
         :param kwargs: Any parameters the user want to configure in the pkg
         :return: self
         """
-        return self.insert(None, pkg_id, do_configure, **kwargs)
+        return self.insert(None, pkg_type, pkg_id, do_configure, **kwargs)
 
     def prepend(self, pkg_type, pkg_id=None, do_configure=True, **kwargs):
         """
@@ -249,7 +253,7 @@ class Pkg(ABC):
         :param kwargs: Any parameters the user want to configure in the pkg
         :return: self
         """
-        return self.insert(0, pkg_id, do_configure, **kwargs)
+        return self.insert(0, pkg_type, pkg_id, do_configure, **kwargs)
 
     def _make_unique_name(self, pkg_type):
         if self.get_pkg(pkg_type) is None:
