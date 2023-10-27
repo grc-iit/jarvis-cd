@@ -10,6 +10,7 @@ from jarvis_cd.basic.pkg import Pipeline, PkgArgParse
 class JarvisArgs(ArgParse):
     def define_options(self):
         self.jarvis = JarvisManager.get_instance()
+        self.jutil = JutilManager.get_instance()
         self.define_init_opts()
         self.define_pipeline_opts()
         self.define_repo_opts()
@@ -1154,8 +1155,13 @@ class JarvisArgs(ArgParse):
             exclusive=self.kwargs['exclusive'],
             host_suffix=self.kwargs['host_suffix']
         )
-        SlurmExec(f'jarvis pipeline run {pipeline_name} +slurm_host',
-                  slurm_info)
+        slurm_cmd = [
+            f'jarvis pipeline run {pipeline_name} +slurm_host'
+        ]
+        if slurm_info.host_suffix is not None:
+            slurm_cmd.append(f'host_suffix={slurm_info.host_suffix}')
+        slurm_cmd = ' '.join(slurm_cmd)
+        SlurmExec(slurm_cmd, slurm_info)
 
     def pipeline_pbs(self):
         pipeline = Pipeline().load()
