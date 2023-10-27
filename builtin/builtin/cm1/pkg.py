@@ -80,7 +80,7 @@ class Cm1(Application):
                 'name': 'ppn',
                 'msg': 'The number of processes per node',
                 'type': int,
-                'default': None,
+                'default': 1,
             },
             {
                 'name': 'output',
@@ -150,6 +150,7 @@ class Cm1(Application):
             ('nodey', corey),
             ('rankx', corex),
             ('ranky', corey),
+            ('ppn', self.config['ppn']),
         ])
 
     def start(self):

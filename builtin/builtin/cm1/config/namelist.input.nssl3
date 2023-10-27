@@ -6,7 +6,7 @@
  nodey        =       ##nodey##, !nuke
  rankx        =       ##rankx##,
  ranky        =       ##ranky##,
- ppnode       =       1,
+ ppnode       =       ##ppn##,
  timeformat   =       1,
  timestats    =       1,
  terrain_flag = .false.,
