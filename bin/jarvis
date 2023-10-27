@@ -494,6 +494,75 @@ class JarvisArgs(ArgParse):
             },
         ])
 
+        # jarvis pipeline prepend
+        self.add_menu('pipeline prepend',
+                      msg='Prepend a pkg to a pipeline',
+                      keep_remainder=True)
+        self.add_args([
+            {
+                'name': 'pkg_type',
+                'msg': 'The type of pkg being added to the pipeline',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'pkg_id',
+                'msg': 'The unique name of the pkg being added to '
+                       'the pipeline. By default, will be equal to '
+                       'pkg_type',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'conf',
+                'msg': 'Should be run the configure step on the pkg',
+                'required': False,
+                'pos': False,
+                'default': True,
+                'type': bool
+            },
+        ])
+
+        # jarvis pipeline insert
+        self.add_menu('pipeline insert',
+                      msg='Prepend a pkg to a pipeline',
+                      keep_remainder=True)
+        self.add_args([
+            {
+                'name': 'at_id',
+                'msg': 'The id of the packge to insert at',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'pkg_type',
+                'msg': 'The type of pkg being added to the pipeline',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'pkg_id',
+                'msg': 'The unique name of the pkg being added to '
+                       'the pipeline. By default, will be equal to '
+                       'pkg_type',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'conf',
+                'msg': 'Should be run the configure step on the pkg',
+                'required': False,
+                'pos': False,
+                'default': True,
+                'type': bool
+            },
+        ])
+
         # pipeline env build
         self.add_menu('pipeline env build',
                       msg="Cache relevant environment vars. Use +ENV_VAR and"
@@ -1074,14 +1143,7 @@ class JarvisArgs(ArgParse):
     def pipeline_env_scan(self):
         Pipeline().load().scan_env(self.kwargs).save()
 
-    def pipeline_append(self):
-        pkg_id = self.kwargs['pkg_id']
-        pipeline = Pipeline().load()
-        if pkg_id is None:
-            pkg_id = self.kwargs['pkg_type']
-        pipeline.append(self.kwargs['pkg_type'],
-                   pkg_id_=pkg_id,
-                   do_configure=False)
+    def maybe_configure(self, pipeline, pkg):
         pkg = pipeline.get_pkg(pkg_id)
         menu = pkg.configure_menu()
         args = PkgArgParse(args=self.remainder, menu=menu)
@@ -1091,6 +1153,38 @@ class JarvisArgs(ArgParse):
             pkg.update_env(pipeline.env)
             pkg.update_config(args.kwargs)
         pipeline.save()
+
+    def pipeline_append(self):
+        pkg_id = self.kwargs['pkg_id']
+        pipeline = Pipeline().load()
+        if pkg_id is None:
+            pkg_id = self.kwargs['pkg_type']
+        pipeline.append(self.kwargs['pkg_type'],
+                   pkg_id_=pkg_id,
+                   do_configure=False)
+        self.maybe_configure(pipeline, pkg)
+
+    def pipeline_append(self):
+        pkg_id = self.kwargs['pkg_id']
+        pipeline = Pipeline().load()
+        if pkg_id is None:
+            pkg_id = self.kwargs['pkg_type']
+        pipeline.prepend(self.kwargs['pkg_type'],
+                        pkg_id_=pkg_id,
+                        do_configure=False)
+        self.maybe_configure(pipeline, pkg)
+
+    def pipeline_insert(self):
+        at_id = self.kwargs['at_id']
+        pkg_id = self.kwargs['pkg_id']
+        pipeline = Pipeline().load()
+        if pkg_id is None:
+            pkg_id = self.kwargs['pkg_type']
+        pipeline.insert(self.kwargs['at_id'],
+                        self.kwargs['pkg_type'],
+                        pkg_id_=pkg_id,
+                        do_configure=False)
+        self.maybe_configure(pipeline, pkg)
 
     def pipeline_update(self):
         Pipeline().load().update().save()

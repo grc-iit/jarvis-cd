@@ -194,10 +194,11 @@ class Pkg(ABC):
         except FileNotFoundError:
             pass
 
-    def append(self, pkg_type, pkg_id=None, do_configure=True, **kwargs):
+    def insert(self, at_id, pkg_type, pkg_id=None, do_configure=True, **kwargs):
         """
         Create and append a pkg to the pipeline
 
+        :param at_id: The id of the pkg to insert at
         :param pkg_type: The type of pkg to create (e.g., OrangeFS)
         :param pkg_id: Semantic name of the pkg to create
         :param do_configure: Whether to configure while appending
@@ -206,7 +207,15 @@ class Pkg(ABC):
         """
         if pkg_id is None:
             pkg_id = self._make_unique_name(pkg_type)
-        self.config['sub_pkgs'].append([pkg_type, pkg_id])
+        if at_id is None:
+            self.config['sub_pkgs'].append([pkg_type, pkg_id])
+        else:
+            off = 0
+            for sub_pkg_type, sub_pkg_id in self.config['sub_pkgs']:
+                if sub_pkg_id == pkg_id:
+                    break
+                off += 1
+            self.config['sub_pkgs'].insert(off, [pkg_type, pkg_id])
         pkg = self.jarvis.construct_pkg(pkg_type)
         if pkg is None:
             raise Exception(f'Could not find pkg: {pkg_type}')
@@ -217,6 +226,30 @@ class Pkg(ABC):
             pkg.configure(**kwargs)
         self.sub_pkgs.append(pkg)
         return self
+
+    def append(self, pkg_type, pkg_id=None, do_configure=True, **kwargs):
+        """
+        Create and append a pkg to the pipeline
+
+        :param pkg_type: The type of pkg to create (e.g., OrangeFS)
+        :param pkg_id: Semantic name of the pkg to create
+        :param do_configure: Whether to configure while appending
+        :param kwargs: Any parameters the user want to configure in the pkg
+        :return: self
+        """
+        return self.insert(None, pkg_id, do_configure, **kwargs)
+
+    def prepend(self, pkg_type, pkg_id=None, do_configure=True, **kwargs):
+        """
+        Create and append a pkg to the pipeline
+
+        :param pkg_type: The type of pkg to create (e.g., OrangeFS)
+        :param pkg_id: Semantic name of the pkg to create
+        :param do_configure: Whether to configure while appending
+        :param kwargs: Any parameters the user want to configure in the pkg
+        :return: self
+        """
+        return self.insert(0, pkg_id, do_configure, **kwargs)
 
     def _make_unique_name(self, pkg_type):
         if self.get_pkg(pkg_type) is None:
