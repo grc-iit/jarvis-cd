@@ -478,18 +478,16 @@ class Pkg(ABC):
         return info
 
     def to_dict(self):
-        detail_config = {}
+        detail_config = {'pkg_name': self.pkg_id, 'pkg_type': self.pkg_type}
+
+        if self.config:
+            detail_config['pkg_config'] = self.config
+
         # Now, after all the main package details are added, add the sub-packages
         for pkg in self.sub_pkgs:
             # Assuming pkg has a method to return its name
             sub_pkg_name = pkg.pkg_id
             detail_config[sub_pkg_name] = pkg.to_dict()
-
-        if self.config:
-            detail_config['pkg_config'] = self.config
-
-        detail_config['pkg_name'] = self.pkg_id
-        detail_config['pkg_type'] = self.pkg_type
 
         return detail_config
 
