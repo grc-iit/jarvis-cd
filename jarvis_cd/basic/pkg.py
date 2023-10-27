@@ -523,7 +523,7 @@ class SimplePkg(Pkg):
             text = fp.read()
         if replacements is not None:
             for const_name, replace in replacements:
-                text = text.replace(f'##{const_name}##', replace)
+                text = text.replace(f'##{const_name}##', str(replace))
         with open(dst, 'w', encoding='utf-8') as fp:
             fp.write(text)
 
