@@ -103,9 +103,9 @@ class GrayScott(Application):
             {
                 'name': 'engine',
                 'msg': 'Engien to be used',
-                'choices': ['bp5','hermes'],
+                'choices': ['bp5', 'hermes'],
                 'type': str,
-                'default': None,
+                'default': 'bp5',
             },
         ]
 
@@ -142,10 +142,10 @@ class GrayScott(Application):
                            env=self.env))
         JsonFile(self.settings_json_path).save(settings_json)
 
-        if lower(self.config['engine']) == 'bp5':
+        if self.config['engine'].lower() == 'bp5':
             self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
                                 self.adios2_xml_path)
-        elif lower(self.config['engine']) == 'hermes':
+        elif self.config['engine'].lower() == 'hermes':
             self.copy_template_file(f'{self.pkg_dir}/config/hermes.xml',
                                     self.adios2_xml_path)
         else:
