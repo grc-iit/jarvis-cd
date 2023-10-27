@@ -1303,16 +1303,6 @@ class JarvisArgs(ArgParse):
 
         pipeline.save_detailed()
 
-    # def to_string_list_pretty(self, depth=0):
-    #     space = ' ' * depth
-    #     info = [f'{space}{self.pkg_type} with name {self.pkg_id}']
-    #     for key, val in self.config.items():
-    #         if key == 'sub_pkgs':
-    #             continue
-    #         info.append(f'{space}  {key}={val}')
-    #     for sub_pkg in self.sub_pkgs:
-    #         info += sub_pkg.to_string_list_pretty(depth + 2)
-    #     return info
 
 if __name__ == '__main__':
     args = JarvisArgs()
