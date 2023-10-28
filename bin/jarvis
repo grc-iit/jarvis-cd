@@ -876,6 +876,14 @@ class JarvisArgs(ArgParse):
                 'pos': False,
                 'default': None
             },
+            {
+                'name': 'polaris',
+                'msg': 'Submit using polaris',
+                'required': False,
+                'pos': False,
+                'default': False,
+                'type': bool
+            },
         ])
 
     def define_env_opts(self):
@@ -1285,7 +1293,13 @@ class JarvisArgs(ArgParse):
             interactive=self.kwargs['interactive'],
             bash_script=script_location
         )
-        PbsExec(f'jarvis pipeline run {pipeline_name} +pbs_host', pbs_info)
+        cmd = [
+            f'jarvis pipeline run {pipeline_name} +pbs_host'
+        ]
+        if self.kwargs['polaris']:
+            cmd.append('+polaris')
+        cmd = ' '.join(cmd)
+        PbsExec(cmd, pbs_info)
 
     def pipeline_start(self):
         Pipeline().load().start()
