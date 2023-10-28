@@ -128,6 +128,8 @@ class Ior(Application):
         else:
             os.makedirs(self.config['out'], exist_ok=True)
         # pipe_stdout=self.config['log']
+        Exec('which mpiexec',
+             LocalExecInfo(env=self.mod_env))
         Exec(' '.join(cmd),
              MpiExecInfo(env=self.mod_env,
                          hostfile=self.jarvis.hostfile,
