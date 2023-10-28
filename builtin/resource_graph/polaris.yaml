@@ -50,15 +50,6 @@ net:
   speed: 107374182400
   type: FI_EP_RDM
   version: '111.0'
-- domain: bond0
-  fabric: 10.140.56.0/22
-  host: localhost
-  protocol: FI_PROTO_SOCK_TCP
-  provider: sockets
-  shared: true
-  speed: 107374182400
-  type: FI_EP_RDM
-  version: '111.0'
 - domain: mlx5_3-xrc
   fabric: IB-0xfe80000000000000
   host: localhost

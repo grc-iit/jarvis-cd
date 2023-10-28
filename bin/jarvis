@@ -651,7 +651,7 @@ class JarvisArgs(ArgParse):
             },
             {
                 'name': 'slurm_host',
-                'msg': 'The pipeline name to be run',
+                'msg': 'This is a SLURM job',
                 'required': False,
                 'pos': False,
                 'default': False,
@@ -659,7 +659,15 @@ class JarvisArgs(ArgParse):
             },
             {
                 'name': 'pbs_host',
-                'msg': 'The pipeline name to be run',
+                'msg': 'This is a PBS job',
+                'required': False,
+                'pos': False,
+                'default': False,
+                'type': bool
+            },
+            {
+                'name': 'polaris',
+                'msg': 'This is a PBS job on Polaris',
                 'required': False,
                 'pos': False,
                 'default': False,
@@ -1219,6 +1227,11 @@ class JarvisArgs(ArgParse):
             Pipeline().load(pipeline_name).update().save()  # this calls the config step
         if self.kwargs['pbs_host']:
             file_location = os.environ.get('PBS_NODEFILE')
+            if self.kwargs['polaris']:
+                hostfile = Hostfile(hostfile=filename)
+                for i, host in enumerate(hostfile.hosts):
+                    hostfile.hosts[i] = host.split('.')[0]
+                hostfile.save(file_location)
             self.jarvis.set_hostfile(file_location)
             Pipeline().load(pipeline_name).update().save()  # this calls the config step
 
