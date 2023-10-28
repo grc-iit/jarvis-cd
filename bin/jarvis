@@ -1228,25 +1228,23 @@ class JarvisArgs(ArgParse):
 
     def pipeline_run(self):
         pipeline_name = self.kwargs['pipeline_name']
+        pipeline = Pipeline().load(pipeline_name)
+        file_location = os.path.join(pipeline.config_dir,
+                                     'hostfile.txt')
         if self.kwargs['slurm_host']:
-            file_location = f'{self.jarvis.config_dir}/{pipeline_name}/slurm_{pipeline_name}_hostfile'
             SlurmHostfile(file_location, self.kwargs['host_suffix'])
             self.jarvis.set_hostfile(file_location)
-            Pipeline().load(pipeline_name).update().save()  # this calls the config step
+            pipeline.update().save()  # this calls the config step
         if self.kwargs['pbs_host']:
-            file_location = os.environ.get('PBS_NODEFILE')
+            orig_nodefile = os.environ.get('PBS_NODEFILE')
             if self.kwargs['polaris']:
-                hostfile = Hostfile(hostfile=file_location)
+                hostfile = Hostfile(hostfile=orig_nodefile)
                 for i, host in enumerate(hostfile.hosts):
                     hostfile.hosts[i] = host.split('.')[0]
-                hostfile.save(file_location)
+            hostfile.save(file_location)
             self.jarvis.set_hostfile(file_location)
-            Pipeline().load(pipeline_name).update().save()  # this calls the config step
-
-        if pipeline_name is None:
-            Pipeline().load().run()  # run current pipeline
-        else:
-            Pipeline().load(pipeline_name).run()
+            pipeline.update().save()  # this calls the config step
+        pipeline.run()
 
     def pipeline_sbatch(self):
         pipeline_name = Pipeline().load().global_id
