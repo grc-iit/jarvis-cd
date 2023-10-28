@@ -56,7 +56,7 @@ class HermesViz(Application):
 
         :return: None
         """
-        cmd = f'python hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]}'
+        cmd = f'python3 hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]}'
         Exec(cmd, LocalExecInfo())
 
     def stop(self):
