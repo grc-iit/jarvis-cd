@@ -1236,7 +1236,7 @@ class JarvisArgs(ArgParse):
         if self.kwargs['pbs_host']:
             file_location = os.environ.get('PBS_NODEFILE')
             if self.kwargs['polaris']:
-                hostfile = Hostfile(hostfile=filename)
+                hostfile = Hostfile(hostfile=file_location)
                 for i, host in enumerate(hostfile.hosts):
                     hostfile.hosts[i] = host.split('.')[0]
                 hostfile.save(file_location)
