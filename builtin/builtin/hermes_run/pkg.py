@@ -104,7 +104,8 @@ class HermesRun(Service):
                 'max_queues': 1024,
                 'shm_allocator': 'kScalablePageAllocator',
                 'shm_name': 'hrun_shm',
-                'shm_size': '0g'
+                'shm_size': '0g',
+                'data_shm_size': '8g',
             },
             'devices': {},
             'rpc': {}
