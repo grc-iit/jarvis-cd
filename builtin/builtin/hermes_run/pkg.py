@@ -31,7 +31,7 @@ class HermesRun(Service):
                 'name': 'ram',
                 'msg': 'Amount of RAM to use for buffering',
                 'type': str,
-                'default': 0
+                'default': '0'
             },
             {
                 'name': 'port',
