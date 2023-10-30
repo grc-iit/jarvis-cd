@@ -31,7 +31,7 @@ class HermesRun(Service):
                 'name': 'ram',
                 'msg': 'Amount of RAM to use for buffering',
                 'type': str,
-                'default': None
+                'default': 0
             },
             {
                 'name': 'port',
@@ -162,7 +162,7 @@ class HermesRun(Service):
             }
             Mkdir(mount, PsshExecInfo(hostfile=self.jarvis.hostfile,
                                       env=self.env))
-        if 'ram' in self.config and self.config['ram'] is not None:
+        if 'ram' in self.config and self.config['ram'] != 0:
             hermes_server['devices']['ram'] = {
                 'mount_point': '',
                 'capacity': self.config['ram'],
