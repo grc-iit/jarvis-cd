@@ -34,6 +34,12 @@ class HermesRun(Service):
                 'default': '0'
             },
             {
+                'name': 'data_shm',
+                'msg': 'Data buffering space',
+                'type': str,
+                'default': '8g'
+            },
+            {
                 'name': 'port',
                 'msg': 'The port to listen for data on',
                 'type': int,
@@ -105,7 +111,7 @@ class HermesRun(Service):
                 'shm_allocator': 'kScalablePageAllocator',
                 'shm_name': 'hrun_shm',
                 'shm_size': '0g',
-                'data_shm_size': '8g',
+                'data_shm_size': self.config['data_shm'],
             },
             'devices': {},
             'rpc': {}
