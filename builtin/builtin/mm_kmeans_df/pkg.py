@@ -51,7 +51,7 @@ class MmKmeansDf(Application):
             },
         ]
 
-    def configure(self, **kwargs):
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -59,7 +59,6 @@ class MmKmeansDf(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
         self.path = self.config['path']
         Mkdir(str(pathlib.Path(self.path).parent),
               LocalExecInfo(env=self.env))

@@ -68,7 +68,7 @@ class Hermes(Service):
             },
         ]
 
-    def configure(self, **kwargs):
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -77,7 +77,6 @@ class Hermes(Service):
         application.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
         self._configure_server()
         self._configure_client()
 

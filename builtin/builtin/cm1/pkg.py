@@ -90,7 +90,7 @@ class Cm1(Application):
             },
         ]
 
-    def configure(self, **kwargs):
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -98,7 +98,6 @@ class Cm1(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
         # Create output directories
         if self.config['output'] is None:
             self.config['output'] = f'{self.shared_dir}/cm1_out'

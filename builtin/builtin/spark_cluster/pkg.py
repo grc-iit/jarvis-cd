@@ -39,7 +39,7 @@ class SparkCluster(Service):
             },
         ]
 
-    def configure(self, **kwargs):
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -47,7 +47,6 @@ class SparkCluster(Service):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
         self.config['SPARK_SCRIPTS'] = self.env['SPARK_SCRIPTS']
         self.env['SPARK_MASTER_HOST'] = self.jarvis.hostfile.hosts[0]
         self.env['SPARK_MASTER_PORT'] = '7077'
