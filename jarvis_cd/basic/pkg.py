@@ -194,6 +194,43 @@ class Pkg(ABC):
         except FileNotFoundError:
             pass
 
+    def insert(self, at_id, pkg_type, pkg_id=None, do_configure=True, **kwargs):
+        """
+        Create and append a pkg to the pipeline
+
+        :param at_id: The id of the pkg to insert at
+        :param pkg_type: The type of pkg to create (e.g., OrangeFS)
+        :param pkg_id: Semantic name of the pkg to create
+        :param do_configure: Whether to configure while appending
+        :param kwargs: Any parameters the user want to configure in the pkg
+        :return: self
+        """
+        if pkg_id is None:
+            pkg_id = self._make_unique_name(pkg_type)
+        off = 0
+        if at_id is None or len(self.config['sub_pkgs']) == 0:
+            self.config['sub_pkgs'].append([pkg_type, pkg_id])
+            off = -1
+        else:
+            if isinstance(at_id, int):
+                off = at_id
+            else:
+                for sub_pkg_type, sub_pkg_id in self.config['sub_pkgs']:
+                    if sub_pkg_id == at_id:
+                        break
+                    off += 1
+            self.config['sub_pkgs'].insert(off, [pkg_type, pkg_id])
+        pkg = self.jarvis.construct_pkg(pkg_type)
+        if pkg is None:
+            raise Exception(f'Could not find pkg: {pkg_type}')
+        global_id = f'{self.global_id}.{pkg_id}'
+        pkg.create(global_id)
+        if do_configure:
+            pkg.update_env(self.env)
+            pkg.configure(**kwargs)
+        self.sub_pkgs.insert(off, pkg)
+        return self
+
     def append(self, pkg_type, pkg_id=None, do_configure=True, **kwargs):
         """
         Create and append a pkg to the pipeline
@@ -204,19 +241,19 @@ class Pkg(ABC):
         :param kwargs: Any parameters the user want to configure in the pkg
         :return: self
         """
-        if pkg_id is None:
-            pkg_id = self._make_unique_name(pkg_type)
-        self.config['sub_pkgs'].append([pkg_type, pkg_id])
-        pkg = self.jarvis.construct_pkg(pkg_type)
-        if pkg is None:
-            raise Exception(f'Could not find pkg: {pkg_type}')
-        global_id = f'{self.global_id}.{pkg_id}'
-        pkg.create(global_id)
-        if do_configure:
-            pkg.update_env(self.env)
-            pkg.configure(**kwargs)
-        self.sub_pkgs.append(pkg)
-        return self
+        return self.insert(None, pkg_type, pkg_id, do_configure, **kwargs)
+
+    def prepend(self, pkg_type, pkg_id=None, do_configure=True, **kwargs):
+        """
+        Create and append a pkg to the pipeline
+
+        :param pkg_type: The type of pkg to create (e.g., OrangeFS)
+        :param pkg_id: Semantic name of the pkg to create
+        :param do_configure: Whether to configure while appending
+        :param kwargs: Any parameters the user want to configure in the pkg
+        :return: self
+        """
+        return self.insert(0, pkg_type, pkg_id, do_configure, **kwargs)
 
     def _make_unique_name(self, pkg_type):
         if self.get_pkg(pkg_type) is None:
@@ -463,6 +500,18 @@ class SimplePkg(Pkg):
                 'type': bool,
                 'default': False
             },
+            {
+                'name': 'do_dbg',
+                'msg': 'Enable or disable debugging',
+                'type': bool,
+                'default': False
+            },
+            {
+                'name': 'dbg_port',
+                'msg': 'The port to use for debugging',
+                'type': int,
+                'default': 4000
+            },
         ]
         return menu
 
@@ -477,8 +526,12 @@ class SimplePkg(Pkg):
         """
         return []
 
-    @abstractmethod
     def configure(self, **kwargs):
+        self.update_config(kwargs, rebuild=kwargs['reinit'])
+        self._configure(**kwargs)
+
+    @abstractmethod
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -523,7 +576,7 @@ class SimplePkg(Pkg):
             text = fp.read()
         if replacements is not None:
             for const_name, replace in replacements:
-                text = text.replace(f'##{const_name}##', replace)
+                text = text.replace(f'##{const_name}##', str(replace))
         with open(dst, 'w', encoding='utf-8') as fp:
             fp.write(text)
 

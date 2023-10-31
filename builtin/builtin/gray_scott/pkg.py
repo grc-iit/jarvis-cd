@@ -103,13 +103,13 @@ class GrayScott(Application):
             {
                 'name': 'engine',
                 'msg': 'Engien to be used',
-                'choices': ['bp5','hermes'],
+                'choices': ['bp5', 'hermes'],
                 'type': str,
-                'default': None,
+                'default': 'bp5',
             },
         ]
 
-    def configure(self, **kwargs):
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -117,7 +117,6 @@ class GrayScott(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
         if self.config['output'] is None:
             adios_dir = os.path.join(self.shared_dir, 'gray-scott-output')
             self.config['output'] = os.path.join(adios_dir,
@@ -142,10 +141,10 @@ class GrayScott(Application):
                            env=self.env))
         JsonFile(self.settings_json_path).save(settings_json)
 
-        if lower(self.config['engine']) == 'bp5':
+        if self.config['engine'].lower() == 'bp5':
             self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
                                 self.adios2_xml_path)
-        elif lower(self.config['engine']) == 'hermes':
+        elif self.config['engine'].lower() == 'hermes':
             self.copy_template_file(f'{self.pkg_dir}/config/hermes.xml',
                                     self.adios2_xml_path)
         else:

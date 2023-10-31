@@ -76,7 +76,7 @@ class NyxLya(Application):
             },
         ]
 
-    def configure(self, **kwargs):
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -84,7 +84,6 @@ class NyxLya(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
         if self.config['nyx_install_path'] is None:
             print("Error: please provide the path to Nyx installation....")
             exit(1)

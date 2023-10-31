@@ -58,7 +58,7 @@ class MmSort(Application):
             },
         ]
 
-    def configure(self, **kwargs):
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -66,7 +66,6 @@ class MmSort(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
         self.config['scratch'] = os.path.expandvars(self.config['scratch'])
         Mkdir(self.config['scratch'],
               PsshExecInfo(hosts=self.jarvis.hostfile))

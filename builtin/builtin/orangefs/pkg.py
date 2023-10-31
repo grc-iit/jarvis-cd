@@ -71,7 +71,7 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
             },
         ]
 
-    def configure(self, **kwargs):
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -79,7 +79,6 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
         rg = self.jarvis.resource_graph
         if self.config['ares']:
             self.config['sudoenv'] = False

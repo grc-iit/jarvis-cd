@@ -494,6 +494,75 @@ class JarvisArgs(ArgParse):
             },
         ])
 
+        # jarvis pipeline prepend
+        self.add_menu('pipeline prepend',
+                      msg='Prepend a pkg to a pipeline',
+                      keep_remainder=True)
+        self.add_args([
+            {
+                'name': 'pkg_type',
+                'msg': 'The type of pkg being added to the pipeline',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'pkg_id',
+                'msg': 'The unique name of the pkg being added to '
+                       'the pipeline. By default, will be equal to '
+                       'pkg_type',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'conf',
+                'msg': 'Should be run the configure step on the pkg',
+                'required': False,
+                'pos': False,
+                'default': True,
+                'type': bool
+            },
+        ])
+
+        # jarvis pipeline insert
+        self.add_menu('pipeline insert',
+                      msg='Prepend a pkg to a pipeline',
+                      keep_remainder=True)
+        self.add_args([
+            {
+                'name': 'at_id',
+                'msg': 'The id of the packge to insert at',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'pkg_type',
+                'msg': 'The type of pkg being added to the pipeline',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'pkg_id',
+                'msg': 'The unique name of the pkg being added to '
+                       'the pipeline. By default, will be equal to '
+                       'pkg_type',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'conf',
+                'msg': 'Should be run the configure step on the pkg',
+                'required': False,
+                'pos': False,
+                'default': True,
+                'type': bool
+            },
+        ])
+
         # pipeline env build
         self.add_menu('pipeline env build',
                       msg="Cache relevant environment vars. Use +ENV_VAR and"
@@ -582,7 +651,7 @@ class JarvisArgs(ArgParse):
             },
             {
                 'name': 'slurm_host',
-                'msg': 'The pipeline name to be run',
+                'msg': 'This is a SLURM job',
                 'required': False,
                 'pos': False,
                 'default': False,
@@ -590,7 +659,15 @@ class JarvisArgs(ArgParse):
             },
             {
                 'name': 'pbs_host',
-                'msg': 'The pipeline name to be run',
+                'msg': 'This is a PBS job',
+                'required': False,
+                'pos': False,
+                'default': False,
+                'type': bool
+            },
+            {
+                'name': 'polaris',
+                'msg': 'This is a PBS job on Polaris',
                 'required': False,
                 'pos': False,
                 'default': False,
@@ -798,6 +875,14 @@ class JarvisArgs(ArgParse):
                 'required': False,
                 'pos': False,
                 'default': None
+            },
+            {
+                'name': 'polaris',
+                'msg': 'Submit using polaris',
+                'required': False,
+                'pos': False,
+                'default': False,
+                'type': bool
             },
         ])
 
@@ -1074,14 +1159,7 @@ class JarvisArgs(ArgParse):
     def pipeline_env_scan(self):
         Pipeline().load().scan_env(self.kwargs).save()
 
-    def pipeline_append(self):
-        pkg_id = self.kwargs['pkg_id']
-        pipeline = Pipeline().load()
-        if pkg_id is None:
-            pkg_id = self.kwargs['pkg_type']
-        pipeline.append(self.kwargs['pkg_type'],
-                   pkg_id_=pkg_id,
-                   do_configure=False)
+    def maybe_configure(self, pipeline, pkg_id):
         pkg = pipeline.get_pkg(pkg_id)
         menu = pkg.configure_menu()
         args = PkgArgParse(args=self.remainder, menu=menu)
@@ -1091,6 +1169,38 @@ class JarvisArgs(ArgParse):
             pkg.update_env(pipeline.env)
             pkg.update_config(args.kwargs)
         pipeline.save()
+
+    def pipeline_append(self):
+        pkg_id = self.kwargs['pkg_id']
+        pipeline = Pipeline().load()
+        if pkg_id is None:
+            pkg_id = self.kwargs['pkg_type']
+        pipeline.append(self.kwargs['pkg_type'],
+                        pkg_id=pkg_id,
+                        do_configure=False)
+        self.maybe_configure(pipeline, pkg_id)
+
+    def pipeline_prepend(self):
+        pkg_id = self.kwargs['pkg_id']
+        pipeline = Pipeline().load()
+        if pkg_id is None:
+            pkg_id = self.kwargs['pkg_type']
+        pipeline.prepend(self.kwargs['pkg_type'],
+                         pkg_id=pkg_id,
+                         do_configure=False)
+        self.maybe_configure(pipeline, pkg_id)
+
+    def pipeline_insert(self):
+        at_id = self.kwargs['at_id']
+        pkg_id = self.kwargs['pkg_id']
+        pipeline = Pipeline().load()
+        if pkg_id is None:
+            pkg_id = self.kwargs['pkg_type']
+        pipeline.insert(self.kwargs['at_id'],
+                        self.kwargs['pkg_type'],
+                        pkg_id=pkg_id,
+                        do_configure=False)
+        self.maybe_configure(pipeline, pkg_id)
 
     def pipeline_update(self):
         Pipeline().load().update().save()
@@ -1118,20 +1228,23 @@ class JarvisArgs(ArgParse):
 
     def pipeline_run(self):
         pipeline_name = self.kwargs['pipeline_name']
+        pipeline = Pipeline().load(pipeline_name)
+        file_location = os.path.join(pipeline.config_dir,
+                                     'hostfile.txt')
         if self.kwargs['slurm_host']:
-            file_location = f'{self.jarvis.config_dir}/{pipeline_name}/slurm_{pipeline_name}_hostfile'
             SlurmHostfile(file_location, self.kwargs['host_suffix'])
             self.jarvis.set_hostfile(file_location)
-            Pipeline().load(pipeline_name).update().save()  # this calls the config step
+            pipeline.update().save()  # this calls the config step
         if self.kwargs['pbs_host']:
-            file_location = os.environ.get('PBS_NODEFILE')
+            orig_nodefile = os.environ.get('PBS_NODEFILE')
+            if self.kwargs['polaris']:
+                hostfile = Hostfile(hostfile=orig_nodefile)
+                for i, host in enumerate(hostfile.hosts):
+                    hostfile.hosts[i] = host.split('.')[0]
+            hostfile.save(file_location)
             self.jarvis.set_hostfile(file_location)
-            Pipeline().load(pipeline_name).update().save()  # this calls the config step
-
-        if pipeline_name is None:
-            Pipeline().load().run()  # run current pipeline
-        else:
-            Pipeline().load(pipeline_name).run()
+            pipeline.update().save()  # this calls the config step
+        pipeline.run()
 
     def pipeline_sbatch(self):
         pipeline_name = Pipeline().load().global_id
@@ -1178,7 +1291,13 @@ class JarvisArgs(ArgParse):
             interactive=self.kwargs['interactive'],
             bash_script=script_location
         )
-        PbsExec(f'jarvis pipeline run {pipeline_name} +pbs_host', pbs_info)
+        cmd = [
+            f'jarvis pipeline run {pipeline_name} +pbs_host'
+        ]
+        if self.kwargs['polaris']:
+            cmd.append('+polaris')
+        cmd = ' '.join(cmd)
+        PbsExec(cmd, pbs_info)
 
     def pipeline_start(self):
         Pipeline().load().start()

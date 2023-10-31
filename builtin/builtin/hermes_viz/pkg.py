@@ -1,14 +1,14 @@
 """
-This module provides classes and methods to launch the MmKmeansDf application.
-MmKmeansDf is ....
+This module provides classes and methods to launch the Ior application.
+Ior is ....
 """
 from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 
 
-class MmKmeansDf(Application):
+class HermesViz(Application):
     """
-    This class provides methods to launch the MmKmeansDf application.
+    This class provides methods to launch the Ior application.
     """
     def _init(self):
         """
@@ -26,28 +26,16 @@ class MmKmeansDf(Application):
         """
         return [
             {
-                'name': 'path',
-                'msg': 'The output path',
-                'type': str,
-                'default': None,
+                'name': 'port',
+                'msg': 'Por the server will listen at',
+                'type': int,
+                'default': 5000,
             },
             {
-                'name': 'df_size',
-                'msg': 'The output path',
-                'type': str,
-                'default': '16g',
-            },
-            {
-                'name': 'window_size',
-                'msg': 'The output path',
-                'type': str,
-                'default': '256m',
-            },
-            {
-                'name': 'nprocs',
-                'msg': 'The output path',
-                'type': str,
-                'default': '16',
+                'name': 'pooling',
+                'msg': 'Time in seconds (accepts floats) that server will sleep between pooling hermes',
+                'type': float,
+                'default': 0.5,
             },
         ]
 
@@ -59,9 +47,7 @@ class MmKmeansDf(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.path = self.config['path']
-        Mkdir(str(pathlib.Path(self.path).parent),
-              LocalExecInfo(env=self.env))
+        pass
 
     def start(self):
         """
@@ -70,14 +56,8 @@ class MmKmeansDf(Application):
 
         :return: None
         """
-        cmd = [
-            'kmeans_df',
-            self.config['path'],
-            self.config['df_size'],
-            self.config['window_size']
-        ]
-        cmd = ' '.join(cmd)
-        Exec(cmd, MpiExecInfo(nprocs=self.config['nprocs']))
+        cmd = f'python3 hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]}'
+        Exec(cmd, LocalExecInfo())
 
     def stop(self):
         """
@@ -95,4 +75,4 @@ class MmKmeansDf(Application):
 
         :return: None
         """
-        Rm(f'{self.config["path"]}*')
+        pass

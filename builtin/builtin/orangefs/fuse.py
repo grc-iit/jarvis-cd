@@ -77,7 +77,7 @@ class OrangefsFuse(Service):
         }
         return config
 
-    def configure(self, **kwargs):
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -85,7 +85,6 @@ class OrangefsFuse(Service):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
         rg = self.jarvis.resource_graph
         self.md_hosts = self.jarvis.hostfile
         if self.config['md_hosts'] is None:

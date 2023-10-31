@@ -90,7 +90,7 @@ class Ior(Application):
             },
         ]
 
-    def configure(self, **kwargs):
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -98,7 +98,6 @@ class Ior(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
         self.config['api'] = self.config['api'].upper()
 
     def start(self):
@@ -128,6 +127,8 @@ class Ior(Application):
         else:
             os.makedirs(self.config['out'], exist_ok=True)
         # pipe_stdout=self.config['log']
+        Exec('which mpiexec',
+             LocalExecInfo(env=self.mod_env))
         Exec(' '.join(cmd),
              MpiExecInfo(env=self.mod_env,
                          hostfile=self.jarvis.hostfile,

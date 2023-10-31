@@ -52,7 +52,7 @@ class HermesApi(Interceptor):
             },
         ]
 
-    def configure(self, **kwargs):
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -60,7 +60,6 @@ class HermesApi(Interceptor):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
         has_one = False
         if self.config['mpi']:
             self.config['HERMES_MPIIO'] = self.find_library('hermes_mpiio')

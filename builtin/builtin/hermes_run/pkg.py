@@ -31,7 +31,13 @@ class HermesRun(Service):
                 'name': 'ram',
                 'msg': 'Amount of RAM to use for buffering',
                 'type': str,
-                'default': None
+                'default': '0'
+            },
+            {
+                'name': 'data_shm',
+                'msg': 'Data buffering space',
+                'type': str,
+                'default': '8g'
             },
             {
                 'name': 'port',
@@ -77,7 +83,7 @@ class HermesRun(Service):
             }
         ]
 
-    def configure(self, **kwargs):
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -86,7 +92,6 @@ class HermesRun(Service):
         application.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
         self._configure_server()
 
     def _configure_server(self):
@@ -99,12 +104,13 @@ class HermesRun(Service):
                 'max_workers': 4
             },
             'queue_manager': {
-                'queue_depth': 8192,
+                'queue_depth': 100000,
                 'max_lanes': 1,
                 'max_queues': 1024,
                 'shm_allocator': 'kScalablePageAllocator',
                 'shm_name': 'hrun_shm',
-                'shm_size': '0g'
+                'shm_size': '0g',
+                'data_shm_size': self.config['data_shm'],
             },
             'devices': {},
             'rpc': {}
@@ -162,7 +168,7 @@ class HermesRun(Service):
             }
             Mkdir(mount, PsshExecInfo(hostfile=self.jarvis.hostfile,
                                       env=self.env))
-        if 'ram' in self.config and self.config['ram'] is not None:
+        if 'ram' in self.config and self.config['ram'] != '0':
             hermes_server['devices']['ram'] = {
                 'mount_point': '',
                 'capacity': self.config['ram'],
