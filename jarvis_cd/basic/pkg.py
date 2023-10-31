@@ -255,22 +255,6 @@ class Pkg(ABC):
         """
         return self.insert(0, pkg_type, pkg_id, do_configure, **kwargs)
 
-    def enable_debug(self, dbg_port):
-        """
-        Enable debugging for this pipeline. Sets the base debugging port,
-        where sub pkgs in the pipeline can edit.
-
-        :param dbg_port: Enable the debugging port
-        :return: self
-        """
-        self.config['do_dbg'] = True
-        self.config['dbg_port'] = dbg_port
-        return self
-
-    def disable_debug(self):
-        self.config['do_dbg'] = False
-        return self
-
     def _make_unique_name(self, pkg_type):
         if self.get_pkg(pkg_type) is None:
             return pkg_type
