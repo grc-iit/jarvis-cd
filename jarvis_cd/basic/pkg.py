@@ -59,6 +59,7 @@ class Pkg(ABC):
         self.env_path = None
         self.env = None
         self.mod_env = None
+        self.exit_code = 0
 
     def _init_common(self, global_id, root):
         """
@@ -161,7 +162,16 @@ class Pkg(ABC):
         """
         Destroy a pipeline's sub-pkgs
 
-        :return: None
+        :return: self
+        """
+        self.reset()
+        return self
+
+    def reset(self):
+        """
+        Destroy a pipeline's sub-pkgs
+
+        :return: self
         """
         try:
             for dir_name in os.listdir(self.config_dir):
@@ -169,8 +179,10 @@ class Pkg(ABC):
                 if os.path.isdir(path):
                     shutil.rmtree(path)
             os.remove(self.config_path)
+            self.create(self.global_id)
         except FileNotFoundError:
             pass
+        return self
 
     def get_path(self, config=False, shared=False, private=False):
         if shared:
@@ -527,6 +539,8 @@ class SimplePkg(Pkg):
         return []
 
     def configure(self, **kwargs):
+        if 'reinit' not in kwargs:
+            kwargs['reinit'] = False
         self.update_config(kwargs, rebuild=kwargs['reinit'])
         self._configure(**kwargs)
 
@@ -714,7 +728,7 @@ class Pipeline(Pkg):
         """
         pipeline_id = config['name']
         self.create(pipeline_id)
-        self.clear()
+        self.reset()
         if 'env' in config:
             self.copy_static_env(config['env'])
         for sub_pkg in config['pkgs']:
@@ -815,6 +829,7 @@ class Pipeline(Pkg):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.modify_env()
                 self.mod_env.update(self.env)
+            self.exit_code += pkg.exit_code
 
     def stop(self):
         """

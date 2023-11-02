@@ -64,10 +64,11 @@ class HermesPosixTests(Application):
         code = 1
         if test:
             code = test()
-        exit(code)
+        self.exit_code = 1
 
     def test_posix_basic(self):
-        node = Exec('posix_adapter_test')
+        node = Exec('posix_adapter_test',
+                    LocalExecInfo(env=self.mod_env))
         return node.exit_code
 
     def test_hermes_posix_basic_small(self):

@@ -34,7 +34,7 @@ class Echo(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
+        pass
 
     def start(self):
         """
