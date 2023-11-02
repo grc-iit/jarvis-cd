@@ -76,7 +76,9 @@ class HermesUnitTests(Application):
                  MpiExecInfo(hostfile=self.jarvis.hostfile,
                              nprocs=len(self.jarvis.hostfile),
                              ppn=1,
-                             env=self.env))
+                             env=self.env,
+                             do_dbg=self.config['do_dbg'],
+                             dbg_port=self.config['dbg_port']))
         elif self.config['TEST_CASE'] in test_latency_execs:
             Exec(f'test_performance_exec {self.config["TEST_CASE"]}',
                  LocalExecInfo(env=self.env))
