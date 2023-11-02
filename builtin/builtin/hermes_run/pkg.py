@@ -251,7 +251,9 @@ class HermesRun(Service):
         self.daemon_pkg = Exec('hrun_start_runtime',
                                 PsshExecInfo(hostfile=self.jarvis.hostfile,
                                              env=self.env,
-                                             exec_async=True))
+                                             exec_async=True,
+                                             do_dbg=self.config['do_dbg'],
+                                             dbg_port=self.config['dbg_port']))
         time.sleep(self.config['sleep'])
         print('Done sleeping')
 

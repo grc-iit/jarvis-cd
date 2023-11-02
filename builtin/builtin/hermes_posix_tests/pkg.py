@@ -64,7 +64,7 @@ class HermesPosixTests(Application):
         code = 1
         if test:
             code = test()
-        self.exit_code = 1
+        self.exit_code = code
 
     def test_posix_basic(self):
         node = Exec('posix_adapter_test',
