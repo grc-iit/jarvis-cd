@@ -14,16 +14,7 @@ class HermesPosixTests(Application):
         """
         Initialize paths
         """
-        self.choices = [
-            'posix_basic',
-            'hermes_posix_basic_small',
-            'hermes_posix_basic_large',
-            'posix_basic_mpi',
-            'hermes_posix_basic_mpi_small',
-            'hermes_posix_basic_mpi_large',
-            'posix_simple_io_omp',
-            'hermes_posix_simple_io_omp',
-        ]
+        pass
 
     def _configure_menu(self):
         """
@@ -35,12 +26,33 @@ class HermesPosixTests(Application):
         """
         return [
             {
-                'name': 'TEST_CASE',
+                'name': 'test_file',
+                'choices': ['posix_basic',
+                            'posix_basic_mpi',
+                            'posix_simple_io_omp'],
                 'msg': '',
                 'type': str,
                 'default': None,
-                'choices': self.choices,
-            }
+            },
+            {
+                'name': 'test_case',
+                'msg': 'Specify exact test case to run',
+                'type': str,
+                'default': None,
+            },
+            {
+                'name': 'hermes',
+                'msg': 'Whether or not to use Hermes',
+                'type': bool,
+                'default': False,
+            },
+            {
+                'name': 'size',
+                'msg': 'The size of the test to run',
+                'choices': [None, 'small', 'large'],
+                'type': str,
+                'default': None,
+            },
         ]
 
     def _configure(self, **kwargs):
@@ -60,108 +72,59 @@ class HermesPosixTests(Application):
 
         :return: None
         """
-        test = getattr(self, f'test_{self.config["TEST_CASE"]}')
-        code = 1
-        if test:
-            code = test()
-        self.exit_code = code
+        test_fun = getattr(self, f'test_{self.config["test_file"]}')
+        test_fun()
 
     def test_posix_basic(self):
-        node = Exec('posix_adapter_test',
-                    LocalExecInfo(env=self.mod_env))
-        return node.exit_code
-
-    def test_hermes_posix_basic_small(self):
-        posix_cmd = [
-            'hermes_posix_adapter_test',
-            '~[request_size=range-small]',
-            '--reporter compact -d yes'
-        ]
-        posix_cmd = ''.join(posix_cmd)
-        node = Exec(posix_cmd,
-                    LocalExecInfo(env=self.mod_env,
-                                  do_dbg=self.config['do_dbg'],
-                                  dbg_port=self.config['dbg_port']))
-        return node.exit_code
-
-    def test_hermes_posix_basic_large(self):
-        posix_cmd = [
-            'hermes_posix_adapter_test',
-            '~[request_size=range-large]',
-            '--reporter compact -d yes'
-        ]
-        posix_cmd = ''.join(posix_cmd)
-        node = Exec(posix_cmd,
+        cmd = 'posix_adapter_test'
+        if self.config['hermes']:
+            cmd = f'hermes_{cmd}'
+        if self.config['test_case']:
+            cmd = f'{cmd} {self.config["test_case"]}'
+        else:
+            posix_cmd = [cmd]
+            if self.config['size'] == 'small':
+                posix_cmd.append('~[request_size=range-small]')
+            elif self.config['size'] == 'large':
+                posix_cmd.append('~[request_size=range-large]')
+            posix_cmd.append('--reporter compact -d yes')
+            cmd = ' '.join(posix_cmd)
+        node = Exec(cmd,
                     LocalExecInfo(env=self.mod_env,
                                   do_dbg=self.config['do_dbg'],
                                   dbg_port=self.config['dbg_port']))
         return node.exit_code
 
     def test_posix_basic_mpi(self):
-        node = Exec('posix_adapter_test',
+        cmd = 'posix_adapter_mpi_test'
+        if self.config['hermes']:
+            cmd = f'hermes_{cmd}'
+        if self.config['test_case']:
+            cmd = f'{cmd} {self.config["test_case"]}'
+        else:
+            posix_cmd = [cmd]
+            if self.config['size'] == 'small':
+                posix_cmd.append('~[request_size=range-small]')
+            elif self.config['size'] == 'large':
+                posix_cmd.append('~[request_size=range-large]')
+            posix_cmd.append('--reporter compact -d yes')
+            cmd = ' '.join(posix_cmd)
+        node = Exec(cmd,
                     MpiExecInfo(nprocs=2,
-                                hostfile=self.jarvis.hostfile,
-                                env=self.mod_env,
-                                do_dbg=self.config['do_dbg'],
-                                dbg_port=self.config['dbg_port']))
-        return node.exit_code
-
-    def test_hermes_posix_basic_mpi_small(self):
-        posix_cmd = [
-            'hermes_posix_adapter_mpi_test',
-            '~[request_size=range-small]',
-            '--reporter compact -d yes'
-        ]
-        posix_cmd = ''.join(posix_cmd)
-        node = Exec(posix_cmd,
-                    MpiExecInfo(nprocs=2,
-                                hostfile=self.jarvis.hostfile,
-                                env=self.mod_env,
-                                do_dbg=self.config['do_dbg'],
-                                dbg_port=self.config['dbg_port']))
-        return node.exit_code
-
-    def test_hermes_posix_basic_mpi_large(self):
-        posix_cmd = [
-            'hermes_posix_adapter_mpi_test',
-            '~[request_size=range-large]',
-            '--reporter compact -d yes'
-        ]
-        posix_cmd = ''.join(posix_cmd)
-        node = Exec(posix_cmd,
-                    MpiExecInfo(nprocs=2,
-                                hostfile=self.jarvis.hostfile,
                                 env=self.mod_env,
                                 do_dbg=self.config['do_dbg'],
                                 dbg_port=self.config['dbg_port']))
         return node.exit_code
 
     def test_posix_simple_io_omp(self):
-        posix_cmd = [
-            'posix_simple_io_omp',
-            '/tmp/test_hermes/hi.txt 0 1024 8 0'
-        ]
-        posix_cmd = ''.join(posix_cmd)
-        node = Exec(posix_cmd,
-                    MpiExecInfo(nprocs=2,
-                                hostfile=self.jarvis.hostfile,
-                                env=self.mod_env,
-                                do_dbg=self.config['do_dbg'],
-                                dbg_port=self.config['dbg_port']))
-        return node.exit_code
-
-    def test_hermes_posix_simple_io_omp(self):
-        posix_cmd = [
-            'hermes_posix_simple_io_omp',
-            '/tmp/test_hermes/hi.txt 0 1024 8 0'
-        ]
-        posix_cmd = ''.join(posix_cmd)
-        node = Exec(posix_cmd,
-                    MpiExecInfo(nprocs=2,
-                                hostfile=self.jarvis.hostfile,
-                                env=self.mod_env,
-                                do_dbg=self.config['do_dbg'],
-                                dbg_port=self.config['dbg_port']))
+        cmd = 'posix_simple_io_omp'
+        if self.config['hermes']:
+            cmd = f'hermes_{cmd}'
+        cmd = f'{cmd} /tmp/test_hermes/hi.txt 0 1024 8 0'
+        node = Exec(cmd,
+                    LocalExecInfo(env=self.mod_env,
+                                  do_dbg=self.config['do_dbg'],
+                                  dbg_port=self.config['dbg_port']))
         return node.exit_code
 
     def stop(self):
