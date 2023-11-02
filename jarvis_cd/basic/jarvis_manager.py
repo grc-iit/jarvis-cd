@@ -340,6 +340,7 @@ class JarvisManager:
         """
         repo = self.get_repo(repo_name)
         pkg_types = os.listdir(os.path.join(repo['path'], repo['name']))
+        pkg_types.sort()
         print(f'{repo["name"]}: {repo["path"]}')
         for pkg_type in pkg_types:
             if not pkg_type.startswith('_'):
