@@ -52,12 +52,6 @@ class HermesStdioTests(Application):
                 'type': str,
                 'default': None,
             },
-            {
-                'name': 'output',
-                'msg': 'File to use for standard output & error',
-                'type': str,
-                'default': None,
-            },
         ]
 
     def _configure(self, **kwargs):
@@ -99,8 +93,8 @@ class HermesStdioTests(Application):
                     LocalExecInfo(env=self.mod_env,
                                   do_dbg=self.config['do_dbg'],
                                   dbg_port=self.config['dbg_port'],
-                                  pipe_stdout=self.config['output'],
-                                  pipe_stderr=self.config['output']))
+                                  pipe_stdout=self.config['stdout'],
+                                  pipe_stderr=self.config['stderr']))
         return node.exit_code
 
     def stop(self):

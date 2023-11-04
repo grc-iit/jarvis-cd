@@ -53,12 +53,6 @@ class HermesPosixTests(Application):
                 'type': str,
                 'default': None,
             },
-            {
-                'name': 'output',
-                'msg': 'File to use for standard output & error',
-                'type': str,
-                'default': None,
-            },
         ]
 
     def _configure(self, **kwargs):
@@ -122,7 +116,9 @@ class HermesPosixTests(Application):
                     MpiExecInfo(nprocs=2,
                                 env=self.mod_env,
                                 do_dbg=self.config['do_dbg'],
-                                dbg_port=self.config['dbg_port']))
+                                dbg_port=self.config['dbg_port'],
+                                pipe_stdout=self.config['stdout'],
+                                pipe_stderr=self.config['stderr']))
         return node.exit_code
 
     def test_posix_simple_io_omp(self):
