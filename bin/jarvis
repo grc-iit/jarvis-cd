@@ -15,7 +15,7 @@ class JarvisArgs(ArgParse):
         self.define_pipeline_opts()
         self.define_repo_opts()
         self.define_env_opts()
-        self.jutil.debug_mpi_exec = True
+        self.jutil.debug_mpi_exec = False
 
     def define_init_opts(self):
         # jarvis init

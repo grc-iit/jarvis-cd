@@ -80,7 +80,7 @@ class HermesStdioTests(Application):
         test_fun = getattr(self, f'test_{self.config["test_file"]}')
         test_fun()
 
-    def test_posix_basic(self):
+    def test_stdio_basic(self):
         cmd = 'stdio_adapter_test'
         if self.config['hermes']:
             cmd = f'hermes_{cmd}'

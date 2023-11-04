@@ -524,6 +524,20 @@ class SimplePkg(Pkg):
                 'type': int,
                 'default': 4000
             },
+            {
+                'name': 'stdout',
+                'msg': 'The file to use for holding output. Use stderr to'
+                       'pipe to the same file as stderr.',
+                'type': str,
+                'default': None
+            },
+            {
+                'name': 'stderr',
+                'msg': 'The file to use for holding error output. Use stdout '
+                       'to pipe to the same file as stdout.',
+                'type': str,
+                'default': None
+            },
         ]
         return menu
 
@@ -541,6 +555,14 @@ class SimplePkg(Pkg):
     def configure(self, **kwargs):
         if 'reinit' not in kwargs:
             kwargs['reinit'] = False
+        if 'stdout' not in kwargs:
+            kwargs['stdout'] = None
+        if 'stderr' not in kwargs:
+            kwargs['stderr'] = None
+        if kwargs['stdout'] == 'stderr':
+            kwargs['stdout'] = kwargs['stderr']
+        if kwargs['stderr'] == 'stdout':
+            kwargs['stderr'] = kwargs['stdout']
         self.update_config(kwargs, rebuild=kwargs['reinit'])
         self._configure(**kwargs)
 
