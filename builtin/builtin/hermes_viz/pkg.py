@@ -2,11 +2,11 @@
 This module provides classes and methods to launch the Ior application.
 Ior is ....
 """
-from jarvis_cd.basic.pkg import Application
+from jarvis_cd.basic.pkg import Service
 from jarvis_util import *
 
 
-class HermesViz(Application):
+class HermesViz(Service):
     """
     This class provides methods to launch the Ior application.
     """
@@ -77,7 +77,9 @@ class HermesViz(Application):
         cmd = f'hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]} ' \
               f'--real {self.config["real"]} --hostfile {self.config["hostfile"]} ' \
               f'--db_path {self.config["db_path"]}'
-        Exec(cmd, LocalExecInfo())
+        Exec(cmd, LocalExecInfo(env=self.env, exec_async=True))
+        time.sleep(self.config['sleep'])
+        print('Done sleeping')
 
     def stop(self):
         """
