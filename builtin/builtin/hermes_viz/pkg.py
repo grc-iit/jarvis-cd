@@ -77,7 +77,7 @@ class HermesViz(Service):
         cmd = f'hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]} ' \
               f'--real {self.config["real"]} --hostfile {self.config["hostfile"]} ' \
               f'--db_path {self.config["db_path"]}'
-        Exec(cmd, LocalExecInfo(env=self.env, exec_async=True))
+        self.daemon_pkg = Exec(cmd, LocalExecInfo(env=self.env, exec_async=True))
         time.sleep(self.config['sleep'])
         print('Done sleeping')
 
@@ -88,7 +88,13 @@ class HermesViz(Service):
 
         :return: None
         """
-        pass
+        print('Stopping hermes_viz')
+        Kill('hermes_viz.py',
+             LocalExecInfo(env=self.env),
+             partial=True)
+        if self.daemon_pkg is not None:
+            self.daemon_pkg.wait()
+        print('hermes_viz stoppped')
 
     def clean(self):
         """
