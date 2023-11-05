@@ -135,7 +135,7 @@ class Ior(Application):
                          nprocs=self.config['nprocs'],
                          ppn=self.config['ppn'],
                          do_dbg=self.config['do_dbg'],
-                         dbg_port=self.config_['dbg_port']))
+                         dbg_port=self.config['dbg_port']))
 
     def stop(self):
         """
