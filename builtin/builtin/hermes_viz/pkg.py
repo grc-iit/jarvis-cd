@@ -98,3 +98,12 @@ class HermesViz(Service):
         :return: None
         """
         pass
+
+    def status(self):
+        """
+        Check whether or not an application is running. E.g., are OrangeFS
+        servers running?
+
+        :return: True or false
+        """
+        return True
