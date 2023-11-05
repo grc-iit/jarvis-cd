@@ -74,7 +74,7 @@ class HermesViz(Application):
 
         :return: None
         """
-        cmd = f'python3 hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]}' \
+        cmd = f'hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]}' \
               f'--real {self.config["real"]} --hostfile {self.config["hostfile"]} ' \
               f'--db_path {self.config["db_path"]}'
         Exec(cmd, LocalExecInfo())
