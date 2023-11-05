@@ -37,6 +37,24 @@ class HermesViz(Application):
                 'type': float,
                 'default': 0.5,
             },
+            {
+                'name': 'real',
+                'msg': 'Generate data or capture from hermes',
+                'type': bool,
+                'default': True,
+            },
+            {
+                'name': 'hostfile',
+                'msg': 'hostfile with nodes under which we are running',
+                'type': str,
+                'default': "~/jarvis_node_normal",
+            },
+            {
+                'name': 'db_path',
+                'msg': 'path to the database to gather the metadata',
+                'type': str,
+                'default': "/mnt/nvme/jcernudagarcia/metadata.db",
+            },
         ]
 
     def _configure(self, **kwargs):
@@ -56,7 +74,9 @@ class HermesViz(Application):
 
         :return: None
         """
-        cmd = f'python3 hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]}'
+        cmd = f'python3 hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]}' \
+              f'--real {self.config["real"]} --hostfile {self.config["hostfile"]} ' \
+              f'--db_path {self.config["db_path"]}'
         Exec(cmd, LocalExecInfo())
 
     def stop(self):
