@@ -14,7 +14,7 @@ class HermesViz(Service):
         """
         Initialize paths
         """
-        pass
+        self.daemon_pkg = None
 
     def _configure_menu(self):
         """
