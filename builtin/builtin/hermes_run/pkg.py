@@ -64,6 +64,18 @@ class HermesRun(Service):
                 'default': 32
             },
             {
+                'name': 'recency_max',
+                'msg': 'time before blob is considered stale (sec)',
+                'type': float,
+                'default': 1
+            },
+            {
+                'name': 'borg_min_cap',
+                'msg': 'Capacity percentage before reorganizing can begin',
+                'type': float,
+                'default': 0
+            },
+            {
                 'name': 'devices',
                 'msg': 'Search for a number of devices to include',
                 'type': list,
@@ -176,7 +188,7 @@ class HermesRun(Service):
                 'bandwidth': '40GBps',
                 'latency': '100ns',
                 'is_shared_device': False,
-                'borg_capacity_thresh': [0.0, 1.0],
+                'borg_capacity_thresh': [self.config['borg_min_cap'], 1.0],
                 'slab_sizes': ['256', '512', '1KB',
                                '4KB', '16KB', '64KB', '1MB']
             }
@@ -218,15 +230,10 @@ class HermesRun(Service):
             'port': self.config['port'],
             'num_threads': self.config['threads']
         }
-        hermes_server['rpc'] = {
-            'host_file': hostfile_path,
-            'protocol': protocol,
-            'domain': domain,
-            'port': self.config['port'],
-            'num_threads': self.config['threads']
+        hermes_server['buffer_organizer'] = {
+            'recency_max': self.config['recency_max']
         }
         if self.jarvis.hostfile.path is None:
-            hermes_server['rpc']['host_names'] = self.jarvis.hostfile.hosts
             hermes_server['rpc']['host_names'] = self.jarvis.hostfile.hosts
 
         # Save hermes configurations
