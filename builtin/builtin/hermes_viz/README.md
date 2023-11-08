@@ -8,6 +8,7 @@ scspkg create HermesViz
 cd $(scspkg pkg src HermesViz)
 git clone https://github.com/lukemartinlogan/HermesViz.git
 scspkg prepend env HERMES_VIZ_ROOT "${PWD}/HermesViz"
+scspkg prepend env PATH "${PWD}/HermesViz"
 scspkg prepend env PYTHONPATH "${PWD}/HermesViz"
 module load HermesViz
 ```
@@ -16,7 +17,6 @@ module load HermesViz
 
 On the master node:
 ```
-
 ```
 
 On the compute node:

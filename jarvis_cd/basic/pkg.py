@@ -785,6 +785,7 @@ class Pipeline(Pkg):
         static_env_path = os.path.join(self.jarvis.env_dir, f'{env_name}.yaml')
         self.env = YamlFile(static_env_path).load()
         self.track_env(env_track_dict)
+        self.update()
         return self
 
     def destroy_static_env(self, env_name):
