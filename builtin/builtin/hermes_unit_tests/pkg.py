@@ -53,7 +53,7 @@ class HermesUnitTests(Application):
         test_ipc_execs = ['TestIpc', 'TestIO']
         test_hermes_execs = [
             'TestHermesPut1n', 'TestHermesPut',
-            'TestHermesAsyncPut', 'TestHermesPutGet',
+            'TestHermesAsyncPut', 'TestHermesAsyncPutLocalFlush', 'TestHermesPutGet',
             'TestHermesPartialPutGet', 'TestHermesBlobDestroy',
             'TestHermesBucketDestroy', 'TestHermesReorganizeBlob',
             'TestHermesBucketAppend', 'TestHermesBucketAppend1n',
