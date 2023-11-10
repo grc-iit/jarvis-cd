@@ -76,6 +76,12 @@ class HermesRun(Service):
                 'default': 0
             },
             {
+                'name': 'qdepth',
+                'msg': 'The depth of queues',
+                'type': float,
+                'default': 100000
+            },
+            {
                 'name': 'devices',
                 'msg': 'Search for a number of devices to include',
                 'type': list,
@@ -116,7 +122,7 @@ class HermesRun(Service):
                 'max_workers': 4
             },
             'queue_manager': {
-                'queue_depth': 8192,
+                'queue_depth': self.config['qdepth'],
                 'max_lanes': 4,
                 'max_queues': 1024,
                 'shm_allocator': 'kScalablePageAllocator',
