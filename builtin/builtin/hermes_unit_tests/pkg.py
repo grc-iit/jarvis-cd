@@ -86,7 +86,9 @@ class HermesUnitTests(Application):
                  MpiExecInfo(hostfile=self.jarvis.hostfile,
                              nprocs=nprocs,
                              ppn=self.config['ppn'],
-                             env=self.env))
+                             env=self.env,
+                             do_dbg=self.config['do_dbg'],
+                             dbg_port=self.config['dbg_port']))
         elif self.config['TEST_CASE'] in test_hermes_execs:
             Exec(f'test_hermes_exec {self.config["TEST_CASE"]}',
                  MpiExecInfo(hostfile=self.jarvis.hostfile,
@@ -97,12 +99,16 @@ class HermesUnitTests(Application):
                              dbg_port=self.config['dbg_port']))
         elif self.config['TEST_CASE'] in test_latency_execs:
             Exec(f'test_performance_exec {self.config["TEST_CASE"]}',
-                 LocalExecInfo(env=self.env))
+                 LocalExecInfo(env=self.env,
+                             do_dbg=self.config['do_dbg'],
+                             dbg_port=self.config['dbg_port']))
         elif self.config['TEST_CASE'] in test_ping_pong:
             Exec(f'test_ping_pong_exec',
                 MpiExecInfo(nprocs=2,
                             ppn=2,
-                            env=self.env))
+                            env=self.env,
+                             do_dbg=self.config['do_dbg'],
+                             dbg_port=self.config['dbg_port']))
 
     def stop(self):
         """
