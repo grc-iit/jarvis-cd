@@ -30,7 +30,19 @@ class HermesUnitTests(Application):
                 'msg': 'Destroy previous configuration and rebuild',
                 'type': str,
                 'default': 'TestIpc'
-            }
+            },
+            {
+                'name': 'nprocs',
+                'msg': 'The number of processes to spawn',
+                'type': int,
+                'default': None,
+            },
+            {
+                'name': 'ppn',
+                'msg': 'The number of processes per node',
+                'type': int,
+                'default': 1,
+            },
         ]
 
     def _configure(self, **kwargs):
@@ -50,6 +62,9 @@ class HermesUnitTests(Application):
 
         :return: None
         """
+        nprocs = self.config['nprocs']
+        if self.config['nprocs'] is None:
+            nprocs = len(self.jarvis.hostfile)
         test_ipc_execs = ['TestIpc', 'TestIO']
         test_hermes_execs = [
             'TestHermesPut1n', 'TestHermesPut',
@@ -69,14 +84,14 @@ class HermesUnitTests(Application):
         if self.config['TEST_CASE'] in test_ipc_execs:
             Exec(f'test_ipc_exec {self.config["TEST_CASE"]}',
                  MpiExecInfo(hostfile=self.jarvis.hostfile,
-                             nprocs=len(self.jarvis.hostfile),
-                             ppn=1,
+                             nprocs=nprocs,
+                             ppn=self.config['ppn'],
                              env=self.env))
         elif self.config['TEST_CASE'] in test_hermes_execs:
             Exec(f'test_hermes_exec {self.config["TEST_CASE"]}',
                  MpiExecInfo(hostfile=self.jarvis.hostfile,
-                             nprocs=len(self.jarvis.hostfile),
-                             ppn=1,
+                             nprocs=nprocs,
+                             ppn=self.config['ppn'],
                              env=self.env,
                              do_dbg=self.config['do_dbg'],
                              dbg_port=self.config['dbg_port']))
