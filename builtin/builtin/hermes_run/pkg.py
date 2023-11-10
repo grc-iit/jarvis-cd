@@ -82,6 +82,12 @@ class HermesRun(Service):
                 'default': 100000
             },
             {
+                'name': 'qlanes',
+                'msg': 'The number of lanes per queue',
+                'type': int,
+                'default': 4
+            },
+            {
                 'name': 'dworkers',
                 'msg': 'The number of core-dedicated workers',
                 'type': int,
@@ -143,7 +149,7 @@ class HermesRun(Service):
             },
             'queue_manager': {
                 'queue_depth': self.config['qdepth'],
-                'max_lanes': 4,
+                'max_lanes': self.config['qlanes'],
                 'max_queues': 1024,
                 'shm_allocator': 'kScalablePageAllocator',
                 'shm_name': 'hrun_shm',
