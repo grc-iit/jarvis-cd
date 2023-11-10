@@ -82,6 +82,24 @@ class HermesRun(Service):
                 'default': 100000
             },
             {
+                'name': 'dworkers',
+                'msg': 'The number of core-dedicated workers',
+                'type': int,
+                'default': 4
+            },
+            {
+                'name': 'oworkers',
+                'msg': 'The number of overlapping workers',
+                'type': int,
+                'default': 32
+            },
+            {
+                'name': 'oworkers_per_core',
+                'msg': 'Overlapping workers per core',
+                'type': int,
+                'default': 32
+            },
+            {
                 'name': 'devices',
                 'msg': 'Search for a number of devices to include',
                 'type': list,
@@ -119,7 +137,9 @@ class HermesRun(Service):
         # Begin making hermes_run config
         hermes_server = {
             'work_orchestrator': {
-                'max_workers': 4
+                'max_dworkers': self.config['dworkers'],
+                'max_oworkers': self.config['oworkers'],
+                'oworkers_per_core': self.config['oworkers_per_core'],
             },
             'queue_manager': {
                 'queue_depth': self.config['qdepth'],
