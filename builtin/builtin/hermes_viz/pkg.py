@@ -52,8 +52,7 @@ class HermesViz(Service):
             {
                 'name': 'db_path',
                 'msg': 'path to the database to gather the metadata',
-                'type': str,
-                'default': "/mnt/nvme/jcernudagarcia/metadata.db",
+                'type': str
             },
         ]
 
@@ -74,9 +73,14 @@ class HermesViz(Service):
 
         :return: None
         """
-        cmd = f'hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]} ' \
-              f'--real {self.config["real"]} --hostfile {self.config["hostfile"]} ' \
-              f'--db_path {self.config["db_path"]}'
+
+        if self.config["db_path"]:
+            cmd = f'hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]} ' \
+                  f'--real {self.config["real"]} --hostfile {self.config["hostfile"]} ' \
+                  f'--db_path {self.config["db_path"]}'
+        else:
+            cmd = f'hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]} ' \
+                  f'--real {self.config["real"]} --hostfile {self.config["hostfile"]} '
         self.daemon_pkg = Exec(cmd, LocalExecInfo(env=self.env, exec_async=True))
         time.sleep(self.config['sleep'])
         print('Done sleeping')
