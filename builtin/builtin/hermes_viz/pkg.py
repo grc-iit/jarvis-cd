@@ -73,7 +73,7 @@ class HermesViz(Service):
 
         :return: None
         """
-
+        print("Starting the Hermes visualizer flask server?")
         if self.config["db_path"]:
             cmd = f'hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]} ' \
                   f'--real {self.config["real"]} --hostfile {self.config["hostfile"]} ' \
@@ -83,7 +83,7 @@ class HermesViz(Service):
                   f'--real {self.config["real"]} --hostfile {self.config["hostfile"]} '
         self.daemon_pkg = Exec(cmd, LocalExecInfo(env=self.env, exec_async=True))
         time.sleep(self.config['sleep'])
-        print('Done sleeping')
+        print('Finished sleeping for the visualizer')
 
     def stop(self):
         """
