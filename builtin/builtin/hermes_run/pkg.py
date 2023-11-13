@@ -304,9 +304,14 @@ class HermesRun(Service):
         :return: None
         """
         print('Stopping hermes_run')
-        Kill('hrun',
-             PsshExecInfo(hostfile=self.jarvis.hostfile,
-                          env=self.env))
+        if self.config['do_dbg']:
+            Kill('hrun',
+                 PsshExecInfo(hostfile=self.jarvis.hostfile,
+                              env=self.env))
+        else:
+            Kill('gdbserver',
+                 PsshExecInfo(hostfile=self.jarvis.hostfile,
+                              env=self.env))
         # Exec('hrun_stop_runtime',
         #      PsshExecInfo(hostfile=self.jarvis.hostfile,
         #                   env=self.env))

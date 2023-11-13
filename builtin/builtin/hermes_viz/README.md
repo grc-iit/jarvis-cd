@@ -1,7 +1,7 @@
 
 This is the visualizer used for Hermes.
 
-# Installation
+# 1. Installation
 ```bash
 # git clone https://github.com/JaimeCernuda/HermesViz
 scspkg create HermesViz
@@ -17,20 +17,29 @@ python3 -m pip install flask
 python3 -m pip install -r hermes/visualizer/requirments.txt
 ```
 
-# Usage
+# 2. Usage
 
-On the master node:
+## 2.1. Master Node
 ```
+local_port=5000
+remote_port=5000
+ares_node=ares-comp-10
+ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
+
 local_port=4000
 remote_port=4000
 ares_node=ares-comp-10
-ssh -L ${local_port}:localhost:${remote_port} -t ares ssh -L ${remote_port}:localhost:${remote_port} "${ares_node}"
+ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
 ```
+
+## 2.2. Compute Node
 
 For spack installs:
 ```
 spack load hermes
 spack unload python
+jarvis pipeline create hermes_viz
+jarvis pipeline append hemres_viz
 ```
 
 For manual installs:
@@ -40,7 +49,15 @@ module load hermes_run
 spack unload python
 ```
 
-On your personal machine:
+## 2.3. Personal Machine
 ```
+local_port=5000
+remote_port=5000
+ares_node=llogan@ares.cs.iit.edu
+ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
 
+local_port=4000
+remote_port=4000
+ares_node=llogan@ares.cs.iit.edu
+ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
 ```
