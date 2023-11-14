@@ -70,7 +70,7 @@ class Pkg(ABC):
 
     def log(self, msg, color=None):
         if color is not None:
-            print(color.format(msg))
+            print(color.value.format(msg))
         else:
             print(msg)
 
