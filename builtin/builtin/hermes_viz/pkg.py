@@ -81,7 +81,7 @@ class HermesViz(Service):
         else:
             cmd = f'hermes_viz.py --port {self.config["port"]} --sleep_time {self.config["pooling"]} ' \
                   f'--real {self.config["real"]} --hostfile {self.config["hostfile"]} '
-        self.daemon_pkg = Exec(cmd, LocalExecInfo(env=self.env, exec_async=True, hide_output=True))
+        self.daemon_pkg = Exec(cmd, LocalExecInfo(env=self.env, exec_async=True))
         time.sleep(self.config['sleep'])
         print('Finished sleeping for the visualizer')
 

@@ -26,8 +26,8 @@ remote_port=5000
 ares_node=ares-comp-10
 ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
 
-local_port=4000
-remote_port=4000
+local_port=4001
+remote_port=4001
 ares_node=ares-comp-10
 ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
 ```
@@ -56,8 +56,13 @@ remote_port=5000
 ares_node=llogan@ares.cs.iit.edu
 ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
 
-local_port=4000
-remote_port=4000
+local_port=4001
+remote_port=4001
 ares_node=llogan@ares.cs.iit.edu
 ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
+```
+
+Locate process spawned by ssh -L
+```
+lsof -i :5000
 ```
