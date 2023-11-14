@@ -31,9 +31,9 @@ class PkgArgParse(ArgParse):
 
 
 class Color(Enum):
-    green = '\033[92m{}\033[0m'
-    red = '\033[{}\033[0m'
-    cyan = '\033[96m{}\033[0m'
+    GREEN = '\033[92m{}\033[0m'
+    RED = '\033[{}\033[0m'
+    CYAN = '\033[96m{}\033[0m'
 
 
 class Pkg(ABC):
