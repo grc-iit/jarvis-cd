@@ -74,7 +74,8 @@ class HermesUnitTests(Application):
             'TestHermesBucketAppend', 'TestHermesBucketAppend1n',
             'TestHermesConnect', 'TestHermesGetContainedBlobIds',
             'TestHermesMultiGetBucket', 'TestHermesDataStager',
-            'TestHermesDataOp', 'TestHermesCollectMetadata', 'TestHermesDataPlacement'
+            'TestHermesDataOp', 'TestHermesCollectMetadata', 'TestHermesDataPlacement',
+            'TestDataDataPlacement2'
         ]
         test_latency_execs = ['TestRoundTripLatency',
                               'TestHshmQueueAllocateEmplacePop',
