@@ -13,6 +13,7 @@ from jarvis_util.util.argparse import ArgParse
 from jarvis_util.jutil_manager import JutilManager
 from jarvis_util.shell.filesystem import Mkdir
 from jarvis_util.shell.pssh_exec import PsshExecInfo
+from enum import Enum
 import inspect
 import pathlib
 import shutil
@@ -27,6 +28,12 @@ class PkgArgParse(ArgParse):
 
     def main_menu(self):
         pass
+
+
+class Color(Enum):
+    green = '\033[92m{}\033[0m'
+    red = '\033[{}\033[0m'
+    cyan = '\033[96m{}\033[0m'
 
 
 class Pkg(ABC):
@@ -60,6 +67,12 @@ class Pkg(ABC):
         self.env = None
         self.mod_env = None
         self.exit_code = 0
+
+    def log(self, msg, color=None):
+        if color is not None:
+            print(color.format(msg))
+        else:
+            print(msg)
 
     def _init_common(self, global_id, root):
         """

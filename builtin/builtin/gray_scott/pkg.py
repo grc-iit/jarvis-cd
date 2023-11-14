@@ -5,6 +5,7 @@ substances.
 """
 from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
+import time
 import pathlib
 
 
@@ -158,11 +159,15 @@ class GrayScott(Application):
         :return: None
         """
         # print(self.env['HERMES_CLIENT_CONF'])
+        start = time.time()
         Exec(f'gray-scott {self.settings_json_path}',
              MpiExecInfo(nprocs=self.config['nprocs'],
                          ppn=self.config['ppn'],
                          hostfile=self.jarvis.hostfile,
                          env=self.mod_env))
+        end = time.time()
+        diff = end - start
+        self.log(f'TIME: {diff} seconds')
 
     def stop(self):
         """
