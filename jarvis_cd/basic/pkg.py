@@ -551,6 +551,12 @@ class SimplePkg(Pkg):
                 'type': str,
                 'default': None
             },
+            {
+                'name': 'hide_output',
+                'msg': 'Hide output of the runtime.',
+                'type': bool,
+                'default': False
+            },
         ]
         return menu
 

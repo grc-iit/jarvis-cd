@@ -21,8 +21,8 @@ python3 -m pip install -r hermes/visualizer/requirments.txt
 
 ## 2.1. Master Node
 ```
-local_port=5000
-remote_port=5000
+local_port=5001
+remote_port=5001
 ares_node=ares-comp-10
 ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
 
@@ -51,8 +51,8 @@ spack unload python
 
 ## 2.3. Personal Machine
 ```
-local_port=5000
-remote_port=5000
+local_port=5001
+remote_port=5001
 ares_node=llogan@ares.cs.iit.edu
 ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
 
@@ -64,5 +64,5 @@ ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
 
 Locate process spawned by ssh -L
 ```
-lsof -i :5000
+lsof -i :5001
 ```
