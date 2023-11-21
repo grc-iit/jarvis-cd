@@ -13,6 +13,7 @@ from jarvis_util.util.argparse import ArgParse
 from jarvis_util.jutil_manager import JutilManager
 from jarvis_util.shell.filesystem import Mkdir
 from jarvis_util.shell.pssh_exec import PsshExecInfo
+from enum import Enum
 import inspect
 import pathlib
 import shutil
@@ -27,6 +28,12 @@ class PkgArgParse(ArgParse):
 
     def main_menu(self):
         pass
+
+
+class Color(Enum):
+    GREEN = '\033[92m{}\033[0m'
+    RED = '\033[{}\033[0m'
+    CYAN = '\033[96m{}\033[0m'
 
 
 class Pkg(ABC):
@@ -59,6 +66,13 @@ class Pkg(ABC):
         self.env_path = None
         self.env = None
         self.mod_env = None
+        self.exit_code = 0
+
+    def log(self, msg, color=None):
+        if color is not None:
+            print(color.value.format(msg))
+        else:
+            print(msg)
 
     def _init_common(self, global_id, root):
         """
@@ -161,7 +175,16 @@ class Pkg(ABC):
         """
         Destroy a pipeline's sub-pkgs
 
-        :return: None
+        :return: self
+        """
+        self.reset()
+        return self
+
+    def reset(self):
+        """
+        Destroy a pipeline's sub-pkgs
+
+        :return: self
         """
         try:
             for dir_name in os.listdir(self.config_dir):
@@ -169,8 +192,10 @@ class Pkg(ABC):
                 if os.path.isdir(path):
                     shutil.rmtree(path)
             os.remove(self.config_path)
+            self.create(self.global_id)
         except FileNotFoundError:
             pass
+        return self
 
     def get_path(self, config=False, shared=False, private=False):
         if shared:
@@ -512,6 +537,26 @@ class SimplePkg(Pkg):
                 'type': int,
                 'default': 4000
             },
+            {
+                'name': 'stdout',
+                'msg': 'The file to use for holding output. Use stderr to'
+                       'pipe to the same file as stderr.',
+                'type': str,
+                'default': None
+            },
+            {
+                'name': 'stderr',
+                'msg': 'The file to use for holding error output. Use stdout '
+                       'to pipe to the same file as stdout.',
+                'type': str,
+                'default': None
+            },
+            {
+                'name': 'hide_output',
+                'msg': 'Hide output of the runtime.',
+                'type': bool,
+                'default': False
+            },
         ]
         return menu
 
@@ -527,6 +572,16 @@ class SimplePkg(Pkg):
         return []
 
     def configure(self, **kwargs):
+        if 'reinit' not in kwargs:
+            kwargs['reinit'] = False
+        if 'stdout' not in kwargs:
+            kwargs['stdout'] = None
+        if 'stderr' not in kwargs:
+            kwargs['stderr'] = None
+        if kwargs['stdout'] == 'stderr':
+            kwargs['stdout'] = kwargs['stderr']
+        if kwargs['stderr'] == 'stdout':
+            kwargs['stderr'] = kwargs['stdout']
         self.update_config(kwargs, rebuild=kwargs['reinit'])
         self._configure(**kwargs)
 
@@ -714,7 +769,7 @@ class Pipeline(Pkg):
         """
         pipeline_id = config['name']
         self.create(pipeline_id)
-        self.clear()
+        self.reset()
         if 'env' in config:
             self.copy_static_env(config['env'])
         for sub_pkg in config['pkgs']:
@@ -749,6 +804,7 @@ class Pipeline(Pkg):
         static_env_path = os.path.join(self.jarvis.env_dir, f'{env_name}.yaml')
         self.env = YamlFile(static_env_path).load()
         self.track_env(env_track_dict)
+        self.update()
         return self
 
     def destroy_static_env(self, env_name):
@@ -815,6 +871,7 @@ class Pipeline(Pkg):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.modify_env()
                 self.mod_env.update(self.env)
+            self.exit_code += pkg.exit_code
 
     def stop(self):
         """

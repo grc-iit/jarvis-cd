@@ -3,8 +3,9 @@ This module provides classes and methods to launch the Gray Scott application.
 Gray Scott is a 3D 7-point stencil code for modeling the diffusion of two
 substances.
 """
-from jarvis_cd.basic.pkg import Application
+from jarvis_cd.basic.pkg import Application, Color
 from jarvis_util import *
+import time
 import pathlib
 
 
@@ -158,11 +159,15 @@ class GrayScott(Application):
         :return: None
         """
         # print(self.env['HERMES_CLIENT_CONF'])
+        start = time.time()
         Exec(f'gray-scott {self.settings_json_path}',
              MpiExecInfo(nprocs=self.config['nprocs'],
                          ppn=self.config['ppn'],
                          hostfile=self.jarvis.hostfile,
                          env=self.mod_env))
+        end = time.time()
+        diff = end - start
+        self.log(f'TIME: {diff} seconds', color=Color.GREEN)
 
     def stop(self):
         """

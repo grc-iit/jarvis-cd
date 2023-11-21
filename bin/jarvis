@@ -15,6 +15,7 @@ class JarvisArgs(ArgParse):
         self.define_pipeline_opts()
         self.define_repo_opts()
         self.define_env_opts()
+        self.jutil.debug_mpi_exec = False
 
     def define_init_opts(self):
         # jarvis init
@@ -385,8 +386,8 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarvis pipeline yaml
-        self.add_menu('pipeline yaml',
+        # jarvis pipeline load yaml
+        self.add_menu('pipeline load yaml',
                       msg='Create a pipeline from a yaml schema')
         self.add_args([
             {
@@ -405,7 +406,20 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarvis pipeline yaml
+        # jarvis pipeline run yaml
+        self.add_menu('pipeline run yaml',
+                      msg='Create a pipeline from a yaml schema')
+        self.add_args([
+            {
+                'name': 'path',
+                'msg': 'The pipeline schema file path',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis pipeline iterate
         self.add_menu('pipeline iterate',
                       msg='Create a pipeline from a yaml schema and iterate')
         self.add_args([
@@ -1101,11 +1115,19 @@ class JarvisArgs(ArgParse):
         self.jarvis.cd(pipeline_id)
         self.jarvis.save()
 
-    def pipeline_yaml(self):
+    def pipeline_load_yaml(self):
         path = self.kwargs['path']
         pipeline = Pipeline().from_yaml(path).save()
         self.jarvis.cd(pipeline.global_id)
         self.jarvis.save()
+
+    def pipeline_run_yaml(self):
+        path = self.kwargs['path']
+        pipeline = Pipeline().from_yaml(path).save()
+        self.jarvis.cd(pipeline.global_id)
+        pipeline.run()
+        self.jarvis.save()
+        exit(pipeline.exit_code)
 
     def pipeline_iterate(self):
         # path = self.kwargs['path']
@@ -1126,7 +1148,7 @@ class JarvisArgs(ArgParse):
 
     def pipeline_reset(self):
         pipeline_id = self.kwargs['pipeline_id']
-        Pipeline().load(pipeline_id, with_config=False).clear()
+        Pipeline().load(pipeline_id, with_config=False).reset()
         self.jarvis.save()
 
     def pipeline_destroy(self):
@@ -1245,6 +1267,7 @@ class JarvisArgs(ArgParse):
             self.jarvis.set_hostfile(file_location)
             pipeline.update().save()  # this calls the config step
         pipeline.run()
+        exit(pipeline.exit_code)
 
     def pipeline_sbatch(self):
         pipeline_name = Pipeline().load().global_id

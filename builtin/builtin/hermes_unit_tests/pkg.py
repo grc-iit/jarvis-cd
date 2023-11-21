@@ -30,7 +30,19 @@ class HermesUnitTests(Application):
                 'msg': 'Destroy previous configuration and rebuild',
                 'type': str,
                 'default': 'TestIpc'
-            }
+            },
+            {
+                'name': 'nprocs',
+                'msg': 'The number of processes to spawn',
+                'type': int,
+                'default': None,
+            },
+            {
+                'name': 'ppn',
+                'msg': 'The number of processes per node',
+                'type': int,
+                'default': 1,
+            },
         ]
 
     def _configure(self, **kwargs):
@@ -50,15 +62,20 @@ class HermesUnitTests(Application):
 
         :return: None
         """
+        nprocs = self.config['nprocs']
+        if self.config['nprocs'] is None:
+            nprocs = len(self.jarvis.hostfile)
         test_ipc_execs = ['TestIpc', 'TestIO']
         test_hermes_execs = [
-            'TestHermesPut1n', 'TestHermesPut', 'TestHermesPutGet',
+            'TestHermesPut1n', 'TestHermesPut',
+            'TestHermesAsyncPut', 'TestHermesAsyncPutLocalFlush', 'TestHermesPutGet',
             'TestHermesPartialPutGet', 'TestHermesBlobDestroy',
             'TestHermesBucketDestroy', 'TestHermesReorganizeBlob',
             'TestHermesBucketAppend', 'TestHermesBucketAppend1n',
             'TestHermesConnect', 'TestHermesGetContainedBlobIds',
             'TestHermesMultiGetBucket', 'TestHermesDataStager',
-            'TestHermesDataOp', 'TestHermesCollectMetadata'
+            'TestHermesDataOp', 'TestHermesCollectMetadata', 'TestHermesDataPlacement',
+            'TestHermesDataPlacementFancy'
         ]
         test_latency_execs = ['TestRoundTripLatency',
                               'TestHshmQueueAllocateEmplacePop',
@@ -68,23 +85,31 @@ class HermesUnitTests(Application):
         if self.config['TEST_CASE'] in test_ipc_execs:
             Exec(f'test_ipc_exec {self.config["TEST_CASE"]}',
                  MpiExecInfo(hostfile=self.jarvis.hostfile,
-                             nprocs=len(self.jarvis.hostfile),
-                             ppn=1,
-                             env=self.env))
+                             nprocs=nprocs,
+                             ppn=self.config['ppn'],
+                             env=self.env,
+                             do_dbg=self.config['do_dbg'],
+                             dbg_port=self.config['dbg_port']))
         elif self.config['TEST_CASE'] in test_hermes_execs:
             Exec(f'test_hermes_exec {self.config["TEST_CASE"]}',
                  MpiExecInfo(hostfile=self.jarvis.hostfile,
-                             nprocs=len(self.jarvis.hostfile),
-                             ppn=1,
-                             env=self.env))
+                             nprocs=nprocs,
+                             ppn=self.config['ppn'],
+                             env=self.env,
+                             do_dbg=self.config['do_dbg'],
+                             dbg_port=self.config['dbg_port']))
         elif self.config['TEST_CASE'] in test_latency_execs:
             Exec(f'test_performance_exec {self.config["TEST_CASE"]}',
-                 LocalExecInfo(env=self.env))
+                 LocalExecInfo(env=self.env,
+                             do_dbg=self.config['do_dbg'],
+                             dbg_port=self.config['dbg_port']))
         elif self.config['TEST_CASE'] in test_ping_pong:
             Exec(f'test_ping_pong_exec',
                 MpiExecInfo(nprocs=2,
                             ppn=2,
-                            env=self.env))
+                            env=self.env,
+                             do_dbg=self.config['do_dbg'],
+                             dbg_port=self.config['dbg_port']))
 
     def stop(self):
         """

@@ -328,7 +328,8 @@ class JarvisManager:
         :return: None
         """
         for repo in self.repos:
-            print(f'{repo["name"]}: {repo["path"]}')
+            self.list_repo(repo['name'])
+
 
     def list_repo(self, repo_name):
         """
@@ -338,9 +339,12 @@ class JarvisManager:
         :return: None
         """
         repo = self.get_repo(repo_name)
-        pkg_types = os.listdir(repo['path'])
+        pkg_types = os.listdir(os.path.join(repo['path'], repo['name']))
+        pkg_types.sort()
+        print(f'{repo["name"]}: {repo["path"]}')
         for pkg_type in pkg_types:
-            print(pkg_type)
+            if not pkg_type.startswith('_'):
+                print(f'  {pkg_type}')
 
     def construct_pkg(self, pkg_type):
         """
