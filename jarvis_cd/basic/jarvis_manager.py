@@ -223,6 +223,7 @@ class JarvisManager:
         :return: List of pipelines
         """
         pipelines = os.listdir(self.config_dir)
+        pipelines.sort()
         pipelines.remove('env')
         return pipelines
 

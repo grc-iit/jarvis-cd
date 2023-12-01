@@ -85,7 +85,8 @@ class HermesPosixTests(Application):
         else:
             posix_cmd = [cmd]
             if self.config['size'] == 'small':
-                posix_cmd.append('~[request_size=range-small]')
+                # posix_cmd.append('~[request_size=range-small]')
+                posix_cmd.append('SingleWrite')
             elif self.config['size'] == 'large':
                 posix_cmd.append('~[request_size=range-large]')
             posix_cmd.append('--reporter compact -d yes')
@@ -94,8 +95,8 @@ class HermesPosixTests(Application):
                     LocalExecInfo(env=self.mod_env,
                                   do_dbg=self.config['do_dbg'],
                                   dbg_port=self.config['dbg_port'],
-                                  pipe_stdout=self.config['output'],
-                                  pipe_stderr=self.config['output']))
+                                  pipe_stdout=self.config['stdout'],
+                                  pipe_stderr=self.config['stderr']))
         return node.exit_code
 
     def test_posix_basic_mpi(self):
