@@ -87,6 +87,7 @@ class HermesPosixTests(Application):
             if self.config['size'] == 'small':
                 # posix_cmd.append('~[request_size=range-small]')
                 posix_cmd.append('SingleWrite')
+                # posix_cmd.append('Remove')
             elif self.config['size'] == 'large':
                 posix_cmd.append('~[request_size=range-large]')
             posix_cmd.append('--reporter compact -d yes')
