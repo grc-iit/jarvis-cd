@@ -91,13 +91,13 @@ class HermesRun(Service):
                 'name': 'dworkers',
                 'msg': 'The number of core-dedicated workers',
                 'type': int,
-                'default': 4
+                'default': 2
             },
             {
                 'name': 'oworkers',
                 'msg': 'The number of overlapping workers',
                 'type': int,
-                'default': 32
+                'default': 4
             },
             {
                 'name': 'oworkers_per_core',

@@ -28,7 +28,10 @@ class HermesStdioTests(Application):
             {
                 'name': 'test_file',
                 'choices': ['stdio_basic',
-                            'stdio_basic_mpi'],
+                            'stdio_basic_mpi',
+                            'stdio_low_buf',
+                            'stdio_adapter_mode',
+                            'stdio_mapper'],
                 'msg': '',
                 'type': str,
                 'default': None,
@@ -95,6 +98,74 @@ class HermesStdioTests(Application):
                                   dbg_port=self.config['dbg_port'],
                                   pipe_stdout=self.config['stdout'],
                                   pipe_stderr=self.config['stderr']))
+        return node.exit_code
+
+    def test_stdio_basic_mpi(self):
+        cmd = 'stdio_adapter_mpi_test'
+        if self.config['hermes']:
+            cmd = f'hermes_{cmd}'
+        if self.config['test_case']:
+            cmd = f'{cmd} {self.config["test_case"]}'
+        else:
+            posix_cmd = [cmd]
+            if self.config['size'] == 'small':
+                posix_cmd.append('~[request_size=range-small]')
+            elif self.config['size'] == 'large':
+                posix_cmd.append('~[request_size=range-large]')
+            posix_cmd.append('--reporter compact -d yes')
+            cmd = ' '.join(posix_cmd)
+        node = Exec(cmd,
+                    MpiExecInfo(nprocs=2,
+                                env=self.mod_env,
+                                do_dbg=self.config['do_dbg'],
+                                dbg_port=self.config['dbg_port'],
+                                pipe_stdout=self.config['stdout'],
+                                pipe_stderr=self.config['stderr']))
+        return node.exit_code
+
+    def test_stdio_low_buf(self):
+        cmd = 'stdio_low_buf_adapter_test'
+        if self.config['hermes']:
+            cmd = f'hermes_{cmd}'
+        if self.config['test_case']:
+            cmd = f'{cmd} {self.config["test_case"]}'
+        node = Exec(cmd,
+                    MpiExecInfo(nprocs=1,
+                                env=self.mod_env,
+                                do_dbg=self.config['do_dbg'],
+                                dbg_port=self.config['dbg_port'],
+                                pipe_stdout=self.config['stdout'],
+                                pipe_stderr=self.config['stderr']))
+        return node.exit_code
+
+    def test_stdio_adapter_mode(self):
+        cmd = 'stdio_adapter_mode_test'
+        if self.config['hermes']:
+            cmd = f'hermes_{cmd}'
+        if self.config['test_case']:
+            cmd = f'{cmd} {self.config["test_case"]}'
+        node = Exec(cmd,
+                    MpiExecInfo(nprocs=1,
+                                env=self.mod_env,
+                                do_dbg=self.config['do_dbg'],
+                                dbg_port=self.config['dbg_port'],
+                                pipe_stdout=self.config['stdout'],
+                                pipe_stderr=self.config['stderr']))
+        return node.exit_code
+
+    def test_stdio_mapper(self):
+        cmd = 'stdio_adapter_mapper_test'
+        if self.config['hermes']:
+            cmd = f'hermes_{cmd}'
+        if self.config['test_case']:
+            cmd = f'{cmd} {self.config["test_case"]}'
+        node = Exec(cmd,
+                    MpiExecInfo(nprocs=1,
+                                env=self.mod_env,
+                                do_dbg=self.config['do_dbg'],
+                                dbg_port=self.config['dbg_port'],
+                                pipe_stdout=self.config['stdout'],
+                                pipe_stderr=self.config['stderr']))
         return node.exit_code
 
     def stop(self):
