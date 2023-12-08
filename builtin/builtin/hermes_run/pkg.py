@@ -289,7 +289,7 @@ class HermesRun(Service):
         print(self.env['HERMES_CLIENT_CONF'])
         self.daemon_pkg = Exec('hrun_start_runtime',
                                 PsshExecInfo(hostfile=self.jarvis.hostfile,
-                                             env=self.env,
+                                             env=self.mod_env,
                                              exec_async=True,
                                              do_dbg=self.config['do_dbg'],
                                              dbg_port=self.config['dbg_port'],
