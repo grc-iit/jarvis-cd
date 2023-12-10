@@ -106,6 +106,12 @@ class HermesRun(Service):
                 'default': 32
             },
             {
+                'name': 'shm_name',
+                'msg': 'The base shared-memory name',
+                'type': str,
+                'default': 'hrun_shm_${USER}'
+            },
+            {
                 'name': 'devices',
                 'msg': 'Search for a number of devices to include',
                 'type': list,
@@ -152,7 +158,7 @@ class HermesRun(Service):
                 'max_lanes': self.config['qlanes'],
                 'max_queues': 1024,
                 'shm_allocator': 'kScalablePageAllocator',
-                'shm_name': 'hrun_shm',
+                'shm_name': self.config['shm_name'],
                 'shm_size': '0g',
                 'data_shm_size': self.config['data_shm'],
             },
