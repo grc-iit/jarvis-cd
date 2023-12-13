@@ -63,7 +63,7 @@ class HermesPosixTests(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        pass
+        Mkdir("/tmp/test_hermes")
 
     def start(self):
         """
