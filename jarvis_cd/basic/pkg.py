@@ -235,7 +235,7 @@ class Pkg(ABC):
         off = 0
         if at_id is None or len(self.config['sub_pkgs']) == 0:
             self.config['sub_pkgs'].append([pkg_type, pkg_id])
-            off = -1
+            off = len(self.config['sub_pkgs'])
         else:
             if isinstance(at_id, int):
                 off = at_id
