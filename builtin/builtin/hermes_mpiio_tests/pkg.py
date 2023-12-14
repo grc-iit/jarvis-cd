@@ -61,7 +61,7 @@ class HermesMpiioTests(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        Mkdir("/tmp/test_hermes")
+        pass
 
     def start(self):
         """
@@ -70,6 +70,7 @@ class HermesMpiioTests(Application):
 
         :return: None
         """
+        Mkdir("/tmp/test_hermes")
         test_fun = getattr(self, f'test_{self.config["test_file"]}')
         test_fun()
 
@@ -88,7 +89,7 @@ class HermesMpiioTests(Application):
             mpiio_cmd.append('--reporter compact -d yes')
             cmd = ' '.join(mpiio_cmd)
         node = Exec(cmd,
-                    MpiExecInfo(nprocs=2,
+                    MpiExecInfo(nprocs=4,
                                 env=self.mod_env,
                                 do_dbg=self.config['do_dbg'],
                                 dbg_port=self.config['dbg_port'],
