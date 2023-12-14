@@ -703,6 +703,9 @@ class JarvisArgs(ArgParse):
         self.add_menu('pipeline stop',
                       msg="Stop a pipeline",
                       keep_remainder=True)
+        self.add_menu('pipeline kill',
+                      msg="Kill a pipeline",
+                      keep_remainder=True)
         self.add_menu('pipeline clean',
                       msg="Clean a pipeline",
                       keep_remainder=True)
@@ -1327,6 +1330,9 @@ class JarvisArgs(ArgParse):
 
     def pipeline_stop(self):
         Pipeline().load().stop()
+
+    def pipeline_kill(self):
+        Pipeline().load().kill()
 
     def pipeline_clean(self):
         Pipeline().load().clean()

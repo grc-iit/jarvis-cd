@@ -311,6 +311,19 @@ class HermesRun(Service):
         :return: None
         """
         print('Stopping hermes_run')
+        Exec('hrun_stop_runtime',
+             LocalExecInfo(hostfile=self.jarvis.hostfile,
+                           env=self.mod_env,
+                           exec_async=True,
+                           do_dbg=self.config['do_dbg'],
+                           dbg_port=self.config['dbg_port'],
+                           hide_output=self.config['hide_output']))
+        print('Client Exited?')
+        if self.daemon_pkg is not None:
+            self.daemon_pkg.wait()
+        print('Daemon Exited?')
+
+    def kill(self):
         Kill('hrun',
              PsshExecInfo(hostfile=self.jarvis.hostfile,
                           env=self.env))
@@ -318,9 +331,6 @@ class HermesRun(Service):
             Kill('gdbserver',
                  PsshExecInfo(hostfile=self.jarvis.hostfile,
                               env=self.env))
-        # Exec('hrun_stop_runtime',
-        #      PsshExecInfo(hostfile=self.jarvis.hostfile,
-        #                   env=self.env))
         print('Client Exited?')
         if self.daemon_pkg is not None:
             self.daemon_pkg.wait()

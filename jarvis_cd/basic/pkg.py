@@ -884,6 +884,18 @@ class Pipeline(Pkg):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.stop()
 
+    def kill(self):
+        """
+        Stop the pipeline
+
+        :return: None
+        """
+        for pkg in reversed(self.sub_pkgs):
+            if isinstance(pkg, Service):
+                pkg.update_env(self.env, self.mod_env)
+                if hasattr(pkg, 'kill'):
+                    pkg.kill()
+
     def clean(self):
         """
         Clean the pipeline
