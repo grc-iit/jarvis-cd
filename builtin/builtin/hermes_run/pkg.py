@@ -40,6 +40,12 @@ class HermesRun(Service):
                 'default': '8g'
             },
             {
+                'name': 'task_shm',
+                'msg': 'Task buffering space',
+                'type': str,
+                'default': '0g'
+            },
+            {
                 'name': 'port',
                 'msg': 'The port to listen for data on',
                 'type': int,
@@ -159,7 +165,7 @@ class HermesRun(Service):
                 'max_queues': 1024,
                 'shm_allocator': 'kScalablePageAllocator',
                 'shm_name': self.config['shm_name'],
-                'shm_size': '0g',
+                'shm_size': self.config['task_shm'],
                 'data_shm_size': self.config['data_shm'],
             },
             'devices': {},
