@@ -1349,8 +1349,7 @@ class JarvisArgs(ArgParse):
     def pipeline_save(self):
         Pipeline().load().status()
 
-    def generate_bash_complete(self):
-        # Generate bash completion script based on self.menus
+    def generate_bash_completion_script(self):
         bash_script = "#!/bin/bash\n"
         bash_script += "_jarvis_completion() {\n"
         bash_script += "    local cur prev opts\n"
@@ -1358,20 +1357,37 @@ class JarvisArgs(ArgParse):
         bash_script += "    cur=\"${COMP_WORDS[COMP_CWORD]}\"\n"
         bash_script += "    prev=\"${COMP_WORDS[COMP_CWORD-1]}\"\n"
 
-        # Iterate over menus to create options for completion
+        # Handling each menu item
         for menu in self.menus:
-            opts = " ".join([arg['name'] + "=" for arg in menu['args']])
-            bash_script += "    if [[ $prev == '{}']]; then\n".format(menu['name'])
-            bash_script += "        opts=\"" + opts + "\"\n"
-            bash_script += "    fi\n"
+            # Check if 'args' key exists
+            if 'args' in menu:
+                # Check for special cases like 'pipeline append'
+                if menu['name'] == 'pipeline append':
+                    # Special handling for 'pipeline append'
+                    bash_script += "    if [[ $prev == 'pipeline' ]]; then\n"
+                    bash_script += "        if [[ $cur == 'append'* ]]; then\n"
+                    bash_script += "            local pkg_ids=$(jarvis repo list)  # Fetching pkg_ids dynamically\n"
+                    bash_script += "            COMPREPLY=( $(compgen -W \"$pkg_ids\" -- $cur) )\n"
+                    bash_script += "            return 0\n"
+                    bash_script += "        fi\n"
+                    bash_script += "    fi\n"
+                else:
+                    # Default handling for other commands
+                    opts = " ".join([arg['name'] + "=" for arg in menu['args']])
+                    bash_script += "    if [[ $prev == '{}']]; then\n".format(menu['name'])
+                    bash_script += "        opts=\"" + opts + "\"\n"
+                    bash_script += "    fi\n"
 
         bash_script += "    COMPREPLY=( $(compgen -W \"$opts\" -- $cur) )\n"
         bash_script += "    return 0\n"
         bash_script += "}\n"
         bash_script += "complete -F _jarvis_completion jarvis\n"
 
+        # Write to file
         with open('jarvis_autocomplete.sh', 'w') as file:
             file.write(bash_script)
+        print("Bash completion script generated: jarvis_autocomplete.sh")
+
 
 
 if __name__ == '__main__':
