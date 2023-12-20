@@ -1349,7 +1349,7 @@ class JarvisArgs(ArgParse):
     def pipeline_save(self):
         Pipeline().load().status()
 
-    def generate_bash_completion_script(self):
+    def generate_bash_complete(self):
         bash_script = "#!/bin/bash\n"
         bash_script += "_jarvis_completion() {\n"
         bash_script += "    local cur prev opts\n"
