@@ -903,6 +903,9 @@ class JarvisArgs(ArgParse):
             },
         ])
 
+        self.add_menu('generate bash complete',
+                      msg='Generate bash completion script for jarvis')
+
     def define_env_opts(self):
         # jarvis env build
         self.add_menu('env build',
@@ -1346,6 +1349,28 @@ class JarvisArgs(ArgParse):
     def pipeline_save(self):
         Pipeline().load().status()
 
+    def generate_bash_complete(self):
+        # Generate bash completion script based on self.menus
+        bash_script = "#!/bin/bash\n"
+        bash_script += "_jarvis_completion() {\n"
+        bash_script += "    local cur prev opts\n"
+        bash_script += "    COMPREPLY=()\n"
+        bash_script += "    cur=\"${COMP_WORDS[COMP_CWORD]}\"\n"
+        bash_script += "    prev=\"${COMP_WORDS[COMP_CWORD-1]}\"\n"
+
+        # Iterate over menus to create options for completion
+        for menu in self.menus:
+            opts = " ".join([arg['name'] + "=" for arg in menu['args']])
+            bash_script += "    if [[ $prev == '{}']]; then\n".format(menu['name'])
+            bash_script += "        opts=\"" + opts + "\"\n"
+            bash_script += "    fi\n"
+
+        bash_script += "    COMPREPLY=( $(compgen -W \"$opts\" -- $cur) )\n"
+        bash_script += "    return 0\n"
+        bash_script += "}\n"
+        bash_script += "complete -F _jarvis_completion jarvis\n"
+
+        return bash_script
 
 if __name__ == '__main__':
     args = JarvisArgs()
