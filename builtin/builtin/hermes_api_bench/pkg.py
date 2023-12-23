@@ -66,8 +66,8 @@ class HermesApiBench(Application):
             {
                 'name': 'nprocs',
                 'msg': 'The number of processes to spawn',
-                'type': str,
-                'default': '1',
+                'type': int,
+                'default': 1,
             },
             {
                 'name': 'ppn',
@@ -124,7 +124,9 @@ class HermesApiBench(Application):
         Exec(cmd, MpiExecInfo(nprocs=self.config['nprocs'],
                               env=self.env,
                               hosts=self.jarvis.hostfile,
-                              ppn=self.config['ppn']))
+                              ppn=self.config['ppn'],
+                              do_dbg=self.config['do_dbg'],
+                              dbg_port=self.config['dbg_port']))
 
     def stop(self):
         """
