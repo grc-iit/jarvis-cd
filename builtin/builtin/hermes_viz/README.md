@@ -23,12 +23,12 @@ python3 -m pip install -r hermes/visualizer/requirments.txt
 ```
 local_port=5001
 remote_port=5001
-ares_node=ares-comp-10
+ares_node=ares-comp-18
 ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
 
-local_port=4001
-remote_port=4001
-ares_node=ares-comp-10
+local_port=4000
+remote_port=4000
+ares_node=ares-comp-25
 ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
 ```
 
@@ -51,13 +51,13 @@ spack unload python
 
 ## 2.3. Personal Machine
 ```
-local_port=5001
-remote_port=5001
+local_port=4000
+remote_port=4000
 ares_node=llogan@ares.cs.iit.edu
 ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
 
-local_port=4001
-remote_port=4001
+local_port=5001
+remote_port=5001
 ares_node=llogan@ares.cs.iit.edu
 ssh -L ${local_port}:localhost:${remote_port} -fN ${ares_node}
 ```

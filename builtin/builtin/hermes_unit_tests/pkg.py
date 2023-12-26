@@ -75,7 +75,7 @@ class HermesUnitTests(Application):
             'TestHermesConnect', 'TestHermesGetContainedBlobIds',
             'TestHermesMultiGetBucket', 'TestHermesDataStager',
             'TestHermesDataOp', 'TestHermesCollectMetadata', 'TestHermesDataPlacement',
-            'TestHermesDataPlacementFancy'
+            'TestHermesDataPlacementFancy', 'hermes'
         ]
         test_latency_execs = ['TestRoundTripLatency',
                               'TestHshmQueueAllocateEmplacePop',
@@ -91,7 +91,10 @@ class HermesUnitTests(Application):
                              do_dbg=self.config['do_dbg'],
                              dbg_port=self.config['dbg_port']))
         elif self.config['TEST_CASE'] in test_hermes_execs:
-            Exec(f'test_hermes_exec {self.config["TEST_CASE"]}',
+            case = self.config['TEST_CASE']
+            if self.config['TEST_CASE'] == 'hermes':
+                case = ''
+            Exec(f'test_hermes_exec {case}',
                  MpiExecInfo(hostfile=self.jarvis.hostfile,
                              nprocs=nprocs,
                              ppn=self.config['ppn'],

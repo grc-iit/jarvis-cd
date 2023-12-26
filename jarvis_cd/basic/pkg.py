@@ -235,7 +235,7 @@ class Pkg(ABC):
         off = 0
         if at_id is None or len(self.config['sub_pkgs']) == 0:
             self.config['sub_pkgs'].append([pkg_type, pkg_id])
-            off = -1
+            off = len(self.config['sub_pkgs'])
         else:
             if isinstance(at_id, int):
                 off = at_id
@@ -883,6 +883,18 @@ class Pipeline(Pkg):
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.stop()
+
+    def kill(self):
+        """
+        Stop the pipeline
+
+        :return: None
+        """
+        for pkg in reversed(self.sub_pkgs):
+            if isinstance(pkg, Service):
+                pkg.update_env(self.env, self.mod_env)
+                if hasattr(pkg, 'kill'):
+                    pkg.kill()
 
     def clean(self):
         """

@@ -40,6 +40,12 @@ class HermesRun(Service):
                 'default': '8g'
             },
             {
+                'name': 'task_shm',
+                'msg': 'Task buffering space',
+                'type': str,
+                'default': '0g'
+            },
+            {
                 'name': 'port',
                 'msg': 'The port to listen for data on',
                 'type': int,
@@ -91,19 +97,25 @@ class HermesRun(Service):
                 'name': 'dworkers',
                 'msg': 'The number of core-dedicated workers',
                 'type': int,
-                'default': 4
+                'default': 2
             },
             {
                 'name': 'oworkers',
                 'msg': 'The number of overlapping workers',
                 'type': int,
-                'default': 32
+                'default': 4
             },
             {
                 'name': 'oworkers_per_core',
                 'msg': 'Overlapping workers per core',
                 'type': int,
                 'default': 32
+            },
+            {
+                'name': 'shm_name',
+                'msg': 'The base shared-memory name',
+                'type': str,
+                'default': 'hrun_shm_${USER}'
             },
             {
                 'name': 'devices',
@@ -152,8 +164,8 @@ class HermesRun(Service):
                 'max_lanes': self.config['qlanes'],
                 'max_queues': 1024,
                 'shm_allocator': 'kScalablePageAllocator',
-                'shm_name': 'hrun_shm',
-                'shm_size': '0g',
+                'shm_name': self.config['shm_name'],
+                'shm_size': self.config['task_shm'],
                 'data_shm_size': self.config['data_shm'],
             },
             'devices': {},
@@ -289,7 +301,7 @@ class HermesRun(Service):
         print(self.env['HERMES_CLIENT_CONF'])
         self.daemon_pkg = Exec('hrun_start_runtime',
                                 PsshExecInfo(hostfile=self.jarvis.hostfile,
-                                             env=self.env,
+                                             env=self.mod_env,
                                              exec_async=True,
                                              do_dbg=self.config['do_dbg'],
                                              dbg_port=self.config['dbg_port'],
@@ -305,6 +317,19 @@ class HermesRun(Service):
         :return: None
         """
         print('Stopping hermes_run')
+        Exec('hrun_stop_runtime',
+             LocalExecInfo(hostfile=self.jarvis.hostfile,
+                           env=self.mod_env,
+                           exec_async=True,
+                           do_dbg=self.config['do_dbg'],
+                           dbg_port=self.config['dbg_port'],
+                           hide_output=self.config['hide_output']))
+        print('Client Exited?')
+        if self.daemon_pkg is not None:
+            self.daemon_pkg.wait()
+        print('Daemon Exited?')
+
+    def kill(self):
         Kill('hrun',
              PsshExecInfo(hostfile=self.jarvis.hostfile,
                           env=self.env))
@@ -312,9 +337,6 @@ class HermesRun(Service):
             Kill('gdbserver',
                  PsshExecInfo(hostfile=self.jarvis.hostfile,
                               env=self.env))
-        # Exec('hrun_stop_runtime',
-        #      PsshExecInfo(hostfile=self.jarvis.hostfile,
-        #                   env=self.env))
         print('Client Exited?')
         if self.daemon_pkg is not None:
             self.daemon_pkg.wait()
