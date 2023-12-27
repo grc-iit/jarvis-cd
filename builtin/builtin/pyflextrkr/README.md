@@ -73,8 +73,8 @@ mkdir -p $OUTPUT_PATH
 ```
 You can setup your yaml path to:
 ```bash
-YAML_PATH=$EXPERIMENT_PATH/config_wrf_mcs_tbradar_demo.yml
-cp "`scspkg pkg src pyflextrkr`/PyFLEXTRKR/config/config_wrf_mcs_tbradar_example.yml" $YAML_PATH
+cd /path/to/jarvis-cd
+YAML_PATH=./builtin/builtin/pyflextrkr/example_config/run_mcs_tbpfradar3d_wrf_template.yml
 ```
 
 
