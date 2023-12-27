@@ -143,6 +143,19 @@ class HermesRun(Service):
                 'choices': ['default', 'scratch', 'bypass']
             },
             {
+                'name': 'flush_mode',
+                'msg': 'The flushing mode to use for adapters',
+                'type': str,
+                'default': 'async',
+                'choices': ['sync', 'async']
+            },
+            {
+                'name': 'page_size',
+                'msg': 'The page size to use for adapters',
+                'type': str,
+                'default': '1m'
+            },
+            {
                 'name': 'devices',
                 'msg': 'Search for a number of devices to include',
                 'type': list,
@@ -202,7 +215,8 @@ class HermesRun(Service):
         hermes_client = {
             'path_inclusions': ['/tmp/test_hermes'],
             'path_exclusions': ['/'],
-            'file_page_size': '1024KB'
+            'file_page_size': self.config['page_size'],
+            'flushing_mode': self.config['flush_mode']
         }
         if self.config['include'] is not None:
             hermes_client['path_inclusions'].append(self.config['include'])
