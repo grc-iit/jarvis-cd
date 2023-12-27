@@ -22,7 +22,7 @@ cd `scspkg pkg src pyflextrkr`
 git clone https://github.com/candiceT233/PyFLEXTRKR
 cd PyFLEXTRKR
 # export PYFLEXTRKR_PATH=`pwd`
-scspkg env set pyflextrkr PYFLEXTRKR_PATH="`pwd`" HDF5_USE_FILE_LOCKING=FALSE
+scspkg env set pyflextrkr PYFLEXTRKR_PATH="`pwd`"
 # scspkg env prepend pyflextrkr PATH ${PATH}
 ```
 
@@ -36,7 +36,7 @@ conda env create -f environment.yml
 conda activate flextrkr
 pip install -e .
 HDF5_MPI="OFF" HDF5_DIR=${YOUR_HDF5_DIR} pip install --no-cache-dir --no-binary=h5py h5py
-pip install xarray[io]
+pip install xarray[io] pyyaml
 conda deactivate
 ```
 
@@ -76,16 +76,16 @@ module load pyflextrkr
 
 
 
-Setup example input data and path.
+Setup example input data `wrf_tbradar.tar.gz` and path.
 ```bash
 EXPERIMENT_PATH=~/experiments/flextrkr_run
-INPUT_PATH=$EXPERIMENT_PATH/input_data/wrf_tbradar
+INPUT_PATH=$EXPERIMENT_PATH/input_data/run_mcs_tbpfradar3d_wrf
 mkdir -p $INPUT_PATH
-wget https://portal.nersc.gov/project/m1867/PyFLEXTRKR/sample_data/tb_radar/wrf_tbradar.tar.gz -O ${INPUT_PATH}/wrf_tbradar.tar.gz
+wget https://portal.nersc.gov/project/m1867/PyFLEXTRKR/sample_data/tb_radar/wrf_tbradar.tar.gz -O ${INPUT_PATH}/run_mcs_tbpfradar3d_wrf.tar.gz
 
-tar -xvzf ${INPUT_PATH}wrf_tbradar.tar.gz -C ${INPUT_PATH}
+tar -xvzf ${INPUT_PATH}/run_mcs_tbpfradar3d_wrf.tar.gz -C ${INPUT_PATH}
 # Remove downloaded tar file
-rm -fv ${INPUT_PATH}wrf_tbradar.tar.gz
+rm -fv ${INPUT_PATH}/run_mcs_tbpfradar3d_wrf.tar.gz
 ```
 
 
@@ -96,7 +96,8 @@ mkdir -p $OUTPUT_PATH
 ```
 
 
-Setup the experiment yaml file. 
+<!-- Setup the experiment yaml file. 
+(This step is automated in jarvis-cd)
 - Makesure to change the 3 environment variables accordingly. 
 - Use absolute paths in the yaml file.
 ```yaml
@@ -108,7 +109,7 @@ You can setup your yaml path to:
 ```bash
 YAML_PATH=$EXPERIMENT_PATH/config_wrf_mcs_tbradar_demo.yml
 cp "`scspkg pkg src pyflextrkr`/PyFLEXTRKR/config/config_wrf_mcs_tbradar_example.yml" $YAML_PATH
-```
+``` -->
 
 
 

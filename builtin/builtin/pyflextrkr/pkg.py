@@ -8,7 +8,7 @@ from jarvis_util import *
 import time
 import pathlib
 
-import subprocess
+import yaml
 
 
 class Pyflextrkr(Application):
@@ -44,7 +44,7 @@ class Pyflextrkr(Application):
                 'name': 'config',
                 'msg': 'The config file for running analysis',
                 'type': str,
-                'default': f'{self.pkg_dir}/example_config/run_mcs_tbpfradar3d_wrf.yml',
+                'default': f'{self.pkg_dir}/example_config/run_mcs_tbpfradar3d_wrf_template.yml',
             },
             {
                 'name': 'runscript',
@@ -80,7 +80,13 @@ class Pyflextrkr(Application):
                 'name': 'experiment_path',
                 'msg': 'Absolute path to the experiment run input and output files',
                 'type': str,
-                'default': "~/experiment/flextrkr_runs",
+                'default': '${HOME}/experiments/flextrkr_runs',
+            },
+            {
+                'name': 'supported_runscripts',
+                'msg': 'List of supported run scripts',
+                'type': list,
+                'default': ['run_mcs_tbpfradar3d_wrf'],
             }
         ]
 
@@ -91,9 +97,11 @@ class Pyflextrkr(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
+        
         self.env['HDF5_USE_FILE_LOCKING'] = "FALSE" # set HDF5 locking: FALSE, TRUE, BESTEFFORT
         
         if self.config['experiment_path'] is not None:
+            self.config['experiment_path'] = os.path.expandvars(self.config['experiment_path'])
             self.env['EXPERIMENT_PATH'] = self.config['experiment_path']
         
         if self.config['conda_env'] is None:
@@ -102,6 +110,16 @@ class Pyflextrkr(Application):
         if self.config['runscript'] is None:
             raise Exception("Must set the Pyflextrkr script to run")
         else:
+            # check if run script is supported
+            if self.config['runscript'] not in self.config['supported_runscripts']:
+                # print(f"Run script {self.config['runscript']} is not supported")
+                raise Exception("Run script is not supported")
+            
+            # check if run script matches config file
+            if self.config['runscript'] not in self.config['config']:
+                print(f"Run script {self.config['runscript']} does not match config file {self.config['config']}")
+                raise Exception("Run script does not match config file")
+            
             # get base file name without extension
             pass_in_path = self.config['runscript']
             script_name = pass_in_path.split("/")[-1]
@@ -135,6 +153,48 @@ class Pyflextrkr(Application):
         
         # for item in self.env:
         #     print(f"{item}={self.env[item]}\n")
+        
+        ## Configure yaml file
+        self._configure_yaml()
+
+    def _configure_yaml(self):
+        yaml_file = self.config['config']
+        # print(f"Configuring yaml file: {yaml_file}")
+        
+        paths_to_mkdir = []
+        
+        with open(yaml_file, "r") as stream:
+            try:
+                config_vars = yaml.safe_load(stream)
+                config_vars['dask_tmp_dir'] = f"/tmp/pyflextrkr"
+                config_vars['clouddata_path'] = f"{self.config['experiment_path']}/input_data/{self.config['runscript']}/"
+                config_vars['root_path'] = f"{self.config['experiment_path']}/output_data/{self.config['runscript']}/"
+                
+                paths_to_mkdir.append(config_vars['dask_tmp_dir'])
+                paths_to_mkdir.append(config_vars['clouddata_path'])
+                paths_to_mkdir.append(config_vars['root_path'])
+                
+                # check if landmask_filename is a key in config_vars
+                if 'landmask_filename' in config_vars:
+                    # check if landmask_filename exists
+                    landmask_filename = f"{self.config['experiment_path']}/input_data/{self.config['runscript']}/wrf_landmask.nc"
+                    config_vars['landmask_filename'] = landmask_filename
+                    
+                    if pathlib.Path(landmask_filename).exists():
+                        config_vars['landmask_filename'] = landmask_filename
+                    else:
+                        raise Exception(f"File {config_vars['landmask_filename']} does not exist.")
+                
+                # save config_vars back to yaml file
+                new_yaml_file = yaml_file.replace("_template.yml", ".yml")
+                yaml.dump(config_vars, open(new_yaml_file, 'w'), default_flow_style=False)
+            except yaml.YAMLError as exc:
+                print(exc)
+        self.config['config'] = new_yaml_file
+        
+        for new_path in paths_to_mkdir:
+            # pathlib.Path(new_path).mkdir(parents=True, exist_ok=True)
+            Exec(f"mkdir -p {new_path}")
 
     def start(self):
         """
@@ -154,6 +214,7 @@ class Pyflextrkr(Application):
 
         if self.config['pyflextrkr_path'] and self.config['runscript']:
             cmd.append(f'{self.config["pyflextrkr_path"]}/runscripts/{self.config["runscript"]}.py')
+            
         if self.config['config']:
             cmd.append(self.config['config'])
         
@@ -180,8 +241,7 @@ class Pyflextrkr(Application):
 
         :return: None
         """
-        cmd = ['killall', '-9', 'python']
-        Exec(' '.join(cmd))
+        pass
         
     def kill(self):
         """
