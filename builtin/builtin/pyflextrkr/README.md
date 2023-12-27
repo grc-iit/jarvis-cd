@@ -40,29 +40,6 @@ pip install xarray[io] pyyaml
 conda deactivate
 ```
 
-<!-- ```bash
-# gray-scott example
-scspkg create gray-scott
-cd `scspkg pkg src gray-scott`
-git clone https://github.com/pnorbert/adiosvm
-cd adiosvm/Tutorial/gs-mpiio
-mkdir build
-pushd build
-cmake ../ -DCMAKE_BUILD_TYPE=Release
-make -j8
-export GRAY_SCOTT_PATH=`pwd`
-scspkg env set gray_scott GRAY_SCOTT_PATH="${GRAY_SCOTT_PATH}"
-scspkg env prepend gray_scott PATH "${GRAY_SCOTT_PATH}"
-module load gray_scott
-spack load mpi adios2
-
-
-cd /path_to_scspkg
-python3 -m pip install -e .
-module use `scspkg module dir`
-scspkg env set pyflextrkr PYFLEXTRKR_PATH="${PYFLEXTRKR_PATH}" HDF5_USE_FILE_LOCKING=FALSE
-scspkg env prepend pyflextrkr PATH ${PATH}
-``` -->
 
 # Pyflextrkrt
 
@@ -94,23 +71,11 @@ Setup example output data and path.
 OUTPUT_PATH=$EXPERIMENT_PATH/wrf_tbradar
 mkdir -p $OUTPUT_PATH
 ```
-
-
-<!-- Setup the experiment yaml file. 
-(This step is automated in jarvis-cd)
-- Makesure to change the 3 environment variables accordingly. 
-- Use absolute paths in the yaml file.
-```yaml
-clouddata_path: '${INPUT_PATH}' # TODO: Change this to your own path
-root_path: '${OUTPUT_PATH}' # TODO: Change this to your own path
-landmask_filename: '${INPUT_PATH}/wrf_landmask.nc' # TODO: Change this to your own path
-```
 You can setup your yaml path to:
 ```bash
 YAML_PATH=$EXPERIMENT_PATH/config_wrf_mcs_tbradar_demo.yml
 cp "`scspkg pkg src pyflextrkr`/PyFLEXTRKR/config/config_wrf_mcs_tbradar_example.yml" $YAML_PATH
-``` -->
-
+```
 
 
 ## 1. Create a Resource Graph
