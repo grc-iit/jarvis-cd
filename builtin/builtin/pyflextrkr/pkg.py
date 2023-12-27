@@ -112,6 +112,7 @@ class Pyflextrkr(Application):
             # check that path exists
             pathlib.Path(self.config['pyflextrkr_path']).exists()
             self.config['log_file'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
+            self.config['stdout'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
             
 
     def start(self):
@@ -121,6 +122,9 @@ class Pyflextrkr(Application):
 
         :return: None
         """
+        
+        # check which python is being used
+        # Exec("which python")
         
         cmd = [
             'conda','run', '-n', self.config['conda_env'], # conda environment
@@ -132,17 +136,21 @@ class Pyflextrkr(Application):
         if self.config['config']:
             cmd.append(self.config['config'])
         
-        print(f"Running Pyflextrkr with command: {' '.join(cmd)}")
+        conda_cmd = ' '.join(cmd)
+        
+        print(f"Running Pyflextrkr with command: {conda_cmd}")
+        print(f"STDOUT to : {self.config['log_file']}")
         
         start = time.time()
-        Exec(' '.join(cmd))
+        
+        Exec(conda_cmd,
+             LocalExecInfo(env=self.mod_env,
+                           pipe_stdout=self.config['log_file'],))
+        
         end = time.time()
         diff = end - start
         self.log(f'TIME: {diff} seconds') # color=Color.GREEN
-
-        # if self.config['log_file']:
-        #     cmd.append(">")
-        #     cmd.append(self.config['log_file'])
+        
 
     def stop(self):
         """

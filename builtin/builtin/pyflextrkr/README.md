@@ -21,14 +21,15 @@ scspkg create pyflextrkr
 cd `scspkg pkg src pyflextrkr`
 git clone https://github.com/candiceT233/PyFLEXTRKR
 cd PyFLEXTRKR
-export PYFLEXTRKR_PATH=`pwd`
-scspkg env set pyflextrkr PYFLEXTRKR_PATH="${PYFLEXTRKR_PATH}"
+# export PYFLEXTRKR_PATH=`pwd`
+scspkg env set pyflextrkr PYFLEXTRKR_PATH="`pwd`" HDF5_USE_FILE_LOCKING=FALSE
+# scspkg env prepend pyflextrkr PATH ${PATH}
 ```
 
 
 
 
-Prepare conda environment:
+Prepare conda environment in scspkg:
 ```bash
 YOUR_HDF5_DIR="`which h5cc |sed 's/.\{9\}$//'`"
 conda env create -f environment.yml
@@ -54,6 +55,13 @@ scspkg env set gray_scott GRAY_SCOTT_PATH="${GRAY_SCOTT_PATH}"
 scspkg env prepend gray_scott PATH "${GRAY_SCOTT_PATH}"
 module load gray_scott
 spack load mpi adios2
+
+
+cd /path_to_scspkg
+python3 -m pip install -e .
+module use `scspkg module dir`
+scspkg env set pyflextrkr PYFLEXTRKR_PATH="${PYFLEXTRKR_PATH}" HDF5_USE_FILE_LOCKING=FALSE
+scspkg env prepend pyflextrkr PATH ${PATH}
 ``` -->
 
 # Pyflextrkrt
@@ -70,7 +78,8 @@ module load pyflextrkr
 
 Setup example input data and path.
 ```bash
-INPUT_PATH=~/experiments/flextrkr_run/input_data/wrf_tbradar
+EXPERIMENT_PATH=~/experiments/flextrkr_run
+INPUT_PATH=$EXPERIMENT_PATH/input_data/wrf_tbradar
 mkdir -p $INPUT_PATH
 wget https://portal.nersc.gov/project/m1867/PyFLEXTRKR/sample_data/tb_radar/wrf_tbradar.tar.gz -O ${INPUT_PATH}/wrf_tbradar.tar.gz
 
@@ -82,8 +91,8 @@ rm -fv ${INPUT_PATH}wrf_tbradar.tar.gz
 
 Setup example output data and path.
 ```bash
-OUTPUT_PAT=~/experiments/flextrkr_run/wrf_tbradar
-mkdir -p $OUTPUT_PAT
+OUTPUT_PATH=$EXPERIMENT_PATH/wrf_tbradar
+mkdir -p $OUTPUT_PATH
 ```
 
 
@@ -92,8 +101,13 @@ Setup the experiment yaml file.
 - Use absolute paths in the yaml file.
 ```yaml
 clouddata_path: '${INPUT_PATH}' # TODO: Change this to your own path
-root_path: '${OUTPUT_PAT}' # TODO: Change this to your own path
+root_path: '${OUTPUT_PATH}' # TODO: Change this to your own path
 landmask_filename: '${INPUT_PATH}/wrf_landmask.nc' # TODO: Change this to your own path
+```
+You can setup your yaml path to:
+```bash
+YAML_PATH=$EXPERIMENT_PATH/config_wrf_mcs_tbradar_demo.yml
+cp "`scspkg pkg src pyflextrkr`/PyFLEXTRKR/config/config_wrf_mcs_tbradar_example.yml" $YAML_PATH
 ```
 
 
@@ -137,7 +151,7 @@ jarvis pipeline env build
 
 Create a Jarvis pipeline with Pyflextrkr.
 ```bash
-jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf config=/path_to_experiment_config/config.yml pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
+jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf config=$YAML_PATH pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
 ```
 
 <!-- ```bash
@@ -178,13 +192,18 @@ jarvis pipeline sbatch job_name=pyflex_test nnodes=1 ppn=8 output_file=./pyflex_
 
 Create the environment variables needed by Hermes + Pyflextrkr
 ```bash
-# On personal
-spack install hermes@master adios2
-spack load hermes adios2
-# On Ares
-module load hermes/master-feow7up adios2/2.9.0-mmkelnu
-# export GRAY_SCOTT_PATH=${HOME}/adiosvm/Tutorial/gs-mpiio/build
-export PATH="${GRAY_SCOTT_PATH}:$PATH"
+spack install hermes_shm
+scspkg create hermes
+cd `scspkg pkg src hermes`
+git clone https://github.com/HDFGroup/hermes
+cd hermes
+mkdir build
+cd build
+cmake ../ -DCMAKE_BUILD_TYPE="Release" \
+    -DCMAKE_INSTALL_PREFIX=`scspkg pkg root hermes` \
+    -DHERMES_ENABLE_VFD="ON"
+
+module load hermes
 ```
 
 ## 2. Create a Resource Graph
@@ -210,7 +229,7 @@ The Jarvis pipeline will store all configuration data needed by Hermes
 and Pyflextrkr.
 
 ```bash
-jarvis pipeline create gs-hermes
+jarvis pipeline create hermes_pyflextrkr_test
 ```
 
 ## 3. Save Environment
@@ -225,9 +244,9 @@ jarvis pipeline env build
 Create a Jarvis pipeline with Hermes, the Hermes MPI-IO interceptor,
 and gray-scott
 ```bash
-jarvis pipeline append hermes --sleep=10 --output_dir=${HOME}/gray-scott
-jarvis pipeline append hermes_api +mpi
-jarvis pipeline append gray_scott
+jarvis pipeline append hermes --sleep=10 include=$EXPERIMENT_PATH --output_dir=$EXPERIMENT_PATH
+jarvis pipeline append hermes_api +vfd
+jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf config=$YAML_PATH pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
 ```
 
 ## 5. Run the Experiment
