@@ -215,9 +215,12 @@ class HermesRun(Service):
         hermes_client = {
             'path_inclusions': ['/tmp/test_hermes'],
             'path_exclusions': ['/'],
-            'file_page_size': self.config['page_size'],
-            'flushing_mode': self.config['flush_mode']
+            'file_page_size': self.config['page_size']
         }
+        if self.config['flush_mode'] == 'async':
+            hermes_client['flushing_mode'] = 'kAsync'
+        elif self.config['flush_mode'] == 'sync':
+            hermes_client['flushing_mode'] = 'kSync'
         if self.config['include'] is not None:
             hermes_client['path_inclusions'].append(self.config['include'])
 
