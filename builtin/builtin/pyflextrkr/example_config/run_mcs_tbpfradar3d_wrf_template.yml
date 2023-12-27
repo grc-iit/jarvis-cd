@@ -18,7 +18,7 @@ run_speed : True # needed
 # run_parallel: 1 (local cluster), 2 (Dask MPI)
 run_parallel: 1
 nprocesses : 8  # Number of processors to use if run_parallel=1
-dask_tmp_dir: '/tmp/mtang11'  # Dask temporary directory if run_parallel=1
+dask_tmp_dir: '/tmp/pyflextrkr_test'  # Dask temporary directory if run_parallel=1
 timeout: 360  # [seconds] Dask timeout limit
 
 # Start/end date and time
