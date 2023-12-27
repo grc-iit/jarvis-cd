@@ -480,6 +480,3 @@ Traceback (most recent call last):
   File "h5py/h5f.pyx", line 106, in h5py.h5f.open
 OSError: Unable to synchronously open file (file signature not found)
 ```
-
-
-
