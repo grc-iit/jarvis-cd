@@ -90,8 +90,14 @@ class HermesRun(Service):
             {
                 'name': 'qdepth',
                 'msg': 'The depth of queues',
-                'type': float,
+                'type': int,
                 'default': 100000
+            },
+            {
+                'name': 'pqdepth',
+                'msg': 'The depth of the process queue',
+                'type': int,
+                'default': 48
             },
             {
                 'name': 'qlanes',
@@ -180,6 +186,7 @@ class HermesRun(Service):
             },
             'queue_manager': {
                 'queue_depth': self.config['qdepth'],
+                'proc_queue_depth': self.config['pqdepth'],
                 'max_lanes': self.config['qlanes'],
                 'max_queues': 1024,
                 'shm_allocator': 'kScalablePageAllocator',
