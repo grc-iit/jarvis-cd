@@ -140,7 +140,7 @@ class HermesRun(Service):
                 'msg': 'The adapter mode to use for Hermes',
                 'type': str,
                 'default': 'default',
-                'chocies': ['default', 'scratch', 'bypass']
+                'choices': ['default', 'scratch', 'bypass']
             },
             {
                 'name': 'devices',
