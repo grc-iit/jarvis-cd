@@ -32,6 +32,7 @@ class Pyflextrkr(Application):
 
         :return: List(dict)
         """
+        
         return [
             {
                 'name': 'conda_env',
@@ -67,13 +68,13 @@ class Pyflextrkr(Application):
                 'name': 'pyflextrkr_path',
                 'msg': 'Absolute path to the Pyflextrkr source code',
                 'type': str,
-                'default': '${PYFLEXTRKR_PATH}',
+                'default': None, #PYFLEXTRKR_PATH,
             },
             {
                 'name': 'log_file',
                 'msg': 'File path to log stdout',
                 'type': str,
-                'default': '${PYFLEXTRKR_PATH}/pyflextrkr_run.log',
+                'default': None, #f'{PYFLEXTRKR_PATH}/pyflextrkr_run.log',
             },
         ]
 
@@ -107,6 +108,10 @@ class Pyflextrkr(Application):
         
         if self.config['pyflextrkr_path'] is None:
             raise Exception("Must set the path to the Pyflextrkr source code")
+        else:
+            # check that path exists
+            pathlib.Path(self.config['pyflextrkr_path']).exists()
+            self.config['log_file'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
             
 
     def start(self):

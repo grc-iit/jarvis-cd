@@ -137,11 +137,11 @@ jarvis pipeline env build
 
 Create a Jarvis pipeline with Pyflextrkr.
 ```bash
-jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf config=/path_to_experiment_config/config.yml
+jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf config=/path_to_experiment_config/config.yml pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
 ```
 
 <!-- ```bash
-jarvis pipeline append pyflextrkr conda_env=flextrkr runscript=run_mcs_tbpfradar3d_wrf config=${HOME}/experiments/flextrkr_runs/config_wrf_mcs_tbradar_demo.yml
+jarvis pipeline append pyflextrkr conda_env=flextrkr runscript=run_mcs_tbpfradar3d_wrf config=${HOME}/experiments/flextrkr_runs/config_wrf_mcs_tbradar_demo.yml pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
 
 jarvis pkg configure pyflextrkr conda_env=flextrkr runscript=run_mcs_tbpfradar3d_wrf config=${HOME}/experiments/flextrkr_runs/config_wrf_mcs_tbradar_demo.yml
 
