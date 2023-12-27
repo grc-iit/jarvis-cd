@@ -82,10 +82,22 @@ class HermesRun(Service):
                 'default': 0
             },
             {
+                'name': 'flush_period',
+                'msg': 'Period of time to check for flushing (milliseconds)',
+                'type': int,
+                'default': 5000
+            },
+            {
                 'name': 'qdepth',
                 'msg': 'The depth of queues',
-                'type': float,
+                'type': int,
                 'default': 100000
+            },
+            {
+                'name': 'pqdepth',
+                'msg': 'The depth of the process queue',
+                'type': int,
+                'default': 48
             },
             {
                 'name': 'qlanes',
@@ -116,6 +128,19 @@ class HermesRun(Service):
                 'msg': 'The base shared-memory name',
                 'type': str,
                 'default': 'hrun_shm_${USER}'
+            },
+            {
+                'name': 'dpe',
+                'msg': 'The DPE to use by default',
+                'type': str,
+                'default': 'MinimizeIoTime'
+            },
+            {
+                'name': 'adapter_mode',
+                'msg': 'The adapter mode to use for Hermes',
+                'type': str,
+                'default': 'default',
+                'chocies': ['default', 'scratch', 'bypass']
             },
             {
                 'name': 'devices',
@@ -161,6 +186,7 @@ class HermesRun(Service):
             },
             'queue_manager': {
                 'queue_depth': self.config['qdepth'],
+                'proc_queue_depth': self.config['pqdepth'],
                 'max_lanes': self.config['qlanes'],
                 'max_queues': 1024,
                 'shm_allocator': 'kScalablePageAllocator',
@@ -275,10 +301,20 @@ class HermesRun(Service):
             'num_threads': self.config['threads']
         }
         hermes_server['buffer_organizer'] = {
-            'recency_max': self.config['recency_max']
+            'recency_max': self.config['recency_max'],
+            'flush_period': self.config['flush_period']
         }
         if self.jarvis.hostfile.path is None:
             hermes_server['rpc']['host_names'] = self.jarvis.hostfile.hosts
+        hermes_server['default_placement_policy'] = self.config['dpe']
+        if self.config['adapter_mode'] == 'default':
+            adapter_mode = 'kDefault'
+        elif self.config['adapter_mode'] == 'scratch':
+            adapter_mode = 'kScratch'
+        elif self.config['adapter_mode'] == 'bypass':
+            adapter_mode = 'kBypass'
+        self.env['HERMES_ADAPTER_MODE'] = adapter_mode
+        hermes_server['default_placement_policy'] = self.config['dpe']
 
         # Save hermes configurations
         hermes_server_yaml = f'{self.shared_dir}/hermes_server.yaml'
