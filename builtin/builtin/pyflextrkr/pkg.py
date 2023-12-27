@@ -133,10 +133,8 @@ class Pyflextrkr(Application):
             pass
         else:
             raise Exception(f"File {self.config['config']} does not exist.")
-        
 
         if self.config['flush_mem'] == False:
-            # Exec(f"export FLUSH_MEM=FALSE")
             self.env['FLUSH_MEM'] = "FALSE"
         else:
             self.env['FLUSH_MEM'] = "TRUE"
@@ -159,8 +157,7 @@ class Pyflextrkr(Application):
 
     def _configure_yaml(self):
         yaml_file = self.config['config']
-        # print(f"Configuring yaml file: {yaml_file}")
-        
+                
         paths_to_mkdir = []
         
         with open(yaml_file, "r") as stream:
@@ -204,14 +201,12 @@ class Pyflextrkr(Application):
         :return: None
         """
         
-        # check which python is being used
-        # Exec("which python")
-        
         cmd = [
             'conda','run', '-n', self.config['conda_env'], # conda environment
             'python',
         ]
-
+        
+        # Convert runscript to full .py file path
         if self.config['pyflextrkr_path'] and self.config['runscript']:
             cmd.append(f'{self.config["pyflextrkr_path"]}/runscripts/{self.config["runscript"]}.py')
             
