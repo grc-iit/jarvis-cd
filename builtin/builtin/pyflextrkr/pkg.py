@@ -44,11 +44,11 @@ class Pyflextrkr(Application):
                 'name': 'config',
                 'msg': 'The config file for running analysis',
                 'type': str,
-                'default': None,
+                'default': f'{self.pkg_dir}/example_config/run_mcs_tbpfradar3d_wrf.yml',
             },
             {
                 'name': 'runscript',
-                'msg': 'The name of the Pyflextrkr script to run',
+                'msg': 'The name of the Pyflextrkr script to run (run_mcs_tbpfradar3d_wrf)',
                 'type': str,
                 'default': None,
             },
@@ -68,14 +68,20 @@ class Pyflextrkr(Application):
                 'name': 'pyflextrkr_path',
                 'msg': 'Absolute path to the Pyflextrkr source code',
                 'type': str,
-                'default': None, #PYFLEXTRKR_PATH,
+                'default': None,
             },
             {
                 'name': 'log_file',
                 'msg': 'File path to log stdout',
                 'type': str,
-                'default': None, #f'{PYFLEXTRKR_PATH}/pyflextrkr_run.log',
+                'default': None,
             },
+            {
+                'name': 'experiment_path',
+                'msg': 'Absolute path to the experiment run input and output files',
+                'type': str,
+                'default': "~/experiment/flextrkr_runs",
+            }
         ]
 
     def _configure(self, **kwargs):
@@ -85,10 +91,14 @@ class Pyflextrkr(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
+        self.env['HDF5_USE_FILE_LOCKING'] = "FALSE" # set HDF5 locking: FALSE, TRUE, BESTEFFORT
+        
+        if self.config['experiment_path'] is not None:
+            self.env['EXPERIMENT_PATH'] = self.config['experiment_path']
+        
         if self.config['conda_env'] is None:
             raise Exception("Must set the conda environment for running Pyflextrkr")
-        if self.config['config'] is None:
-            raise Exception("Must set the Pyflextrkr config file")
+        
         if self.config['runscript'] is None:
             raise Exception("Must set the Pyflextrkr script to run")
         else:
@@ -99,10 +109,19 @@ class Pyflextrkr(Application):
             if ".py" in script_name:
                 script_name = script_name[:-3]
             self.config['runscript'] = script_name
-        
-        if self.config['flush_mem'] == False:
-            Exec(f"export FLUSH_MEM=FALSE")
+
+        # Check if config file exists
+        if pathlib.Path(self.config['config']).exists():
+            pass
         else:
+            raise Exception(f"File {self.config['config']} does not exist.")
+        
+
+        if self.config['flush_mem'] == False:
+            # Exec(f"export FLUSH_MEM=FALSE")
+            self.env['FLUSH_MEM'] = "FALSE"
+        else:
+            self.env['FLUSH_MEM'] = "TRUE"
             if self.config['flush_mem_cmd'] is None:
                 raise Exception("Must add the command to flush memory using flush_mem_cmd")
         
@@ -113,11 +132,13 @@ class Pyflextrkr(Application):
             pathlib.Path(self.config['pyflextrkr_path']).exists()
             self.config['log_file'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
             self.config['stdout'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
-            
+        
+        # for item in self.env:
+        #     print(f"{item}={self.env[item]}\n")
 
     def start(self):
         """
-        Launch an application. E.g., OrangeFS will launch the servers, clients,
+        Launch an application. E.g., Pyflextrkr will launch the servers, clients,
         and metadata services on all necessary pkgs.
 
         :return: None
@@ -154,20 +175,32 @@ class Pyflextrkr(Application):
 
     def stop(self):
         """
-        Stop a running application. E.g., OrangeFS will terminate the servers,
+        Stop a running application. E.g., Pyflextrkr will terminate the servers,
         clients, and metadata services.
 
         :return: None
         """
-        pass
+        cmd = ['killall', '-9', 'python']
+        Exec(' '.join(cmd))
+        
+    def kill(self):
+        """
+        Stop a running application. E.g., Pyflextrkr will terminate the servers,
+        clients, and metadata services.
+
+        :return: None
+        """
+        cmd = ['killall', '-9', 'python']
+        Exec(' '.join(cmd))
 
     def clean(self):
         """
-        Destroy all data for an application. E.g., OrangeFS will delete all
+        Destroy all data for an application. E.g., Pyflextrkr will delete all
         metadata and data directories in addition to the orangefs.xml file.
 
         :return: None
         """
+        print(f"Manual: Please clean up files in {self.config['experiment_path']}")
         pass
         # output_dir = self.config['output'] + "*"
         # print(f'Removing {output_dir}')
