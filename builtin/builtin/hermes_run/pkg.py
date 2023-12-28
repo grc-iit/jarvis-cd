@@ -358,7 +358,9 @@ class HermesRun(Service):
                                              exec_async=True,
                                              do_dbg=self.config['do_dbg'],
                                              dbg_port=self.config['dbg_port'],
-                                             hide_output=self.config['hide_output']))
+                                             hide_output=self.config['hide_output'],
+                                             pipe_stdout=self.config['stdout'],
+                                             pipe_stderr=self.config['stderr']))
         time.sleep(self.config['sleep'])
         print('Done sleeping')
 
