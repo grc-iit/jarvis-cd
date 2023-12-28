@@ -10,7 +10,9 @@ bash Miniconda3-latest-Linux-x86_64.sh.sh
 ```
 - HDF5 (1.14.0+)
 - Require h5py
-
+- MPI
+    - Either OpenMPI or MPICH
+    - Required by mpi4py
 
 
 # Installation
@@ -36,7 +38,7 @@ conda env create -f environment.yml
 conda activate flextrkr
 pip install -e .
 HDF5_MPI="OFF" HDF5_DIR=${YOUR_HDF5_DIR} pip install --no-cache-dir --no-binary=h5py h5py
-pip install xarray[io] pyyaml
+pip install xarray[io] pyyaml mpi4py
 conda deactivate
 ```
 
@@ -143,10 +145,19 @@ jarvis pipeline clean
 
 # Pyflextrkr Withg Slurm
 
-Do the above and
+## Local Cluster
+Do the above and `ppn` must match `nprocesses`
 ```bash
 jarvis pipeline sbatch job_name=pyflex_test nnodes=1 ppn=8 output_file=./pyflex_test.out error_file=./pyflex_test.err
 ```
+
+## Multi Nodes Cluster
+Do the above and `ppn` must greater than match `nprocesses`/`nnodes` 
+    (e.g. `nnodes=2 ppn=8` allocates 16 processes in total, and `nprocesses` must not greater than 16)
+```bash
+jarvis pipeline sbatch job_name=pyflex_test nnodes=2 ppn=8 output_file=./pyflex_test.out error_file=./pyflex_test.err
+```
+
 
 # Pyflextrkr With Hermes
 
