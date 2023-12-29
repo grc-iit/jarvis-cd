@@ -40,6 +40,12 @@ class HermesRun(Service):
                 'default': '8g'
             },
             {
+                'name': 'rdata_shm',
+                'msg': 'Runtime data buffering space',
+                'type': str,
+                'default': '8g'
+            },
+            {
                 'name': 'task_shm',
                 'msg': 'Task buffering space',
                 'type': str,
@@ -206,6 +212,7 @@ class HermesRun(Service):
                 'shm_name': self.config['shm_name'],
                 'shm_size': self.config['task_shm'],
                 'data_shm_size': self.config['data_shm'],
+                'rdata_shm_size': self.config['rdata_shm'],
             },
             'devices': {},
             'rpc': {}
