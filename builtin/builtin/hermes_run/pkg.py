@@ -382,7 +382,7 @@ class HermesRun(Service):
         Exec('hrun_stop_runtime',
              LocalExecInfo(hostfile=self.jarvis.hostfile,
                            env=self.mod_env,
-                           exec_async=True,
+                           exec_async=False,
                            do_dbg=self.config['do_dbg'],
                            dbg_port=self.config['dbg_port'],
                            hide_output=self.config['hide_output']))
