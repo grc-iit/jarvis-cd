@@ -381,7 +381,7 @@ class HermesRun(Service):
         print('Stopping hermes_run')
         Exec('hrun_stop_runtime',
              LocalExecInfo(hostfile=self.jarvis.hostfile,
-                           env=self.mod_env,
+                           env=self.env,
                            exec_async=False,
                            do_dbg=self.config['do_dbg'],
                            dbg_port=self.config['dbg_port'],
