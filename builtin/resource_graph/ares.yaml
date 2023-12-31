@@ -286,7 +286,7 @@ net:
   version: '114.10'
 - provider: verbs
   fabric: IB-0xfe80000000000000
-  domain: mlx5_0
+  domain: rocep47s0
   version: 119.0
   type: FI_EP_MSG
   protocol: FI_PROTO_RDMA_CM_IB_RC
