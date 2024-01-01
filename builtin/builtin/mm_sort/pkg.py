@@ -39,9 +39,15 @@ class MmSort(Application):
             },
             {
                 'name': 'nprocs',
-                'msg': 'The output path',
-                'type': str,
-                'default': '16',
+                'msg': 'Number of processes to spawn',
+                'type': int,
+                'default': 16,
+            },
+            {
+                'name': 'ppn',
+                'msg': 'Number of processes per node',
+                'type': int,
+                'default': 16,
             },
             {
                 'name': 'api',
@@ -77,6 +83,7 @@ class MmSort(Application):
 
         :return: None
         """
+        mm_sort = ['mmap', 'mega']
         if self.config['api'] == 'spark':
             cmd = [
                 'spark-submit',
@@ -85,11 +92,22 @@ class MmSort(Application):
                 f'--conf spark.speculation=false',
                 f'--conf spark.storage.replication=1',
                 f'--conf spark.local.dir={self.config["scratch"]}',
-                f'{self.env["MM_PATH"]}/benchmark/parallel_sort.py',
+                f'{self.env["MM_PATH"]}/benchmark/mm_sort.py',
                 self.config['path']
             ]
             cmd = ' '.join(cmd)
             Exec(cmd, LocalExecInfo(env=self.env))
+        elif self.config['api'] in mm_sort:
+            cmd = [
+                'mm_sort',
+                self.config['api'],
+                self.config['path'],
+                self.config['memory'],
+            ]
+            cmd = ' '.join(cmd)
+            Exec(cmd, MpiExecInfo(env=self.env,
+                                  nprocs=self.config['nprocs'],
+                                  ppn=self.config['ppn']))
 
     def stop(self):
         """
