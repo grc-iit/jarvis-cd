@@ -419,6 +419,28 @@ class Pkg(ABC):
         else:
             env[env_var] = f'{path}:{cur_env}'
 
+    def append_env(self, env_var, path):
+        """
+        Append a path to the an environment variable, such as LD_PRELOAD.
+
+        :param env_var: The name of the environment variable
+        :param path: The path to prepend
+        :return:
+        """
+        if env_var == 'LD_PRELOAD':
+            env = self.mod_env
+        else:
+            env = self.env
+        if env_var in env:
+            cur_env = env[env_var]
+        else:
+            cur_env = os.getenv(env_var)
+
+        if cur_env is None or len(cur_env) == 0:
+            env[env_var] = path
+        else:
+            env[env_var] = f'{cur_env}:{path}'
+
     def setenv(self, env_var, val):
         """
         Set the Jarvis environment variable

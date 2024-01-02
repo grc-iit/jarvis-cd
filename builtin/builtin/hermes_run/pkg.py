@@ -40,6 +40,12 @@ class HermesRun(Service):
                 'default': '8g'
             },
             {
+                'name': 'rdata_shm',
+                'msg': 'Runtime data buffering space',
+                'type': str,
+                'default': '8g'
+            },
+            {
                 'name': 'task_shm',
                 'msg': 'Task buffering space',
                 'type': str,
@@ -206,6 +212,7 @@ class HermesRun(Service):
                 'shm_name': self.config['shm_name'],
                 'shm_size': self.config['task_shm'],
                 'data_shm_size': self.config['data_shm'],
+                'rdata_shm_size': self.config['rdata_shm'],
             },
             'devices': {},
             'rpc': {}
@@ -358,7 +365,9 @@ class HermesRun(Service):
                                              exec_async=True,
                                              do_dbg=self.config['do_dbg'],
                                              dbg_port=self.config['dbg_port'],
-                                             hide_output=self.config['hide_output']))
+                                             hide_output=self.config['hide_output'],
+                                             pipe_stdout=self.config['stdout'],
+                                             pipe_stderr=self.config['stderr']))
         time.sleep(self.config['sleep'])
         print('Done sleeping')
 
@@ -372,8 +381,8 @@ class HermesRun(Service):
         print('Stopping hermes_run')
         Exec('hrun_stop_runtime',
              LocalExecInfo(hostfile=self.jarvis.hostfile,
-                           env=self.mod_env,
-                           exec_async=True,
+                           env=self.env,
+                           exec_async=False,
                            do_dbg=self.config['do_dbg'],
                            dbg_port=self.config['dbg_port'],
                            hide_output=self.config['hide_output']))
