@@ -87,6 +87,24 @@ class Pyflextrkr(Application):
                 'msg': 'List of supported run scripts',
                 'type': list,
                 'default': ['run_mcs_tbpfradar3d_wrf'],
+            },
+            {
+                'name': 'run_parallel',
+                'msg': 'Parallel mode for Pyflextrkr: 0 (serial), 1 (local cluster), 2 (Dask MPI)',
+                'type': int,
+                'default': 1,
+            },
+            {
+                'name': 'nprocesses',
+                'msg': 'Number of processes to run in parallel',
+                'type': int,
+                'default': 8,
+            },
+            {
+                'name': 'run_cmd', # This is a internal variable
+                'msg': 'Command to run Pyflextrkr',
+                'type': str,
+                'default': None,
             }
         ]
 
@@ -103,6 +121,10 @@ class Pyflextrkr(Application):
         if self.config['experiment_path'] is not None:
             self.config['experiment_path'] = os.path.expandvars(self.config['experiment_path'])
             self.env['EXPERIMENT_PATH'] = self.config['experiment_path']
+        
+        # Check if run_parallel is 0, 1, or 2
+        if self.config['run_parallel'] not in [0,1,2]:
+            raise Exception("run_parallel must be 0 (serial), 1 (local cluster), or 2 (Dask MPI)")
         
         if self.config['conda_env'] is None:
             raise Exception("Must set the conda environment for running Pyflextrkr")
@@ -163,13 +185,20 @@ class Pyflextrkr(Application):
         with open(yaml_file, "r") as stream:
             try:
                 config_vars = yaml.safe_load(stream)
-                config_vars['dask_tmp_dir'] = f"/tmp/pyflextrkr"
+                config_vars['dask_tmp_dir'] = f"/tmp/pyflextrkr_test"
                 config_vars['clouddata_path'] = f"{self.config['experiment_path']}/input_data/{self.config['runscript']}/"
                 config_vars['root_path'] = f"{self.config['experiment_path']}/output_data/{self.config['runscript']}/"
                 
                 paths_to_mkdir.append(config_vars['dask_tmp_dir'])
                 paths_to_mkdir.append(config_vars['clouddata_path'])
                 paths_to_mkdir.append(config_vars['root_path'])
+                
+                # Set run mode
+                config_vars['run_parallel'] = self.config['run_parallel']
+                if self.config['run_parallel'] == 0 and self.config['nprocesses'] > 1:
+                    self.log(f"WARNING: run_parallel is 0 (serial) nprocesses is set to")
+                    self.config['nprocesses'] = 1
+                config_vars['nprocesses'] = self.config['nprocesses']
                 
                 # check if landmask_filename is a key in config_vars
                 if 'landmask_filename' in config_vars:
@@ -190,8 +219,64 @@ class Pyflextrkr(Application):
         self.config['config'] = new_yaml_file
         
         for new_path in paths_to_mkdir:
-            # pathlib.Path(new_path).mkdir(parents=True, exist_ok=True)
-            Exec(f"mkdir -p {new_path}")
+            pathlib.Path(new_path).mkdir(parents=True, exist_ok=True)
+            # Exec(f"mkdir -p {new_path}")
+
+    def _construct_cmd(self):
+        """
+        Construct the command to launch the application. E.g., Pyflextrkr will
+        launch with expected environment and number of srun processes.
+
+        :return: None
+        """
+        cmd = []
+        if self.config['run_parallel'] == 1:
+            cmd = [
+            'conda','run', '-n', self.config['conda_env'],
+            ]
+        elif self.config['run_parallel'] == 2:
+            host_list_str = None
+            
+            # Check if self.jarvis.hostfile is set
+            if self.jarvis.hostfile is None:
+                raise Exception("Running with Dask-MPI mode but self.jarvis.hostfile is None")
+            
+            # open self.jarvis.hostfile to get all lines of hosts into a string deliminated by ,
+            print(f"Reading hostfile: {self.jarvis.hostfile}")
+            if 'localhost' in self.jarvis.hostfile:
+                host_list_str = "ares-comp-25"
+            else:
+                for hostname in self.jarvis.hostfile:
+                    if host_list_str is None:
+                        host_list_str = hostname.rstrip()
+                    else:
+                        host_list_str = host_list_str + "," + hostname.rstrip()
+            
+            if host_list_str is None:
+                raise Exception("host_list_str is None")
+            print(f"host_list_str: {host_list_str}")
+            
+            # mpirun --host $hostlist --npernode 2
+            ppn = self.config['nprocesses']/len(self.jarvis.hostfile)
+            cmd = [
+                'conda','run', '-n', self.config['conda_env'],
+                'mpirun',
+                '--host', host_list_str,
+                '-n', str(self.config['nprocesses']),
+                '-ppn', str(ppn),
+            ]
+            
+        cmd.append('python')
+        # Convert runscript to full .py file path
+        if self.config['pyflextrkr_path'] and self.config['runscript']:
+            cmd.append(f'{self.config["pyflextrkr_path"]}/runscripts/{self.config["runscript"]}.py')
+            
+        if self.config['config']:
+            cmd.append(self.config['config'])
+
+        self.config['run_cmd'] = ' '.join(cmd)
+        print(f"run_cmd: {self.config['run_cmd']}")
+
 
     def start(self):
         """
@@ -201,26 +286,14 @@ class Pyflextrkr(Application):
         :return: None
         """
         
-        cmd = [
-            'conda','run', '-n', self.config['conda_env'], # conda environment
-            'python',
-        ]
+        self._construct_cmd()
         
-        # Convert runscript to full .py file path
-        if self.config['pyflextrkr_path'] and self.config['runscript']:
-            cmd.append(f'{self.config["pyflextrkr_path"]}/runscripts/{self.config["runscript"]}.py')
-            
-        if self.config['config']:
-            cmd.append(self.config['config'])
-        
-        conda_cmd = ' '.join(cmd)
-        
-        print(f"Running Pyflextrkr with command: {conda_cmd}")
+        print(f"Running Pyflextrkr with command: {self.config['run_cmd']}")
         print(f"STDOUT to : {self.config['log_file']}")
         
         start = time.time()
         
-        Exec(conda_cmd,
+        Exec(self.config['run_cmd'],
              LocalExecInfo(env=self.mod_env,
                            pipe_stdout=self.config['log_file'],))
         

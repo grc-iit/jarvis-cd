@@ -10,7 +10,9 @@ bash Miniconda3-latest-Linux-x86_64.sh.sh
 ```
 - HDF5 (1.14.0+)
 - Require h5py
-
+- MPI
+    - Either OpenMPI or MPICH
+    - Required by mpi4py
 
 
 # Installation
@@ -36,33 +38,10 @@ conda env create -f environment.yml
 conda activate flextrkr
 pip install -e .
 HDF5_MPI="OFF" HDF5_DIR=${YOUR_HDF5_DIR} pip install --no-cache-dir --no-binary=h5py h5py
-pip install xarray[io] pyyaml
+pip install xarray[io] pyyaml mpi4py
 conda deactivate
 ```
 
-<!-- ```bash
-# gray-scott example
-scspkg create gray-scott
-cd `scspkg pkg src gray-scott`
-git clone https://github.com/pnorbert/adiosvm
-cd adiosvm/Tutorial/gs-mpiio
-mkdir build
-pushd build
-cmake ../ -DCMAKE_BUILD_TYPE=Release
-make -j8
-export GRAY_SCOTT_PATH=`pwd`
-scspkg env set gray_scott GRAY_SCOTT_PATH="${GRAY_SCOTT_PATH}"
-scspkg env prepend gray_scott PATH "${GRAY_SCOTT_PATH}"
-module load gray_scott
-spack load mpi adios2
-
-
-cd /path_to_scspkg
-python3 -m pip install -e .
-module use `scspkg module dir`
-scspkg env set pyflextrkr PYFLEXTRKR_PATH="${PYFLEXTRKR_PATH}" HDF5_USE_FILE_LOCKING=FALSE
-scspkg env prepend pyflextrkr PATH ${PATH}
-``` -->
 
 # Pyflextrkrt
 
@@ -94,23 +73,11 @@ Setup example output data and path.
 OUTPUT_PATH=$EXPERIMENT_PATH/wrf_tbradar
 mkdir -p $OUTPUT_PATH
 ```
-
-
-<!-- Setup the experiment yaml file. 
-(This step is automated in jarvis-cd)
-- Makesure to change the 3 environment variables accordingly. 
-- Use absolute paths in the yaml file.
-```yaml
-clouddata_path: '${INPUT_PATH}' # TODO: Change this to your own path
-root_path: '${OUTPUT_PATH}' # TODO: Change this to your own path
-landmask_filename: '${INPUT_PATH}/wrf_landmask.nc' # TODO: Change this to your own path
-```
 You can setup your yaml path to:
 ```bash
-YAML_PATH=$EXPERIMENT_PATH/config_wrf_mcs_tbradar_demo.yml
-cp "`scspkg pkg src pyflextrkr`/PyFLEXTRKR/config/config_wrf_mcs_tbradar_example.yml" $YAML_PATH
-``` -->
-
+cd /path/to/jarvis-cd
+YAML_PATH=./builtin/builtin/pyflextrkr/example_config/run_mcs_tbpfradar3d_wrf_template.yml
+```
 
 
 ## 1. Create a Resource Graph
@@ -178,10 +145,19 @@ jarvis pipeline clean
 
 # Pyflextrkr Withg Slurm
 
-Do the above and
+## Local Cluster
+Do the above and `ppn` must match `nprocesses`
 ```bash
 jarvis pipeline sbatch job_name=pyflex_test nnodes=1 ppn=8 output_file=./pyflex_test.out error_file=./pyflex_test.err
 ```
+
+## Multi Nodes Cluster
+Do the above and `ppn` must greater than match `nprocesses`/`nnodes` 
+    (e.g. `nnodes=2 ppn=8` allocates 16 processes in total, and `nprocesses` must not greater than 16)
+```bash
+jarvis pipeline sbatch job_name=pyflex_test nnodes=2 ppn=8 output_file=./pyflex_test.out error_file=./pyflex_test.err
+```
+
 
 # Pyflextrkr With Hermes
 
