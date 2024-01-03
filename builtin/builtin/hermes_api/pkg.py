@@ -95,11 +95,11 @@ class HermesApi(Interceptor):
         :return: None
         """
         if self.config['mpi']:
-            self.prepend_env('LD_PRELOAD', self.config['HERMES_MPIIO'])
+            self.append_env('LD_PRELOAD', self.config['HERMES_MPIIO'])
         if self.config['posix']:
-            self.prepend_env('LD_PRELOAD', self.config['HERMES_POSIX'])
+            self.append_env('LD_PRELOAD', self.config['HERMES_POSIX'])
         if self.config['stdio']:
-            self.prepend_env('LD_PRELOAD', self.config['HERMES_STDIO'])
+            self.append_env('LD_PRELOAD', self.config['HERMES_STDIO'])
         if self.config['vfd']:
             plugin_path_parent = (
                 str(pathlib.Path(self.config['HERMES_VFD']).parent))

@@ -89,7 +89,7 @@ class HermesMpiioTests(Application):
             mpiio_cmd.append('--reporter compact -d yes')
             cmd = ' '.join(mpiio_cmd)
         node = Exec(cmd,
-                    MpiExecInfo(nprocs=4,
+                    MpiExecInfo(nprocs=1,
                                 env=self.mod_env,
                                 do_dbg=self.config['do_dbg'],
                                 dbg_port=self.config['dbg_port'],
