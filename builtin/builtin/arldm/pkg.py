@@ -8,8 +8,6 @@ from jarvis_util import *
 import time
 import pathlib
 
-import subprocess
-
 
 class ARLDM(Application):
     """
@@ -19,9 +17,6 @@ class ARLDM(Application):
         """
         Initialize paths
         """
-        # self.adios2_xml_path = f'{self.shared_dir}/adios2.xml'
-        # self.settings_json_path = f'{self.shared_dir}/settings-files.json'
-        # self.conda_env = 'arldm'
         pass
 
     def _configure_menu(self):
