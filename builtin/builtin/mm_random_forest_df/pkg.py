@@ -1,14 +1,14 @@
 """
-This module provides classes and methods to launch the MmKmeansDf application.
-MmKmeansDf is ....
+This module provides classes and methods to launch the MmRandomForestDf application.
+MmRandomForestDf is ....
 """
 from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 
 
-class MmKmeansDf(Application):
+class MmRandomForestDf(Application):
     """
-    This class provides methods to launch the MmKmeansDf application.
+    This class provides methods to launch the MmRandomForestDf application.
     """
     def _init(self):
         """
@@ -90,7 +90,7 @@ class MmKmeansDf(Application):
         :return: None
         """
         cmd = [
-            'mm_kmeans_df',
+            'mm_random_forest_df',
             self.config['k'],
             self.config['path'],
             self.config['df_size'],
@@ -119,4 +119,4 @@ class MmKmeansDf(Application):
 
         :return: None
         """
-        Rm(f'{self.config["path"]}*')
+        pass

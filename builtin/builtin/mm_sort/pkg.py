@@ -107,7 +107,9 @@ class MmSort(Application):
             cmd = ' '.join(cmd)
             Exec(cmd, MpiExecInfo(env=self.env,
                                   nprocs=self.config['nprocs'],
-                                  ppn=self.config['ppn']))
+                                  ppn=self.config['ppn'],
+                                  do_dbg=self.config['do_dbg'],
+                                  dbg_port=self.config['dbg_port']))
 
     def stop(self):
         """

@@ -1,14 +1,14 @@
 """
-This module provides classes and methods to launch the MmKmeans application.
-MmKmeans is ....
+This module provides classes and methods to launch the MmRandomForest application.
+MmRandomForest is ....
 """
 from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 
 
-class MmKmeans(Application):
+class MmRandomForest(Application):
     """
-    This class provides methods to launch the MmKmeans application.
+    This class provides methods to launch the MmRandomForest application.
     """
     def _init(self):
         """
@@ -26,7 +26,13 @@ class MmKmeans(Application):
         """
         return [
             {
-                'name': 'path',
+                'name': 'train_path',
+                'msg': 'The input data path',
+                'type': str,
+                'default': None,
+            },
+            {
+                'name': 'test_path',
                 'msg': 'The input data path',
                 'type': str,
                 'default': None,
@@ -57,16 +63,10 @@ class MmKmeans(Application):
                 'choices': ['spark', 'mmap', 'mega', 'pandas']
             },
             {
-                'name': 'k',
-                'msg': 'The number of centers',
+                'name': 'nfeature',
+                'msg': 'The number of features for prediction',
                 'type': str,
-                'default': '30'
-            },
-            {
-                'name': 'max_iter',
-                'msg': 'Maximum # of iterations',
-                'type': str,
-                'default': '30'
+                'default': '2'
             },
             {
                 'name': 'scratch',
@@ -104,26 +104,28 @@ class MmKmeans(Application):
                 f'--conf spark.speculation=false',
                 f'--conf spark.storage.replication=1',
                 f'--conf spark.local.dir={self.config["scratch"]}',
-                f'{self.env["MM_PATH"]}/benchmark/spark_kmeans.py',
-                self.config['path']
+                f'{self.env["MM_PATH"]}/benchmark/spark_random_forest.py',
+                self.config['train_path'],
+                self.config['test_path']
             ]
             cmd = ' '.join(cmd)
             Exec(cmd, LocalExecInfo(env=self.env))
         elif self.config['api'] == 'pandas':
             cmd = [
-                f'{self.env["MM_PATH"]}/benchmark/pandas_kmeans.py',
-                self.config['path']
+                f'{self.env["MM_PATH"]}/benchmark/pandas_random_forest.py',
+                self.config['train_path'],
+                self.config['test_path'],
             ]
             cmd = ' '.join(cmd)
             Exec(cmd, LocalExecInfo(env=self.env))
         elif self.config['api'] in mm_kmeans:
             cmd = [
-                'mm_kmeans',
+                'mm_random_forest',
                 self.config['api'],
-                self.config['path'],
+                self.config['train_path'],
+                self.config['test_path'],
+                self.config['nfeature'],
                 self.config['memory'],
-                self.config['k'],
-                self.config['max_iter'],
             ]
             cmd = ' '.join(cmd)
             Exec(cmd, MpiExecInfo(env=self.env,
