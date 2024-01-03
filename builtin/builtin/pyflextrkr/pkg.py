@@ -50,7 +50,8 @@ class Pyflextrkr(Application):
                 'name': 'runscript',
                 'msg': 'The name of the Pyflextrkr script to run (run_mcs_tbpfradar3d_wrf)',
                 'type': str,
-                'default': None,
+                'default': 'run_mcs_tbpfradar3d_wrf',
+                'choices': ['run_mcs_tbpfradar3d_wrf']
             },
             {
                 'name': 'flush_mem',
@@ -83,12 +84,6 @@ class Pyflextrkr(Application):
                 'default': '${HOME}/experiments/flextrkr_runs',
             },
             {
-                'name': 'supported_runscripts',
-                'msg': 'List of supported run scripts',
-                'type': list,
-                'default': ['run_mcs_tbpfradar3d_wrf'],
-            },
-            {
                 'name': 'run_parallel',
                 'msg': 'Parallel mode for Pyflextrkr: 0 (serial), 1 (local cluster), 2 (Dask MPI)',
                 'type': int,
@@ -116,7 +111,7 @@ class Pyflextrkr(Application):
         :return: None
         """
         
-        self.env['HDF5_USE_FILE_LOCKING'] = "FALSE" # set HDF5 locking: FALSE, TRUE, BESTEFFORT
+        self.env['HDF5_USE_FILE_LOCKING'] = "BESTEFFORT" # set HDF5 locking: FALSE, TRUE, BESTEFFORT
         
         if self.config['experiment_path'] is not None:
             self.config['experiment_path'] = os.path.expandvars(self.config['experiment_path'])
@@ -134,13 +129,11 @@ class Pyflextrkr(Application):
         else:
             # check if run script is supported
             if self.config['runscript'] not in self.config['supported_runscripts']:
-                # print(f"Run script {self.config['runscript']} is not supported")
-                raise Exception("Run script is not supported")
+                raise Exception(f"Run script {self.config['runscript']} is not supported")
             
             # check if run script matches config file
             if self.config['runscript'] not in self.config['config']:
-                print(f"Run script {self.config['runscript']} does not match config file {self.config['config']}")
-                raise Exception("Run script does not match config file")
+                raise Exception(f"Run script {self.config['runscript']} does not match config file {self.config['config']}")
             
             # get base file name without extension
             pass_in_path = self.config['runscript']
@@ -171,15 +164,18 @@ class Pyflextrkr(Application):
             self.config['log_file'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
             self.config['stdout'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
         
-        # for item in self.env:
-        #     print(f"{item}={self.env[item]}\n")
-        
         ## Configure yaml file
         self._configure_yaml()
+        
 
     def _configure_yaml(self):
         yaml_file = self.config['config']
-                
+        
+        if "_template.yml" not in str(yaml_file):
+            yaml_file = yaml_file.replace(".yml", "_template.yml")
+        
+        self.log(f"Pyflextrkr yaml_file: {yaml_file}")
+            
         paths_to_mkdir = []
         
         with open(yaml_file, "r") as stream:
@@ -196,7 +192,7 @@ class Pyflextrkr(Application):
                 # Set run mode
                 config_vars['run_parallel'] = self.config['run_parallel']
                 if self.config['run_parallel'] == 0 and self.config['nprocesses'] > 1:
-                    self.log(f"WARNING: run_parallel is 0 (serial) nprocesses is set to")
+                    self.log(f"WARNING: run_parallel is 0 (serial) nprocesses is set to 1")
                     self.config['nprocesses'] = 1
                 config_vars['nprocesses'] = self.config['nprocesses']
                 
@@ -215,7 +211,7 @@ class Pyflextrkr(Application):
                 new_yaml_file = yaml_file.replace("_template.yml", ".yml")
                 yaml.dump(config_vars, open(new_yaml_file, 'w'), default_flow_style=False)
             except yaml.YAMLError as exc:
-                print(exc)
+                self.log(exc)
         self.config['config'] = new_yaml_file
         
         for new_path in paths_to_mkdir:
@@ -242,9 +238,9 @@ class Pyflextrkr(Application):
                 raise Exception("Running with Dask-MPI mode but self.jarvis.hostfile is None")
             
             # open self.jarvis.hostfile to get all lines of hosts into a string deliminated by ,
-            print(f"Reading hostfile: {self.jarvis.hostfile}")
+            # self.log(f"Pyflextrkr hostfile: {self.jarvis.hostfile}")
             if 'localhost' in self.jarvis.hostfile:
-                host_list_str = "ares-comp-25"
+                host_list_str = "127.0.0.1"
             else:
                 for hostname in self.jarvis.hostfile:
                     if host_list_str is None:
@@ -254,7 +250,7 @@ class Pyflextrkr(Application):
             
             if host_list_str is None:
                 raise Exception("host_list_str is None")
-            print(f"host_list_str: {host_list_str}")
+            self.log(f"Pyflextrkr host_list_str: {host_list_str}")
             
             # mpirun --host $hostlist --npernode 2
             ppn = self.config['nprocesses']/len(self.jarvis.hostfile)
@@ -263,19 +259,18 @@ class Pyflextrkr(Application):
                 'mpirun',
                 '--host', host_list_str,
                 '-n', str(self.config['nprocesses']),
-                '-ppn', str(ppn),
+                '-ppn', str(int(ppn)),
             ]
             
         cmd.append('python')
         # Convert runscript to full .py file path
         if self.config['pyflextrkr_path'] and self.config['runscript']:
             cmd.append(f'{self.config["pyflextrkr_path"]}/runscripts/{self.config["runscript"]}.py')
-            
-        if self.config['config']:
-            cmd.append(self.config['config'])
+        
+        
+        cmd.append(self.config['config'])
 
         self.config['run_cmd'] = ' '.join(cmd)
-        print(f"run_cmd: {self.config['run_cmd']}")
 
 
     def start(self):
@@ -286,10 +281,13 @@ class Pyflextrkr(Application):
         :return: None
         """
         
+        ## Configure yaml file before start
+        self._configure_yaml()
+        
         self._construct_cmd()
         
-        print(f"Running Pyflextrkr with command: {self.config['run_cmd']}")
-        print(f"STDOUT to : {self.config['log_file']}")
+        self.log(f"Pyflextrkr run_cmd: {self.config['run_cmd']}")
+        self.log(f"Pyflextrkr log_file : {self.config['log_file']}")
         
         start = time.time()
         
@@ -299,7 +297,7 @@ class Pyflextrkr(Application):
         
         end = time.time()
         diff = end - start
-        self.log(f'TIME: {diff} seconds') # color=Color.GREEN
+        self.log(f'Pyflextrkr TIME: {diff} seconds') # color=Color.GREEN
         
 
     def stop(self):
@@ -328,8 +326,8 @@ class Pyflextrkr(Application):
 
         :return: None
         """
-        print(f"Manual: Please clean up files in {self.config['experiment_path']}")
+        self.log(f"Manual Exec Required: Please clean up files in {self.config['experiment_path']}")
         pass
         # output_dir = self.config['output'] + "*"
-        # print(f'Removing {output_dir}')
+        # self.log(f'Removing {output_dir}')
         # Rm(output_dir)

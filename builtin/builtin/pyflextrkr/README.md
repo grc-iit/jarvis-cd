@@ -123,9 +123,9 @@ jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf config=$YAML
 ```
 
 <!-- ```bash
-jarvis pipeline append pyflextrkr conda_env=flextrkr runscript=run_mcs_tbpfradar3d_wrf config=${HOME}/experiments/flextrkr_runs/config_wrf_mcs_tbradar_demo.yml pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
+jarvis pipeline append pyflextrkr conda_env=flextrkr runscript=run_mcs_tbpfradar3d_wrf pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
 
-jarvis pkg configure pyflextrkr conda_env=flextrkr runscript=run_mcs_tbpfradar3d_wrf config=${HOME}/experiments/flextrkr_runs/config_wrf_mcs_tbradar_demo.yml
+jarvis pkg configure pyflextrkr conda_env=flextrkr runscript=run_mcs_tbpfradar3d_wrf config=${HOME}/jarvis-cd/builtin/builtin/pyflextrkr/example_config/run_mcs_tbpfradar3d_wrf_template.yml
 
 ``` -->
 
@@ -155,7 +155,7 @@ jarvis pipeline sbatch job_name=pyflex_test nnodes=1 ppn=8 output_file=./pyflex_
 Do the above and `ppn` must greater than match `nprocesses`/`nnodes` 
     (e.g. `nnodes=2 ppn=8` allocates 16 processes in total, and `nprocesses` must not greater than 16)
 ```bash
-jarvis pipeline sbatch job_name=pyflex_test nnodes=2 ppn=8 output_file=./pyflex_test.out error_file=./pyflex_test.err
+jarvis pipeline sbatch job_name=pyflex_2ntest nnodes=2 ppn=8 output_file=./pyflex_2ntest.out error_file=./pyflex_2ntest.err
 ```
 
 
