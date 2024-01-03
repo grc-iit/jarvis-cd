@@ -49,8 +49,9 @@ module load arldm
 ## Data Preparation
 
 ```shell
-PROJECT_INPUT_PATH=~/experiments/ARLDM/input_data
-mkdir -p $PROJECT_INPUT_PATH $PROJECT_INPUT_PATH/zippack
+EXPERIMENT_PATH=~/experiments/ARLDM
+EXPERIMENT_INPUT_PATH=$EXPERIMENT_PATH/input_data
+mkdir -p $EXPERIMENT_INPUT_PATH $EXPERIMENT_INPUT_PATH/zippack
 
 python3 -m pip install gdown
 ```
@@ -58,48 +59,48 @@ python3 -m pip install gdown
 ### pororo
 * Download the PororoSV dataset [here](https://drive.google.com/file/d/11Io1_BufAayJ1BpdxxV2uJUvCcirbrNc/view?usp=sharing).
 ```shell
-cd $PROJECT_INPUT_PATH
+cd $EXPERIMENT_INPUT_PATH
 gdown https://drive.google.com/u/0/uc?id=11Io1_BufAayJ1BpdxxV2uJUvCcirbrNc&export=download
 unzip pororo.zip
-mv pororo.zip $PROJECT_INPUT_PATH/zippack
+mv pororo.zip $EXPERIMENT_INPUT_PATH/zippack
 ```
 
 
 ### flintstones
 * Download the FlintstonesSV dataset [here](https://drive.google.com/file/d/1kG4esNwabJQPWqadSDaugrlF4dRaV33_/view?usp=sharing).
 ```shell
-cd $PROJECT_INPUT_PATH
+cd $EXPERIMENT_INPUT_PATH
 gdown https://drive.google.com/u/0/uc?id=1kG4esNwabJQPWqadSDaugrlF4dRaV33_&export=download
 unzip flintstones_data.zip
-mv flintstones_data.zip $PROJECT_INPUT_PATH/zippack
+mv flintstones_data.zip $EXPERIMENT_INPUT_PATH/zippack
 ```
 
 
 ### VIST
 * Download the VIST-SIS url links [here](https://visionandlanguage.net/VIST/json_files/story-in-sequence/SIS-with-labels.tar.gz)
 ```shell
-cd $PROJECT_INPUT_PATH
+cd $EXPERIMENT_INPUT_PATH
 wget https://visionandlanguage.net/VIST/json_files/story-in-sequence/SIS-with-labels.tar.gz
 tar -vxf SIS-with-labels.tar.gz
-mv SIS-with-labels.tar.gz $PROJECT_INPUT_PATH/zippack
+mv SIS-with-labels.tar.gz $EXPERIMENT_INPUT_PATH/zippack
 ```
 * Download the VIST-DII url links [here](https://visionandlanguage.net/VIST/json_files/description-in-isolation/DII-with-labels.tar.gz)
 ```shell
-cd $PROJECT_INPUT_PATH
+cd $EXPERIMENT_INPUT_PATH
 wget https://visionandlanguage.net/VIST/json_files/description-in-isolation/DII-with-labels.tar.gz
 tar -vxf DII-with-labels.tar.gz
-mv DII-with-labels.tar.gz $PROJECT_INPUT_PATH/zippack
+mv DII-with-labels.tar.gz $EXPERIMENT_INPUT_PATH/zippack
 ```
 * Download the VIST images running
 ```shell
-python data_script/vist_img_download.py --json_dir $PROJECT_INPUT_PATH/input_data/dii --img_dir $PROJECT_INPUT_PATH/input_data/visit_img --num_process 32
+python data_script/vist_img_download.py --json_dir $EXPERIMENT_PATH/input_data/dii --img_dir $EXPERIMENT_PATH/input_data/visit_img --num_process 32
 ```
 
 
 Setup example output data and path.
 ```bash
-OUTPUT_PAT=~/experiments/ARLDM/output_data
-mkdir -p $OUTPUT_PAT
+OUTPUT_PATH=$EXPERIMENT_PATH/output_data
+mkdir -p $OUTPUT_PATH
 ```
 
 
@@ -109,7 +110,7 @@ Setup the experiment yaml file.
 - Use absolute paths in the yaml file.
 ```yaml
 clouddata_path: '${INPUT_PATH}' # TODO: Change this to your own path
-root_path: '${OUTPUT_PAT}' # TODO: Change this to your own path
+root_path: '${OUTPUT_PATH}' # TODO: Change this to your own path
 landmask_filename: '${INPUT_PATH}/wrf_landmask.nc' # TODO: Change this to your own path
 ``` -->
 
