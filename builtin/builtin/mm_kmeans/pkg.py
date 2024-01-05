@@ -32,7 +32,7 @@ class MmKmeans(Application):
                 'default': None,
             },
             {
-                'name': 'memory',
+                'name': 'window_size',
                 'msg': 'The max amount of memory to consume',
                 'type': str,
                 'default': '1g',
@@ -100,7 +100,7 @@ class MmKmeans(Application):
             cmd = [
                 'spark-submit',
                 f'--driver-memory 2g',
-                f'--executor-memory {self.config["memory"]}',
+                f'--executor-memory {self.config["window_size"]}',
                 f'--conf spark.speculation=false',
                 f'--conf spark.storage.replication=1',
                 f'--conf spark.local.dir={self.config["scratch"]}',
@@ -121,7 +121,7 @@ class MmKmeans(Application):
                 'mm_kmeans',
                 self.config['api'],
                 self.config['path'],
-                self.config['memory'],
+                self.config['window_size'],
                 self.config['k'],
                 self.config['max_iter'],
             ]

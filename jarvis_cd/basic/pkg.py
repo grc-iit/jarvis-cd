@@ -593,6 +593,19 @@ class SimplePkg(Pkg):
         """
         return []
 
+    def get_type_map(self):
+        """
+        Get the mapping between keys and types
+
+        :return: dict
+        """
+        menu = self.configure_menu()
+        type_map = {}
+        for opt in menu:
+            if 'type' in opt:
+                type_map[opt['name']] = opt['type']
+        return type_map
+
     def configure(self, **kwargs):
         if 'reinit' not in kwargs:
             kwargs['reinit'] = False
@@ -635,6 +648,10 @@ class SimplePkg(Pkg):
             default_args.update(self.config)
         default_args.update(kwargs)
         self.config = default_args
+        type_map = self.get_type_map()
+        for key, val in self.config.items():
+            if key in type_map and type_map[key] is not None:
+                self.config[key] = type_map[key](self.config[key])
 
     @staticmethod
     def copy_template_file(src, dst, replacements=None):

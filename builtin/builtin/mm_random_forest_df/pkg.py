@@ -41,13 +41,13 @@ class MmRandomForestDf(Application):
                 'name': 'df_size',
                 'msg': 'The total size of data',
                 'type': str,
-                'default': '16g',
+                'default': '16m',
             },
             {
                 'name': 'window_size',
                 'msg': 'The size of a window of data',
                 'type': str,
-                'default': '256m',
+                'default': '1m',
             },
             {
                 'name': 'type',
@@ -60,7 +60,7 @@ class MmRandomForestDf(Application):
                 'name': 'nprocs',
                 'msg': 'Number of procs',
                 'type': int,
-                'default': 16,
+                'default': 1,
             },
             {
                 'name': 'ppn',
@@ -97,6 +97,7 @@ class MmRandomForestDf(Application):
             self.config['window_size'],
             self.config['type']
         ]
+        print(cmd)
         cmd = ' '.join(cmd)
         Exec(cmd, MpiExecInfo(nprocs=self.config['nprocs'],
                               ppn=self.config['ppn'],

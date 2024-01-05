@@ -38,7 +38,7 @@ class MmRandomForest(Application):
                 'default': None,
             },
             {
-                'name': 'memory',
+                'name': 'window_size',
                 'msg': 'The max amount of memory to consume',
                 'type': str,
                 'default': '1g',
@@ -47,7 +47,7 @@ class MmRandomForest(Application):
                 'name': 'nprocs',
                 'msg': 'The output path',
                 'type': int,
-                'default': 16,
+                'default': 1,
             },
             {
                 'name': 'ppn',
@@ -100,7 +100,7 @@ class MmRandomForest(Application):
             cmd = [
                 'spark-submit',
                 f'--driver-memory 2g',
-                f'--executor-memory {self.config["memory"]}',
+                f'--executor-memory {self.config["window_size"]}',
                 f'--conf spark.speculation=false',
                 f'--conf spark.storage.replication=1',
                 f'--conf spark.local.dir={self.config["scratch"]}',
@@ -125,7 +125,7 @@ class MmRandomForest(Application):
                 self.config['train_path'],
                 self.config['test_path'],
                 self.config['nfeature'],
-                self.config['memory'],
+                self.config['window_size'],
             ]
             cmd = ' '.join(cmd)
             Exec(cmd, MpiExecInfo(env=self.env,
