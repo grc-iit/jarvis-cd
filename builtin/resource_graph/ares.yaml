@@ -284,12 +284,9 @@ net:
   speed: 42949672960
   type: FI_EP_RDM
   version: '114.10'
-- domain: rocep47s0
+- provider: verbs
   fabric: IB-0xfe80000000000000
-  host: localhost
-  protocol: FI_PROTO_RDMA_CM_IB_RC
-  provider: verbs
-  shared: true
-  speed: 42949672960
+  domain: rocep47s0
+  version: 119.0
   type: FI_EP_MSG
-  version: '114.10'
+  protocol: FI_PROTO_RDMA_CM_IB_RC

@@ -17,9 +17,11 @@ make -j8
 cd ../
 
 export MM_PATH=${PWD}
-scspkg env set MM_PATH ${MM_PATH}
-scspkg env prepend PATH ${MM_PATH}/build/bin
-scspkg env prepend LD_LIBRARY_PATH ${MM_PATH}/build/bin
+scspkg env set mega_mmap MM_PATH ${MM_PATH}
+scspkg env prepend mega_mmap PATH ${MM_PATH}/build/bin
+scspkg env prepend mega_mmap PATH ${MM_PATH}/cmake-build-debug/bin
+scspkg env prepend mega_mmap LD_LIBRARY_PATH ${MM_PATH}/build/bin
+scspkg env prepend mega_mmap LD_LIBRARY_PATH ${MM_PATH}/cmake-build-debug/bin
 ```
 
 # 5.2. Run KMeans Sort

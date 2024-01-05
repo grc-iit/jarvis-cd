@@ -1,14 +1,14 @@
 """
-This module provides classes and methods to launch the MmKmeansDf application.
-MmKmeansDf is ....
+This module provides classes and methods to launch the MmRandomForestDf application.
+MmRandomForestDf is ....
 """
 from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 
 
-class MmKmeansDf(Application):
+class MmRandomForestDf(Application):
     """
-    This class provides methods to launch the MmKmeansDf application.
+    This class provides methods to launch the MmRandomForestDf application.
     """
     def _init(self):
         """
@@ -41,13 +41,13 @@ class MmKmeansDf(Application):
                 'name': 'df_size',
                 'msg': 'The total size of data',
                 'type': str,
-                'default': '16g',
+                'default': '16m',
             },
             {
                 'name': 'window_size',
                 'msg': 'The size of a window of data',
                 'type': str,
-                'default': '256m',
+                'default': '1m',
             },
             {
                 'name': 'type',
@@ -60,7 +60,7 @@ class MmKmeansDf(Application):
                 'name': 'nprocs',
                 'msg': 'Number of procs',
                 'type': int,
-                'default': 16,
+                'default': 1,
             },
             {
                 'name': 'ppn',
@@ -90,13 +90,14 @@ class MmKmeansDf(Application):
         :return: None
         """
         cmd = [
-            'mm_kmeans_df',
+            'mm_random_forest_df',
             self.config['k'],
             self.config['path'],
             self.config['df_size'],
             self.config['window_size'],
             self.config['type']
         ]
+        print(cmd)
         cmd = ' '.join(cmd)
         Exec(cmd, MpiExecInfo(nprocs=self.config['nprocs'],
                               ppn=self.config['ppn'],
@@ -119,4 +120,4 @@ class MmKmeansDf(Application):
 
         :return: None
         """
-        Rm(f'{self.config["path"]}*')
+        pass

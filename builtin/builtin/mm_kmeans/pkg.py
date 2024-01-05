@@ -32,7 +32,7 @@ class MmKmeans(Application):
                 'default': None,
             },
             {
-                'name': 'memory',
+                'name': 'window_size',
                 'msg': 'The max amount of memory to consume',
                 'type': str,
                 'default': '1g',
@@ -40,15 +40,33 @@ class MmKmeans(Application):
             {
                 'name': 'nprocs',
                 'msg': 'The output path',
-                'type': str,
-                'default': '16',
+                'type': int,
+                'default': 16,
+            },
+            {
+                'name': 'ppn',
+                'msg': 'The output path',
+                'type': int,
+                'default': 16,
             },
             {
                 'name': 'api',
                 'msg': 'The implementation to use',
                 'type': str,
                 'default': 'spark',
-                'choices': ['spark', 'mmap', 'mega']
+                'choices': ['spark', 'mmap', 'mega', 'pandas']
+            },
+            {
+                'name': 'k',
+                'msg': 'The number of centers',
+                'type': str,
+                'default': '30'
+            },
+            {
+                'name': 'max_iter',
+                'msg': 'Maximum # of iterations',
+                'type': str,
+                'default': '30'
             },
             {
                 'name': 'scratch',
@@ -77,19 +95,42 @@ class MmKmeans(Application):
 
         :return: None
         """
+        mm_kmeans = ['mmap', 'mega']
         if self.config['api'] == 'spark':
             cmd = [
                 'spark-submit',
                 f'--driver-memory 2g',
-                f'--executor-memory {self.config["memory"]}',
+                f'--executor-memory {self.config["window_size"]}',
                 f'--conf spark.speculation=false',
                 f'--conf spark.storage.replication=1',
                 f'--conf spark.local.dir={self.config["scratch"]}',
-                f'{self.env["MM_PATH"]}/benchmark/kmeans.py',
+                f'{self.env["MM_PATH"]}/benchmark/spark_kmeans.py',
                 self.config['path']
             ]
             cmd = ' '.join(cmd)
             Exec(cmd, LocalExecInfo(env=self.env))
+        elif self.config['api'] == 'pandas':
+            cmd = [
+                f'{self.env["MM_PATH"]}/benchmark/pandas_kmeans.py',
+                self.config['path']
+            ]
+            cmd = ' '.join(cmd)
+            Exec(cmd, LocalExecInfo(env=self.env))
+        elif self.config['api'] in mm_kmeans:
+            cmd = [
+                'mm_kmeans',
+                self.config['api'],
+                self.config['path'],
+                self.config['window_size'],
+                self.config['k'],
+                self.config['max_iter'],
+            ]
+            cmd = ' '.join(cmd)
+            Exec(cmd, MpiExecInfo(env=self.env,
+                                  nprocs=self.config['nprocs'],
+                                  ppn=self.config['ppn'],
+                                  do_dbg=self.config['do_dbg'],
+                                  dbg_port=self.config['dbg_port']))
 
     def stop(self):
         """

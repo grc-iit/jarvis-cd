@@ -28,6 +28,11 @@ scspkg env prepend mega_mmap LD_LIBRARY_PATH ${MM_PATH}/build/bin
 module load mega_mmap
 jarvis pipeline create kmeans_df
 jarvis pipeline env build +MM_PATH
-jarvis pipeline append mm_kmeans_df path=${HOME}/mm_data df_size=256g window_size=64m nprocs=64
+jarvis pipeline append mm_kmeans_df 
+jarvis pkg configure mm_kmeans_df \
+path=${HOME}/mm_data/mm_data.bin \
+df_size=32g \
+window_size=16m \
+nprocs=4
 jarvis pipeline run
 ```

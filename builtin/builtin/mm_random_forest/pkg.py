@@ -1,14 +1,14 @@
 """
-This module provides classes and methods to launch the MmSort application.
-MmSort is ....
+This module provides classes and methods to launch the MmRandomForest application.
+MmRandomForest is ....
 """
 from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 
 
-class MmSort(Application):
+class MmRandomForest(Application):
     """
-    This class provides methods to launch the MmSort application.
+    This class provides methods to launch the MmRandomForest application.
     """
     def _init(self):
         """
@@ -26,26 +26,32 @@ class MmSort(Application):
         """
         return [
             {
-                'name': 'path',
+                'name': 'train_path',
                 'msg': 'The input data path',
                 'type': str,
                 'default': None,
             },
             {
-                'name': 'memory',
+                'name': 'test_path',
+                'msg': 'The input data path',
+                'type': str,
+                'default': None,
+            },
+            {
+                'name': 'window_size',
                 'msg': 'The max amount of memory to consume',
                 'type': str,
                 'default': '1g',
             },
             {
                 'name': 'nprocs',
-                'msg': 'Number of processes to spawn',
+                'msg': 'The output path',
                 'type': int,
-                'default': 16,
+                'default': 1,
             },
             {
                 'name': 'ppn',
-                'msg': 'Number of processes per node',
+                'msg': 'The output path',
                 'type': int,
                 'default': 16,
             },
@@ -54,7 +60,13 @@ class MmSort(Application):
                 'msg': 'The implementation to use',
                 'type': str,
                 'default': 'spark',
-                'choices': ['spark', 'mmap', 'mega']
+                'choices': ['spark', 'mmap', 'mega', 'pandas']
+            },
+            {
+                'name': 'nfeature',
+                'msg': 'The number of features for prediction',
+                'type': str,
+                'default': '2'
             },
             {
                 'name': 'scratch',
@@ -83,26 +95,37 @@ class MmSort(Application):
 
         :return: None
         """
-        mm_sort = ['mmap', 'mega']
+        mm_kmeans = ['mmap', 'mega']
         if self.config['api'] == 'spark':
             cmd = [
                 'spark-submit',
                 f'--driver-memory 2g',
-                f'--executor-memory {self.config["memory"]}',
+                f'--executor-memory {self.config["window_size"]}',
                 f'--conf spark.speculation=false',
                 f'--conf spark.storage.replication=1',
                 f'--conf spark.local.dir={self.config["scratch"]}',
-                f'{self.env["MM_PATH"]}/benchmark/mm_sort.py',
-                self.config['path']
+                f'{self.env["MM_PATH"]}/benchmark/spark_random_forest.py',
+                self.config['train_path'],
+                self.config['test_path']
             ]
             cmd = ' '.join(cmd)
             Exec(cmd, LocalExecInfo(env=self.env))
-        elif self.config['api'] in mm_sort:
+        elif self.config['api'] == 'pandas':
             cmd = [
-                'mm_sort',
+                f'{self.env["MM_PATH"]}/benchmark/pandas_random_forest.py',
+                self.config['train_path'],
+                self.config['test_path'],
+            ]
+            cmd = ' '.join(cmd)
+            Exec(cmd, LocalExecInfo(env=self.env))
+        elif self.config['api'] in mm_kmeans:
+            cmd = [
+                'mm_random_forest',
                 self.config['api'],
-                self.config['path'],
-                self.config['memory'],
+                self.config['train_path'],
+                self.config['test_path'],
+                self.config['nfeature'],
+                self.config['window_size'],
             ]
             cmd = ' '.join(cmd)
             Exec(cmd, MpiExecInfo(env=self.env,
