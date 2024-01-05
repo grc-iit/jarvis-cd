@@ -169,6 +169,8 @@ class Pyflextrkr(Application):
         
 
     def _configure_yaml(self):
+        self.env['HDF5_USE_FILE_LOCKING'] = "TRUE" # set HDF5 locking: FALSE, TRUE, BESTEFFORT
+
         yaml_file = self.config['config']
         
         if "_template.yml" not in str(yaml_file):
