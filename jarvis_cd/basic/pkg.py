@@ -650,7 +650,9 @@ class SimplePkg(Pkg):
         self.config = default_args
         type_map = self.get_type_map()
         for key, val in self.config.items():
-            if key in type_map and type_map[key] is not None:
+            if (key in type_map and
+                    type_map[key] is not None and
+                    val is not None):
                 self.config[key] = type_map[key](self.config[key])
 
     @staticmethod
