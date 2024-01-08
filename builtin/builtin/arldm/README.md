@@ -183,7 +183,7 @@ Clean data produced by ARLDM
 jarvis pipeline clean
 ```
 
-# ARLDM Withg Slurm
+# ARLDM Withg Slurm (single node)
 
 Do the above and
 ```bash
