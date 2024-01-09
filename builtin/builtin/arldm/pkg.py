@@ -156,7 +156,7 @@ class Arldm(Application):
                     new_dir = self.config['local_exp_dir']
                     config_vars['ckpt_dir'] = config_vars['ckpt_dir'].replace(replace_dir, new_dir)
                     config_vars['sample_output_dir'] = config_vars['sample_output_dir'].replace(replace_dir, new_dir)
-                    config_vars[run_test]['hdf5_file'] = config_vars[run_test]['hdf5_file'].replace(replace_dir, new_dir)
+                    config_vars[run_test]['hdf5_file'] = f"{new_dir}/output_data/{self.config['runscript']}/{self.config['runscript']}_out.h5"
                 
                 # save config_vars back to yaml file
                 new_yaml_file = yaml_file.replace("_template.yml", ".yml")
