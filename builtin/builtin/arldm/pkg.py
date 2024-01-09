@@ -15,6 +15,7 @@ class Arldm(Application):
         """
         Initialize paths
         """
+        # print(f"ARLDM _init")
         pass
 
     def _configure_menu(self):
@@ -25,6 +26,7 @@ class Arldm(Application):
 
         :return: List(dict)
         """
+        print(f"ARLDM _configure_menu")
         return [
             {
                 'name': 'conda_env',
@@ -112,6 +114,13 @@ class Arldm(Application):
                 'msg': 'Prepare the HDF5 file for the ARLDM run',
                 'type': bool,
                 'default': False,
+            },
+            {
+                'name': 'storage_device',
+                'msg': 'Storage device to use for ARLDM run',
+                'type': str,
+                'default': 'nfs',
+                # 'choices': ['nvme', 'ssd', 'hdd', 'nfs', 'pfs'], # this should be per systems
             }
         ]
 
@@ -153,12 +162,18 @@ class Arldm(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.env['HDF5_USE_FILE_LOCKING'] = "FALSE" # set HDF5 locking: FALSE, TRUE, BESTEFFORT
-        self.env['HYDRA_FULL_ERROR'] = "1" # complete stack trace.
+        # self.env['HDF5_USE_FILE_LOCKING'] = "FALSE" 
+        # self.env['HYDRA_FULL_ERROR'] = "1" # complete stack trace.
+        
+        print(f"ARLDM _configure")
+        
+        self.setenv('HDF5_USE_FILE_LOCKING', "FALSE") # set HDF5 locking: FALSE, TRUE, BESTEFFORT
+        self.setenv('HYDRA_FULL_ERROR', "1")
         
         if self.config['experiment_path'] is not None:
             self.config['experiment_path'] = os.path.expandvars(self.config['experiment_path'])
-            self.env['EXPERIMENT_PATH'] = self.config['experiment_path']
+            # self.env['EXPERIMENT_PATH'] = self.config['experiment_path']
+            self.setenv('EXPERIMENT_PATH', self.config['experiment_path'])
         
         if self.config['conda_env'] is None:
             raise Exception("Must set the conda environment for running ARLDM")
@@ -177,7 +192,8 @@ class Arldm(Application):
             raise Exception("Must set the path to the ARLDM source code")
         else:
             # check that path exists
-            pathlib.Path(self.config['arldm_path']).exists()
+            if not pathlib.Path(self.config['arldm_path']).exists():
+                raise Exception("Must set the correct path to the ARLDM source code")
             # no default log file
             # self.config['log_file'] = f'{self.config["arldm_path"]}/arldm_run.log'
             # self.config['stdout'] = f'{self.config["arldm_path"]}/arldm_run.log'
@@ -197,8 +213,9 @@ class Arldm(Application):
         self.config['hdf5_file'] = f'{self.config["experiment_path"]}/output_data/{self.config["runscript"]}.h5'
         
         self._configure_yaml()
+        
 
-    def prep_hdf5_file(self):
+    def _prep_hdf5_file(self):
         """
         Prepare the HDF5 file for the ARLDM run
         """
@@ -217,25 +234,65 @@ class Arldm(Application):
             cmd.append(f'--save_path {self.config["hdf5_file"]}')
         elif self.config['runscript'] == 'vistsis' or self.config['runscript'] == 'vistdii':
             cmd.append(f'{self.config["arldm_path"]}/data_script/vist_hdf5.py')
-            cmd.append(f'--sis_json_dir {self.config["arldm_path"]}/input_data/sis')
-            cmd.append(f'--dii_json_dir {self.config["arldm_path"]}/input_data/dii')
+            cmd.append(f'--sis_json_dir {self.config["experiment_path"]}/input_data/vistsis')
+            cmd.append(f'--dii_json_dir {self.config["experiment_path"]}/input_data/vistdii')
             cmd.append(f'--img_dir {self.config["experiment_path"]}/input_data/visit_img')
             cmd.append(f'--save_path {self.config["hdf5_file"]}')
         else:
             raise Exception("Must set the correct ARLDM script to run")
         
         prep_cmd = ' '.join(cmd)
-        Exec(prep_cmd,
-                LocalExecInfo(env=self.mod_env,))
-        
-        pass
+        Exec(prep_cmd, LocalExecInfo(env=self.mod_env,))
     
-    def train(self):
+    def _move_data_to_storage(self):
+        """
+        Move the data to the storage device
+        """
+        print(f"ARLDM _move_data_to_storage")
+        
+        orig_path = self.config['experiment_path']
+        rg = self.jarvis.resource_graph
+        dev_type = self.config['storage_device']
+        
+
+        if self.config['storage_device'] == 'nfs':
+            # Default is NFS, no need to move data
+            pass
+        elif self.config['storage_device'] == 'pfs':
+            # Move data to PFS
+            # TODO: do nothing for now
+            pass
+        else:
+            # Find storage path
+            dev_df = rg.find_storage(dev_types=[dev_type],shared=False)       
+            if dev_df is None:
+                raise Exception(f"Could not find storage device of type {dev_type}")     
+
+
+
+            new_exp_dir = os.path.expandvars(dev_df.rows[0]['mount']) + "/ARLDM"
+            new_exp_dir_input_dir = new_exp_dir + "/input_data" + f"/{self.config['runscript']}"
+            new_exp_dir_output_dir = new_exp_dir + "/output_data" + f"/{self.config['runscript']}"
+            
+            # Make experiment_path on NVME
+            print(f"Making experiment input path on NVME: {new_exp_dir_input_dir}")
+            print(f"Making experiment output path on NVME: {new_exp_dir_output_dir}")
+            pathlib.Path(new_exp_dir_input_dir).mkdir(parents=True, exist_ok=True)
+            pathlib.Path(new_exp_dir_output_dir).mkdir(parents=True, exist_ok=True)
+            
+            cur_script = self.config['runscript']
+            
+            # Move data to NVME
+            cmd = f"cp -r {orig_path}/input_data/{self.config['runscript']}/* {new_exp_dir_input_dir}"
+            print(f"Copying data to {dev_type}: {cmd}")
+            Exec(cmd,LocalExecInfo(env=self.mod_env,))
+            Exec(f"ls -l {new_exp_dir_input_dir}",)
+            self.config['experiment_path'] = new_exp_dir
+    
+    def _train(self):
         """
         Run the ARLDM training run
         """
-        # # check which python is being used
-        # Exec("which python", LocalExecInfo(env=self.mod_env,))
         print(f"ARLDM training run: {self.config['runscript']}")
         
         cmd = [
@@ -270,7 +327,7 @@ class Arldm(Application):
         diff = end - start
         self.log(f'TIME: {diff} seconds') # color=Color.GREEN
     
-    def sample(self):
+    def _sample(self):
         """
         Run the ARLDM sampling run
         
@@ -286,14 +343,18 @@ class Arldm(Application):
 
         :return: None
         """
+        self._move_data_to_storage()
+        
+        print(f"ARLDM start")
+        
         if self.config['prep_hdf5']:
-            self.prep_hdf5_file()
+            self._prep_hdf5_file()
         
         if self.config['mode'] == 'train':
-            self.train()
+            self._train()
         
         if self.config['mode'] == 'sample':
-            self.sample()
+            self._sample()
         
 
 

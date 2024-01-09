@@ -254,7 +254,7 @@ and gray-scott
 ```bash
 jarvis pipeline append hermes --sleep=10 include=$EXPERIMENT_PATH --output_dir=$EXPERIMENT_PATH
 jarvis pipeline append hermes_api +vfd
-jarvis pipeline append arldm runscript=run_mcs_tbpfradar3d_wrf config=$YAML_PATH arldm_path="`scspkg pkg src arldm`/ARLDM"
+jarvis pipeline append arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM"
 ```
 
 ## 5. Run the Experiment
