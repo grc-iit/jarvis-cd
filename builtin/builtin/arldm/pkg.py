@@ -121,6 +121,11 @@ class Arldm(Application):
                 'type': str,
                 'default': 'nfs',
                 # 'choices': ['nvme', 'ssd', 'hdd', 'nfs', 'pfs'], # this should be per systems
+            },{
+                'name': 'local_exp_dir',
+                'msg': 'Local experiment directory',
+                'type': str,
+                'default': None,
             }
         ]
 
@@ -140,12 +145,18 @@ class Arldm(Application):
                 
                 config_vars['mode'] = self.config['mode']
                 config_vars['num_workers'] = self.config['num_workers']
-                config_vars['ckpt_dir'] = self.config['ckpt_dir']
                 config_vars['run_name'] = f"{self.config['runscript']}_{self.config['mode']}"
-                config_vars['dataset'] = self.config['runscript']
-                config_vars['sample_output_dir'] = self.config['sample_output_dir']
                 
+                config_vars['ckpt_dir'] = self.config['ckpt_dir']
+                config_vars['sample_output_dir'] = self.config['sample_output_dir']
                 config_vars[run_test]['hdf5_file'] = self.config['hdf5_file']
+                
+                if self.config['local_exp_dir'] is not None:
+                    replace_dir = self.config['experiment_path']
+                    new_dir = self.config['local_exp_dir']
+                    config_vars['ckpt_dir'] = config_vars['ckpt_dir'].replace(replace_dir, new_dir)
+                    config_vars['sample_output_dir'] = config_vars['sample_output_dir'].replace(replace_dir, new_dir)
+                    config_vars[run_test]['hdf5_file'] = config_vars[run_test]['hdf5_file'].replace(replace_dir, new_dir)
                 
                 # save config_vars back to yaml file
                 new_yaml_file = yaml_file.replace("_template.yml", ".yml")
@@ -212,6 +223,8 @@ class Arldm(Application):
         # set sample_output_dir
         self.config['hdf5_file'] = f'{self.config["experiment_path"]}/output_data/{self.config["runscript"]}.h5'
         
+        
+        
         self._configure_yaml()
         
 
@@ -268,26 +281,37 @@ class Arldm(Application):
             if dev_df is None:
                 raise Exception(f"Could not find storage device of type {dev_type}")     
 
-
-
             new_exp_dir = os.path.expandvars(dev_df.rows[0]['mount']) + "/ARLDM"
             new_exp_dir_input_dir = new_exp_dir + "/input_data" + f"/{self.config['runscript']}"
             new_exp_dir_output_dir = new_exp_dir + "/output_data" + f"/{self.config['runscript']}"
             
-            # Make experiment_path on NVME
-            print(f"Making experiment input path on NVME: {new_exp_dir_input_dir}")
-            print(f"Making experiment output path on NVME: {new_exp_dir_output_dir}")
-            pathlib.Path(new_exp_dir_input_dir).mkdir(parents=True, exist_ok=True)
-            pathlib.Path(new_exp_dir_output_dir).mkdir(parents=True, exist_ok=True)
+            # check if new_exp_dir_input_dir exist, if exists, no need to copy
+            if (pathlib.Path(new_exp_dir_input_dir).exists() and 
+                pathlib.Path(new_exp_dir_output_dir).exists() and 
+                len(os.listdir(new_exp_dir_input_dir)) != 0 and 
+                len(os.listdir(new_exp_dir_output_dir)) != 0):
+                # check if new_exp_dir_input_dir has files in it
+                print(f"Input data already exists on {dev_type}: {new_exp_dir_input_dir}")
+            else:
             
-            cur_script = self.config['runscript']
-            
-            # Move data to NVME
-            cmd = f"cp -r {orig_path}/input_data/{self.config['runscript']}/* {new_exp_dir_input_dir}"
-            print(f"Copying data to {dev_type}: {cmd}")
-            Exec(cmd,LocalExecInfo(env=self.mod_env,))
-            Exec(f"ls -l {new_exp_dir_input_dir}",)
-            self.config['experiment_path'] = new_exp_dir
+                # Make experiment_path on NVME
+                print(f"Making experiment input path on NVME: {new_exp_dir_input_dir}")
+                print(f"Making experiment output path on NVME: {new_exp_dir_output_dir}")
+                pathlib.Path(new_exp_dir_input_dir).mkdir(parents=True, exist_ok=True)
+                pathlib.Path(new_exp_dir_output_dir).mkdir(parents=True, exist_ok=True)
+                
+                # Move data to NVME
+                cmd = f"cp -r {orig_path}/input_data/{self.config['runscript']}/* {new_exp_dir_input_dir}"
+                print(f"Copying data to {dev_type}: {cmd}")
+                Exec(cmd,LocalExecInfo(env=self.mod_env,))
+                
+                cmd = f"cp {orig_path}/output_data/{self.config['runscript']}_out.h5 {new_exp_dir_output_dir}"
+                print(f"Copying data to {dev_type}: {cmd}")
+                Exec(cmd,LocalExecInfo(env=self.mod_env,))
+                
+            Exec(f"ls -l {new_exp_dir_input_dir}",LocalExecInfo(env=self.mod_env,))
+            Exec(f"ls -l {new_exp_dir_output_dir}",LocalExecInfo(env=self.mod_env,))
+            self.config['local_exp_dir'] = new_exp_dir
     
     def _train(self):
         """
@@ -343,7 +367,9 @@ class Arldm(Application):
 
         :return: None
         """
+        
         self._move_data_to_storage()
+        self._configure_yaml()
         
         print(f"ARLDM start")
         
