@@ -221,8 +221,7 @@ class Arldm(Application):
         pathlib.Path(self.config['sample_output_dir']).mkdir(parents=True, exist_ok=True)
         
         # set sample_output_dir
-        self.config['hdf5_file'] = f'{self.config["experiment_path"]}/output_data/{self.config["runscript"]}.h5'
-        
+        self.config['hdf5_file'] = f'{self.config["experiment_path"]}/output_data/{self.config["runscript"]}_out.h5'
         
         
         self._configure_yaml()
@@ -239,11 +238,11 @@ class Arldm(Application):
         
         if self.config['runscript'] == 'pororo':
             cmd.append(f'{self.config["arldm_path"]}/data_script/pororo_hdf5.py')
-            cmd.append(f'--data_dir {self.config["experiment_path"]}/input_data/pororo_png')
+            cmd.append(f'--data_dir {self.config["experiment_path"]}/input_data/pororo')
             cmd.append(f'--save_path {self.config["hdf5_file"]}')
         elif self.config['runscript'] == 'flintstones':
             cmd.append(f'{self.config["arldm_path"]}/data_script/flintstones_hdf5.py')
-            cmd.append(f'--data_dir {self.config["experiment_path"]}/input_data/flintstones_data')
+            cmd.append(f'--data_dir {self.config["experiment_path"]}/input_data/flintstones')
             cmd.append(f'--save_path {self.config["hdf5_file"]}')
         elif self.config['runscript'] == 'vistsis' or self.config['runscript'] == 'vistdii':
             cmd.append(f'{self.config["arldm_path"]}/data_script/vist_hdf5.py')
@@ -257,11 +256,11 @@ class Arldm(Application):
         prep_cmd = ' '.join(cmd)
         Exec(prep_cmd, LocalExecInfo(env=self.mod_env,))
     
-    def _move_data_to_storage(self):
+    def _stagein_h5_data(self):
         """
         Move the data to the storage device
         """
-        print(f"ARLDM _move_data_to_storage")
+        print(f"ARLDM _stagein_h5_data")
         
         orig_path = self.config['experiment_path']
         rg = self.jarvis.resource_graph
@@ -287,11 +286,17 @@ class Arldm(Application):
             
             # check if new_exp_dir_input_dir exist, if exists, no need to copy
             if (pathlib.Path(new_exp_dir_input_dir).exists() and 
-                pathlib.Path(new_exp_dir_output_dir).exists() and 
-                len(os.listdir(new_exp_dir_input_dir)) != 0 and 
-                len(os.listdir(new_exp_dir_output_dir)) != 0):
-                # check if new_exp_dir_input_dir has files in it
-                print(f"Input data already exists on {dev_type}: {new_exp_dir_input_dir}")
+                len(os.listdir(new_exp_dir_input_dir)) != 0):
+                    if pathlib.Path(f"{new_exp_dir_output_dir}/{self.config['runscript']}_out.h5").exists():
+                        # check if new_exp_dir_input_dir has files in it
+                        print(f"Input data already exists on {dev_type}: {new_exp_dir_input_dir}")
+                    else:
+                        if self.config['prep_hdf5'] == False:
+                            cmd = f"cp {orig_path}/output_data/{self.config['runscript']}_out.h5 {new_exp_dir_output_dir}"
+                            print(f"Copying data to {dev_type}: {cmd}")
+                            Exec(cmd,LocalExecInfo(env=self.mod_env,))
+                        else:
+                            pass
             else:
             
                 # Make experiment_path on NVME
@@ -305,9 +310,10 @@ class Arldm(Application):
                 print(f"Copying data to {dev_type}: {cmd}")
                 Exec(cmd,LocalExecInfo(env=self.mod_env,))
                 
-                cmd = f"cp {orig_path}/output_data/{self.config['runscript']}_out.h5 {new_exp_dir_output_dir}"
-                print(f"Copying data to {dev_type}: {cmd}")
-                Exec(cmd,LocalExecInfo(env=self.mod_env,))
+                if self.config['prep_hdf5'] == False:
+                    cmd = f"cp {orig_path}/output_data/{self.config['runscript']}_out.h5 {new_exp_dir_output_dir}"
+                    print(f"Copying data to {dev_type}: {cmd}")
+                    Exec(cmd,LocalExecInfo(env=self.mod_env,))
                 
             Exec(f"ls -l {new_exp_dir_input_dir}",LocalExecInfo(env=self.mod_env,))
             Exec(f"ls -l {new_exp_dir_output_dir}",LocalExecInfo(env=self.mod_env,))
@@ -368,7 +374,7 @@ class Arldm(Application):
         :return: None
         """
         
-        self._move_data_to_storage()
+        self._stagein_h5_data()
         self._configure_yaml()
         
         print(f"ARLDM start")
