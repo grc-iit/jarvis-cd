@@ -156,7 +156,8 @@ class Arldm(Application):
                     new_dir = self.config['local_exp_dir']
                     config_vars['ckpt_dir'] = config_vars['ckpt_dir'].replace(replace_dir, new_dir)
                     config_vars['sample_output_dir'] = config_vars['sample_output_dir'].replace(replace_dir, new_dir)
-                    config_vars[run_test]['hdf5_file'] = f"{new_dir}/output_data/{self.config['runscript']}/{self.config['runscript']}_out.h5"
+                    self.config['hdf5_file'] = f"{new_dir}/output_data/{self.config['runscript']}/{self.config['runscript']}_out.h5"
+                    config_vars[run_test]['hdf5_file'] = self.config['hdf5_file']
                 
                 # save config_vars back to yaml file
                 new_yaml_file = yaml_file.replace("_template.yml", ".yml")
@@ -232,6 +233,8 @@ class Arldm(Application):
         Prepare the HDF5 file for the ARLDM run
         """
         
+        print(f"ARLDM _prep_hdf5_file to {self.config['hdf5_file']}")
+        
         cmd = [
             'python',
         ]
@@ -254,7 +257,20 @@ class Arldm(Application):
             raise Exception("Must set the correct ARLDM script to run")
         
         prep_cmd = ' '.join(cmd)
+        
+        start = time.time()
         Exec(prep_cmd, LocalExecInfo(env=self.mod_env,))
+        
+        end = time.time()
+        diff = end - start
+        self.log(f'TIME: {diff} seconds') # color=Color.GREEN
+        
+        # check if hdf5_file exists
+        if pathlib.Path(self.config['hdf5_file']).exists():
+           print(f"HDF5 file created: {self.config['hdf5_file']}")
+        else:
+            raise Exception(f"HDF5 file not created: {self.config['hdf5_file']}") 
+        
     
     def _stagein_h5_data(self):
         """
@@ -379,6 +395,8 @@ class Arldm(Application):
         
         print(f"ARLDM start")
         
+        start = time.time()
+        
         if self.config['prep_hdf5']:
             self._prep_hdf5_file()
         
@@ -388,6 +406,9 @@ class Arldm(Application):
         if self.config['mode'] == 'sample':
             self._sample()
         
+        end = time.time()
+        diff = end - start
+        self.log(f'TOTAL RUN TIME: {diff} seconds')
 
 
     def stop(self):
