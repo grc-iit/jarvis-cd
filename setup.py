@@ -24,10 +24,12 @@ setuptools.setup(
     ],
     install_requires=[
         'pyyaml',
-        'pylint==2.15.0',
+        'pylint==2.13.9',
+        # 'pylint==2.15.0',
         # 'coverage==5.5',
         # 'coverage-lcov==0.2.4',
         'pytest==6.2.5',
-        'jarvis-util @ git+https://github.com/scs-lab/jarvis-util.git#egg=jarvis-util'
+        # 'jarvis-util @ git+https://github.com/scs-lab/jarvis-util.git#egg=jarvis-util'
+        'jarvis-util @ git+https://github.com/candiceT233/jarvis-util.git#egg=jarvis-util'
     ]
 )
