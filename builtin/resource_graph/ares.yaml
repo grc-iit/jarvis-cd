@@ -1,87 +1,43 @@
 fs:
-- avail: 512174850048
-  block_size: '512'
+- avail: 500GB
   dev_type: ssd
   device: /dev/sdb1
-  fs_mount: /mnt/ssd
-  fs_size: 477G
   fs_type: xfs
   host: localhost
   model: Samsung SSD 860
   mount: /mnt/ssd/${USER}
   parent: /dev/sdb
-  partlabel: primary
-  partuuid: c83c75b7-0cf8-4ae6-ac47-61faf8931dfb
-  rota: false
-  sec_type: null
   shared: false
-  size: 512067475865
-  tran: sata
-  use%: 1%
-  used: 33M
   uuid: 45b6abb3-7786-4b68-95d0-a8fac92e0d70
-- avail: 107374182400
-  block_size: null
+- avail: 500GB
   dev_type: hdd
   device: null
-  fs_mount: null
-  fs_size: null
-  fs_type: null
+  fs_type: xfs
   host: localhost
   model: null
   mount: ${HOME}
   parent: null
-  partlabel: null
-  partuuid: null
-  rota: true
-  sec_type: null
   shared: true
-  size: 107374182400
-  tran: sata
-  use%: null
-  used: null
   uuid: null
-- avail: 256624295936
-  block_size: '512'
+- avail: 240GB
   dev_type: nvme
   device: /dev/nvme0n1p1
-  fs_mount: /mnt/nvme
-  fs_size: 239G
   fs_type: xfs
   host: localhost
   model: TOSHIBA-RD400
   mount: /mnt/nvme/${USER}
   parent: /dev/nvme0n1
-  partlabel: primary
-  partuuid: 4c67d5c0-0414-4bd2-b094-298e207d77a2
-  rota: false
-  sec_type: null
   shared: false
-  size: 256087425024
-  tran: nvme
-  use%: 1%
-  used: 261M
   uuid: cbc9b18c-fbb0-4ab7-a9fd-8cc719a93f64
-- avail: 1000727379968
-  block_size: '4096'
+- avail: 900GB
   dev_type: hdd
   device: /dev/sdc1
-  fs_mount: /mnt/hdd
-  fs_size: 932G
   fs_type: xfs
   host: localhost
   model: ST1000LM049-2GH1
   mount: /mnt/hdd/${USER}
   parent: /dev/sdc
-  partlabel: primary
-  partuuid: 50ba6cac-ffd2-4521-b9ff-fda1b9e4d58c
-  rota: true
-  sec_type: null
   shared: false
-  size: 1000190509056
-  tran: sata
-  use%: 1%
-  used: 33M
   uuid: 7857cbad-2e46-40c2-835a-b297bc5ee1d2
 hosts:
 - localhost

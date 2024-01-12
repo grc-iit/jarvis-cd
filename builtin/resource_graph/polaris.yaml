@@ -2,15 +2,13 @@ fs:
 - avail: 54975581388800
   dev_type: hdd
   device: null
+  fs_type: null
   host: localhost
   model: null
   mount: /lus/grand/projects/VeloC/${USER}/SCS_lab
   parent: null
-  rota: true
-  sector_size: null
   shared: true
-  size: 54975581388800
-  tran: sata
+  uuid: null
 hosts:
 - localhost
 net:

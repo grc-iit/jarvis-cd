@@ -2,56 +2,32 @@ fs:
 - avail: 262200417583104
   dev_type: nvme
   device: nvme0n1
-  fs_mount: null
-  fs_size: null
   fs_type: null
   host: localhost
   model: INTEL SSDPEKKA512G8
   mount: /scratch/${USER}
   parent: null
-  rota: 0
-  sector_size: 262144
   shared: false
-  size: 262200417583104
-  tran: nvme
-  use%: null
-  used: null
   uuid: null
 - avail: 33554432000
   dev_type: ssd
   device: sda2
-  fs_mount: null
-  fs_size: null
   fs_type: null
   host: localhost
   model: INTEL SSDSC2KG96
   mount: /
   parent: sda
-  rota: 0
-  sector_size: 512
   shared: false
-  size: 33554432000
-  tran: sata
-  use%: null
-  used: null
   uuid: null
 - avail: 2147483648000
   dev_type: hdd
   device: null
-  fs_mount: null
-  fs_size: null
   fs_type: null
   host: localhost
   model: null
   mount: /rcfs/projects/chess/${USER}
   parent: null
-  rota: true
-  sector_size: null
   shared: true
-  size: 2147483648000
-  tran: sata
-  use%: null
-  used: null
   uuid: null
 hosts:
 - localhost
