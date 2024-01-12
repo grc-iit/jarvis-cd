@@ -24,7 +24,7 @@ setuptools.setup(
     ],
     install_requires=[
         'pyyaml',
-        'pylint==2.13.9',
+        'pylint>=2.13.9',
         # 'pylint==2.15.0',
         # 'coverage==5.5',
         # 'coverage-lcov==0.2.4',
