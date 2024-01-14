@@ -6,6 +6,7 @@ from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 import pathlib
 import yaml
+import os
 
 class Arldm(Application):
     """
@@ -271,7 +272,8 @@ class Arldm(Application):
             cmd.append(f'--save_path {self.config["hdf5_file"]}')
         elif self.config['runscript'] == 'vistsis' or self.config['runscript'] == 'vistdii':
             cmd.append(f'{self.config["arldm_path"]}/data_script/vist_hdf5.py')
-            cmd.append(f'--sis_json_dir {experiment_path}/vistsis')
+            # experiment_path = f'{experiment_path}/{self.config["runscript"]}'
+            cmd.append(f'--sis_json_dir {experiment_path}')
             cmd.append(f'--dii_json_dir {experiment_path}/vistdii')
             cmd.append(f'--img_dir {experiment_path}/visit_img')
             cmd.append(f'--save_path {self.config["hdf5_file"]}')
@@ -320,6 +322,8 @@ class Arldm(Application):
                             cmd = f"cp {orig_path}/output_data/{self.config['runscript']}_out.h5 {new_exp_dir_output_dir}"
                             print(f"Copying data to {dev_type}: {cmd}")
                             Exec(cmd,LocalExecInfo(env=self.mod_env,))
+
+                                
                         else:
                             # _prep_hdf5_file will run, so no need to copy
                             pass
@@ -335,7 +339,20 @@ class Arldm(Application):
                 cmd = f"cp -r {orig_path}/input_data/{self.config['runscript']}/* {new_exp_dir_input_dir}"
                 print(f"Copying data to {dev_type}: {cmd}")
                 Exec(cmd,LocalExecInfo(env=self.mod_env,))
-                
+
+                if self.config['runscript'] == 'vistsis' or self.config['runscript'] == 'vistdii':
+                    vistdii_path = new_exp_dir + "/input_data/vistdii" #f"{new_exp_dir_input_dir}/vistdii"
+                    pathlib.Path(vistdii_path).mkdir(parents=True, exist_ok=True)
+                    cmd = f"cp -r {orig_path}/input_data/vistdii/* {vistdii_path}"
+                    print(f"Copying data to {dev_type}: {cmd}")
+                    Exec(cmd,LocalExecInfo(env=self.mod_env,))
+                    
+                    visit_img_path = new_exp_dir + "/input_data/visit_img"
+                    pathlib.Path(visit_img_path).mkdir(parents=True, exist_ok=True)
+                    cmd = f"cp -r {orig_path}/input_data/visit_img/* {visit_img_path}"
+                    print(f"Copying data to {dev_type}: {cmd}")
+                    Exec(cmd,LocalExecInfo(env=self.mod_env,))
+
                 if self.config['prep_hdf5'] == False:
                     cmd = f"cp {orig_path}/output_data/{self.config['runscript']}_out.h5 {new_exp_dir_output_dir}"
                     print(f"Copying data to {dev_type}: {cmd}")
@@ -392,6 +409,48 @@ class Arldm(Application):
         """
         print(f"ARLDM sampling run: not implemented yet")
 
+    def _update_conda_env(self):
+        env_var_dict = {}
+        env_var_dict['variables'] = {}
+        # Obtain environment variables and write into hermes_envar.yaml
+        check_envars = ['HDF5_PLUGIN_PATH', 'HDF5_DRIVER']
+        for var in check_envars:
+            if var not in os.environ:
+                self.log(f"Environment variable {var} not set")
+            else:
+                env_var_dict['variables'][var] = self.env[var]
+        
+        """ YAML file format
+        variables:
+            HDF5_USE_FILE_LOCKING: FALSE
+            PATH_FOR_TASK_FILES: /tmp/mtang11/arldm_test
+            CURR_TASK: "arldm_train"
+            HDF5_DRIVER_CONFIG: "true 65536"
+            HDF5_VOL_CONNECTOR: "tracker under_vol: 0;under_info: {};path: data-stat-dl.yaml;level: 2;format: "
+            HDF5_DRIVER: "hdf5_tracker_vfd"
+            HDF5_LOG_FILE_PATH: "data-stat-dl.yaml"
+            HDF5_PLUGIN_PATH: "/home/mtang11/install/tracker/lib"
+        """
+        # Write environment variables to hermes_envar.yaml
+        yaml_file = f'{self.pkg_dir}/hermes_envar.yaml'
+        print(f"Writing environment variables to {yaml_file}")
+        with open(yaml_file, 'w') as outfile:
+            yaml.dump(env_var_dict, outfile, default_flow_style=False)
+                
+        
+        # conda env update --file ares_tracker_envar.yaml --prune --name arldm # need internet
+        cmd = [
+            'conda','run', '-n', self.config['conda_env'],
+            'conda','env','update',
+            '--file', yaml_file,
+            '--prune',
+            '--name', self.config['conda_env'],
+        ]
+        conda_cmd = ' '.join(cmd)
+        print(f"Updating conda environment with command: {conda_cmd}")
+        Exec(conda_cmd, LocalExecInfo(env=self.mod_env,))
+        
+
     def start(self):
         """
         Launch an application. E.g., OrangeFS will launch the servers, clients,
@@ -402,6 +461,7 @@ class Arldm(Application):
         
         self._stagein_h5_data()
         self._configure_yaml()
+        self._update_conda_env()
         
         print(f"ARLDM start")
         
