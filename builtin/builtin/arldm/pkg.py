@@ -223,7 +223,24 @@ class Arldm(Application):
         
         # set sample_output_dir
         self.config['hdf5_file'] = f'{self.config["experiment_path"]}/output_data/{self.config["runscript"]}_out.h5'
-        
+
+        rg = self.jarvis.resource_graph
+        dev_type = self.config['storage_device']
+        if self.config['storage_device'] == 'nfs':
+            # Default is NFS, no need to move data
+            pass
+        elif self.config['storage_device'] == 'pfs':
+            # Move data to PFS
+            # TODO: do nothing for now
+            pass
+        else:
+            # Find storage path
+            dev_df = rg.find_storage(dev_types=[dev_type],shared=False)       
+            if dev_df is None:
+                raise Exception(f"Could not find storage device of type {dev_type}")     
+
+            new_exp_dir = os.path.expandvars(dev_df.rows[0]['mount']) + "/ARLDM"
+            self.config['local_exp_dir'] = new_exp_dir
         
         self._configure_yaml()
         
@@ -232,26 +249,31 @@ class Arldm(Application):
         """
         Prepare the HDF5 file for the ARLDM run
         """
-        
-        print(f"ARLDM _prep_hdf5_file to {self.config['hdf5_file']}")
+        experiment_path = self.config['experiment_path'] + "/input_data"
+        if self.config['local_exp_dir'] is not None:
+            experiment_path = self.config['local_exp_dir'] + "/input_data"
+
+        print(f"ARLDM _prep_hdf5_file input from {experiment_path} to {self.config['hdf5_file']}")
         
         cmd = [
+            f"cd {self.config['arldm_path']}; echo Executing from directory `pwd`;",
+            'conda','run', '-n', self.config['conda_env'], # conda environment
             'python',
         ]
-        
+
         if self.config['runscript'] == 'pororo':
             cmd.append(f'{self.config["arldm_path"]}/data_script/pororo_hdf5.py')
-            cmd.append(f'--data_dir {self.config["experiment_path"]}/input_data/pororo')
+            cmd.append(f'--data_dir {experiment_path}/pororo')
             cmd.append(f'--save_path {self.config["hdf5_file"]}')
         elif self.config['runscript'] == 'flintstones':
             cmd.append(f'{self.config["arldm_path"]}/data_script/flintstones_hdf5.py')
-            cmd.append(f'--data_dir {self.config["experiment_path"]}/input_data/flintstones')
+            cmd.append(f'--data_dir {experiment_path}/flintstones')
             cmd.append(f'--save_path {self.config["hdf5_file"]}')
         elif self.config['runscript'] == 'vistsis' or self.config['runscript'] == 'vistdii':
             cmd.append(f'{self.config["arldm_path"]}/data_script/vist_hdf5.py')
-            cmd.append(f'--sis_json_dir {self.config["experiment_path"]}/input_data/vistsis')
-            cmd.append(f'--dii_json_dir {self.config["experiment_path"]}/input_data/vistdii')
-            cmd.append(f'--img_dir {self.config["experiment_path"]}/input_data/visit_img')
+            cmd.append(f'--sis_json_dir {experiment_path}/vistsis')
+            cmd.append(f'--dii_json_dir {experiment_path}/vistdii')
+            cmd.append(f'--img_dir {experiment_path}/visit_img')
             cmd.append(f'--save_path {self.config["hdf5_file"]}')
         else:
             raise Exception("Must set the correct ARLDM script to run")
@@ -282,21 +304,8 @@ class Arldm(Application):
         rg = self.jarvis.resource_graph
         dev_type = self.config['storage_device']
         
-
-        if self.config['storage_device'] == 'nfs':
-            # Default is NFS, no need to move data
-            pass
-        elif self.config['storage_device'] == 'pfs':
-            # Move data to PFS
-            # TODO: do nothing for now
-            pass
-        else:
-            # Find storage path
-            dev_df = rg.find_storage(dev_types=[dev_type],shared=False)       
-            if dev_df is None:
-                raise Exception(f"Could not find storage device of type {dev_type}")     
-
-            new_exp_dir = os.path.expandvars(dev_df.rows[0]['mount']) + "/ARLDM"
+        if self.config['local_exp_dir'] is not None:
+            new_exp_dir = self.config['local_exp_dir']
             new_exp_dir_input_dir = new_exp_dir + "/input_data" + f"/{self.config['runscript']}"
             new_exp_dir_output_dir = new_exp_dir + "/output_data" + f"/{self.config['runscript']}"
             
@@ -312,6 +321,7 @@ class Arldm(Application):
                             print(f"Copying data to {dev_type}: {cmd}")
                             Exec(cmd,LocalExecInfo(env=self.mod_env,))
                         else:
+                            # _prep_hdf5_file will run, so no need to copy
                             pass
             else:
             
@@ -333,7 +343,7 @@ class Arldm(Application):
                 
             Exec(f"ls -l {new_exp_dir_input_dir}",LocalExecInfo(env=self.mod_env,))
             Exec(f"ls -l {new_exp_dir_output_dir}",LocalExecInfo(env=self.mod_env,))
-            self.config['local_exp_dir'] = new_exp_dir
+
     
     def _train(self):
         """
