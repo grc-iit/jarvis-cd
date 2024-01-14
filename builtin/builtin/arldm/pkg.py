@@ -42,6 +42,12 @@ class Arldm(Application):
                 'default': f'{self.pkg_dir}/example_config/config_template.yml',
             },
             {
+                'name': 'update_envar',
+                'msg': 'Update the conda environment variables',
+                'type': str,
+                'default': f'{self.pkg_dir}/example_config/update_envar.yml',
+            },
+            {
                 'name': 'runscript',
                 'msg': 'The name of the ARLDM script to run',
                 'type': str,
@@ -273,7 +279,7 @@ class Arldm(Application):
         elif self.config['runscript'] == 'vistsis' or self.config['runscript'] == 'vistdii':
             cmd.append(f'{self.config["arldm_path"]}/data_script/vist_hdf5.py')
             # experiment_path = f'{experiment_path}/{self.config["runscript"]}'
-            cmd.append(f'--sis_json_dir {experiment_path}')
+            cmd.append(f'--sis_json_dir {experiment_path}/vistsis')
             cmd.append(f'--dii_json_dir {experiment_path}/vistdii')
             cmd.append(f'--img_dir {experiment_path}/visit_img')
             cmd.append(f'--save_path {self.config["hdf5_file"]}')
@@ -410,16 +416,6 @@ class Arldm(Application):
         print(f"ARLDM sampling run: not implemented yet")
 
     def _update_conda_env(self):
-        env_var_dict = {}
-        env_var_dict['variables'] = {}
-        # Obtain environment variables and write into hermes_envar.yaml
-        check_envars = ['HDF5_PLUGIN_PATH', 'HDF5_DRIVER']
-        for var in check_envars:
-            if var not in os.environ:
-                self.log(f"Environment variable {var} not set")
-            else:
-                env_var_dict['variables'][var] = self.env[var]
-        
         """ YAML file format
         variables:
             HDF5_USE_FILE_LOCKING: FALSE
@@ -431,12 +427,10 @@ class Arldm(Application):
             HDF5_LOG_FILE_PATH: "data-stat-dl.yaml"
             HDF5_PLUGIN_PATH: "/home/mtang11/install/tracker/lib"
         """
-        # Write environment variables to hermes_envar.yaml
-        yaml_file = f'{self.pkg_dir}/hermes_envar.yaml'
-        print(f"Writing environment variables to {yaml_file}")
-        with open(yaml_file, 'w') as outfile:
-            yaml.dump(env_var_dict, outfile, default_flow_style=False)
-                
+
+        yaml_file = self.config['update_envar']
+        
+
         
         # conda env update --file ares_tracker_envar.yaml --prune --name arldm # need internet
         cmd = [
@@ -450,6 +444,20 @@ class Arldm(Application):
         print(f"Updating conda environment with command: {conda_cmd}")
         Exec(conda_cmd, LocalExecInfo(env=self.mod_env,))
         
+        # check if environment variables are updated
+        with open(yaml_file, "r") as stream:
+            try:
+                config_vars = yaml.safe_load(stream)
+                for key, val in config_vars['variables'].items():
+                    # print(f"YAML file environment variable: {key} = {val}")
+                    cmd = [
+                        'conda','run', '-n', self.config['conda_env'],
+                        'echo', f"${key}",
+                    ]
+                    conda_cmd = ' '.join(cmd)
+                    Exec(conda_cmd, LocalExecInfo(env=self.mod_env,))
+            except yaml.YAMLError as exc:
+                print(exc)
 
     def start(self):
         """
