@@ -419,19 +419,12 @@ class Arldm(Application):
         """ YAML file format
         variables:
             HDF5_USE_FILE_LOCKING: FALSE
-            PATH_FOR_TASK_FILES: /tmp/mtang11/arldm_test
-            CURR_TASK: "arldm_train"
-            HDF5_DRIVER_CONFIG: "true 65536"
-            HDF5_VOL_CONNECTOR: "tracker under_vol: 0;under_info: {};path: data-stat-dl.yaml;level: 2;format: "
             HDF5_DRIVER: "hdf5_tracker_vfd"
-            HDF5_LOG_FILE_PATH: "data-stat-dl.yaml"
             HDF5_PLUGIN_PATH: "/home/mtang11/install/tracker/lib"
         """
 
         yaml_file = self.config['update_envar']
-        
-
-        
+                
         # conda env update --file ares_tracker_envar.yaml --prune --name arldm # need internet
         cmd = [
             'conda','run', '-n', self.config['conda_env'],
