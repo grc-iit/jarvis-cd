@@ -1,7 +1,6 @@
 """
 This module provides classes and methods to launch the Gray Scott application.
-Gray Scott is a 3D 7-point stencil code for modeling the diffusion of two
-substances.
+Pyflextrkr is ....
 """
 from jarvis_cd.basic.pkg import Application, Color
 from jarvis_util import *
@@ -19,9 +18,6 @@ class Pyflextrkr(Application):
         """
         Initialize paths
         """
-        # self.adios2_xml_path = f'{self.shared_dir}/adios2.xml'
-        # self.settings_json_path = f'{self.shared_dir}/settings-files.json'
-        # self.conda_env = 'pyflextrkr'
         pass
 
     def _configure_menu(self):
@@ -127,9 +123,6 @@ class Pyflextrkr(Application):
         if self.config['runscript'] is None:
             raise Exception("Must set the Pyflextrkr script to run")
         else:
-            # check if run script is supported
-            if self.config['runscript'] not in self.config['supported_runscripts']:
-                raise Exception(f"Run script {self.config['runscript']} is not supported")
             
             # check if run script matches config file
             if self.config['runscript'] not in self.config['config']:
