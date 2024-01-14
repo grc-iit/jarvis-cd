@@ -43,6 +43,12 @@ class Pyflextrkr(Application):
                 'default': f'{self.pkg_dir}/example_config/run_mcs_tbpfradar3d_wrf_template.yml',
             },
             {
+                'name': 'update_envar',
+                'msg': 'Update the conda environment variables',
+                'type': str,
+                'default': f'{self.pkg_dir}/example_config/update_envar.yml',
+            },
+            {
                 'name': 'runscript',
                 'msg': 'The name of the Pyflextrkr script to run (run_mcs_tbpfradar3d_wrf)',
                 'type': str,
@@ -267,6 +273,42 @@ class Pyflextrkr(Application):
 
         self.config['run_cmd'] = ' '.join(cmd)
 
+    def _update_conda_env(self):
+        """ YAML file format
+        variables:
+            HDF5_USE_FILE_LOCKING: FALSE
+            HDF5_DRIVER: "hdf5_tracker_vfd"
+            HDF5_PLUGIN_PATH: "/home/mtang11/install/tracker/lib"
+        """
+
+        yaml_file = self.config['update_envar']
+                
+        # conda env update --file ares_tracker_envar.yaml --prune --name arldm # need internet
+        cmd = [
+            'conda','run', '-n', self.config['conda_env'],
+            'conda','env','update',
+            '--file', yaml_file,
+            '--prune',
+            '--name', self.config['conda_env'],
+        ]
+        conda_cmd = ' '.join(cmd)
+        print(f"Updating conda environment with command: {conda_cmd}")
+        Exec(conda_cmd, LocalExecInfo(env=self.mod_env,))
+        
+        # check if environment variables are updated
+        with open(yaml_file, "r") as stream:
+            try:
+                config_vars = yaml.safe_load(stream)
+                for key, val in config_vars['variables'].items():
+                    # print(f"YAML file environment variable: {key} = {val}")
+                    cmd = [
+                        'conda','run', '-n', self.config['conda_env'],
+                        'echo', f"${key}",
+                    ]
+                    conda_cmd = ' '.join(cmd)
+                    Exec(conda_cmd, LocalExecInfo(env=self.mod_env,))
+            except yaml.YAMLError as exc:
+                print(exc)
 
     def start(self):
         """
@@ -278,6 +320,7 @@ class Pyflextrkr(Application):
         
         ## Configure yaml file before start
         self._configure_yaml()
+        self._update_conda_env()
         
         self._construct_cmd()
         
