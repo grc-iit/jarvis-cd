@@ -29,7 +29,7 @@ class Gadget2(Application):
                 'name': 'nprocs',
                 'msg': 'Number of processes to spawn',
                 'type': int,
-                'default': 4,
+                'default': 1,
             },
             {
                 'name': 'ppn',
@@ -67,16 +67,18 @@ class Gadget2(Application):
         """
         test_case = self.config['test_case']
         paramfile = f'{self.config_dir}/{test_case}.param'
+        buildconf = f'{self.pkg_dir}/config/{test_case}.yaml'
+        outdir = expand_env(self.config['out'])
         self.copy_template_file(f'{self.pkg_dir}/paramfiles/{test_case}.param',
                                 paramfile,
                                 replacements={
-                                    'REPO_DIR': self.env['GADGET_PATH'],
-                                    'OUTPUT_DIR': self.config['out']
+                                    # 'REPO_DIR': self.env['GADGET2_PATH'],
+                                    'OUTPUT_DIR': outdir
                                 })
         build_dir = f'{self.shared_dir}/build'
         Cmake(self.env['GADGET2_PATH'],
               build_dir,
-              opts=YamlFile('').Load(f'{self.pkg_dir}/config/{test_case}.yaml'))
+              opts=YamlFile(buildconf).load())
         Make(build_dir, nthreads=self.config['j'])
 
     def start(self):
@@ -86,7 +88,17 @@ class Gadget2(Application):
 
         :return: None
         """
-        pass
+        test_case = self.config['test_case']
+        build_dir = f'{self.shared_dir}/build'
+        exec_path = f'{build_dir}/bin/Gadget2'
+        paramfile = f'{self.config_dir}/{test_case}.param'
+        Mkdir(self.config['out'])
+        Exec(f'{exec_path} {paramfile}',
+             MpiExecInfo(nprocs=self.config['nprocs'],
+                         ppn=self.config['ppn'],
+                         hostfile=self.jarvis.hostfile,
+                         env=self.mod_env,
+                         cwd=self.env['GADGET2_PATH']))
 
     def stop(self):
         """
@@ -104,4 +116,6 @@ class Gadget2(Application):
 
         :return: None
         """
-        pass
+        build_dir = f'{self.shared_dir}/build'
+
+        Rm()

@@ -11,7 +11,7 @@ CpuFile            cpu.txt
 RestartFile        restart
 SnapshotFileBase   snapshot
 
-OutputListFilename parameterfiles/output_list.txt
+OutputListFilename output_list.txt
 
 % CPU time -limit
 

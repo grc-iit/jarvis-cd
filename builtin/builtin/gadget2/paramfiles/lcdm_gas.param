@@ -11,7 +11,7 @@ CpuFile            cpu.txt
 RestartFile        restart
 SnapshotFileBase   snapshot
 
-OutputListFilename parameterfiles/outputs_lcdm_gas.txt
+OutputListFilename outputs_lcdm_gas.txt
 
 % CPU time -limit
 
