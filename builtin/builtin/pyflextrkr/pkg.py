@@ -53,7 +53,7 @@ class Pyflextrkr(Application):
                 'msg': 'The name of the Pyflextrkr script to run (run_mcs_tbpfradar3d_wrf)',
                 'type': str,
                 'default': 'run_mcs_tbpfradar3d_wrf',
-                'choices': ['run_mcs_tbpfradar3d_wrf']
+                'choices': ['run_mcs_tbpfradar3d_wrf', 'run_mcs_tbpf_saag_summer_sam', 'run_mcs_tb_summer_sam']
             },
             {
                 'name': 'flush_mem',
