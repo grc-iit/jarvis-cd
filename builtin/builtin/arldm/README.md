@@ -32,7 +32,8 @@ YOUR_HDF5_DIR="`which h5cc |sed 's/.\{9\}$//'`"
 conda env create -f arldm_conda.yml
 conda activate arldm
 pip install -e .
-HDF5_MPI="OFF" HDF5_DIR=${YOUR_HDF5_DIR} pip install --no-cache-dir --no-binary=h5py h5py
+pip uninstall h5py;
+HDF5_MPI="OFF" HDF5_DIR=${YOUR_HDF5_DIR} pip install --no-cache-dir --no-binary=h5py h5py==3.8.0
 conda deactivate
 ```
 
