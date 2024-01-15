@@ -15,9 +15,9 @@ Nsample          128       % sets the maximum k that the code uses,
 Box              150000.0  % Periodic box size of simulation
 
 FileBase         ics                 % Base-filename of output files
-OutputDir        ##REPOD_DIR##/ICs/  % Directory for output
+OutputDir        ##REPO_DIR##/ICs/  % Directory for output
 
-GlassFile        ##REPOD_DIR##/NGenIC/dummy_glass.dat  % File with unperturbed glass or
+GlassFile        ##REPO_DIR##/N-GenIC/dummy_glass.dat  % File with unperturbed glass or
                                   % Cartesian grid
 
 TileFac          ##TILE_FAC##                % Number of times the glass file is

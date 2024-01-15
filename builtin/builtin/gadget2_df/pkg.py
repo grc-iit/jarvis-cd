@@ -38,6 +38,12 @@ class Gadget2Df(Application):
                 'default': None,
             },
             {
+                'name': 'j',
+                'msg': 'Number of threads to use for building gadget',
+                'type': int,
+                'default': 8,
+            },
+            {
                 'name': 'tile_fac',
                 'msg': 'The tiling factor used to replicate the initial boundary'
                        'conditions',
@@ -61,6 +67,18 @@ class Gadget2Df(Application):
                                     'REPO_DIR': self.env['GADGET2_PATH'],
                                     'TILE_FAC': self.config['tile_fac']
                                 })
+        build_dir = f'{self.shared_dir}/build'
+        Rm(build_dir)
+        Mkdir(build_dir)
+        cmake_opts = {}
+        if 'FFTW_PATH' in self.env:
+            cmake_opts['FFTW_PATH'] = self.env['FFTW_PATH']
+        Cmake(self.env['GADGET2_PATH'],
+              build_dir,
+              opts=cmake_opts,
+              exec_info=LocalExecInfo(env=self.env))
+        Make(build_dir, nthreads=self.config['j'],
+             exec_info=LocalExecInfo(env=self.env))
 
     def start(self):
         """
@@ -69,6 +87,7 @@ class Gadget2Df(Application):
 
         :return: None
         """
+        build_dir = f'{self.shared_dir}/build'
         paramfile = f'{self.config_dir}/ics.param'
         exec_path = f'{build_dir}/bin/NGenIC'
         ngenic_root = f'{self.env["GADGET2_PATH"]}/N-GenIC'

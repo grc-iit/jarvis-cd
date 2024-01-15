@@ -125,8 +125,10 @@ class Gadget2(Application):
             cmake_opts['FFTW_PATH'] = self.env['FFTW_PATH']
         Cmake(self.env['GADGET2_PATH'],
               build_dir,
-              opts=cmake_opts)
-        Make(build_dir, nthreads=self.config['j'])
+              opts=cmake_opts,
+              exec_info=LocalExecInfo(env=self.env))
+        Make(build_dir, nthreads=self.config['j'],
+             exec_info=LocalExecInfo(env=self.env))
 
     def start(self):
         """
