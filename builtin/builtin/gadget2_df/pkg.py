@@ -68,8 +68,6 @@ class Gadget2Df(Application):
                                     'TILE_FAC': self.config['tile_fac']
                                 })
         build_dir = f'{self.shared_dir}/build'
-        Rm(build_dir)
-        Mkdir(build_dir)
         cmake_opts = {}
         if 'FFTW_PATH' in self.env:
             cmake_opts['FFTW_PATH'] = self.env['FFTW_PATH']
