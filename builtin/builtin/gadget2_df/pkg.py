@@ -44,11 +44,17 @@ class Gadget2Df(Application):
                 'default': 8,
             },
             {
-                'name': 'tile_fac',
-                'msg': 'The tiling factor used to replicate the initial boundary'
-                       'conditions',
+                'name': 'nparticles',
+                'msg': 'The maximum number of particles to generate. Should'
+                       'be a multiple of 4096.',
                 'type': int,
-                'default': 4,
+                'default': 4096,
+            },
+            {
+                'name': 'base',
+                'msg': 'The name of the initial condition output file.',
+                'type': str,
+                'default': 'ics',
             },
         ]
 
@@ -61,14 +67,24 @@ class Gadget2Df(Application):
         :return: None
         """
         paramfile = f'{self.config_dir}/ics.param'
+        nparticles = self.config['nparticles']
+        tile_fac = int((nparticles / 4096) ** (1.0 / 3.0))
+        nparticles = 4096 * tile_fac ** 3
+        print(f'NUMBER OF PARTICLES: {nparticles}')
+        if tile_fac < 1:
+            tile_fac = 1
+        nsample = nparticles ** (1.0 / 3.0)
         self.copy_template_file(f'{self.pkg_dir}/paramfiles/ics.param',
                                 paramfile,
                                 replacements={
                                     'REPO_DIR': self.env['GADGET2_PATH'],
-                                    'TILE_FAC': self.config['tile_fac']
+                                    'TILE_FAC': tile_fac,
+                                    'NSAMPLE': nsample,
+                                    'FILE_BASE': self.config['base'],
                                 })
         build_dir = f'{self.shared_dir}/build'
         cmake_opts = {}
+        Mkdir(f'{self.env["GADGET2_PATH"]}/ICs-NGen')
         if 'FFTW_PATH' in self.env:
             cmake_opts['FFTW_PATH'] = self.env['FFTW_PATH']
         Cmake(self.env['GADGET2_PATH'],
@@ -112,4 +128,6 @@ class Gadget2Df(Application):
 
         :return: None
         """
-        pass
+        ics_path = f'{self.env["GADGET2_PATH"]}/ICs-NGen/{self.config["base"]}.*'
+        print(ics_path)
+        Rm(ics_path)

@@ -94,6 +94,12 @@ class Gadget2(Application):
                 'type': float,
                 'default': .2,
             },
+            {
+                'name': 'ic',
+                'msg': 'The initial conditions file to use.',
+                'type': str,
+                'default': None,
+            },
         ]
 
     def _configure(self, **kwargs):
@@ -118,6 +124,7 @@ class Gadget2(Application):
                                     'TIME_MAX': self.config['time_max'],
                                     'TIME_BET_SNAPSHOT': self.config['time_bet_snapshot'],
                                     'MAX_SIZE_TIMESTEP': self.config['max_size_timestep'],
+                                    'INITCOND': self.config['ic'],
                                 })
         build_dir = f'{self.shared_dir}/build'
         cmake_opts = YamlFile(buildconf).load()
@@ -147,7 +154,9 @@ class Gadget2(Application):
                          ppn=self.config['ppn'],
                          hostfile=self.jarvis.hostfile,
                          env=self.mod_env,
-                         cwd=self.env['GADGET2_PATH']))
+                         cwd=self.env['GADGET2_PATH'],
+                         do_dbg=self.config['do_dbg'],
+                         dbg_port=self.config['dbg_port']))
 
     def stop(self):
         """

@@ -1,9 +1,9 @@
 
-Nmesh            128       % This is the size of the FFT grid used to 
+Nmesh            ##NSAMPLE##       % This is the size of the FFT grid used to
                            % compute the displacement field. One
                            % should have Nmesh >= Nsample.
 
-Nsample          128       % sets the maximum k that the code uses,
+Nsample          ##NSAMPLE##       % sets the maximum k that the code uses,
                            % i.e. this effectively determines the
                            % Nyquist frequency that the code assumes,
                            % k_Nyquist = 2*PI/Box * Nsample/2
@@ -14,8 +14,8 @@ Nsample          128       % sets the maximum k that the code uses,
 
 Box              150000.0  % Periodic box size of simulation
 
-FileBase         ics                 % Base-filename of output files
-OutputDir        ##REPO_DIR##/ICs/  % Directory for output
+FileBase         ##FILE_BASE##            % Base-filename of output files
+OutputDir        ##REPO_DIR##/ICs-NGen/  % Directory for output
 
 GlassFile        ##REPO_DIR##/N-GenIC/dummy_glass.dat  % File with unperturbed glass or
                                   % Cartesian grid
@@ -71,7 +71,7 @@ PrimordialIndex  1.0       % may be used to tilt the primordial index,
 Seed             123456    %  seed for IC-generator
 
 
-NumFilesWrittenInParallel 2  % limits the number of files that are
+NumFilesWrittenInParallel 1  % limits the number of files that are
                              % written in parallel when outputting
 
 
