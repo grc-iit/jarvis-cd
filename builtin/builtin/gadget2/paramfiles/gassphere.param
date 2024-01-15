@@ -34,7 +34,7 @@ PeriodicBoundariesOn     0
 %  Caracteristics of run
 
 TimeBegin           0.0
-TimeMax	            3.0
+TimeMax	            ##TIME_MAX##
 
 Omega0	              0
 OmegaLambda           0
@@ -89,9 +89,9 @@ MinGasTemp             0
 
 % Memory allocation
 
-PartAllocFactor       1.5
-TreeAllocFactor       0.8
-BufferSize            5          % in MByte
+PartAllocFactor       ##PART_ALLOC_FACTOR##
+TreeAllocFactor       ##TREE_ALLOC_FACTOR##
+BufferSize            ##BUFFER_SIZE##          % in MByte
 
 % System of units
 
@@ -119,14 +119,3 @@ SofteningDiskMaxPhys      0
 SofteningBulgeMaxPhys     0
 SofteningStarsMaxPhys     0
 SofteningBndryMaxPhys     0
-
-
-
-
-
-
-
-
-
-
-

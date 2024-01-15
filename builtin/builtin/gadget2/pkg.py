@@ -55,6 +55,45 @@ class Gadget2(Application):
                 'type': str,
                 'default': '${HOME}/gadget_data',
             },
+            {
+                'name': 'buffer_size',
+                'msg': 'The size in MB of buffers used for communication. '
+                       '100MB is typically an upper bound.',
+                'type': float,
+                'default': 15,
+            },
+            {
+                'name': 'part_alloc_factor',
+                'msg': 'Allocate space for particles per processor. '
+                       'Typically should be in the range of 1 to 3.',
+                'type': float,
+                'default': 1.1,
+            },
+            {
+                'name': 'tree_alloc_factor',
+                'msg': 'Allocate space for the BH-tree, which is typically '
+                       'smaller than the number of particles.',
+                'type': float,
+                'default': .9,
+            },
+            {
+                'name': 'max_size_timestep',
+                'msg': 'The maximum time step of a particle',
+                'type': float,
+                'default': .01,
+            },
+            {
+                'name': 'time_max',
+                'msg': 'The maximum time the simulation estimates (seconds)',
+                'type': float,
+                'default': 3,
+            },
+            {
+                'name': 'time_bet_snapshot',
+                'msg': 'The number of estimated seconds before snapshot occurs',
+                'type': float,
+                'default': .2,
+            },
         ]
 
     def _configure(self, **kwargs):
@@ -72,13 +111,21 @@ class Gadget2(Application):
         self.copy_template_file(f'{self.pkg_dir}/paramfiles/{test_case}.param',
                                 paramfile,
                                 replacements={
-                                    # 'REPO_DIR': self.env['GADGET2_PATH'],
-                                    'OUTPUT_DIR': outdir
+                                    'OUTPUT_DIR': outdir,
+                                    'BUFFER_SIZE': self.config['buffer_size'],
+                                    'PART_ALLOC_FACTOR': self.config['part_alloc_factor'],
+                                    'TREE_ALLOC_FACTOR': self.config['tree_alloc_factor'],
+                                    'TIME_MAX': self.config['time_max'],
+                                    'TIME_BET_SNAPSHOT': self.config['time_bet_snapshot'],
+                                    'MAX_SIZE_TIMESTEP': self.config['max_size_timestep'],
                                 })
         build_dir = f'{self.shared_dir}/build'
+        cmake_opts = YamlFile(buildconf).load()
+        if 'FFTW_PATH' in self.env:
+            cmake_opts['FFTW_PATH'] = self.env['FFTW_PATH']
         Cmake(self.env['GADGET2_PATH'],
               build_dir,
-              opts=YamlFile(buildconf).load())
+              opts=cmake_opts)
         Make(build_dir, nthreads=self.config['j'])
 
     def start(self):
@@ -117,5 +164,4 @@ class Gadget2(Application):
         :return: None
         """
         build_dir = f'{self.shared_dir}/build'
-
-        Rm()
+        Rm([self.config['out']])
