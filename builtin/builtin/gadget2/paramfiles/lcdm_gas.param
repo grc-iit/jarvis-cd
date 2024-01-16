@@ -11,7 +11,7 @@ CpuFile            cpu.txt
 RestartFile        restart
 SnapshotFileBase   snapshot
 
-OutputListFilename outputs_lcdm_gas.txt
+OutputListFilename /home/lukemartinlogan/Documents/Projects/PhD/gadget2/Gadget2/parameterfiles/outputs_lcdm_gas.txt
 
 % CPU time -limit
 
@@ -57,7 +57,7 @@ NumFilesWrittenInParallel 1
 
 % Accuracy of time integration
 
-ErrTolIntAccuracy      0.025 
+ErrTolIntAccuracy      0.025
 
 MaxRMSDisplacementFac  0.2
 
