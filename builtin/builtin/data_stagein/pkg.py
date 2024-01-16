@@ -6,6 +6,7 @@ from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 import os
 import pathlib
+import time
 
 
 class DataStagein(Application):
@@ -67,6 +68,14 @@ class DataStagein(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
+        
+        if self.config['dest_data_path'] is None:
+            raise ValueError("dest_data_path is not set")
+        if self.config['user_data_paths'] is None:
+            raise ValueError("user_data_paths is not set")
+        if self.config['mkdir_datapaths'] is None:
+            raise ValueError("mkdir_datapaths is not set")
+        
         user_data_paths = self.config['user_data_paths']
         
         # Convert user_data_paths to list
@@ -104,6 +113,8 @@ class DataStagein(Application):
         if not pathlib.Path(dest_data_path).exists():
             pathlib.Path(dest_data_path).mkdir(parents=True, exist_ok=True)
         
+        start = time.time()
+        
         for data_path in user_data_list:
             if not os.path.exists(data_path):
                 raise FileNotFoundError(f"Data path {data_path} does not exist")
@@ -112,12 +123,24 @@ class DataStagein(Application):
                 if len(os.listdir(data_path)) == 0:
                     raise ValueError(f"Data path {data_path} is empty")
             
+            # Check if two directory contains the same files
+            dest_files = os.listdir(dest_data_path)
+            data_files = os.listdir(data_path)
+            if set(dest_files) == set(data_files):
+                print(f"Data path {data_path} already exists in {dest_data_path}")
+                continue
+            
             # Move data to destination path
-            cmd = f"cp -r {data_path} {dest_data_path}"
+            cmd = f"cp -r {data_path}/* {dest_data_path}"
             print(f"Copying data from {data_path} to {dest_data_path}")
             Exec(cmd,LocalExecInfo(env=self.mod_env,))
             
-            Exec(f"ls -l {dest_data_path}",LocalExecInfo(env=self.mod_env,))
+            copied_items = len(os.listdir(dest_data_path))
+            print(f"Copied {copied_items} items to {dest_data_path}")
+        
+        end = time.time()
+        diff = end - start
+        self.log(f'data_stagein TIME: {diff} seconds')
             
         print("Data stagein complete")
 
