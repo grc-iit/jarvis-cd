@@ -102,6 +102,12 @@ class Pyflextrkr(Application):
                 'msg': 'Command to run Pyflextrkr',
                 'type': str,
                 'default': None,
+            },
+            {
+                'name': 'local_exp_dir',
+                'msg': 'Local experiment directory',
+                'type': str,
+                'default': None,
             }
         ]
 
@@ -163,8 +169,6 @@ class Pyflextrkr(Application):
             self.config['log_file'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
             self.config['stdout'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
         
-        ## Configure yaml file
-        self._configure_yaml()
         
 
     def _configure_yaml(self):
@@ -175,20 +179,28 @@ class Pyflextrkr(Application):
         if "_template.yml" not in str(yaml_file):
             yaml_file = yaml_file.replace(".yml", "_template.yml")
         
-        self.log(f"Pyflextrkr yaml_file: {yaml_file}")
-            
-        paths_to_mkdir = []
+        self.log(f"Pyflextrkr config from: {yaml_file}")
         
         with open(yaml_file, "r") as stream:
+            
+            experiment_path = self.config['experiment_path']
+            if self.config['local_exp_dir'] is not None:
+                experiment_path = self.config['local_exp_dir']
+            
+            input_path = f"{experiment_path}/input_data/{self.config['runscript']}/"
+            output_path = f"{experiment_path}/output_data/{self.config['runscript']}/"
+            
+            pathlib.Path(input_path).mkdir(parents=True, exist_ok=True)
+            pathlib.Path(output_path).mkdir(parents=True, exist_ok=True)
+            
             try:
                 config_vars = yaml.safe_load(stream)
-                config_vars['dask_tmp_dir'] = f"/tmp/pyflextrkr_test"
-                config_vars['clouddata_path'] = f"{self.config['experiment_path']}/input_data/{self.config['runscript']}/"
-                config_vars['root_path'] = f"{self.config['experiment_path']}/output_data/{self.config['runscript']}/"
                 
-                paths_to_mkdir.append(config_vars['dask_tmp_dir'])
-                paths_to_mkdir.append(config_vars['clouddata_path'])
-                paths_to_mkdir.append(config_vars['root_path'])
+                config_vars['dask_tmp_dir'] = f"/tmp/pyflextrkr_test"
+                pathlib.Path(config_vars['dask_tmp_dir']).mkdir(parents=True, exist_ok=True)
+                
+                config_vars['clouddata_path'] = input_path
+                config_vars['root_path'] = output_path
                 
                 # Set run mode
                 config_vars['run_parallel'] = self.config['run_parallel']
@@ -199,14 +211,14 @@ class Pyflextrkr(Application):
                 
                 # check if landmask_filename is a key in config_vars
                 if 'landmask_filename' in config_vars:
-                    # check if landmask_filename exists
-                    landmask_filename = f"{self.config['experiment_path']}/input_data/{self.config['runscript']}/wrf_landmask.nc"
-                    config_vars['landmask_filename'] = landmask_filename
+                    org_path = config_vars['landmask_filename']
+                    landmask_path = org_path.replace('INPUT_DIR/', input_path)
+                    landmask_path = landmask_path.replace("'", "") # remove single quotes format
                     
-                    if pathlib.Path(landmask_filename).exists():
-                        config_vars['landmask_filename'] = landmask_filename
+                    if pathlib.Path(landmask_path).exists():
+                        config_vars['landmask_filename'] = landmask_path
                     else:
-                        raise Exception(f"File {config_vars['landmask_filename']} does not exist.")
+                        raise Exception(f"File {landmask_path} does not exist.")
                 
                 # save config_vars back to yaml file
                 new_yaml_file = yaml_file.replace("_template.yml", ".yml")
@@ -214,10 +226,6 @@ class Pyflextrkr(Application):
             except yaml.YAMLError as exc:
                 self.log(exc)
         self.config['config'] = new_yaml_file
-        
-        for new_path in paths_to_mkdir:
-            pathlib.Path(new_path).mkdir(parents=True, exist_ok=True)
-            # Exec(f"mkdir -p {new_path}")
 
     def _construct_cmd(self):
         """
@@ -320,7 +328,7 @@ class Pyflextrkr(Application):
         
         ## Configure yaml file before start
         self._configure_yaml()
-        self._update_conda_env()
+        # self._update_conda_env() # no need to update for pyflextrkr
         
         self._construct_cmd()
         

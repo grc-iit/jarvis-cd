@@ -46,7 +46,7 @@ databasename:  'pr_rlut_mean_sam_'
 # Input files directory
 clouddata_path: 'INPUT_DIR/'
 # Working directory for the tracking data
-root_path: 'TRACK_DIR/'
+root_path: 'OUTPUT_DIR/'
 # Working sub-directory names
 tracking_path_name: 'tracking'
 stats_path_name: 'stats'

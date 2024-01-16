@@ -42,16 +42,16 @@ interp_levels: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10,
 wrfout_path: ''
 wrfout_basename: 'wrfout_d01_'
 # Tracking input files directory
-clouddata_path: '/your_path/input_data/run_mcs_tbpfradar3d_wrf/' # TODO: Change this to your own path
+clouddata_path: 'INPUT_DIR/'
 # Working directory for the tracking data
-root_path: '/your_path/run_mcs_tbpfradar3d_wrf/' # TODO: Change this to your own path
+root_path: 'TRACK_DIR/'
 # Working sub-directory names
 tracking_path_name: 'tracking'
 stats_path_name: 'stats'
 pixel_path_name: 'mcstracking'
 
 # Land mask file
-landmask_filename: '/your_path/input_data/run_mcs_tbpfradar3d_wrf/wrf_landmask.nc' # TODO: Change this to your own path
+landmask_filename: 'INPUT_DIR/wrf_landmask.nc'
 landmask_varname: 'LANDMASK'
 landmask_x_dimname: 'west_east'
 landmask_y_dimname: 'south_north'
