@@ -51,7 +51,7 @@ class Gadget2Df(Application):
                 'default': 4096,
             },
             {
-                'name': 'base',
+                'name': 'ic',
                 'msg': 'The name of the initial condition output file.',
                 'type': str,
                 'default': 'ics',
@@ -73,14 +73,14 @@ class Gadget2Df(Application):
         print(f'NUMBER OF PARTICLES: {nparticles}')
         if tile_fac < 1:
             tile_fac = 1
-        nsample = nparticles ** (1.0 / 3.0)
+        nsample = int(tile_fac * 16)
         self.copy_template_file(f'{self.pkg_dir}/paramfiles/ics.param',
                                 paramfile,
                                 replacements={
                                     'REPO_DIR': self.env['GADGET2_PATH'],
                                     'TILE_FAC': tile_fac,
                                     'NSAMPLE': nsample,
-                                    'FILE_BASE': self.config['base'],
+                                    'FILE_BASE': self.config['ic'],
                                 })
         build_dir = f'{self.shared_dir}/build'
         cmake_opts = {}
@@ -128,6 +128,6 @@ class Gadget2Df(Application):
 
         :return: None
         """
-        ics_path = f'{self.env["GADGET2_PATH"]}/ICs-NGen/{self.config["base"]}.*'
+        ics_path = f'{self.env["GADGET2_PATH"]}/ICs-NGen/{self.config["ic"]}.*'
         print(ics_path)
         Rm(ics_path)

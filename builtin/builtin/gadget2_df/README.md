@@ -11,7 +11,7 @@ jarvis pipeline create ngenic
 jarvis pipeline env copy gadget2
 jarvis pipeline append gadget2_df
 jarvis pkg configure gadget2_df \
-tile_fac=1 \
+nparticles=100000 \
 nprocs=4
 jarvis pipeline run
 ```

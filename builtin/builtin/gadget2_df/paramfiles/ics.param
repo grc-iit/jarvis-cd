@@ -12,12 +12,12 @@ Nsample          ##NSAMPLE##       % sets the maximum k that the code uses,
                            % total number of particles
  
 
-Box              150000.0  % Periodic box size of simulation
+Box              50000.0  % Periodic box size of simulation
 
 FileBase         ##FILE_BASE##            % Base-filename of output files
 OutputDir        ##REPO_DIR##/ICs-NGen/  % Directory for output
 
-GlassFile        ##REPO_DIR##/N-GenIC/dummy_glass.dat  % File with unperturbed glass or
+GlassFile        ##REPO_DIR##/N-GenIC/cppglass.dat  % File with unperturbed glass or
                                   % Cartesian grid
 
 TileFac          ##TILE_FAC##                % Number of times the glass file is
@@ -30,7 +30,7 @@ OmegaLambda      0.7       % Cosmological constant (at z=0)
 OmegaBaryon      0.0       % Baryon density        (at z=0)
 HubbleParam      0.7       % Hubble paramater (may be used for power spec parameterization)
 
-Redshift         63        % Starting redshift
+Redshift         0.0        % Starting redshift
 
 Sigma8           0.9       % power spectrum normalization
 
