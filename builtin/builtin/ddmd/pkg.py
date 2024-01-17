@@ -622,16 +622,11 @@ class Ddmd(Application):
             # remove all paths excepts molecular_dynamics_runs
             for rp in remove_paths:
                 if rp != "molecular_dynamics_runs":
-                    print("INFO: removing " + rp)
-                    # recursive remove
-                    try:
-                        shutil.rmtree(self.config['experiment_path'] + "/" + rp)
-                    except OSError as e:
-                        print(f"INFO: {e}")
+                    remove_path = self.config['experiment_path'] + "/" + rp
+                    print("INFO: removing " + remove_path)
+                    Rm(remove_path)
         else:
             for rp in remove_paths:
-                print("INFO: removing " + rp)
-                try:
-                    shutil.rmtree(self.config['experiment_path'] + "/" + rp)
-                except OSError as e:
-                    print(f"INFO: {e}")
+                remove_path = self.config['experiment_path'] + "/" + rp
+                print("INFO: removing " + remove_path)
+                Rm(remove_path)
