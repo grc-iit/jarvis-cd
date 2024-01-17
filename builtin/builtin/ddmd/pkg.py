@@ -7,8 +7,7 @@ from jarvis_util import *
 import os
 import yaml
 import time
-import pathlib
-import glob
+import pathlib, glob, shutil
 
 class Ddmd(Application):
     """
@@ -56,6 +55,12 @@ class Ddmd(Application):
                 'msg': 'Absolute path to the experiment run input and output files',
                 'type': str,
                 'default': '${HOME}/experiments/ddmd_test',
+            },
+            {
+                'name': 'local_exp_dir',
+                'msg': 'Local experiment directory',
+                'type': str,
+                'default': None,
             },
             {
                 'name': 'molecules_path',
@@ -325,7 +330,7 @@ class Ddmd(Application):
         node_idx = 0 # TODO: allow specify nodes?
         node_name = self.jarvis.hostfile[node_idx]
         dest_path= self.config['experiment_path'] + "/" + "machine_learning" + "_runs/" + stage_idx + "/" + task_idx
-        stage_name="training" # "machine_learning" : faster, "inference" : slower
+        stage_name="machine_learning" # "machine_learning" : faster, "training" : slower
         yaml_path = self.config['ddmd_path'] + "/test/bba/" + stage_name + "_stage_test.yaml"
         # create the dest_path
         pathlib.Path(dest_path).mkdir(parents=True, exist_ok=True)
@@ -430,6 +435,7 @@ class Ddmd(Application):
             else:
                 latest_checkpoint = pretrained_model
         else:
+            print(f"Using pretrained model: {pretrained_model}")
             latest_checkpoint = pretrained_model
         
         prev_stage_idx = "stage" + str((self.config['stage_idx']-1)).zfill(4)
@@ -483,6 +489,28 @@ class Ddmd(Application):
             print("ERROR: Inference failed")
             return None
     
+    def _check_openmm(self):
+        """
+        Check if all the OpenMM files exist
+        """
+        for task in range(self.config['md_start'], self.config['md_runs']):
+        
+            task_idx = "task" + str(task).zfill(4)
+            stage_idx = "stage" + str(self.config['stage_idx']).zfill(4)
+            stage_name="molecular_dynamics"
+            dest_path= self.config['experiment_path'] + "/" + stage_name + "_runs/" + stage_idx + "/" + task_idx
+            
+            # Check if "*.h5" and "*.pdb" files exist and not size 0
+            h5_path_pattern = os.path.join(dest_path, '*.h5')
+            matching_h5_files = glob.glob(h5_path_pattern)
+            pdb_path_pattern = os.path.join(dest_path, '*.pdb')
+            matching_pdb_files = glob.glob(pdb_path_pattern)
+            if matching_h5_files and matching_pdb_files:
+                continue
+            else:
+                return False
+        return True
+            
 
     def start(self):
         """
@@ -492,12 +520,20 @@ class Ddmd(Application):
         :return: None
         """
         
+        print("INFO: removing all previous runs")
+        self.clean()
+        
+        # Check if all the OpenMM files exist
+        if self._check_openmm() == False and self.config['skip_sim'] == True:
+            print("ERROR: OpenMM files not found, cannot skip simulation")
+            self.config['skip_sim'] = False
+        
         iter_cnt = self.config['iter_count']
         
         total_start = time.time()
         
         for i in range(iter_cnt):
-        
+                            
             if self.config['skip_sim'] == False:
                 start = time.time()
                 self.openmm_list = self._run_openmm()
@@ -576,4 +612,26 @@ class Ddmd(Application):
 
         :return: None
         """
-        pass
+        remove_paths = [
+            "agent_runs", "inference_runs", "model_selection_runs",
+            "aggregate_runs", "machine_learning_runs", "molecular_dynamics_runs"
+        ]
+        
+        if self.config['skip_sim'] == True:
+            print("INFO: do not clean OpenMM")
+            # remove all paths excepts molecular_dynamics_runs
+            for rp in remove_paths:
+                if rp != "molecular_dynamics_runs":
+                    print("INFO: removing " + rp)
+                    # recursive remove
+                    try:
+                        shutil.rmtree(self.config['experiment_path'] + "/" + rp)
+                    except OSError as e:
+                        print(f"INFO: {e}")
+        else:
+            for rp in remove_paths:
+                print("INFO: removing " + rp)
+                try:
+                    shutil.rmtree(self.config['experiment_path'] + "/" + rp)
+                except OSError as e:
+                    print(f"INFO: {e}")
