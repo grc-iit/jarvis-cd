@@ -664,15 +664,19 @@ class SimplePkg(Pkg):
 
         :param src: Path to the template
         :param dst: Destination of the template
-        :param replacements: A list of 2-tuples. First entry is the name
+        :param replacements: A list of 2-tuples or dict. First entry is the name
         of the constant to replace, right is the value to replace it with.
         :return: None
         """
         with open(src, 'r', encoding='utf-8') as fp:
             text = fp.read()
         if replacements is not None:
-            for const_name, replace in replacements:
-                text = text.replace(f'##{const_name}##', str(replace))
+            if isinstance(replacements, list):
+                for const_name, replace in replacements:
+                    text = text.replace(f'##{const_name}##', str(replace))
+            elif isinstance(replacements, dict):
+                for const_name, replace in replacements.items():
+                    text = text.replace(f'##{const_name}##', str(replace))
         with open(dst, 'w', encoding='utf-8') as fp:
             fp.write(text)
 
