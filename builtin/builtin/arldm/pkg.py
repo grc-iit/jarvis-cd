@@ -42,10 +42,16 @@ class Arldm(Application):
                 'default': f'{self.pkg_dir}/example_config/config_template.yml',
             },
             {
-                'name': 'update_envar',
+                'name': 'update_envar_yml',
                 'msg': 'Update the conda environment variables',
                 'type': str,
                 'default': f'{self.pkg_dir}/example_config/update_envar.yml',
+            },
+            {
+                'name': 'update_envar',
+                'msg': 'Whether to update the conda environment variables',
+                'type': bool,
+                'default': False,
             },
             {
                 'name': 'runscript',
@@ -128,7 +134,8 @@ class Arldm(Application):
                 'type': str,
                 'default': 'nfs',
                 # 'choices': ['nvme', 'ssd', 'hdd', 'nfs', 'pfs'], # this should be per systems
-            },{
+            },
+            {
                 'name': 'local_exp_dir',
                 'msg': 'Local experiment directory',
                 'type': str,
@@ -153,10 +160,12 @@ class Arldm(Application):
                 config_vars['mode'] = self.config['mode']
                 config_vars['num_workers'] = self.config['num_workers']
                 config_vars['run_name'] = f"{self.config['runscript']}_{self.config['mode']}"
+                config_vars['dataset'] = run_test
                 
                 config_vars['ckpt_dir'] = self.config['ckpt_dir']
                 config_vars['sample_output_dir'] = self.config['sample_output_dir']
                 config_vars[run_test]['hdf5_file'] = self.config['hdf5_file']
+                
                 
                 if self.config['local_exp_dir'] is not None:
                     replace_dir = self.config['experiment_path']
@@ -305,6 +314,8 @@ class Arldm(Application):
     def _stagein_h5_data(self):
         """
         Move the data to the storage device
+        
+        ** This method is not used for now **
         """
         print(f"ARLDM _stagein_h5_data")
         
@@ -329,12 +340,7 @@ class Arldm(Application):
                             print(f"Copying data to {dev_type}: {cmd}")
                             Exec(cmd,LocalExecInfo(env=self.mod_env,))
 
-                                
-                        else:
-                            # _prep_hdf5_file will run, so no need to copy
-                            pass
             else:
-            
                 # Make experiment_path on NVME
                 print(f"Making experiment input path on NVME: {new_exp_dir_input_dir}")
                 print(f"Making experiment output path on NVME: {new_exp_dir_output_dir}")
@@ -365,14 +371,17 @@ class Arldm(Application):
                     Exec(cmd,LocalExecInfo(env=self.mod_env,))
                 
             Exec(f"ls -l {new_exp_dir_input_dir}",LocalExecInfo(env=self.mod_env,))
-            Exec(f"ls -l {new_exp_dir_output_dir}",LocalExecInfo(env=self.mod_env,))
-
     
     def _train(self):
         """
         Run the ARLDM training run
         """
-        print(f"ARLDM training run: {self.config['runscript']}")
+        print(f"ARLDM _train: {self.config['runscript']}")
+        
+        # Move config file to arldm_path
+        Exec(f"cp {self.config['config']} {self.config['arldm_path']}/config.yaml",
+             LocalExecInfo(env=self.mod_env,))
+        
         
         cmd = [
             f"cd {self.config['arldm_path']}; echo Executing from directory `pwd`;",
@@ -386,16 +395,6 @@ class Arldm(Application):
         conda_cmd = ' '.join(cmd)
         
         print(f"Running ARLDM with command: {conda_cmd}")
-        
-        # Move config file to arldm_path
-        Exec(f"cp {self.config['config']} {self.config['arldm_path']}/config.yml",
-             LocalExecInfo(env=self.mod_env,))
-        
-        # # go to arldm_path
-        # Exec(f"cd {self.config['arldm_path']}",
-        #      LocalExecInfo(env=self.mod_env,))
-        
-        # Exec(f"cd {self.config['arldm_path']}; echo Executing from directory `pwd`", LocalExecInfo(env=self.mod_env,))
         
         start = time.time()
         
@@ -415,42 +414,24 @@ class Arldm(Application):
         """
         print(f"ARLDM sampling run: not implemented yet")
 
-    def _update_conda_env(self):
-        """ YAML file format
-        variables:
-            HDF5_USE_FILE_LOCKING: FALSE
-            HDF5_DRIVER: "hdf5_tracker_vfd"
-            HDF5_PLUGIN_PATH: "/home/mtang11/install/tracker/lib"
-        """
-
-        yaml_file = self.config['update_envar']
-                
-        # conda env update --file ares_tracker_envar.yaml --prune --name arldm # need internet
-        cmd = [
-            'conda','run', '-n', self.config['conda_env'],
-            'conda','env','update',
-            '--file', yaml_file,
-            '--prune',
-            '--name', self.config['conda_env'],
-        ]
-        conda_cmd = ' '.join(cmd)
-        print(f"Updating conda environment with command: {conda_cmd}")
-        Exec(conda_cmd, LocalExecInfo(env=self.mod_env,))
-        
-        # check if environment variables are updated
-        with open(yaml_file, "r") as stream:
-            try:
-                config_vars = yaml.safe_load(stream)
-                for key, val in config_vars['variables'].items():
-                    # print(f"YAML file environment variable: {key} = {val}")
-                    cmd = [
-                        'conda','run', '-n', self.config['conda_env'],
-                        'echo', f"${key}",
-                    ]
-                    conda_cmd = ' '.join(cmd)
-                    Exec(conda_cmd, LocalExecInfo(env=self.mod_env,))
-            except yaml.YAMLError as exc:
-                print(exc)
+    def _set_env_vars(self):
+        try:
+            # Get current environment variables
+            HDF5_DRIVER = self.env['HDF5_DRIVER'] #os.getenv('HDF5_DRIVER')
+            HDF5_PLUGIN_PATH = self.env['HDF5_PLUGIN_PATH'] #os.getenv('HDF5_PLUGIN_PATH')
+                    
+            cmd = [
+                'conda', 'env', 'config', 'vars', 'set',
+                f'HDF5_DRIVER={HDF5_DRIVER}',
+                f'HDF5_PLUGIN_PATH={HDF5_PLUGIN_PATH}',
+                '-n', self.config['conda_env'],
+            ]
+            
+            cmd = ' '.join(cmd)
+            Exec(cmd, LocalExecInfo(env=self.mod_env,))
+        except Exception as e:
+            print(f"ARLDM: Exception: {e}")
+            print(f"ARLDM: HDF5_DRIVER and HDF5_PLUGIN_PATH is not set")
 
     def start(self):
         """
@@ -460,9 +441,10 @@ class Arldm(Application):
         :return: None
         """
         
-        self._stagein_h5_data()
         self._configure_yaml()
-        self._update_conda_env()
+        
+        if self.config['update_envar'] == True:
+            self._update_conda_env()
         
         print(f"ARLDM start")
         
