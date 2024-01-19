@@ -68,6 +68,11 @@ class DataStagein(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
+        required_params = ['dest_data_path', 'user_data_paths', 'mkdir_datapaths']
+        print("data_stagein Required parameters: ")
+        for param in required_params:
+            print(f"    {param}")
+            
         
         if self.config['dest_data_path'] is None:
             raise ValueError("dest_data_path is not set")
