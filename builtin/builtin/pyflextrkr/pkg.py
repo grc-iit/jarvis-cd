@@ -368,13 +368,17 @@ class Pyflextrkr(Application):
         """
         # self.log(f"Manual Exec Required: Please clean up files in {self.config['experiment_path']}")
         
-        output_dir = self.config['experiment_path'] + "/output_data/*"
+        output_dir = self.config['experiment_path'] + f"/output_data/{self.config['runscript']}"
         if self.config['local_exp_dir'] is not None:
-            output_dir = self.config['local_exp_dir'] + "/output_data/*"
+            output_dir = self.config['local_exp_dir'] + f"/output_data/{self.config['runscript']}"
         
         # recursive remove all files in output_data directory
         self.log(f'Removing {output_dir}')
         Rm(output_dir)
+        
+        # clear node cache
+        self.log(f"Clearing node cache")
+        Exec("module load user-scripts;drop_caches", LocalExecInfo(env=self.mod_env,))
         
         # output_dir = self.config['output'] + "*"
         # self.log(f'Removing {output_dir}')
