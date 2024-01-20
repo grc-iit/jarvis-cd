@@ -96,7 +96,6 @@ class MmKmeans(Application):
         :return: None
         """
         mm_kmeans = ['mmap', 'mega']
-        start = time.time()
         if self.config['api'] == 'spark':
             cmd = [
                 'spark-submit',
