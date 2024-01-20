@@ -924,7 +924,8 @@ class Pipeline(Pkg):
             self.exit_code += pkg.exit_code
             end = time.time()
             self.start_time = end - start
-            self.log(f'{pkg.pkg_id}: Start finished in {diff} seconds',
+            self.log(f'{pkg.pkg_id}: '
+                     f'Start finished in {self.start_time} seconds',
                      color=Color.GREEN)
 
     def stop(self):
@@ -941,7 +942,8 @@ class Pipeline(Pkg):
                 pkg.stop()
             end = time.time()
             self.stop_time = end - start
-            self.log(f'{pkg.pkg_id}: End finished in {diff} seconds',
+            self.log(f'{pkg.pkg_id}: '
+                     f'End finished in {self.stop_time} seconds',
                      color=Color.GREEN)
 
     def kill(self):
