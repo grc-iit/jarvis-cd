@@ -177,3 +177,12 @@ net:
   speed: 42949672960
   type: FI_EP_RDM
   version: '114.10'
+- domain: ''
+  fabric: 172.25.0.0/16
+  host: localhost
+  protocol: ''
+  provider: ofi+verbs;ofi_rxm
+  shared: true
+  speed: 42949672961
+  type: ''
+  version: '114.10'
