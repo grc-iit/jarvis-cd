@@ -7,6 +7,7 @@ from jarvis_util import *
 import pathlib
 import yaml
 import os
+from scspkg.pkg import Package
 
 class Arldm(Application):
     """
@@ -16,7 +17,7 @@ class Arldm(Application):
         """
         Initialize paths
         """
-        # print(f"ARLDM _init")
+        # self.log(f"ARLDM _init")
         pass
 
     def _configure_menu(self):
@@ -27,7 +28,7 @@ class Arldm(Application):
 
         :return: List(dict)
         """
-        print(f"ARLDM _configure_menu")
+        self.log(f"ARLDM _configure_menu")
         return [
             {
                 'name': 'conda_env',
@@ -76,7 +77,7 @@ class Arldm(Application):
                 'name': 'arldm_path',
                 'msg': 'Absolute path to the ARLDM source code (can set to `scspkg pkg src arldm`/ARLDM)',
                 'type': str,
-                'default': None,
+                'default': f"{Package(self.config['pkg_type']).pkg_root}/src/ARLDM",
             },
             {
                 'name': 'log_file',
@@ -179,7 +180,7 @@ class Arldm(Application):
                 new_yaml_file = yaml_file.replace("_template.yml", ".yml")
                 yaml.dump(config_vars, open(new_yaml_file, 'w'), default_flow_style=False)
             except yaml.YAMLError as exc:
-                print(exc)
+                self.log(exc)
         self.config['config'] = new_yaml_file
 
     def _configure(self, **kwargs):
@@ -193,7 +194,7 @@ class Arldm(Application):
         # self.env['HDF5_USE_FILE_LOCKING'] = "FALSE" 
         # self.env['HYDRA_FULL_ERROR'] = "1" # complete stack trace.
         
-        print(f"ARLDM _configure")
+        self.log(f"ARLDM _configure")
         
         self.setenv('HDF5_USE_FILE_LOCKING', "FALSE") # set HDF5 locking: FALSE, TRUE, BESTEFFORT
         self.setenv('HYDRA_FULL_ERROR', "1")
@@ -217,14 +218,11 @@ class Arldm(Application):
                 raise Exception("Must add the command to flush memory using flush_mem_cmd")
         
         if self.config['arldm_path'] is None:
-            raise Exception("Must set the path to the ARLDM source code")
+            raise Exception("Must set the `'arldm_path'` to the ARLDM source code")
         else:
             # check that path exists
             if not pathlib.Path(self.config['arldm_path']).exists():
-                raise Exception("Must set the correct path to the ARLDM source code")
-            # no default log file
-            # self.config['log_file'] = f'{self.config["arldm_path"]}/arldm_run.log'
-            # self.config['stdout'] = f'{self.config["arldm_path"]}/arldm_run.log'
+                raise Exception(f"`'arldm_path'` does not exist: {self.config['arldm_path']}")
         
         # check and make -p experiment_path
         pathlib.Path(self.config['experiment_path']).mkdir(parents=True, exist_ok=True)
@@ -269,7 +267,7 @@ class Arldm(Application):
         if self.config['local_exp_dir'] is not None:
             experiment_path = self.config['local_exp_dir'] + "/input_data"
 
-        print(f"ARLDM _prep_hdf5_file input from {experiment_path} to {self.config['hdf5_file']}")
+        self.log(f"ARLDM _prep_hdf5_file input from {experiment_path} to {self.config['hdf5_file']}")
         
         cmd = [
             f"cd {self.config['arldm_path']}; echo Executing from directory `pwd`;",
@@ -306,7 +304,7 @@ class Arldm(Application):
         
         # check if hdf5_file exists
         if pathlib.Path(self.config['hdf5_file']).exists():
-           print(f"HDF5 file created: {self.config['hdf5_file']}")
+           self.log(f"HDF5 file created: {self.config['hdf5_file']}")
         else:
             raise Exception(f"HDF5 file not created: {self.config['hdf5_file']}") 
         
@@ -317,7 +315,7 @@ class Arldm(Application):
         
         ** This method is not used for now **
         """
-        print(f"ARLDM _stagein_h5_data")
+        self.log(f"ARLDM _stagein_h5_data")
         
         orig_path = self.config['experiment_path']
         rg = self.jarvis.resource_graph
@@ -333,41 +331,41 @@ class Arldm(Application):
                 len(os.listdir(new_exp_dir_input_dir)) != 0):
                     if pathlib.Path(f"{new_exp_dir_output_dir}/{self.config['runscript']}_out.h5").exists():
                         # check if new_exp_dir_input_dir has files in it
-                        print(f"Input data already exists on {dev_type}: {new_exp_dir_input_dir}")
+                        self.log(f"Input data already exists on {dev_type}: {new_exp_dir_input_dir}")
                     else:
                         if self.config['prep_hdf5'] == False:
                             cmd = f"cp {orig_path}/output_data/{self.config['runscript']}_out.h5 {new_exp_dir_output_dir}"
-                            print(f"Copying data to {dev_type}: {cmd}")
+                            self.log(f"Copying data to {dev_type}: {cmd}")
                             Exec(cmd,LocalExecInfo(env=self.mod_env,))
 
             else:
                 # Make experiment_path on NVME
-                print(f"Making experiment input path on NVME: {new_exp_dir_input_dir}")
-                print(f"Making experiment output path on NVME: {new_exp_dir_output_dir}")
+                self.log(f"Making experiment input path on NVME: {new_exp_dir_input_dir}")
+                self.log(f"Making experiment output path on NVME: {new_exp_dir_output_dir}")
                 pathlib.Path(new_exp_dir_input_dir).mkdir(parents=True, exist_ok=True)
                 pathlib.Path(new_exp_dir_output_dir).mkdir(parents=True, exist_ok=True)
                 
                 # Move data to NVME
                 cmd = f"cp -r {orig_path}/input_data/{self.config['runscript']}/* {new_exp_dir_input_dir}"
-                print(f"Copying data to {dev_type}: {cmd}")
+                self.log(f"Copying data to {dev_type}: {cmd}")
                 Exec(cmd,LocalExecInfo(env=self.mod_env,))
 
                 if self.config['runscript'] == 'vistsis' or self.config['runscript'] == 'vistdii':
                     vistdii_path = new_exp_dir + "/input_data/vistdii" #f"{new_exp_dir_input_dir}/vistdii"
                     pathlib.Path(vistdii_path).mkdir(parents=True, exist_ok=True)
                     cmd = f"cp -r {orig_path}/input_data/vistdii/* {vistdii_path}"
-                    print(f"Copying data to {dev_type}: {cmd}")
+                    self.log(f"Copying data to {dev_type}: {cmd}")
                     Exec(cmd,LocalExecInfo(env=self.mod_env,))
                     
                     visit_img_path = new_exp_dir + "/input_data/visit_img"
                     pathlib.Path(visit_img_path).mkdir(parents=True, exist_ok=True)
                     cmd = f"cp -r {orig_path}/input_data/visit_img/* {visit_img_path}"
-                    print(f"Copying data to {dev_type}: {cmd}")
+                    self.log(f"Copying data to {dev_type}: {cmd}")
                     Exec(cmd,LocalExecInfo(env=self.mod_env,))
 
                 if self.config['prep_hdf5'] == False:
                     cmd = f"cp {orig_path}/output_data/{self.config['runscript']}_out.h5 {new_exp_dir_output_dir}"
-                    print(f"Copying data to {dev_type}: {cmd}")
+                    self.log(f"Copying data to {dev_type}: {cmd}")
                     Exec(cmd,LocalExecInfo(env=self.mod_env,))
                 
             Exec(f"ls -l {new_exp_dir_input_dir}",LocalExecInfo(env=self.mod_env,))
@@ -376,7 +374,7 @@ class Arldm(Application):
         """
         Run the ARLDM training run
         """
-        print(f"ARLDM _train: {self.config['runscript']}")
+        self.log(f"ARLDM _train: {self.config['runscript']}")
         
         # Move config file to arldm_path
         Exec(f"cp {self.config['config']} {self.config['arldm_path']}/config.yaml",
@@ -394,7 +392,7 @@ class Arldm(Application):
         
         conda_cmd = ' '.join(cmd)
         
-        print(f"Running ARLDM with command: {conda_cmd}")
+        self.log(f"Running ARLDM with command: {conda_cmd}")
         
         start = time.time()
         
@@ -412,26 +410,39 @@ class Arldm(Application):
         This step can only be run when training is fully completed. 
         Currently train is set to fast_dev_run.
         """
-        print(f"ARLDM sampling run: not implemented yet")
+        self.log(f"ARLDM sampling run: not implemented yet")
 
-    def _set_env_vars(self):
-        try:
-            # Get current environment variables
-            HDF5_DRIVER = self.env['HDF5_DRIVER'] #os.getenv('HDF5_DRIVER')
-            HDF5_PLUGIN_PATH = self.env['HDF5_PLUGIN_PATH'] #os.getenv('HDF5_PLUGIN_PATH')
-                    
+    def _unset_vfd_vars(self,env_vars_toset):
+        for env_var in env_vars_toset:
             cmd = [
-                'conda', 'env', 'config', 'vars', 'set',
-                f'HDF5_DRIVER={HDF5_DRIVER}',
-                f'HDF5_PLUGIN_PATH={HDF5_PLUGIN_PATH}',
+                'conda', 'env', 'config', 'vars', 'unset',
+                f'{env_var}',
                 '-n', self.config['conda_env'],
             ]
-            
             cmd = ' '.join(cmd)
             Exec(cmd, LocalExecInfo(env=self.mod_env,))
+            self.log(f"ARLDM: {env_var} is unset")
+
+    def _set_env_vars(self):
+        
+        env_vars_toset = ['HDF5_DRIVER', 'HDF5_PLUGIN_PATH']
+        
+        if self.config['update_envar'] == False:
+            self._unset_vfd_vars(env_vars_toset)
+
+        try:
+            # Get current environment variables
+            for env_var in env_vars_toset:
+                env_var_val = self.env[env_var]
+                cmd = [ 'conda', 'env', 'config', 'vars', 'set',
+                    f'{env_var}={env_var_val}',
+                    '-n', self.config['conda_env'],]
+                cmd = ' '.join(cmd)
+                self.log(f"ARLDM: {cmd}")
+                Exec(cmd, LocalExecInfo(env=self.mod_env,))
+            
         except Exception as e:
-            print(f"ARLDM: Exception: {e}")
-            print(f"ARLDM: HDF5_DRIVER and HDF5_PLUGIN_PATH is not set")
+            self._unset_vfd_vars()
 
     def start(self):
         """
@@ -444,9 +455,9 @@ class Arldm(Application):
         self._configure_yaml()
         
         if self.config['update_envar'] == True:
-            self._update_conda_env()
+            self._set_env_vars()
         
-        print(f"ARLDM start")
+        self.log(f"ARLDM start")
         
         start = time.time()
         
