@@ -828,9 +828,16 @@ class JarvisArgs(ArgParse):
                 'msg': 'Append suffix to all hosts in hostfile',
                 'required': False,
                 'pos': False,
-                'type': str,
                 'default': None
             },
+            {
+                'name': 'nodelist',
+                'msg': 'A list of nodes to run the job on, exp: ares-comp-[10-14],ares-comp-15',
+                'required': False,
+                'pos': False,
+                'type': str,
+                'default': None
+            }
         ])
 
         self.add_menu('pipeline pbs', msg="Run the current pipeline through pbs")
@@ -1292,7 +1299,8 @@ class JarvisArgs(ArgParse):
             mem=self.kwargs['memory'],
             gres=self.kwargs['gres'],
             exclusive=self.kwargs['exclusive'],
-            host_suffix=self.kwargs['host_suffix']
+            host_suffix=self.kwargs['host_suffix'],
+            nodelist=self.kwargs['nodelist']
         )
         slurm_cmd = [
             f'jarvis pipeline run {pipeline_name} +slurm_host'
