@@ -912,7 +912,7 @@ class Pipeline(Pkg):
         """
         self.mod_env = self.env.copy()
         for pkg in self.sub_pkgs:
-            self.log(f'{pkg.pkg_id}: Starting', color=Color.GREEN)
+            self.log(f'{pkg.pkg_id}: Start', color=Color.GREEN)
             start = time.time()
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
@@ -935,7 +935,7 @@ class Pipeline(Pkg):
         :return: None
         """
         for pkg in reversed(self.sub_pkgs):
-            self.log(f'{pkg.pkg_id}: Stopping', color=Color.GREEN)
+            self.log(f'{pkg.pkg_id}: Stop', color=Color.GREEN)
             start = time.time()
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
@@ -943,7 +943,7 @@ class Pipeline(Pkg):
             end = time.time()
             self.stop_time = end - start
             self.log(f'{pkg.pkg_id}: '
-                     f'End finished in {self.stop_time} seconds',
+                     f'Stop finished in {self.stop_time} seconds',
                      color=Color.GREEN)
 
     def kill(self):
