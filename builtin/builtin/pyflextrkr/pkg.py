@@ -102,6 +102,11 @@ class Pyflextrkr(Application):
                 'msg': 'Local experiment directory',
                 'type': str,
                 'default': None,
+            },{
+                'name': 'update_envar',
+                'msg': 'Update HDF5_DRIVER and HDF5_PLUGIN_PATH in conda environment',
+                'type': bool,
+                'default': False,
             }
         ]
 
@@ -168,8 +173,6 @@ class Pyflextrkr(Application):
             self.config['log_file'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
             self.config['stdout'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
         
-        
-        
 
     def _configure_yaml(self):
         self.env['HDF5_USE_FILE_LOCKING'] = "FALSE" # set HDF5 locking: FALSE, TRUE, BESTEFFORT
@@ -233,28 +236,37 @@ class Pyflextrkr(Application):
                 self.log(exc)
         self.config['config'] = new_yaml_file
     
-    def _set_env_vars(self):
-        try:
-            # Get current environment variables
-            HDF5_DRIVER = self.env['HDF5_DRIVER'] #os.getenv('HDF5_DRIVER')
-            HDF5_PLUGIN_PATH = self.env['HDF5_PLUGIN_PATH'] #os.getenv('HDF5_PLUGIN_PATH')
-                    
+    def _unset_vfd_vars(self,env_vars_toset):
+        for env_var in env_vars_toset:
             cmd = [
-                'conda', 'env', 'config', 'vars', 'set',
-                f'HDF5_DRIVER={HDF5_DRIVER}',
-                f'HDF5_PLUGIN_PATH={HDF5_PLUGIN_PATH}',
+                'conda', 'env', 'config', 'vars', 'unset',
+                f'{env_var}',
                 '-n', self.config['conda_env'],
             ]
-            
             cmd = ' '.join(cmd)
             Exec(cmd, LocalExecInfo(env=self.mod_env,))
+            self.log(f"Pyflextrkr: {env_var} is unset")
+
+    def _set_env_vars(self):
+        
+        env_vars_toset = ['HDF5_DRIVER', 'HDF5_PLUGIN_PATH']
+        
+        if self.config['update_envar'] == False:
+            self._unset_vfd_vars(env_vars_toset)
+
+        try:
+            # Get current environment variables
+            for env_var in env_vars_toset:
+                env_var_val = self.env[env_var]
+                cmd = [ 'conda', 'env', 'config', 'vars', 'set',
+                    f'{env_var}={env_var_val}',
+                    '-n', self.config['conda_env'],]
+                cmd = ' '.join(cmd)
+                self.log(f"Pyflextrkr: {cmd}")
+                Exec(cmd, LocalExecInfo(env=self.mod_env,))
+            
         except Exception as e:
-            print(f"Pyflextrkr: Exception: {e}")
-            print(f"Pyflextrkr: HDF5_DRIVER and HDF5_PLUGIN_PATH is not set")
-        
-        # command to unset
-        # conda-env config vars unset HDF5_DRIVER HDF5_PLUGIN_PATH -n flextrkr
-        
+            self._unset_vfd_vars()
         
     
     def _construct_cmd(self):
@@ -264,10 +276,12 @@ class Pyflextrkr(Application):
 
         :return: None
         """
+        self.clean()
+        
         cmd = []
         if self.config['run_parallel'] == 1:
             cmd = [
-            'conda','run', '-n', self.config['conda_env'],
+            'conda','run', '-v','-n', self.config['conda_env'],
             ]
         elif self.config['run_parallel'] == 2:
             host_list_str = None
@@ -294,14 +308,15 @@ class Pyflextrkr(Application):
             # mpirun --host $hostlist --npernode 2
             ppn = self.config['nprocesses']/len(self.jarvis.hostfile)
             cmd = [
-                'conda','run', '-n', self.config['conda_env'],
+                'conda','run', '-v','-n', self.config['conda_env'],
                 'mpirun',
                 '--host', host_list_str,
                 '-n', str(self.config['nprocesses']),
                 '-ppn', str(int(ppn)),
                 # '-env', f'HDF5_USE_FILE_LOCKING={self.config["HDF5_USE_FILE_LOCKING"]}',
             ]
-            
+        
+        # Exec("which python")
         cmd.append('python')
         # Convert runscript to full .py file path
         if self.config['pyflextrkr_path'] and self.config['runscript']:
@@ -319,21 +334,24 @@ class Pyflextrkr(Application):
 
         :return: None
         """
-        self.clean()
+        
+        self._set_env_vars()
         
         ## Configure yaml file before start
-        self._set_env_vars()
         self._configure_yaml()
         self._construct_cmd()
         
         self.log(f"Pyflextrkr run_cmd: {self.config['run_cmd']}")
-        self.log(f"Pyflextrkr log_file : {self.config['log_file']}")
+        # self.log(f"Pyflextrkr log_file : {self.config['log_file']}")
+        
         
         start = time.time()
         
         Exec(self.config['run_cmd'],
              LocalExecInfo(env=self.mod_env,
-                           pipe_stdout=self.config['log_file'],))
+                           hide_output=False,
+                           collect_output=True,
+                           ))
         
         end = time.time()
         diff = end - start
@@ -357,7 +375,7 @@ class Pyflextrkr(Application):
         :return: None
         """
         cmd = ['killall', '-9', 'python']
-        Exec(' '.join(cmd))
+        Exec(' '.join(cmd), LocalExecInfo(hostfile=self.jarvis.hostfile))
 
     def clean(self):
         """
@@ -378,7 +396,8 @@ class Pyflextrkr(Application):
         
         # clear node cache
         self.log(f"Clearing node cache")
-        Exec("module load user-scripts;drop_caches", LocalExecInfo(env=self.mod_env,))
+        drop_cache_cmd = "module load user-scripts;drop_caches"
+        Exec(drop_cache_cmd)
         
         # output_dir = self.config['output'] + "*"
         # self.log(f'Removing {output_dir}')
