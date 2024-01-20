@@ -34,7 +34,7 @@ PeriodicBoundariesOn     1
 %  Caracteristics of run
 
 TimeBegin           0.090909091
-TimeMax	            1.0
+TimeMax	            24.0
 
 Omega0	              0.3
 OmegaLambda           0.7

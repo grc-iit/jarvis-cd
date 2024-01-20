@@ -67,6 +67,7 @@ class Pkg(ABC):
         self.env = None
         self.mod_env = None
         self.exit_code = 0
+        self.runtime = 0
 
     def log(self, msg, color=None):
         if color is not None:
@@ -909,6 +910,8 @@ class Pipeline(Pkg):
         """
         self.mod_env = self.env.copy()
         for pkg in self.sub_pkgs:
+            self.log(f'{pkg.pkg_id}: Starting', color=Color.GREEN)
+            start = time.time()
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.start()
@@ -917,6 +920,10 @@ class Pipeline(Pkg):
                 pkg.modify_env()
                 self.mod_env.update(self.env)
             self.exit_code += pkg.exit_code
+            end = time.time()
+            self.runtime = end - start
+            self.log(f'{pkg.pkg_id}: Runtime {diff} seconds',
+                     color=Color.GREEN)
 
     def stop(self):
         """
@@ -925,6 +932,7 @@ class Pipeline(Pkg):
         :return: None
         """
         for pkg in reversed(self.sub_pkgs):
+            self.log(f'{pkg.pkg_id}: Stopping', color=Color.GREEN)
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.stop()

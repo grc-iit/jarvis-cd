@@ -118,6 +118,7 @@ class Gadget2(Application):
                                 paramfile,
                                 replacements={
                                     'OUTPUT_DIR': outdir,
+                                    'REPO_DIR': self.env['GADGET2_PATH'],
                                     'BUFFER_SIZE': self.config['buffer_size'],
                                     'PART_ALLOC_FACTOR': self.config['part_alloc_factor'],
                                     'TREE_ALLOC_FACTOR': self.config['tree_alloc_factor'],

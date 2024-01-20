@@ -2,7 +2,7 @@
 This module provides classes and methods to launch the MmDbscan application.
 MmDbscan is ....
 """
-from jarvis_cd.basic.pkg import Application
+from jarvis_cd.basic.pkg import Application, Color
 from jarvis_util import *
 
 
@@ -90,22 +90,11 @@ class MmDbscan(Application):
         :return: None
         """
         mm_kmeans = ['mmap', 'mega']
-        if self.config['api'] == 'spark':
+        start = time.time()
+        if self.config['api'] == 'pandas':
             cmd = [
-                'spark-submit',
-                f'--driver-memory 2g',
-                f'--executor-memory {self.config["window_size"]}',
-                f'--conf spark.speculation=false',
-                f'--conf spark.storage.replication=1',
-                f'--conf spark.local.dir={self.config["scratch"]}',
-                f'{self.env["MM_PATH"]}/benchmark/spark_dbscan.py',
-                self.config['path']
-            ]
-            cmd = ' '.join(cmd)
-            Exec(cmd, LocalExecInfo(env=self.env))
-        elif self.config['api'] == 'pandas':
-            cmd = [
-                f'{self.env["MM_PATH"]}/benchmark/pandas_dbscan.py',
+                'python3',
+                f'{self.env["MM_PATH"]}/scripts/pandas_dbscan.py',
                 self.config['path'],
                 self.config['dist']
             ]
@@ -125,6 +114,9 @@ class MmDbscan(Application):
                                   ppn=self.config['ppn'],
                                   do_dbg=self.config['do_dbg'],
                                   dbg_port=self.config['dbg_port']))
+        end = time.time()
+        diff = end - start
+        self.log(f'TIME: {diff} seconds', color=Color.GREEN)
 
     def stop(self):
         """
