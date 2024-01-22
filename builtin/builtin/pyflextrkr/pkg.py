@@ -18,7 +18,7 @@ class Pyflextrkr(Application):
         """
         Initialize paths
         """
-        pass
+        self.pkg_type = 'pyflextrkr'
 
     def _configure_menu(self):
         """
@@ -65,7 +65,7 @@ class Pyflextrkr(Application):
                 'name': 'pyflextrkr_path',
                 'msg': 'Absolute path to the Pyflextrkr source code',
                 'type': str,
-                'default': f"{Package(self.config['pkg_type']).pkg_root}/src/PyFLEXTRKR",
+                'default': f"{Package(self.pkg_type).pkg_root}/src/PyFLEXTRKR",
             },
             {
                 'name': 'log_file',
@@ -102,12 +102,13 @@ class Pyflextrkr(Application):
                 'msg': 'Local experiment directory',
                 'type': str,
                 'default': None,
-            },{
+            },
+            {
                 'name': 'update_envar',
                 'msg': 'Update HDF5_DRIVER and HDF5_PLUGIN_PATH in conda environment',
                 'type': bool,
                 'default': False,
-            }
+            },
         ]
 
     def _configure(self, **kwargs):
