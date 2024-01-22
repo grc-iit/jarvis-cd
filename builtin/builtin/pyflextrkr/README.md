@@ -288,8 +288,8 @@ INPUT_PATH=$EXPERIMENT_PATH/input_data/run_mcs_tbpfradar3d_wrf # NFS
 mkdir -p $INPUT_PATH
 
 LOCAL_EXPERIMENT_PATH=/mnt/nvme/$USER/flextrkr_run
-LOCAL_INPUT_PATH=$LOCAL_EXPERIMENT_PATH/input_data/run_mcs_tbpfradar3d_wrf
-LOCAL_OUTPUT_PATH=$LOCAL_EXPERIMENT_PATH/output_data/run_mcs_tbpfradar3d_wrf
+LOCAL_INPUT_PATH=$LOCAL_EXPERIMENT_PATH/input_data
+LOCAL_OUTPUT_PATH=$LOCAL_EXPERIMENT_PATH/output_data
 ```
 
 ## 5.2. Download Input Data
