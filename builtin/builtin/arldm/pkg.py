@@ -127,7 +127,7 @@ class Arldm(Application):
                 'name': 'prep_hdf5',
                 'msg': 'Prepare the HDF5 file for the ARLDM run',
                 'type': bool,
-                'default': False,
+                'default': True,
             },
             {
                 'name': 'storage_device',
