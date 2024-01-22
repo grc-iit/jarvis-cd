@@ -179,7 +179,7 @@ jarvis pipeline sbatch job_name=pyflex_2ntest nnodes=2 ppn=4 output_file=./pyfle
 ```
 
 
-# 4. Pyflextrkr With Hermes
+# 4. Pyflextrkr + Hermes
 
 ## 4.0. Dependencies
 ### 4.0.1 HDF5
@@ -327,8 +327,6 @@ Run the experiment
 jarvis pipeline run
 ```
 
-
-
 ## 5.8. Clean Data
 
 To clean data produced by Hermes + Pyflextrkr:
@@ -336,9 +334,14 @@ To clean data produced by Hermes + Pyflextrkr:
 jarvis pipeline clean
 ```
 
+# 6. Pyflextrkr + Hermes with Node Local Storage
+Every step the same as [Pyflextrkr + Hermes](#4-pyflextrkr--hermes), except that you need to update the Hermes interception path before running the pipeline:
+```bash
+jarvis pkg configure hermes_run include=$LOCAL_EXPERIMENT_PATH flush_mode=sync
+```
 
-# 6. Pyflextrkr + Hermes With Multinodes Slurm (TODO)
-Steps are the same as [Pyflextrkr With Slurm](#3-pyflextrkr-With-slurm), but not working yet due to OSError.
+# 7. Pyflextrkr + Hermes with Multinodes Slurm (TODO)
+Steps are the same as [Pyflextrkr with Slurm](#3-pyflextrkr-With-slurm), but not working yet due to OSError.
 
 ## OSError Log
 ```log
