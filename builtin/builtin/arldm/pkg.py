@@ -129,15 +129,14 @@ class Arldm(Application):
                 'default': True,
             },
             {
-                'name': 'storage_device',
-                'msg': 'Storage device to use for ARLDM run',
-                'type': str,
-                'default': 'nfs',
-                # 'choices': ['nvme', 'ssd', 'hdd', 'nfs', 'pfs'], # this should be per systems
-            },
-            {
                 'name': 'local_exp_dir',
                 'msg': 'Local experiment directory',
+                'type': str,
+                'default': None,
+            },
+            {
+                'name': 'pretrain_model_path',
+                'msg': 'Pretrained model path',
                 'type': str,
                 'default': None,
             }
@@ -161,19 +160,17 @@ class Arldm(Application):
                 config_vars['num_workers'] = self.config['num_workers']
                 config_vars['run_name'] = f"{self.config['runscript']}_{self.config['mode']}"
                 config_vars['dataset'] = run_test
-                
+
+                experiment_path = self.config['experiment_path']
+                if self.config['local_exp_dir'] is not None:
+                    experiment_path = self.config['local_exp_dir']
+                    self.config['ckpt_dir'] = experiment_path + "/save_ckpt"
+                    self.config['sample_output_dir'] = experiment_path + f"/output_data/sample_out_{self.config['runscript']}_{self.config['mode']}"
+                    self.config['hdf5_file'] = f"{experiment_path}/output_data/{self.config['runscript']}_out.h5"
+
                 config_vars['ckpt_dir'] = self.config['ckpt_dir']
                 config_vars['sample_output_dir'] = self.config['sample_output_dir']
                 config_vars[run_test]['hdf5_file'] = self.config['hdf5_file']
-                
-                
-                if self.config['local_exp_dir'] is not None:
-                    replace_dir = self.config['experiment_path']
-                    new_dir = self.config['local_exp_dir']
-                    config_vars['ckpt_dir'] = config_vars['ckpt_dir'].replace(replace_dir, new_dir)
-                    config_vars['sample_output_dir'] = config_vars['sample_output_dir'].replace(replace_dir, new_dir)
-                    self.config['hdf5_file'] = f"{new_dir}/output_data/{self.config['runscript']}/{self.config['runscript']}_out.h5"
-                    config_vars[run_test]['hdf5_file'] = self.config['hdf5_file']
                 
                 # save config_vars back to yaml file
                 new_yaml_file = yaml_file.replace("_template.yml", ".yml")
@@ -236,24 +233,6 @@ class Arldm(Application):
         
         # set sample_output_dir
         self.config['hdf5_file'] = f'{self.config["experiment_path"]}/output_data/{self.config["runscript"]}_out.h5'
-
-        rg = self.jarvis.resource_graph
-        dev_type = self.config['storage_device']
-        if self.config['storage_device'] == 'nfs':
-            # Default is NFS, no need to move data
-            pass
-        elif self.config['storage_device'] == 'pfs':
-            # Move data to PFS
-            # TODO: do nothing for now
-            pass
-        else:
-            # Find storage path
-            dev_df = rg.find_storage(dev_types=[dev_type],shared=False)       
-            if dev_df is None:
-                raise Exception(f"Could not find storage device of type {dev_type}")     
-
-            new_exp_dir = os.path.expandvars(dev_df.rows[0]['mount']) + "/arldm_run"
-            self.config['local_exp_dir'] = new_exp_dir
         
         self._configure_yaml()
         
@@ -306,68 +285,6 @@ class Arldm(Application):
            self.log(f"HDF5 file created: {self.config['hdf5_file']}")
         else:
             raise Exception(f"HDF5 file not created: {self.config['hdf5_file']}") 
-        
-    
-    def _stagein_h5_data(self):
-        """
-        Move the data to the storage device
-        
-        ** This method is not used for now **
-        """
-        self.log(f"ARLDM _stagein_h5_data")
-        
-        orig_path = self.config['experiment_path']
-        rg = self.jarvis.resource_graph
-        dev_type = self.config['storage_device']
-        
-        if self.config['local_exp_dir'] is not None:
-            new_exp_dir = self.config['local_exp_dir']
-            new_exp_dir_input_dir = new_exp_dir + "/input_data" + f"/{self.config['runscript']}"
-            new_exp_dir_output_dir = new_exp_dir + "/output_data" + f"/{self.config['runscript']}"
-            
-            # check if new_exp_dir_input_dir exist, if exists, no need to copy
-            if (pathlib.Path(new_exp_dir_input_dir).exists() and 
-                len(os.listdir(new_exp_dir_input_dir)) != 0):
-                    if pathlib.Path(f"{new_exp_dir_output_dir}/{self.config['runscript']}_out.h5").exists():
-                        # check if new_exp_dir_input_dir has files in it
-                        self.log(f"Input data already exists on {dev_type}: {new_exp_dir_input_dir}")
-                    else:
-                        if self.config['prep_hdf5'] == False:
-                            cmd = f"cp {orig_path}/output_data/{self.config['runscript']}_out.h5 {new_exp_dir_output_dir}"
-                            self.log(f"Copying data to {dev_type}: {cmd}")
-                            Exec(cmd,LocalExecInfo(env=self.mod_env,))
-
-            else:
-                # Make experiment_path on NVME
-                self.log(f"Making experiment input path on NVME: {new_exp_dir_input_dir}")
-                self.log(f"Making experiment output path on NVME: {new_exp_dir_output_dir}")
-                pathlib.Path(new_exp_dir_input_dir).mkdir(parents=True, exist_ok=True)
-                pathlib.Path(new_exp_dir_output_dir).mkdir(parents=True, exist_ok=True)
-                
-                # Move data to NVME
-                cmd = f"cp -r {orig_path}/input_data/{self.config['runscript']}/* {new_exp_dir_input_dir}"
-                self.log(f"Copying data to {dev_type}: {cmd}")
-                Exec(cmd,LocalExecInfo(env=self.mod_env,))
-
-                if self.config['runscript'] == 'vistsis' or self.config['runscript'] == 'vistdii':
-                    vistdii_path = new_exp_dir + "/input_data/vistdii" #f"{new_exp_dir_input_dir}/vistdii"
-                    pathlib.Path(vistdii_path).mkdir(parents=True, exist_ok=True)
-                    cmd = f"cp -r {orig_path}/input_data/vistdii/* {vistdii_path}"
-                    self.log(f"Copying data to {dev_type}: {cmd}")
-                    Exec(cmd,LocalExecInfo(env=self.mod_env,))
-                    
-                    visit_img_path = new_exp_dir + "/input_data/visit_img"
-                    pathlib.Path(visit_img_path).mkdir(parents=True, exist_ok=True)
-                    cmd = f"cp -r {orig_path}/input_data/visit_img/* {visit_img_path}"
-                    self.log(f"Copying data to {dev_type}: {cmd}")
-                    Exec(cmd,LocalExecInfo(env=self.mod_env,))
-
-                if self.config['prep_hdf5'] == False:
-                    cmd = f"cp {orig_path}/output_data/{self.config['runscript']}_out.h5 {new_exp_dir_output_dir}"
-                    self.log(f"Copying data to {dev_type}: {cmd}")
-                    Exec(cmd,LocalExecInfo(env=self.mod_env,))
-                
-            Exec(f"ls -l {new_exp_dir_input_dir}",LocalExecInfo(env=self.mod_env,))
     
     def _train(self):
         """
@@ -496,8 +413,14 @@ class Arldm(Application):
             output_dir = self.config['local_exp_dir'] + f"/output_data/sample_out_{self.config['runscript']}_{self.config['mode']}"
         
         # recursive remove all files in output_data directory
-        self.log(f'Removing {output_dir}')
-        Rm(output_dir)
+        if os.path.exists(output_dir):
+            self.log(f'Removing {output_dir}')
+            Rm(output_dir)
+        else:
+            self.log(f'No directory to remove: {output_dir}')
         
-        self.log(f'Removing {output_h5}')
-        Rm(output_h5)
+        if os.path.exists(output_h5):     
+            self.log(f'Removing {output_h5}')
+            Rm(output_h5)
+        else:
+            self.log(f'No file to remove: {output_h5}')
