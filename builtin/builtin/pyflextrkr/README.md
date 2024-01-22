@@ -37,7 +37,7 @@ YOUR_HDF5_DIR="`which h5cc |sed 's/.\{9\}$//'`"
 conda env create -f ares_flextrkr.yml
 conda activate flextrkr
 pip install -e .
-HDF5_MPI="OFF" HDF5_DIR=${YOUR_HDF5_DIR} pip install --no-cache-dir --no-binary=h5py h5py
+HDF5_MPI="OFF" HDF5_DIR=${YOUR_HDF5_DIR} pip install --no-cache-dir --no-binary=h5py h5py==3.8.0
 pip install xarray[io] mpi4py
 conda deactivate
 ```
