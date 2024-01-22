@@ -22,7 +22,6 @@ cd `scspkg pkg src arldm`
 git clone https://github.com/candiceT233/ARLDM
 cd ARLDM
 scspkg env set arldm ARLDM_PATH="`pwd`" HDF5_USE_FILE_LOCKING=FALSE
-# scspkg env prepend arldm PATH ${PATH}
 ```
 
 Prepare conda environment:
@@ -39,16 +38,9 @@ conda deactivate
 
 # ARLDM
 
-## 1. Setup Environment
+## 0. Data Preparation
 
-Create the environment variables needed by ARLDM.
-```bash
-module load arldm
-```
-<!-- conda activate arldm -->
-
-## Data Preparation
-
+Setup experiment input and ouput paths
 ```shell
 EXPERIMENT_PATH=~/experiments/ARLDM
 EXPERIMENT_INPUT_PATH=$EXPERIMENT_PATH/input_data
@@ -57,7 +49,7 @@ mkdir -p $EXPERIMENT_INPUT_PATH $EXPERIMENT_INPUT_PATH/zippack
 python3 -m pip install gdown
 ```
 
-### pororo
+### pororo (~20G)
 * Download the PororoSV dataset [here](https://drive.google.com/file/d/11Io1_BufAayJ1BpdxxV2uJUvCcirbrNc/view?usp=sharing).
 ```shell
 cd $EXPERIMENT_INPUT_PATH
@@ -67,7 +59,7 @@ mv pororo.zip $EXPERIMENT_INPUT_PATH/zippack
 ```
 
 
-### flintstones
+### flintstones (~15G)
 * Download the FlintstonesSV dataset [here](https://drive.google.com/file/d/1kG4esNwabJQPWqadSDaugrlF4dRaV33_/view?usp=sharing).
 ```shell
 cd $EXPERIMENT_INPUT_PATH
@@ -76,16 +68,16 @@ unzip flintstones_data.zip
 mv flintstones_data.zip $EXPERIMENT_INPUT_PATH/zippack
 ```
 
+### VIST 
 
-### VIST
-* Download the VIST-SIS url links [here](https://visionandlanguage.net/VIST/json_files/story-in-sequence/SIS-with-labels.tar.gz)
+* Download the VIST-SIS (~200MB) url links [here](https://visionandlanguage.net/VIST/json_files/story-in-sequence/SIS-with-labels.tar.gz)
 ```shell
 cd $EXPERIMENT_INPUT_PATH
 wget https://visionandlanguage.net/VIST/json_files/story-in-sequence/SIS-with-labels.tar.gz
 tar -vxf SIS-with-labels.tar.gz
 mv SIS-with-labels.tar.gz $EXPERIMENT_INPUT_PATH/zippack
 ```
-* Download the VIST-DII url links [here](https://visionandlanguage.net/VIST/json_files/description-in-isolation/DII-with-labels.tar.gz)
+* Download the VIST-DII (~170MB) url links [here](https://visionandlanguage.net/VIST/json_files/description-in-isolation/DII-with-labels.tar.gz)
 ```shell
 cd $EXPERIMENT_INPUT_PATH
 wget https://visionandlanguage.net/VIST/json_files/description-in-isolation/DII-with-labels.tar.gz
@@ -104,9 +96,6 @@ OUTPUT_PATH=$EXPERIMENT_PATH/output_data
 mkdir -p $OUTPUT_PATH
 ```
 
-
-Setup the experiment yaml file. 
-- TODO: add `config_template.yaml` setup to pkg.py script
 <!-- - Makesure to change the 3 environment variables accordingly. 
 - Use absolute paths in the yaml file.
 ```yaml
@@ -114,8 +103,6 @@ clouddata_path: '${INPUT_PATH}' # TODO: Change this to your own path
 root_path: '${OUTPUT_PATH}' # TODO: Change this to your own path
 landmask_filename: '${INPUT_PATH}/wrf_landmask.nc' # TODO: Change this to your own path
 ``` -->
-
-
 
 ## 1. Create a Resource Graph
 
@@ -140,35 +127,23 @@ The Jarvis pipeline will store all configuration data needed by ARLDM.
 
 ```bash
 jarvis pipeline create arldm_test
-module load arldm
 ```
 
 ## 3. Save Environment
 
 Store the current environment in the pipeline.
 ```bash
+module load arldm
 jarvis pipeline env build
 ```
 
 ## 4. Add pkgs to the Pipeline
 
-
 Create a Jarvis pipeline with ARLDM.
 ```bash
-jarvis pipeline append arldm runtest=flintstones arldm_path="`scspkg pkg src arldm`/ARLDM"
+jarvis pipeline append arldm runtest=vistsis
 ```
-runtest=
-- pororo (~20G)
-- flintstones (~15G)
-- vistsis (~200MB)
-- vistdii (~170MB)
 
-<!-- ```bash
-jarvis pipeline append arldm conda_env=arldm runscript=run_mcs_tbpfradar3d_wrf config=${HOME}/experiments/ARLDM/config_wrf_mcs_tbradar_demo.yml arldm_path="`scspkg pkg src arldm`/ARLDM"
-
-jarvis pkg configure arldm conda_env=arldm runscript=run_mcs_tbpfradar3d_wrf config=${HOME}/experiments/ARLDM/config_wrf_mcs_tbradar_demo.yml
-
-``` -->
 
 ## 5. Run Experiment
 
@@ -184,11 +159,11 @@ Clean data produced by ARLDM
 jarvis pipeline clean
 ```
 
-# ARLDM Withg Slurm (single node)
+# ARLDM With Slurm (single node)
 
 Do the above and
 ```bash
-jarvis pipeline sbatch job_name=pyflex_test nnodes=1 ppn=8 output_file=./pyflex_test.out error_file=./pyflex_test.err
+jarvis pipeline sbatch job_name=arldm_test nnodes=1 ppn=8 output_file=./arldm_test.out error_file=./arldm_test.err
 ```
 
 # ARLDM With Hermes
