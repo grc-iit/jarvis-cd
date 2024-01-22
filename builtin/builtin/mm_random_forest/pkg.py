@@ -2,7 +2,7 @@
 This module provides classes and methods to launch the MmRandomForest application.
 MmRandomForest is ....
 """
-from jarvis_cd.basic.pkg import Application
+from jarvis_cd.basic.pkg import Application, Color
 from jarvis_util import *
 
 
@@ -104,7 +104,7 @@ class MmRandomForest(Application):
                 f'--conf spark.speculation=false',
                 f'--conf spark.storage.replication=1',
                 f'--conf spark.local.dir={self.config["scratch"]}',
-                f'{self.env["MM_PATH"]}/benchmark/spark_random_forest.py',
+                f'{self.env["MM_PATH"]}/scripts/spark_random_forest.py',
                 self.config['train_path'],
                 self.config['test_path']
             ]
@@ -112,7 +112,8 @@ class MmRandomForest(Application):
             Exec(cmd, LocalExecInfo(env=self.env))
         elif self.config['api'] == 'pandas':
             cmd = [
-                f'{self.env["MM_PATH"]}/benchmark/pandas_random_forest.py',
+                'python3',
+                f'{self.env["MM_PATH"]}/scripts/pandas_random_forest.py',
                 self.config['train_path'],
                 self.config['test_path'],
             ]

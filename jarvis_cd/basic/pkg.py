@@ -19,6 +19,7 @@ import pathlib
 import shutil
 import math
 import os
+import time
 
 
 class PkgArgParse(ArgParse):
@@ -67,6 +68,8 @@ class Pkg(ABC):
         self.env = None
         self.mod_env = None
         self.exit_code = 0
+        self.start_time = 0
+        self.stop_time = 0
 
     def log(self, msg, color=None):
         if color is not None:
@@ -909,6 +912,8 @@ class Pipeline(Pkg):
         """
         self.mod_env = self.env.copy()
         for pkg in self.sub_pkgs:
+            self.log(f'{pkg.pkg_id}: Start', color=Color.GREEN)
+            start = time.time()
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.start()
@@ -917,6 +922,11 @@ class Pipeline(Pkg):
                 pkg.modify_env()
                 self.mod_env.update(self.env)
             self.exit_code += pkg.exit_code
+            end = time.time()
+            self.start_time = end - start
+            self.log(f'{pkg.pkg_id}: '
+                     f'Start finished in {self.start_time} seconds',
+                     color=Color.GREEN)
 
     def stop(self):
         """
@@ -925,9 +935,16 @@ class Pipeline(Pkg):
         :return: None
         """
         for pkg in reversed(self.sub_pkgs):
+            self.log(f'{pkg.pkg_id}: Stop', color=Color.GREEN)
+            start = time.time()
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.stop()
+            end = time.time()
+            self.stop_time = end - start
+            self.log(f'{pkg.pkg_id}: '
+                     f'Stop finished in {self.stop_time} seconds',
+                     color=Color.GREEN)
 
     def kill(self):
         """
@@ -936,10 +953,12 @@ class Pipeline(Pkg):
         :return: None
         """
         for pkg in reversed(self.sub_pkgs):
+            self.log(f'{pkg.pkg_id}: Killing', color=Color.GREEN)
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
                 if hasattr(pkg, 'kill'):
                     pkg.kill()
+            self.log(f'{pkg.pkg_id}: Finished killing', color=Color.GREEN)
 
     def clean(self):
         """
@@ -948,9 +967,11 @@ class Pipeline(Pkg):
         :return: None
         """
         for pkg in reversed(self.sub_pkgs):
+            self.log(f'{pkg.pkg_id}: Cleaning', color=Color.GREEN)
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.clean()
+            self.log(f'{pkg.pkg_id}: Finished cleaning', color=Color.GREEN)
 
     def status(self):
         """
@@ -960,7 +981,12 @@ class Pipeline(Pkg):
         """
         statuses = []
         for pkg in reversed(self.sub_pkgs):
+            self.log(f'{pkg.pkg_id}: Getting status', color=Color.GREEN)
+            status = None
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
-                statuses.append(pkg.status())
+                status = pkg.status()
+                statuses.append(status)
+            self.log(f'{pkg.pkg_id}: Status was {status}',
+                     color=Color.GREEN)
         return math.prod(statuses)

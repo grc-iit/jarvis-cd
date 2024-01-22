@@ -92,7 +92,7 @@ class MmSort(Application):
                 f'--conf spark.speculation=false',
                 f'--conf spark.storage.replication=1',
                 f'--conf spark.local.dir={self.config["scratch"]}',
-                f'{self.env["MM_PATH"]}/benchmark/mm_sort.py',
+                f'{self.env["MM_PATH"]}/scripts/mm_sort.py',
                 self.config['path']
             ]
             cmd = ' '.join(cmd)
