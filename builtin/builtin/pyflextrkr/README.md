@@ -245,7 +245,7 @@ and pyflextrkr (must use `flush_mode=sync` to prevent [this error](#oserror-log)
 ```bash
 jarvis pipeline append hermes --sleep=10 include=$EXPERIMENT_PATH flush_mode=sync
 jarvis pipeline append hermes_api +vfd
-jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
+jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR" update_envar=true
 ```
 
 ## 4.6. Run the Experiment
@@ -259,7 +259,7 @@ jarvis pipeline run
 
 ## 4.7. Clean Data
 
-To clean data produced by Hermes + Gray-Scott:
+To clean data produced by Hermes + Pyflextrkr:
 ```bash
 jarvis pipeline clean
 ```
@@ -331,7 +331,7 @@ jarvis pipeline run
 
 ## 5.8. Clean Data
 
-To clean data produced by Hermes + Gray-Scott:
+To clean data produced by Hermes + Pyflextrkr:
 ```bash
 jarvis pipeline clean
 ```
