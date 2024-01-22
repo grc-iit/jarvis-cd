@@ -8,12 +8,10 @@ Get the miniconda3 installation script and run it
 wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
 bash Miniconda3-latest-Linux-x86_64.sh.sh
 ```
-- HDF5 (1.14.0+)
-- Require h5py
+- HDF5 (1.14.0+), require by h5py
 - MPI
     - Either OpenMPI or MPICH
     - Required by mpi4py
-
 
 # Installation
 
@@ -23,9 +21,7 @@ scspkg create pyflextrkr
 cd `scspkg pkg src pyflextrkr`
 git clone https://github.com/candiceT233/PyFLEXTRKR
 cd PyFLEXTRKR
-# export PYFLEXTRKR_PATH=`pwd`
 scspkg env set pyflextrkr PYFLEXTRKR_PATH="`pwd`"
-# scspkg env prepend pyflextrkr PATH ${PATH}
 ```
 
 
@@ -33,12 +29,16 @@ scspkg env set pyflextrkr PYFLEXTRKR_PATH="`pwd`"
 
 Prepare conda environment in scspkg:
 ```bash
+cd `scspkg pkg src pyflextrkr`/PyFLEXTRKR
+git switch ares
+
 YOUR_HDF5_DIR="`which h5cc |sed 's/.\{9\}$//'`"
-conda env create -f environment.yml
+
+conda env create -f ares_flextrkr.yml
 conda activate flextrkr
 pip install -e .
 HDF5_MPI="OFF" HDF5_DIR=${YOUR_HDF5_DIR} pip install --no-cache-dir --no-binary=h5py h5py
-pip install xarray[io] pyyaml mpi4py
+pip install xarray[io] mpi4py
 conda deactivate
 ```
 
@@ -46,12 +46,6 @@ conda deactivate
 # Pyflextrkrt
 
 ## 1. Setup Environment
-
-Create the environment variables needed by Pyflextrkr.
-```bash
-module load pyflextrkr
-```
-<!-- conda activate flextrkr -->
 
 
 
@@ -63,6 +57,7 @@ mkdir -p $INPUT_PATH
 wget https://portal.nersc.gov/project/m1867/PyFLEXTRKR/sample_data/tb_radar/wrf_tbradar.tar.gz -O ${INPUT_PATH}/run_mcs_tbpfradar3d_wrf.tar.gz
 
 tar -xvzf ${INPUT_PATH}/run_mcs_tbpfradar3d_wrf.tar.gz -C ${INPUT_PATH}
+
 # Remove downloaded tar file
 rm -fv ${INPUT_PATH}/run_mcs_tbpfradar3d_wrf.tar.gz
 ```
@@ -72,11 +67,6 @@ Setup example output data and path.
 ```bash
 OUTPUT_PATH=$EXPERIMENT_PATH/wrf_tbradar
 mkdir -p $OUTPUT_PATH
-```
-You can setup your yaml path to:
-```bash
-cd /path/to/jarvis-cd
-YAML_PATH=./builtin/builtin/pyflextrkr/example_config/run_mcs_tbpfradar3d_wrf_template.yml
 ```
 
 
@@ -106,6 +96,11 @@ jarvis pipeline create pyflextrkr_test
 ```
 
 ## 3. Save Environment
+Create the environment variables needed by Pyflextrkr.
+```bash
+module load pyflextrkr
+```
+<!-- conda activate flextrkr -->
 
 Store the current environment in the pipeline.
 ```bash
@@ -119,14 +114,13 @@ jarvis pipeline env build
 
 Create a Jarvis pipeline with Pyflextrkr.
 ```bash
-jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf config=$YAML_PATH pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
+jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
 ```
 
 <!-- ```bash
 jarvis pipeline append pyflextrkr conda_env=flextrkr runscript=run_mcs_tbpfradar3d_wrf pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
 
 jarvis pkg configure pyflextrkr conda_env=flextrkr runscript=run_mcs_tbpfradar3d_wrf config=${HOME}/jarvis-cd/builtin/builtin/pyflextrkr/example_config/run_mcs_tbpfradar3d_wrf_template.yml
-
 ``` -->
 
 ## 5. Run Experiment
