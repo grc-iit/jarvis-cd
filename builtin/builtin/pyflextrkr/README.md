@@ -317,7 +317,7 @@ mkdir_datapaths=$LOCAL_INPUT_PATH,$LOCAL_OUTPUT_PATH
 
 Create a Jarvis pipeline with Pyflextrkr.
 ```bash
-jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
+jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR" local_exp_dir=$LOCAL_EXPERIMENT_PATH
 ```
 
 ## 5.7. Run the Experiment
