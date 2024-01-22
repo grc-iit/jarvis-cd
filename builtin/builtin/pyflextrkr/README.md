@@ -157,7 +157,7 @@ Clean data produced by Pyflextrkr
 jarvis pipeline clean
 ```
 
-# 3. Pyflextrkr Withg Slurm
+# 3. Pyflextrkr With Slurm
 
 ## 3.1 Local Cluster
 Do the above and `ppn` must match `nprocesses`
@@ -337,8 +337,8 @@ jarvis pipeline clean
 ```
 
 
-# 6. Pyflextrkr + Hermes Withg Slurm (TODO)
-Steps are the same as [Pyflextrkr Withg Slurm](#3-pyflextrkr-withg-slurm), but not working yet due to OSError.
+# 6. Pyflextrkr + Hermes With Multinodes Slurm (TODO)
+Steps are the same as [Pyflextrkr With Slurm](#3-pyflextrkr-With-slurm), but not working yet due to OSError.
 
 ## OSError Log
 ```log
