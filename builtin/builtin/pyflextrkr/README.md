@@ -36,6 +36,19 @@ Use spack to install mpich
 spack install mpich@3.4.3
 ```
 
+## 0.6. Installation Tools
+You need `wget` to download the datasets online:
+- wget
+You can install wget either with `apt-get` or `spack`
+```bash
+sudo apt-get install wget
+# or
+spack install wget
+spack load wget
+# check if wget is usable
+which wget
+```
+
 
 # 1. Installation
 
