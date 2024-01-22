@@ -17,7 +17,20 @@ class DataStagein(Application):
         """
         Initialize paths
         """
-        pass
+        self.mkdir_datapaths_list = []
+        self.user_data_list = []
+        
+        # Convert user_data_paths to list
+        user_data_paths = self.config['user_data_paths']
+        if user_data_paths is not None:
+            self.user_data_list = user_data_paths.split(',')
+            self.log(f"user_data_list: {self.user_data_list}")
+        
+        # Convert mkdir_datapaths to list
+        mkdir_datapaths = self.config['mkdir_datapaths']
+        if mkdir_datapaths is not None:
+            self.mkdir_datapaths_list = mkdir_datapaths.split(',')
+            self.log(f"mkdir_datapaths_list: {self.mkdir_datapaths_list}")
 
     def _configure_menu(self):
         """
@@ -40,26 +53,32 @@ class DataStagein(Application):
                 'type': str,
                 'default': None,
             },
-            {
-                'name': 'user_data_list',
-                'msg': 'List of paths of user datas to stage in',
-                'type': list,
-                'default': None,
-            },
+            # {
+            #     'name': 'user_data_list',
+            #     'msg': 'List of paths of user datas to stage in',
+            #     'type': list,
+            #     'default': None,
+            # },
             {
                 'name': 'mkdir_datapaths',
                 'msg': 'List of paths tp create if it does not exist, delimitated by comma',
                 'type': str,
                 'default': None,
             },
-            {
-                'name': 'mkdir_datapaths_list',
-                'msg': 'List of paths tp create if it does not exist',
-                'type': list,
-                'default': None,
-            }
+            # {
+            #     'name': 'mkdir_datapaths_list',
+            #     'msg': 'List of paths tp create if it does not exist',
+            #     'type': list,
+            #     'default': None,
+            # }
         ]
-
+    
+    def _print_required_params(self):
+        required_params = ['dest_data_path', 'user_data_paths', 'mkdir_datapaths']
+        print("data_stagein Required parameters: ")
+        for param in required_params:
+            print(f"    {param}")
+            
     def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
@@ -68,29 +87,29 @@ class DataStagein(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        required_params = ['dest_data_path', 'user_data_paths', 'mkdir_datapaths']
-        print("data_stagein Required parameters: ")
-        for param in required_params:
-            print(f"    {param}")
-            
         
         if self.config['dest_data_path'] is None:
+            self._print_required_params()
             raise ValueError("dest_data_path is not set")
         if self.config['user_data_paths'] is None:
+            self._print_required_params()
             raise ValueError("user_data_paths is not set")
         if self.config['mkdir_datapaths'] is None:
+            self._print_required_params()
             raise ValueError("mkdir_datapaths is not set")
         
-        user_data_paths = self.config['user_data_paths']
         
-        # Convert user_data_paths to list
-        if user_data_paths is not None:
-            self.config['user_data_list'] = user_data_paths.split(',')
+        # # Convert user_data_paths to list
+        # user_data_paths = self.config['user_data_paths']
+        # if user_data_paths is not None:
+        #     self.user_data_list = user_data_paths.split(',')
+        #     self.log(f"user_data_list: {self.user_data_list}")
         
-        # Convert mkdir_datapaths to list
-        mkdir_datapaths = self.config['mkdir_datapaths']
-        if mkdir_datapaths is not None:
-            self.config['mkdir_datapaths_list'] = mkdir_datapaths.split(',')
+        # # Convert mkdir_datapaths to list
+        # mkdir_datapaths = self.config['mkdir_datapaths']
+        # if mkdir_datapaths is not None:
+        #     self.mkdir_datapaths_list = mkdir_datapaths.split(',')
+        #     self.log(f"mkdir_datapaths_list: {self.mkdir_datapaths_list}")
         
         self.config['dest_data_path'] = self.config['dest_data_path']
     
@@ -103,9 +122,14 @@ class DataStagein(Application):
         """
         print("Data stagein starting")
         
-        user_data_list = self.config['user_data_list']
+        user_data_list = self.user_data_list
         dest_data_path = self.config['dest_data_path']
-        mkdir_datapaths_list = self.config['mkdir_datapaths_list']
+        mkdir_datapaths_list = self.mkdir_datapaths_list
+        
+        print(f"dest_data_path: {dest_data_path}")
+        print(f"user_data_list: {user_data_list}")
+        print(f"mkdir_datapaths_list: {mkdir_datapaths_list}")
+        
         
         # create paths for user
         for datapath in mkdir_datapaths_list:
@@ -124,19 +148,26 @@ class DataStagein(Application):
             if not os.path.exists(data_path):
                 raise FileNotFoundError(f"Data path {data_path} does not exist")
             else:
-                # Check if the path is empty (e.g. does not contain any files)
-                if len(os.listdir(data_path)) == 0:
-                    raise ValueError(f"Data path {data_path} is empty")
+                # check if data_path is a directory
+                if os.path.isdir(data_path):
+                    # Check if the path is empty (e.g. does not contain any files)
+                    if len(os.listdir(data_path)) == 0:
+                        raise ValueError(f"Data path {data_path} is empty")
+                else:
+                    # Check if the file is not empty
+                    if os.stat(data_path).st_size == 0:
+                        raise ValueError(f"Data file {data_path} is empty")
             
             # Check if two directory contains the same files
             dest_files = os.listdir(dest_data_path)
-            data_files = os.listdir(data_path)
-            if set(dest_files) == set(data_files):
+            if os.path.isdir(data_path) and set(dest_files) == set(os.listdir(data_path)):
+                # data_files = os.listdir(data_path)
+                # if set(dest_files) == set(data_files):
                 print(f"Data path {data_path} already exists in {dest_data_path}")
                 continue
             
             # Move data to destination path
-            cmd = f"cp -r {data_path}/* {dest_data_path}"
+            cmd = f"cp -r {data_path} {dest_data_path}"
             print(f"Copying data from {data_path} to {dest_data_path}")
             Exec(cmd,LocalExecInfo(env=self.mod_env,))
             
