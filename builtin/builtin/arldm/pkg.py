@@ -17,8 +17,7 @@ class Arldm(Application):
         """
         Initialize paths
         """
-        # self.log(f"ARLDM _init")
-        pass
+        self.pkg_type = 'arldm'
 
     def _configure_menu(self):
         """
@@ -77,7 +76,7 @@ class Arldm(Application):
                 'name': 'arldm_path',
                 'msg': 'Absolute path to the ARLDM source code (can set to `scspkg pkg src arldm`/ARLDM)',
                 'type': str,
-                'default': f"{Package(self.config['pkg_type']).pkg_root}/src/ARLDM",
+                'default': f"{Package(self.pkg_type).pkg_root}/src/ARLDM",
             },
             {
                 'name': 'log_file',
@@ -103,25 +102,25 @@ class Arldm(Application):
                 'name': 'experiment_path',
                 'msg': 'Absolute path to the experiment run input and output files',
                 'type': str,
-                'default': '${HOME}/experiments/ARLDM',
+                'default': '${HOME}/experiments/arldm_run',
             },
             {
                 'name': 'ckpt_dir',
                 'msg': 'Directory to save checkpoints',
                 'type': str,
-                'default': None, #'${HOME}/experiments/ARLDM/save_ckpt',
+                'default': None, #'${HOME}/experiments/arldm_run/save_ckpt',
             },
             {
                 'name': 'sample_output_dir',
                 'msg': 'Directory to save samples',
                 'type': str,
-                'default': None, #'${HOME}/experiments/ARLDM/output_data/sample_out_{runscript}_{mode}',
+                'default': None, #'${HOME}/experiments/arldm_run/output_data/sample_out_{runscript}_{mode}',
             },
             {
                 'name': 'hdf5_file',
                 'msg': 'HDF5 file to save samples',
                 'type': str,
-                'default': None, #'${HOME}/experiments/ARLDM/output_data/{runscript}.h5',
+                'default': None, #'${HOME}/experiments/arldm_run/output_data/{runscript}.h5',
             },
             {
                 'name': 'prep_hdf5',
@@ -253,7 +252,7 @@ class Arldm(Application):
             if dev_df is None:
                 raise Exception(f"Could not find storage device of type {dev_type}")     
 
-            new_exp_dir = os.path.expandvars(dev_df.rows[0]['mount']) + "/ARLDM"
+            new_exp_dir = os.path.expandvars(dev_df.rows[0]['mount']) + "/arldm_run"
             self.config['local_exp_dir'] = new_exp_dir
         
         self._configure_yaml()
