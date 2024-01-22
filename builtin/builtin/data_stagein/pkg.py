@@ -171,8 +171,9 @@ class DataStagein(Application):
             print(f"Copying data from {data_path} to {dest_data_path}")
             Exec(cmd,LocalExecInfo(env=self.mod_env,))
             
-            copied_items = len(os.listdir(dest_data_path))
-            print(f"Copied {copied_items} items to {dest_data_path}")
+            copied_items = 1
+            if os.path.isdir(data_path): copied_items = len(os.listdir(data_path))
+            print(f"Copied {copied_items} items ... ")
         
         end = time.time()
         diff = end - start
