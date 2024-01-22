@@ -490,4 +490,14 @@ class Arldm(Application):
 
         :return: None
         """
-        pass
+        output_h5 = self.config['experiment_path'] + f"/output_data/{self.config['runscript']}_out.h5"
+        output_dir = self.config['experiment_path'] + f"/output_data/sample_out_{self.config['runscript']}_{self.config['mode']}"
+        if self.config['local_exp_dir'] is not None:
+            output_dir = self.config['local_exp_dir'] + f"/output_data/sample_out_{self.config['runscript']}_{self.config['mode']}"
+        
+        # recursive remove all files in output_data directory
+        self.log(f'Removing {output_dir}')
+        Rm(output_dir)
+        
+        self.log(f'Removing {output_h5}')
+        Rm(output_h5)
