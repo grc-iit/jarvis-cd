@@ -190,15 +190,17 @@ class Arldm(Application):
         
         self.setenv('HDF5_USE_FILE_LOCKING', "FALSE") # set HDF5 locking: FALSE, TRUE, BESTEFFORT
         self.setenv('HYDRA_FULL_ERROR', "1")
-        pretrain_model_path = os.getenv('PRETRAIN_MODEL_PATH')
-        if pretrain_model_path is not None:
-            if self.config['local_exp_dir'] is not None:
-                pretrain_model_path = self.config['local_exp_dir'] + "/model_large.pth"
-            self.log(f"PRETRAIN_MODEL_PATH: {pretrain_model_path}")
-            self.config['pretrain_model_path'] = pretrain_model_path
-            self.env['PRETRAIN_MODEL_PATH'] = pretrain_model_path
-        else:
-            raise Exception("Must set the pretrain_model_path")
+        
+        if self.config['pretrain_model_path'] is None:
+            pretrain_model_path = os.getenv('PRETRAIN_MODEL_PATH')
+            if pretrain_model_path is not None:
+                if self.config['local_exp_dir'] is not None:
+                    pretrain_model_path = self.config['local_exp_dir'] + "/model_large.pth"
+                self.log(f"PRETRAIN_MODEL_PATH: {pretrain_model_path}")
+                self.config['pretrain_model_path'] = pretrain_model_path
+                self.env['PRETRAIN_MODEL_PATH'] = pretrain_model_path
+            else:
+                raise Exception("Must set the pretrain_model_path")
         
         if self.config['experiment_path'] is not None:
             self.config['experiment_path'] = os.path.expandvars(self.config['experiment_path'])
@@ -337,43 +339,54 @@ class Arldm(Application):
         self.log(f"ARLDM sampling run: not implemented yet")
 
     def _unset_vfd_vars(self,env_vars_toset):
-        for env_var in env_vars_toset:
-            cmd = [
+        cmd = [
                 'conda', 'env', 'config', 'vars', 'unset',
-                f'{env_var}',
-                '-n', self.config['conda_env'],
-            ]
-            cmd = ' '.join(cmd)
-            Exec(cmd, LocalExecInfo(env=self.mod_env,))
-            self.log(f"ARLDM: {env_var} is unset")
+        ]
+        
+        for env_var in env_vars_toset:
+            cmd.append(f'{env_var}')
+            # cmd = [
+            #     'conda', 'env', 'config', 'vars', 'unset',
+            #     f'{env_var}',
+            #     '-n', self.config['conda_env'],
+            # ]
+        cmd.append('-n')
+        cmd.append(self.config['conda_env'])
+        
+        cmd = ' '.join(cmd)
+        Exec(cmd, LocalExecInfo(env=self.mod_env,))
+        self.log(f"ARLDM _unset_vfd_vars: {cmd}")
 
     def _set_env_vars(self):
         
-        env_vars_toset = ['HDF5_DRIVER', 'HDF5_PLUGIN_PATH']
+        env_vars_toset = ['HDF5_DRIVER', 'HDF5_PLUGIN_PATH', 
+                          'HERMES_ADAPTER_MODE', 'HERMES_CLIENT_CONF',
+                          'HERMES_CONF', 'HERMES_VFD', 'HERMES_POSIX'
+                          ]
         
-        if self.config['update_envar'] == False:
-            self._unset_vfd_vars(env_vars_toset)
+        # Unset all env_vars_toset first        
+        self._unset_vfd_vars(env_vars_toset)
 
         try:
             # Get current environment variables
+            cmd = [ 'conda', 'env', 'config', 'vars', 'set']
             for env_var in env_vars_toset:
                 env_var_val = self.env[env_var]
                 
-                if env_var == 'HDF5_PLUGIN_PATH':
-                    env_var_val = f'{env_var_val}:$HDF5_PLUGIN_PATH'
+                if env_var_val:
+                    if env_var != 'HDF5_DRIVER': env_var_val = f'{env_var_val}:${env_var}'
                 
-                cmd = [ 'conda', 'env', 'config', 'vars', 'set',
-                    f'{env_var}={env_var_val}',
-                    '-n', self.config['conda_env'],]
-                cmd = ' '.join(cmd)
-                self.log(f"ARLDM: {cmd}")
-                Exec(cmd, LocalExecInfo(env=self.mod_env,
-                                        pipe_stdout=self.config['stdout'],
-                                        pipe_stderr=self.config['stderr'],
-                                        ))
+                cmd.append(f'{env_var}={env_var_val}')
+            
+            cmd.append('-n')
+            cmd.append(self.config['conda_env'])
+            cmd = ' '.join(cmd)
+            self.log(f"ARLDM _set_env_vars: {cmd}")
+            Exec(cmd, LocalExecInfo(env=self.mod_env,
+                                    ))
             
         except Exception as e:
-            self._unset_vfd_vars()
+            self.log(f"ARLDM: {e}")
 
     def start(self):
         """
