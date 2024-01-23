@@ -50,7 +50,7 @@ class Arldm(Application):
             },
             {
                 'name': 'update_envar',
-                'msg': 'Whether to update the conda environment variables',
+                'msg': 'Whether to update the conda environment variables (when used with custom VFD, e.g. Hermes)',
                 'type': bool,
                 'default': False,
             },
@@ -78,12 +78,6 @@ class Arldm(Application):
                 'msg': 'Absolute path to the ARLDM source code (can set to `scspkg pkg src arldm`/ARLDM)',
                 'type': str,
                 'default': f"{Package(self.pkg_type).pkg_root}/src/ARLDM",
-            },
-            {
-                'name': 'log_file',
-                'msg': 'File path to log stdout',
-                'type': str,
-                'default': None,
             },
             {
                 'name': 'mode',
@@ -138,12 +132,6 @@ class Arldm(Application):
             {
                 'name': 'pretrain_model_path',
                 'msg': 'Pretrained model path',
-                'type': str,
-                'default': None,
-            },
-            {
-                'name': 'log_file',
-                'msg': 'File path to log stdout',
                 'type': str,
                 'default': None,
             },
@@ -325,18 +313,14 @@ class Arldm(Application):
         
         conda_cmd = ' '.join(cmd)
         
-        if self.config['log_file'] is not None:
-            _stdout = self.config['log_file']
-        else:
-            _stdout = self.config['stdout']
-        
         start = time.time()
         
         Exec(conda_cmd,
              LocalExecInfo(env=self.mod_env,
                            do_dbg=self.config['do_dbg'],
                            dbg_port=self.config['dbg_port'],
-                           pipe_stdout=_stdout,
+                           pipe_stdout=self.config['stdout'],
+                           pipe_stderr=self.config['stderr'],
                            ))
         
         end = time.time()
@@ -374,12 +358,19 @@ class Arldm(Application):
             # Get current environment variables
             for env_var in env_vars_toset:
                 env_var_val = self.env[env_var]
+                
+                if env_var == 'HDF5_PLUGIN_PATH':
+                    env_var_val = f'{env_var_val}:$HDF5_PLUGIN_PATH'
+                
                 cmd = [ 'conda', 'env', 'config', 'vars', 'set',
                     f'{env_var}={env_var_val}',
                     '-n', self.config['conda_env'],]
                 cmd = ' '.join(cmd)
                 self.log(f"ARLDM: {cmd}")
-                Exec(cmd, LocalExecInfo(env=self.mod_env,))
+                Exec(cmd, LocalExecInfo(env=self.mod_env,
+                                        pipe_stdout=self.config['stdout'],
+                                        pipe_stderr=self.config['stderr'],
+                                        ))
             
         except Exception as e:
             self._unset_vfd_vars()
