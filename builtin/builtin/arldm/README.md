@@ -424,9 +424,8 @@ jarvis pipeline clean
 
 
 # 6. ARLDM + Hermes on Node Local Storage
-Every step the same as [ARLDM + Hermes](#4-arldm-with-hermes), except for when creating a Jarvis pipeline with Hermes, using the Hermes VFD interceptor.
-```bash
-- Example using `RUN_SCRIPT=vistsis` you need to stage in three different input directories:
+Every step the same as [ARLDM + Hermes](#4-arldm-with-hermes), except for when creating a Jarvis pipeline with Hermes, using the Hermes VFD interceptor:
+- Example using `RUN_SCRIPT=vistsis` you need to stage in three different input directories.
 ```bash
 # Setup env
 RUN_SCRIPT=vistsis # can change to other datasets
