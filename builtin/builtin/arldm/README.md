@@ -447,7 +447,7 @@ jarvis pipeline append hermes_run --sleep=10 include=$LOCAL_EXPERIMENT_PATH
 
 jarvis pipeline append hermes_api +vfd
 
-jarvis pipeline append arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM" update_envar=true
+jarvis pipeline append arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM" update_envar=true local_exp_dir=$LOCAL_EXPERIMENT_PATH
 ```
 
 
