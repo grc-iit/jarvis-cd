@@ -12,6 +12,7 @@ See the [official repo](https://github.com/xichenpan/ARLDM) for more detail.
 7. ARLDM + Hermes with Multinodes Slurm (TODO)
 
 
+
 # 0. Dependencies
 
 ## 0.1. conda
@@ -91,6 +92,7 @@ pip uninstall h5py;
 HDF5_MPI="OFF" HDF5_DIR=${YOUR_HDF5_DIR} pip install --no-cache-dir --no-binary=h5py h5py==3.8.0
 conda deactivate
 ```
+
 
 
 # 2. Running ARLDM
@@ -238,6 +240,8 @@ Clean data produced by ARLDM
 jarvis pipeline clean
 ```
 
+
+
 # 3. ARLDM With Slurm
 
 ## 3.1 Local Cluster
@@ -250,6 +254,8 @@ jarvis pipeline sbatch job_name=arldm_test nnodes=1 ppn=2 output_file=./arldm_te
 ARLDM with jarvis-cd is currently only set to run with single node and using CPU.
     - Multiple CPU worker not tested
     - GPU not tested
+
+
 
 # 4. ARLDM + Hermes
 
@@ -421,11 +427,14 @@ To clean data produced by Hermes + ARLDM:
 jarvis pipeline clean
 ```
 
+
+
 # 6. ARLDM + Hermes on Node Local Storage
 Every step the same as [ARLDM + Hermes](#4-arldm-with-hermes), except that you need to update the Hermes interception path before running the pipeline:
 ```bash
 jarvis pkg configure hermes_run include=$LOCAL_EXPERIMENT_PATH flush_mode=sync
 ```
+
 
 
 # 7. ARLDM + Hermes with Multinodes Slurm (TODO)
