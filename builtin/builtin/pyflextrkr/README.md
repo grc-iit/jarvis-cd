@@ -1,6 +1,18 @@
 The Python FLEXible object TRacKeR (PyFLEXTRKR) is a flexible atmospheric feature tracking software package.
 See the [official repo](https://github.com/FlexTRKR/PyFLEXTRKR) for more detail.
 
+# Table of Content
+0. [Dependencies](#0-dependencies)
+1. [Installation](#1-installation)
+2. [Running Pyflextrkr](#2-running-pyflextrkr)
+3. [Pyflextrkr with Slurm](#3-pyflextrkr-with-slurm)
+4. [Pyflextrkr + Hermes](#4-pyflextrkr--hermes)
+5. [Pyflextrkr on Node Local Storage](#5-pyflextrkr-on-node-local-storage)
+6. [Pyflextrkr + Hermes on Node Local Storage](#6-pyflextrkr--hermes-on-node-local-storage)
+7. [ARLDM + Hermes with Multinodes Slurm (TODO)](#7-pyflextrkr--hermes-on-multinodes-slurm-todo)
+
+
+
 # 0. Dependencies
 
 ## 0.1. conda
@@ -50,6 +62,7 @@ which wget
 ```
 
 
+
 # 1. Installation
 
 ## 1.1 create pyflextrkr scs package
@@ -76,6 +89,7 @@ HDF5_MPI="OFF" HDF5_DIR=${YOUR_HDF5_DIR} pip install --no-cache-dir --no-binary=
 pip install xarray[io] mpi4py
 conda deactivate
 ```
+
 
 
 # 2. Running Pyflextrkr
@@ -170,6 +184,8 @@ Clean data produced by Pyflextrkr
 jarvis pipeline clean
 ```
 
+
+
 # 3. Pyflextrkr With Slurm
 
 ## 3.1 Local Cluster
@@ -190,6 +206,7 @@ jarvis pkg configure pyflextrkr run_parallel=2 nprocesses=8
 ```bash
 jarvis pipeline sbatch job_name=pyflex_2ntest nnodes=2 ppn=4 output_file=./pyflex_2ntest.out error_file=./pyflex_2ntest.err
 ```
+
 
 
 # 4. Pyflextrkr + Hermes
@@ -268,8 +285,6 @@ Run the experiment
 jarvis pipeline run
 ```
 
-
-
 ## 4.7. Clean Data
 
 To clean data produced by Hermes + Pyflextrkr:
@@ -277,7 +292,9 @@ To clean data produced by Hermes + Pyflextrkr:
 jarvis pipeline clean
 ```
 
-# 5. Pyflextrkr with Node Local Storage
+
+
+# 5. Pyflextrkr on Node Local Storage
 For cluster that has node local storage, you can stagein data from shared storage, then run pyflextrkr.
 
 ## 5.1 Setup Environment
@@ -319,7 +336,6 @@ Store the current environment in the pipeline.
 jarvis pipeline env build
 ```
 
-
 ## 5.6. Add pkgs to the Pipeline
 Add data_stagein to pipeline before pyflextrkr.
 ```bash 
@@ -347,13 +363,15 @@ To clean data produced by Hermes + Pyflextrkr:
 jarvis pipeline clean
 ```
 
-# 6. Pyflextrkr + Hermes with Node Local Storage
+
+
+# 6. Pyflextrkr + Hermes on Node Local Storage
 Every step the same as [Pyflextrkr + Hermes](#4-pyflextrkr--hermes), except that you need to update the Hermes interception path before running the pipeline:
 ```bash
 jarvis pkg configure hermes_run include=$LOCAL_EXPERIMENT_PATH flush_mode=sync
 ```
 
-# 7. Pyflextrkr + Hermes with Multinodes Slurm (TODO)
+# 7. Pyflextrkr + Hermes on Multinodes Slurm (TODO)
 Steps are the same as [Pyflextrkr with Slurm](#3-pyflextrkr-With-slurm), but not working yet due to OSError.
 
 ## OSError Log
