@@ -349,7 +349,7 @@ Currently setup DEFAULT input path in a shared storage, below is a example on Ar
 ```bash
 RUN_SCRIPT=vistsis # can change to other datasets
 EXPERIMENT_PATH=~/experiments/arldm_run # NFS
-INPUT_PATH=$EXPERIMENT_PATH/input_data/$RUN_SCRIPT # NFS
+INPUT_PATH=$EXPERIMENT_PATH/input_data # NFS
 cd $EXPERIMENT_PATH; export PRETRAIN_MODEL_PATH=`realpath model_large.pth`
 
 LOCAL_EXPERIMENT_PATH=/mnt/nvme/$USER/arldm_run
@@ -389,15 +389,16 @@ jarvis pipeline env build
 Add data_stagein to pipeline before arldm.
 - For `RUN_SCRIPT=vistsis` you need to stage in three different input directories:
 ```bash 
-jarvis pipeline append data_stagein dest_data_path=$LOCAL_EXPERIMENT_PATH/input_data \
-user_data_paths=$EXPERIMENT_PATH/input_data/vistdii,$EXPERIMENT_PATH/input_data/vistsis,$EXPERIMENT_PATH/input_data/visit_img,$PRETRAIN_MODEL_PATH \
+jarvis pipeline append data_stagein dest_data_path=$LOCAL_INPUT_PATH \
+user_data_paths=$INPUT_PATH/vistdii,$INPUT_PATH/vistsis,$INPUT_PATH/visit_img,$PRETRAIN_MODEL_PATH \
 mkdir_datapaths=$LOCAL_INPUT_PATH,$LOCAL_OUTPUT_PATH
 ```
 
 - For other `RUN_SCRIPT`, you only need to stagein one directory:
 ```bash 
-jarvis pipeline append data_stagein dest_data_path=$LOCAL_EXPERIMENT_PATH \
-user_data_paths=$INPUT_PATH \
+RUN_SCRIPT=pororo
+jarvis pipeline append data_stagein dest_data_path=$LOCAL_INPUT_PATH \
+user_data_paths=$INPUT_PATH/$RUN_SCRIPT \
 mkdir_datapaths=$LOCAL_INPUT_PATH,$LOCAL_OUTPUT_PATH
 ```
 
@@ -430,7 +431,7 @@ Every step the same as [ARLDM + Hermes](#4-arldm-with-hermes), except for when c
 # Setup env
 RUN_SCRIPT=vistsis # can change to other datasets
 EXPERIMENT_PATH=~/experiments/arldm_run # NFS
-INPUT_PATH=$EXPERIMENT_PATH/input_data/$RUN_SCRIPT # NFS
+INPUT_PATH=$EXPERIMENT_PATH/input_data # NFS
 cd $EXPERIMENT_PATH; export PRETRAIN_MODEL_PATH=`realpath model_large.pth`
 
 LOCAL_EXPERIMENT_PATH=/mnt/nvme/$USER/arldm_run
@@ -438,8 +439,8 @@ LOCAL_INPUT_PATH=$LOCAL_EXPERIMENT_PATH/input_data
 LOCAL_OUTPUT_PATH=$LOCAL_EXPERIMENT_PATH/output_data
 
 # add pkg to pipeline
-jarvis pipeline append data_stagein dest_data_path=$LOCAL_EXPERIMENT_PATH/input_data \
-user_data_paths=$EXPERIMENT_PATH/input_data/vistdii,$EXPERIMENT_PATH/input_data/vistsis,$EXPERIMENT_PATH/input_data/visit_img,$PRETRAIN_MODEL_PATH \
+jarvis pipeline append data_stagein dest_data_path=$LOCAL_INPUT_PATH \
+user_data_paths=$INPUT_PATH/vistdii,$INPUT_PATH/vistsis,$INPUT_PATH/visit_img,$PRETRAIN_MODEL_PATH \
 mkdir_datapaths=$LOCAL_INPUT_PATH,$LOCAL_OUTPUT_PATH
 
 jarvis pipeline append hermes_run --sleep=10 include=$LOCAL_EXPERIMENT_PATH

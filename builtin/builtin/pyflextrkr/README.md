@@ -9,7 +9,7 @@ See the [official repo](https://github.com/FlexTRKR/PyFLEXTRKR) for more detail.
 4. [Pyflextrkr + Hermes](#4-pyflextrkr--hermes)
 5. [Pyflextrkr on Node Local Storage](#5-pyflextrkr-on-node-local-storage)
 6. [Pyflextrkr + Hermes on Node Local Storage](#6-pyflextrkr--hermes-on-node-local-storage)
-7. [ARLDM + Hermes with Multinodes Slurm (TODO)](#7-pyflextrkr--hermes-on-multinodes-slurm-todo)
+7. [Pyflextrkr + Hermes with Multinodes Slurm (TODO)](#7-pyflextrkr--hermes-on-multinodes-slurm-todo)
 
 
 
@@ -273,7 +273,7 @@ jarvis pipeline env build
 Create a Jarvis pipeline with Hermes, the Hermes VFD interceptor,
 and pyflextrkr (must use `flush_mode=sync` to prevent [this error](#oserror-log))
 ```bash
-jarvis pipeline append hermes --sleep=10 include=$EXPERIMENT_PATH flush_mode=sync
+jarvis pipeline append hermes_run --sleep=10 include=$EXPERIMENT_PATH flush_mode=sync
 jarvis pipeline append hermes_api +vfd
 jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR" update_envar=true
 ```
@@ -300,8 +300,9 @@ For cluster that has node local storage, you can stagein data from shared storag
 ## 5.1 Setup Environment
 Currently setup DEFAULT input path in a shared storage, below is a example on Ares cluster using node local nvme.
 ```bash
+RUN_SCRIPT=run_mcs_tbpfradar3d_wrf
 EXPERIMENT_PATH=~/experiments/flextrkr_run # NFS
-INPUT_PATH=$EXPERIMENT_PATH/input_data/run_mcs_tbpfradar3d_wrf # NFS
+INPUT_PATH=$EXPERIMENT_PATH/input_data # NFS
 mkdir -p $INPUT_PATH
 
 LOCAL_EXPERIMENT_PATH=/mnt/nvme/$USER/flextrkr_run
@@ -340,7 +341,7 @@ jarvis pipeline env build
 Add data_stagein to pipeline before pyflextrkr.
 ```bash 
 jarvis pipeline append data_stagein dest_data_path=$LOCAL_INPUT_PATH \
-user_data_paths=$INPUT_PATH \
+user_data_paths=$INPUT_PATH/$RUN_SCRIPT \
 mkdir_datapaths=$LOCAL_INPUT_PATH,$LOCAL_OUTPUT_PATH
 ```
 
@@ -366,10 +367,31 @@ jarvis pipeline clean
 
 
 # 6. Pyflextrkr + Hermes on Node Local Storage
-Every step the same as [Pyflextrkr + Hermes](#4-pyflextrkr--hermes), except that you need to update the Hermes interception path before running the pipeline:
+Every step the same as [Pyflextrkr + Hermes](#4-pyflextrkr--hermes), except for when creating a Jarvis pipeline with Hermes, using the Hermes VFD interceptor:
 ```bash
-jarvis pkg configure hermes_run include=$LOCAL_EXPERIMENT_PATH flush_mode=sync
+# Setup env
+RUN_SCRIPT=run_mcs_tbpfradar3d_wrf
+EXPERIMENT_PATH=~/experiments/flextrkr_run # NFS
+INPUT_PATH=$EXPERIMENT_PATH/input_data # NFS
+mkdir -p $INPUT_PATH
+
+LOCAL_EXPERIMENT_PATH=/mnt/nvme/$USER/flextrkr_run
+LOCAL_INPUT_PATH=$LOCAL_EXPERIMENT_PATH/input_data
+LOCAL_OUTPUT_PATH=$LOCAL_EXPERIMENT_PATH/output_data
+
+# add pkg to pipeline
+jarvis pipeline append data_stagein dest_data_path=$LOCAL_INPUT_PATH \
+user_data_paths=$INPUT_PATH/$RUN_SCRIPT \
+mkdir_datapaths=$LOCAL_INPUT_PATH,$LOCAL_OUTPUT_PATH
+
+jarvis pipeline append hermes_run --sleep=10 include=$LOCAL_EXPERIMENT_PATH
+
+jarvis pipeline append hermes_api +vfd
+
+jarvis pipeline append arldm runscript=run_mcs_tbpfradar3d_wrf flextrkr_path="`scspkg pkg src arldm`/PyFLEXTRKR" update_envar=true
 ```
+
+
 
 # 7. Pyflextrkr + Hermes on Multinodes Slurm (TODO)
 Steps are the same as [Pyflextrkr with Slurm](#3-pyflextrkr-With-slurm), but not working yet due to OSError.
