@@ -320,7 +320,7 @@ jarvis pipeline env build
 
 Create a Jarvis pipeline with Hermes, using the Hermes VFD interceptor.
 ```bash
-jarvis pipeline append hermes --sleep=10 include=$EXPERIMENT_PATH flush_mode=sync
+jarvis pipeline append hermes --sleep=10 include=$EXPERIMENT_PATH
 jarvis pipeline append hermes_api +vfd
 jarvis pipeline append arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM" update_envar=true
 ```
