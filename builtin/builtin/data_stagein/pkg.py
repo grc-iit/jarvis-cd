@@ -17,20 +17,25 @@ class DataStagein(Application):
         """
         Initialize paths
         """
-        self.mkdir_datapaths_list = []
-        self.user_data_list = []
         
         # Convert user_data_paths to list
-        user_data_paths = self.config['user_data_paths']
-        if user_data_paths is not None:
-            self.user_data_list = user_data_paths.split(',')
-            self.log(f"user_data_list: {self.user_data_list}")
+        try:
+            user_data_paths = self.config['user_data_paths']
+            if user_data_paths is not None:
+                self.user_data_list = user_data_paths.split(',')
+                self.log(f"user_data_list: {self.user_data_list}")
+        except KeyError:
+            self.user_data_list = []
         
-        # Convert mkdir_datapaths to list
-        mkdir_datapaths = self.config['mkdir_datapaths']
-        if mkdir_datapaths is not None:
-            self.mkdir_datapaths_list = mkdir_datapaths.split(',')
-            self.log(f"mkdir_datapaths_list: {self.mkdir_datapaths_list}")
+        try:
+            # Convert mkdir_datapaths to list
+            mkdir_datapaths = self.config['mkdir_datapaths']
+            if mkdir_datapaths is not None:
+                self.mkdir_datapaths_list = mkdir_datapaths.split(',')
+                self.log(f"mkdir_datapaths_list: {self.mkdir_datapaths_list}")
+        except KeyError:
+            self.mkdir_datapaths_list = []
+        
 
     def _configure_menu(self):
         """
