@@ -6,7 +6,7 @@ See the [official repo](https://github.com/xichenpan/ARLDM) for more detail.
 1. [Installation](#1-installation)
 2. [Running ARLDM](#2-running-arldm)
 3. [ARLDM with Slurm](#3-arldm-with-slurm)
-4. [ARLDM + Hermes](#4-arldm--hermes)
+4. [ARLDM + Hermes (TODO)](#4-arldm--hermes)
 5. [ARLDM on Node Local Storage](#5-arldm-on-node-local-storage)
 6. [ARLDM + Hermes on Node Local Storage](#6-arldm--hermes-on-node-local-storage)
 7. ARLDM + Hermes with Multinodes Slurm (TODO)
@@ -325,11 +325,21 @@ jarvis pipeline append hermes_api +vfd
 jarvis pipeline append arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM" update_envar=true
 ```
 
-## 4.6. Run the Experiment
+## 4.6. Run the Experiment (TODO)
 
 Run the experiment
 ```bash
 jarvis pipeline run
+```
+Currently the script runs with error when entering the training.
+
+Error log:
+```log
+Global seed set to 0
+/home/mtang11/downloads/hermes-1.0.0/hrun/include/hrun/api/manager.h:78 158882 LoadServerConfig Loading server configuration: /home/mtang11/jarvis-pipelines/dhm_arldm/hermes_run/hermes_server.yaml
+/tmp/tmp2a22oj34: line 3: 158882 Aborted                 (core dumped) python /mnt/common/mtang11/scripts/scspkg/packages/arldm/src/ARLDM/main.py
+
+ERROR conda.cli.main_run:execute(49): `conda run python /mnt/common/mtang11/scripts/scspkg/packages/arldm/src/ARLDM/main.py` failed. (See above for error)
 ```
 
 ## 4.7. Clean Data
