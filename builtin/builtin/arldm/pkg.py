@@ -4,10 +4,11 @@ Arldm is ....
 """
 from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
-import pathlib
+import os, pathlib
+import time
 import yaml
-import os
 from scspkg.pkg import Package
+import sys # for stdout, stderr
 
 class Arldm(Application):
     """
@@ -139,7 +140,13 @@ class Arldm(Application):
                 'msg': 'Pretrained model path',
                 'type': str,
                 'default': None,
-            }
+            },
+            {
+                'name': 'log_file',
+                'msg': 'File path to log stdout',
+                'type': str,
+                'default': None,
+            },
         ]
 
     def _configure_yaml(self):
@@ -148,7 +155,7 @@ class Arldm(Application):
         if "_template.yml" not in str(yaml_file):
             yaml_file = yaml_file.replace(".yml", "_template.yml")
         
-        self.log(f"ARLDM yaml_file: {yaml_file}")
+        self.log(f"ARLDM template.yml: {yaml_file}")
 
         with open(yaml_file, "r") as stream:
             try:
@@ -178,6 +185,7 @@ class Arldm(Application):
             except yaml.YAMLError as exc:
                 self.log(exc)
         self.config['config'] = new_yaml_file
+        
 
     def _configure(self, **kwargs):
         """
@@ -194,6 +202,15 @@ class Arldm(Application):
         
         self.setenv('HDF5_USE_FILE_LOCKING', "FALSE") # set HDF5 locking: FALSE, TRUE, BESTEFFORT
         self.setenv('HYDRA_FULL_ERROR', "1")
+        pretrain_model_path = os.getenv('PRETRAIN_MODEL_PATH')
+        if pretrain_model_path is not None:
+            if self.config['local_exp_dir'] is not None:
+                pretrain_model_path = self.config['local_exp_dir'] + "/model_large.pth"
+            self.log(f"PRETRAIN_MODEL_PATH: {pretrain_model_path}")
+            self.config['pretrain_model_path'] = pretrain_model_path
+            self.env['PRETRAIN_MODEL_PATH'] = pretrain_model_path
+        else:
+            raise Exception("Must set the pretrain_model_path")
         
         if self.config['experiment_path'] is not None:
             self.config['experiment_path'] = os.path.expandvars(self.config['experiment_path'])
@@ -233,7 +250,7 @@ class Arldm(Application):
         
         # set sample_output_dir
         self.config['hdf5_file'] = f'{self.config["experiment_path"]}/output_data/{self.config["runscript"]}_out.h5'
-        
+                
         self._configure_yaml()
         
 
@@ -290,7 +307,7 @@ class Arldm(Application):
         """
         Run the ARLDM training run
         """
-        self.log(f"ARLDM _train: {self.config['runscript']}")
+        self.log(f"ARLDM _train: dataset[{self.config['runscript']}]")
         
         # Move config file to arldm_path
         Exec(f"cp {self.config['config']} {self.config['arldm_path']}/config.yaml",
@@ -308,12 +325,19 @@ class Arldm(Application):
         
         conda_cmd = ' '.join(cmd)
         
-        self.log(f"Running ARLDM with command: {conda_cmd}")
+        if self.config['log_file'] is not None:
+            _stdout = self.config['log_file']
+        else:
+            _stdout = self.config['stdout']
         
         start = time.time()
         
         Exec(conda_cmd,
-             LocalExecInfo(env=self.mod_env,))
+             LocalExecInfo(env=self.mod_env,
+                           do_dbg=self.config['do_dbg'],
+                           dbg_port=self.config['dbg_port'],
+                           pipe_stdout=_stdout,
+                           ))
         
         end = time.time()
         diff = end - start
