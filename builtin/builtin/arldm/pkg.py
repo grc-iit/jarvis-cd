@@ -71,7 +71,7 @@ class Arldm(Application):
                 'name': 'flush_mem_cmd',
                 'msg': 'Command to flush the node memory',
                 'type': str,
-                'default': None,
+                'default': "ml user-scripts; sudo drop_caches", # for Ares
             },
             {
                 'name': 'arldm_path',
@@ -452,3 +452,7 @@ class Arldm(Application):
             Rm(output_h5)
         else:
             self.log(f'No file to remove: {output_h5}')
+        
+        # Clear cache
+        self.log(f'Clearing cache')
+        Exec(self.config['flush_mem_cmd'], LocalExecInfo(env=self.mod_env,))

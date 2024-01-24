@@ -59,7 +59,7 @@ class Pyflextrkr(Application):
                 'name': 'flush_mem_cmd',
                 'msg': 'Command to flush the node memory',
                 'type': str,
-                'default': None,
+                'default': "ml user-scripts; sudo drop_caches", # for Ares
             },
             {
                 'name': 'pyflextrkr_path',
@@ -395,10 +395,9 @@ class Pyflextrkr(Application):
         self.log(f'Removing {output_dir}')
         Rm(output_dir)
         
-        # clear node cache
-        self.log(f"Clearing node cache")
-        drop_cache_cmd = "module load user-scripts;drop_caches"
-        Exec(drop_cache_cmd)
+        # Clear cache
+        self.log(f'Clearing cache')
+        Exec(self.config['flush_mem_cmd'], LocalExecInfo(env=self.mod_env,))
         
         # output_dir = self.config['output'] + "*"
         # self.log(f'Removing {output_dir}')
