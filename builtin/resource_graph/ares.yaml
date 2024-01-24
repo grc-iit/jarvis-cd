@@ -51,15 +51,6 @@ net:
   speed: 42949672960
   type: FI_EP_RDM
   version: '114.10'
-- domain: iwo1
-  fabric: Ethernet-iWARP
-  host: localhost
-  protocol: FI_PROTO_RXM
-  provider: verbs;ofi_rxm
-  shared: true
-  speed: 42949672960
-  type: FI_EP_RDM
-  version: '114.10'
 - domain: eno1
   fabric: 172.20.0.0/16
   host: localhost
@@ -87,29 +78,11 @@ net:
   speed: 42949672960
   type: FI_EP_DGRAM
   version: '114.10'
-- domain: rocep47s0-dgram
-  fabric: IB-0xfe80000000000000
-  host: localhost
-  protocol: FI_PROTO_RXD
-  provider: verbs;ofi_rxd
-  shared: true
-  speed: 42949672960
-  type: FI_EP_RDM
-  version: '114.10'
 - domain: enp47s0np0
   fabric: 172.25.0.0/16
   host: localhost
   protocol: FI_PROTO_RXD
   provider: udp;ofi_rxd
-  shared: true
-  speed: 42949672960
-  type: FI_EP_RDM
-  version: '114.10'
-- domain: rocep47s0-xrc
-  fabric: IB-0xfe80000000000000
-  host: localhost
-  protocol: FI_PROTO_RXM
-  provider: verbs;ofi_rxm
   shared: true
   speed: 42949672960
   type: FI_EP_RDM
@@ -141,15 +114,6 @@ net:
   speed: 42949672960
   type: FI_EP_RDM
   version: '114.10'
-- domain: rocep47s0-dgram
-  fabric: IB-0xfe80000000000000
-  host: localhost
-  protocol: FI_PROTO_IB_UD
-  provider: verbs
-  shared: true
-  speed: 42949672960
-  type: FI_EP_DGRAM
-  version: '114.10'
 - domain: eno1
   fabric: 172.20.0.0/16
   host: localhost
@@ -177,15 +141,6 @@ net:
   speed: 42949672960
   type: FI_EP_DGRAM
   version: '114.10'
-- domain: iwo1
-  fabric: Ethernet-iWARP
-  host: localhost
-  protocol: FI_PROTO_IWARP
-  provider: verbs
-  shared: true
-  speed: 42949672960
-  type: FI_EP_MSG
-  version: '114.10'
 - domain: enp47s0np0
   fabric: 172.25.0.0/16
   host: localhost
@@ -200,24 +155,6 @@ net:
   host: localhost
   protocol: FI_PROTO_SOCK_TCP
   provider: tcp
-  shared: true
-  speed: 42949672960
-  type: FI_EP_MSG
-  version: '114.10'
-- domain: rocep47s0
-  fabric: IB-0xfe80000000000000
-  host: localhost
-  protocol: FI_PROTO_RXM
-  provider: verbs;ofi_rxm
-  shared: true
-  speed: 42949672960
-  type: FI_EP_RDM
-  version: '114.10'
-- domain: rocep47s0-xrc
-  fabric: IB-0xfe80000000000000
-  host: localhost
-  protocol: FI_PROTO_RDMA_CM_IB_XRC
-  provider: verbs
   shared: true
   speed: 42949672960
   type: FI_EP_MSG
@@ -240,9 +177,12 @@ net:
   speed: 42949672960
   type: FI_EP_RDM
   version: '114.10'
-- provider: verbs
-  fabric: IB-0xfe80000000000000
-  domain: rocep47s0
-  version: 119.0
-  type: FI_EP_MSG
-  protocol: FI_PROTO_RDMA_CM_IB_RC
+- domain: ''
+  fabric: 172.25.0.0/16
+  host: localhost
+  protocol: ''
+  provider: ofi+verbs;ofi_rxm
+  shared: true
+  speed: 42949672961
+  type: ''
+  version: '114.10'
