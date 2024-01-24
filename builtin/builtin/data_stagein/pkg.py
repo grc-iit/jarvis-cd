@@ -58,24 +58,12 @@ class DataStagein(Application):
                 'type': str,
                 'default': None,
             },
-            # {
-            #     'name': 'user_data_list',
-            #     'msg': 'List of paths of user datas to stage in',
-            #     'type': list,
-            #     'default': None,
-            # },
             {
                 'name': 'mkdir_datapaths',
                 'msg': 'List of paths tp create if it does not exist, delimitated by comma',
                 'type': str,
                 'default': None,
             },
-            # {
-            #     'name': 'mkdir_datapaths_list',
-            #     'msg': 'List of paths tp create if it does not exist',
-            #     'type': list,
-            #     'default': None,
-            # }
         ]
     
     def _print_required_params(self):
@@ -102,19 +90,6 @@ class DataStagein(Application):
         if self.config['mkdir_datapaths'] is None:
             self._print_required_params()
             raise ValueError("mkdir_datapaths is not set")
-        
-        
-        # # Convert user_data_paths to list
-        # user_data_paths = self.config['user_data_paths']
-        # if user_data_paths is not None:
-        #     self.user_data_list = user_data_paths.split(',')
-        #     self.log(f"user_data_list: {self.user_data_list}")
-        
-        # # Convert mkdir_datapaths to list
-        # mkdir_datapaths = self.config['mkdir_datapaths']
-        # if mkdir_datapaths is not None:
-        #     self.mkdir_datapaths_list = mkdir_datapaths.split(',')
-        #     self.log(f"mkdir_datapaths_list: {self.mkdir_datapaths_list}")
         
         self.config['dest_data_path'] = self.config['dest_data_path']
     
