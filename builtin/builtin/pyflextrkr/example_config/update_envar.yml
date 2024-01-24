@@ -1,4 +1,0 @@
-variables:
-  HDF5_USE_FILE_LOCKING: False
-  HDF5_DRIVER: "hdf5_hermes_vfd"
-  HDF5_PLUGIN_PATH: "/mnt/common/mtang11/scripts/scspkg/packages/hermes/lib64/../lib"
