@@ -1,14 +1,14 @@
 """
-This module provides classes and methods to launch the MmSort application.
-MmSort is ....
+This module provides classes and methods to launch the MmDbscan application.
+MmDbscan is ....
 """
-from jarvis_cd.basic.pkg import Application
+from jarvis_cd.basic.pkg import Application, Color
 from jarvis_util import *
 
 
-class MmSort(Application):
+class MmDbscan(Application):
     """
-    This class provides methods to launch the MmSort application.
+    This class provides methods to launch the MmDbscan application.
     """
     def _init(self):
         """
@@ -32,20 +32,20 @@ class MmSort(Application):
                 'default': None,
             },
             {
-                'name': 'memory',
+                'name': 'window_size',
                 'msg': 'The max amount of memory to consume',
                 'type': str,
                 'default': '1g',
             },
             {
                 'name': 'nprocs',
-                'msg': 'Number of processes to spawn',
+                'msg': 'The output path',
                 'type': int,
                 'default': 16,
             },
             {
                 'name': 'ppn',
-                'msg': 'Number of processes per node',
+                'msg': 'The output path',
                 'type': int,
                 'default': 16,
             },
@@ -54,7 +54,13 @@ class MmSort(Application):
                 'msg': 'The implementation to use',
                 'type': str,
                 'default': 'spark',
-                'choices': ['spark', 'mmap', 'mega']
+                'choices': ['spark', 'mmap', 'mega', 'pandas']
+            },
+            {
+                'name': 'dist',
+                'msg': 'The distance before splitting cluster',
+                'type': str,
+                'default': '6'
             },
             {
                 'name': 'scratch',
@@ -83,26 +89,24 @@ class MmSort(Application):
 
         :return: None
         """
-        mm_sort = ['mmap', 'mega']
-        if self.config['api'] == 'spark':
+        mm_kmeans = ['mmap', 'mega']
+        start = time.time()
+        if self.config['api'] == 'pandas':
             cmd = [
-                'spark-submit',
-                f'--driver-memory 2g',
-                f'--executor-memory {self.config["memory"]}',
-                f'--conf spark.speculation=false',
-                f'--conf spark.storage.replication=1',
-                f'--conf spark.local.dir={self.config["scratch"]}',
-                f'{self.env["MM_PATH"]}/scripts/mm_sort.py',
-                self.config['path']
+                'python3',
+                f'{self.env["MM_PATH"]}/scripts/pandas_dbscan.py',
+                self.config['path'],
+                self.config['dist']
             ]
             cmd = ' '.join(cmd)
             Exec(cmd, LocalExecInfo(env=self.env))
-        elif self.config['api'] in mm_sort:
+        elif self.config['api'] in mm_kmeans:
             cmd = [
-                'mm_sort',
+                'mm_dbscan',
                 self.config['api'],
                 self.config['path'],
-                self.config['memory'],
+                self.config['window_size'],
+                self.config['dist']
             ]
             cmd = ' '.join(cmd)
             Exec(cmd, MpiExecInfo(env=self.env,
@@ -110,6 +114,9 @@ class MmSort(Application):
                                   ppn=self.config['ppn'],
                                   do_dbg=self.config['do_dbg'],
                                   dbg_port=self.config['dbg_port']))
+        end = time.time()
+        diff = end - start
+        self.log(f'TIME: {diff} seconds', color=Color.GREEN)
 
     def stop(self):
         """
