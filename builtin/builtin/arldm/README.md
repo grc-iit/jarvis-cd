@@ -103,9 +103,9 @@ Setup experiment input and ouput paths:
 ```bash
 EXPERIMENT_PATH=~/experiments/arldm_run
 EXPERIMENT_INPUT_PATH=$EXPERIMENT_PATH/input_data
-OUTPUT_PATH=$EXPERIMENT_PATH/output_data
+EXPERIMENT_OUTPUT_PATH=$EXPERIMENT_PATH/output_data
 
-mkdir -p $EXPERIMENT_INPUT_PATH $OUTPUT_PATH $EXPERIMENT_INPUT_PATH/zippack
+mkdir -p $EXPERIMENT_INPUT_PATH $EXPERIMENT_OUTPUT_PATH $EXPERIMENT_INPUT_PATH/zippack
 ```
 
 ## 2.2. Download Pretrain Model
@@ -280,18 +280,15 @@ mkdir build
 cd build
 cmake ../ -DCMAKE_BUILD_TYPE="Release" \
     -DCMAKE_INSTALL_PREFIX=`scspkg pkg root hermes` \
-    -DHERMES_ENABLE_MPIIO_ADAPTER="ON" \
     -DHERMES_MPICH="ON" \
     -DHERMES_ENABLE_POSIX_ADAPTER="ON" \
-    -DHERMES_ENABLE_STDIO_ADAPTER="ON" \
-    -DHERMES_ENABLE_VFD="ON" \
-
 ```
 
 ## 4.1. Setup Environment
 
 Create the environment variables needed by Hermes + ARLDM
 ```bash
+RUN_SCRIPT=vistsis # can change to other datasets
 spack load hermes_shm
 module load hermes arldm
 ```
@@ -318,10 +315,10 @@ jarvis pipeline env build
 
 ## 4.5. Add pkgs to the Pipeline
 
-Create a Jarvis pipeline with Hermes, using the Hermes VFD interceptor.
+Create a Jarvis pipeline with Hermes, using the Hermes POSIX interceptor.
 ```bash
-jarvis pipeline append hermes_run --sleep=10 include=$EXPERIMENT_PATH
-jarvis pipeline append hermes_api +vfd
+jarvis pipeline append hermes_run --sleep=10 include=$EXPERIMENT_OUTPUT_PATH/${RUN_SCRIPT}_out.h5
+jarvis pipeline append hermes_api +posix
 jarvis pipeline append arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM" update_envar=true
 ```
 
@@ -333,14 +330,14 @@ jarvis pipeline run
 ```
 Currently the script runs with error when entering the training.
 
-Error log:
+<!-- Error when using Hermes VFD:
 ```log
 Global seed set to 0
 /home/mtang11/downloads/hermes-1.0.0/hrun/include/hrun/api/manager.h:78 158882 LoadServerConfig Loading server configuration: /home/mtang11/jarvis-pipelines/dhm_arldm/hermes_run/hermes_server.yaml
 /tmp/tmp2a22oj34: line 3: 158882 Aborted                 (core dumped) python /mnt/common/mtang11/scripts/scspkg/packages/arldm/src/ARLDM/main.py
 
 ERROR conda.cli.main_run:execute(49): `conda run python /mnt/common/mtang11/scripts/scspkg/packages/arldm/src/ARLDM/main.py` failed. (See above for error)
-```
+``` -->
 
 ## 4.7. Clean Data
 
@@ -453,9 +450,9 @@ jarvis pipeline append data_stagein dest_data_path=$LOCAL_INPUT_PATH \
 user_data_paths=$INPUT_PATH/vistdii,$INPUT_PATH/vistsis,$INPUT_PATH/visit_img,$PRETRAIN_MODEL_PATH \
 mkdir_datapaths=$LOCAL_INPUT_PATH,$LOCAL_OUTPUT_PATH
 
-jarvis pipeline append hermes_run --sleep=10 include=$LOCAL_EXPERIMENT_PATH
+jarvis pipeline append hermes_run --sleep=10 include=$LOCAL_OUTPUT_PATH/${RUN_SCRIPT}_out.h5
 
-jarvis pipeline append hermes_api +vfd
+jarvis pipeline append hermes_api +posix
 
 jarvis pipeline append arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM" update_envar=true local_exp_dir=$LOCAL_EXPERIMENT_PATH
 ```
