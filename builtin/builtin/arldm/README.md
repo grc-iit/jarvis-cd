@@ -6,10 +6,10 @@ See the [official repo](https://github.com/xichenpan/ARLDM) for more detail.
 1. [Installation](#1-installation)
 2. [Running ARLDM](#2-running-arldm)
 3. [ARLDM with Slurm](#3-arldm-with-slurm)
-4. [ARLDM + Hermes (TODO)](#4-arldm--hermes)
+4. [ARLDM + Hermes](#4-arldm--hermes)
 5. [ARLDM on Node Local Storage](#5-arldm-on-node-local-storage)
 6. [ARLDM + Hermes on Node Local Storage](#6-arldm--hermes-on-node-local-storage)
-7. ARLDM + Hermes with Multinodes Slurm (TODO)
+7. ARLDM + Hermes with Multinodes Slurm (Not supported)
 
 
 
