@@ -17,24 +17,24 @@ run_speed : True
 # Parallel processing set up
 # run_parallel: 1 (local cluster), 2 (Dask MPI)
 run_parallel: 1
-nprocesses : 4  # Number of processors to use if run_parallel=1
+nprocesses : 12  # Number of processors to use if run_parallel=1
 # dask_tmp_dir: '/tmp'  # Dask temporary directory if run_parallel=1
 dask_tmp_dir: '/tmp/pyflextrkr_test'  # Dask temporary directory if run_parallel=1
 timeout: 360  # [seconds] Dask timeout limit
 
 # Start/end date and time
 startdate: '20160801.0000'
-enddate: '20160801.0500' # 6 files, tested smallest for 9 stages
-# enddate: '20160801.1100' # 12 files
-# enddate: '20160801.2300' # 24 files
-# enddate: '20160802.1100' # 36 files
-# enddate: '20160802.2300' # 48 files
-# enddate: '20160803.2300' # 72 files
-# enddate: '20160804.2300' # 96 files
-# enddate: '20160806.2300' # 141 files
-# enddate: '20160810.0000' # 217 files
-# enddate: '20160810.2300' # 240 files
-# enddate: '20160910.0000' # 960 files
+# enddate: '20160801.0500' # 6 files ~204MB , tested smallest for 9 stages
+# enddate: '20160801.1100' # 12 files ~ 408MB
+enddate: '20160801.2300' # 24 files ~816MB
+# enddate: '20160802.1100' # 36 files ~ 884MB
+# enddate: '20160802.2300' # 48 files ~ 1.6GB
+# enddate: '20160803.2300' # 72 files ~ 2.4GB
+# enddate: '20160804.2300' # 96 files ~ 3GB
+# enddate: '20160806.2300' # 142 files ~ 4.7GB
+# enddate: '20160809.2300' # 216 files ~ 7.2GB
+# enddate: '20160810.2300' # 240 files ~ 8GB
+# enddate: '20160910.0000' # 960 files ~ 32GB
 
 # Specify tracking input data date/time string format
 # This is the preprocessed file that contains Tb & rainrate
