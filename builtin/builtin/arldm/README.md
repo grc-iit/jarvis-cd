@@ -86,7 +86,7 @@ scspkg env set arldm ARLDM_PATH=$ARLDM_PATH HDF5_USE_FILE_LOCKING=FALSE
 cd `scspkg pkg src arldm`/ARLDM
 
 YOUR_HDF5_DIR="`which h5cc |sed 's/.\{9\}$//'`"
-conda env create -f arldm_conda.yml
+conda env create -f arldm_conda.yaml
 conda activate arldm
 pip uninstall h5py;
 HDF5_MPI="OFF" HDF5_DIR=${YOUR_HDF5_DIR} pip install --no-cache-dir --no-binary=h5py h5py==3.8.0
