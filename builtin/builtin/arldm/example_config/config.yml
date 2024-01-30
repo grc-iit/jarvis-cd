@@ -1,0 +1,67 @@
+batch_size: 1
+calculate_fid: true
+ckpt_dir: /mnt/nvme/mtang11/arldm_run/save_ckpt
+dataset: vistsis
+flintstones:
+  blip_embedding_tokens: 30525
+  clip_embedding_tokens: 49412
+  hdf5_file: FLINTSTONES_HDF5
+  max_length: 91
+  new_tokens:
+  - fred
+  - barney
+  - wilma
+  - betty
+  - pebbles
+  - dino
+  - slate
+freeze_blip: true
+freeze_clip: true
+freeze_resnet: true
+gpu_ids: []
+guidance_scale: 6
+hydra:
+  output_subdir: null
+  run:
+    dir: .
+hydra/hydra_logging: disabled
+hydra/job_logging: disabled
+init_lr: 1e-5
+max_epochs: 50
+mode: train
+num_cpu_cores: -1
+num_inference_steps: 250
+num_workers: 1
+pororo:
+  blip_embedding_tokens: 30530
+  clip_embedding_tokens: 49416
+  hdf5_file: PORORO_HDF5
+  max_length: 85
+  new_tokens:
+  - pororo
+  - loopy
+  - eddy
+  - harry
+  - poby
+  - tongtong
+  - crong
+  - rody
+  - petty
+run_name: vistsis_train
+sample_output_dir: /mnt/nvme/mtang11/arldm_run/output_data/sample_out_vistsis_train
+scheduler: ddim
+seed: 0
+task: continuation
+test_model_file: null
+train_model_file: null
+vistdii:
+  blip_embedding_tokens: 30524
+  clip_embedding_tokens: 49408
+  hdf5_file: VISTDII_HDF5
+  max_length: 65
+vistsis:
+  blip_embedding_tokens: 30524
+  clip_embedding_tokens: 49408
+  hdf5_file: /mnt/nvme/mtang11/arldm_run/output_data/vistsis_out.h5
+  max_length: 100
+warmup_epochs: 1
