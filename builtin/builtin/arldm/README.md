@@ -115,8 +115,8 @@ cd $EXPERIMENT_PATH
 conda activate arldm
 wget https://storage.googleapis.com/sfr-vision-language-research/BLIP/models/model_large.pth
 export PRETRAIN_MODEL_PATH=`realpath model_large.pth`
-conda deactivate
 scspkg env set arldm PRETRAIN_MODEL_PATH=$PRETRAIN_MODEL_PATH
+conda deactivate
 ```
 
 ## 2.3. Download Input Data
