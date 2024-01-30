@@ -124,7 +124,7 @@ You should prepare at least one dataset to run the script. There are 4 available
 
 ### 2.3.1 VISTSIS and VISTDII
 
-* Original VIST-SIS (~23MB) url links [here](https://visionandlanguage.net/VIST/json_files/story-in-sequence/SIS-with-labels.tar.gz)
+1. Download VISTSIS, original VIST-SIS (~23MB) url links [here](https://visionandlanguage.net/VIST/json_files/story-in-sequence/SIS-with-labels.tar.gz)
 ```shell
 cd $EXPERIMENT_INPUT_PATH
 wget https://visionandlanguage.net/VIST/json_files/story-in-sequence/SIS-with-labels.tar.gz
@@ -134,7 +134,8 @@ mv sis vistsis # ~ 172M
 # save downloaded package to different directory
 mv SIS-with-labels.tar.gz $EXPERIMENT_INPUT_PATH/zippack
 ```
-* Original VIST-DII (~18MB) url links [here](https://visionandlanguage.net/VIST/json_files/description-in-isolation/DII-with-labels.tar.gz)
+
+2. Download VISTSIS, original VIST-DII (~18MB) url links [here](https://visionandlanguage.net/VIST/json_files/description-in-isolation/DII-with-labels.tar.gz)
 ```shell
 cd $EXPERIMENT_INPUT_PATH
 wget https://visionandlanguage.net/VIST/json_files/description-in-isolation/DII-with-labels.tar.gz
@@ -147,7 +148,8 @@ mv DII-with-labels.tar.gz $EXPERIMENT_INPUT_PATH/zippack
 Download the VIST images by running below command (this will take over 2 hours on Ares)
 ```shell
 cd $ARLDM_PATH
-python data_script/vist_img_download.py --json_dir $EXPERIMENT_PATH/input_data/vistdii --img_dir $EXPERIMENT_PATH/input_data/visit_img --num_process 12
+conda activate arldm
+python data_script/vist_img_download.py --json_dir $EXPERIMENT_INPUT_PATH/vistdii --img_dir $EXPERIMENT_INPUT_PATH/visit_img --num_process 12
 ```
 
 ### 2.3.3 flintstones 
