@@ -242,7 +242,7 @@ class HermesRun(Service):
                         for dev_type, count in self.config['devices']]
             dev_df = sdf.concat(dev_list)
         if len(dev_df) == 0:
-            raise Exception('Hermes needs at least on storage device')
+            raise Exception('Hermes needs at least one storage device')
         devs = dev_df.rows
         for i, dev in enumerate(devs):
             dev_type = dev['dev_type']
