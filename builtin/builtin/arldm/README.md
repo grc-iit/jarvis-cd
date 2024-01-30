@@ -145,7 +145,8 @@ mv dii vistdii # ~ 125M
 # save downloaded package to different directory
 mv DII-with-labels.tar.gz $EXPERIMENT_INPUT_PATH/zippack
 ```
-Download the VIST images by running below command (this will take over 2 hours on Ares)
+
+3. Download the VIST images by running below command (this will take over 2 hours on Ares)
 ```shell
 cd $ARLDM_PATH
 conda activate arldm
