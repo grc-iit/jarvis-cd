@@ -273,6 +273,7 @@ spack install hermes_shm ^hdf5@1.14.0+hl~mpi ^mpich@3.4.3
 ```
 
 ### 4.0.3 Install Hermes with scspkg
+1. Option 1: build with POSIX adaptor
 ```bash
 spack load hermes_shm
 scspkg create hermes
@@ -285,6 +286,24 @@ cmake ../ -DCMAKE_BUILD_TYPE="Release" \
     -DCMAKE_INSTALL_PREFIX=`scspkg pkg root hermes` \
     -DHERMES_MPICH="ON" \
     -DHERMES_ENABLE_POSIX_ADAPTER="ON" \
+```
+
+2. Option 2: build with VFD adaptor (This is not working yet)
+```bash
+spack load hermes_shm
+scspkg create hermes
+cd `scspkg pkg src hermes`
+git clone https://github.com/HDFGroup/hermes
+cd hermes
+mkdir build
+cd build
+cmake ../ -DCMAKE_BUILD_TYPE="Release" \
+    -DCMAKE_INSTALL_PREFIX=`scspkg pkg root hermes` \
+    -DHERMES_ENABLE_MPIIO_ADAPTER="ON" \
+    -DHERMES_MPICH="ON" \
+    -DHERMES_ENABLE_POSIX_ADAPTER="ON" \
+    -DHERMES_ENABLE_STDIO_ADAPTER="ON" \
+    -DHERMES_ENABLE_VFD="ON" \
 ```
 
 ## 4.1. Setup Environment
