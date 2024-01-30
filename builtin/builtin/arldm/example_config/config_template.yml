@@ -1,7 +1,6 @@
 # device
 mode: MODE  # train sample
-# gpu_ids: [ 0, 1, 2, 3 ]  # gpu ids
-gpu_ids: []  # gpu ids
+gpu_ids: []  # gpu ids, 4 GPU uses [ 0, 1, 2, 3 ]
 batch_size: 1  # batch size each item denotes one story
 num_workers: WORKERS  # number of workers
 num_cpu_cores: -1  # -1 number of cpu cores
@@ -18,9 +17,9 @@ init_lr: 1e-5  # initial learning rate
 warmup_epochs: 1  # warmup epochs
 max_epochs: 50  # max epochs
 train_model_file:  # model file for resume, none for train from scratch
-freeze_clip: False  # whether to freeze clip
-freeze_blip: False  # whether to freeze blip
-freeze_resnet: False  # whether to freeze resnet
+freeze_clip: True  # whether to freeze clip, True to reduce vram usage
+freeze_blip: True  # whether to freeze blip, True to reduce vram usage
+freeze_resnet: True  # whether to freeze resnet, True to reduce vram usage
 
 # sample
 test_model_file:  # model file for test
@@ -48,11 +47,11 @@ flintstones:
 vistsis:
   hdf5_file: VISTSIS_HDF5
   max_length: 100
-  clip_embedding_tokens: 4940
+  clip_embedding_tokens: 49408
   blip_embedding_tokens: 30524
 
 vistdii:
-  hdf5_file: VISTSIS_HDF5
+  hdf5_file: VISTDII_HDF5
   max_length: 65
   clip_embedding_tokens: 49408
   blip_embedding_tokens: 30524
