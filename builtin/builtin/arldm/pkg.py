@@ -195,6 +195,13 @@ class Arldm(Application):
                 self.env['PRETRAIN_MODEL_PATH'] = pretrain_model_path
             else:
                 raise Exception("Must set the pretrain_model_path")
+        else:
+            if self.config['local_exp_dir'] is None:
+                pretrain_model_path = os.getenv('PRETRAIN_MODEL_PATH')
+                if pretrain_model_path is not None:
+                    self.log(f"PRETRAIN_MODEL_PATH: {pretrain_model_path}")
+                    self.config['pretrain_model_path'] = pretrain_model_path
+                    self.env['PRETRAIN_MODEL_PATH'] = pretrain_model_path
         
         experiment_input_path = os.getenv('EXPERIMENT_INPUT_PATH')
         if experiment_input_path is None:
