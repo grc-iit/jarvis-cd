@@ -74,10 +74,10 @@ class Pyflextrkr(Application):
                 'default': None,
             },
             {
-                'name': 'experiment_path',
+                'name': 'experiment_input_path',
                 'msg': 'Absolute path to the experiment run input and output files',
                 'type': str,
-                'default': '${HOME}/experiments/flextrkr_runs',
+                'default': None,
             },
             {
                 'name': 'run_parallel',
@@ -119,9 +119,11 @@ class Pyflextrkr(Application):
         :return: None
         """
         
-        if self.config['experiment_path'] is not None:
-            self.config['experiment_path'] = os.path.expandvars(self.config['experiment_path'])
-            self.env['EXPERIMENT_PATH'] = self.config['experiment_path']
+        experiment_input_path = os.getenv('EXPERIMENT_INPUT_PATH')
+        if experiment_input_path is None:
+            raise Exception("Must set the experiment_input_path")
+        else:
+            self.config['experiment_input_path'] = experiment_input_path
         
         # update config file everytime
         self.config['config'] = f"{self.pkg_dir}/example_config/{self.config['runscript']}_template.yml"
@@ -187,12 +189,12 @@ class Pyflextrkr(Application):
         
         with open(yaml_file, "r") as stream:
             
-            experiment_path = self.config['experiment_path']
+            experiment_input_path = self.config['experiment_input_path']
             if self.config['local_exp_dir'] is not None:
-                experiment_path = self.config['local_exp_dir']
+                experiment_input_path = self.config['local_exp_dir']
             
-            input_path = f"{experiment_path}/input_data/{self.config['runscript']}/"
-            output_path = f"{experiment_path}/output_data/{self.config['runscript']}/"
+            input_path = f"{experiment_input_path}/{self.config['runscript']}/"
+            output_path = f"{experiment_input_path}/output_data/{self.config['runscript']}/"
             
             pathlib.Path(input_path).mkdir(parents=True, exist_ok=True)
             pathlib.Path(output_path).mkdir(parents=True, exist_ok=True)
@@ -267,7 +269,7 @@ class Pyflextrkr(Application):
                 Exec(cmd, LocalExecInfo(env=self.mod_env,))
             
         except Exception as e:
-            self._unset_vfd_vars()
+            self._unset_vfd_vars(env_vars_toset)
         
     
     def _construct_cmd(self):
@@ -385,9 +387,9 @@ class Pyflextrkr(Application):
 
         :return: None
         """
-        # self.log(f"Manual Exec Required: Please clean up files in {self.config['experiment_path']}")
+        # self.log(f"Manual Exec Required: Please clean up files in {self.config['experiment_input_path']}")
         
-        output_dir = self.config['experiment_path'] + f"/output_data/{self.config['runscript']}"
+        output_dir = self.config['experiment_input_path'] + f"/output_data/{self.config['runscript']}"
         if self.config['local_exp_dir'] is not None:
             output_dir = self.config['local_exp_dir'] + f"/output_data/{self.config['runscript']}"
         
