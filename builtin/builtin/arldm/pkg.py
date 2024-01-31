@@ -94,28 +94,22 @@ class Arldm(Application):
                 'choices': [0, 1, 2],
             },
             {
-                'name': 'experiment_path',
-                'msg': 'Absolute path to the experiment run input and output files',
+                'name': 'experiment_input_path',
+                'msg': 'Absolute path to the experiment where you put all data',
                 'type': str,
-                'default': '${HOME}/experiments/arldm_run',
-            },
-            {
-                'name': 'ckpt_dir',
-                'msg': 'Directory to save checkpoints',
-                'type': str,
-                'default': None, #'${HOME}/experiments/arldm_run/save_ckpt',
+                'default': None,
             },
             {
                 'name': 'sample_output_dir',
                 'msg': 'Directory to save samples',
                 'type': str,
-                'default': None, #'${HOME}/experiments/arldm_run/output_data/sample_out_{runscript}_{mode}',
+                'default': None, 
             },
             {
                 'name': 'hdf5_file',
                 'msg': 'HDF5 file to save samples',
                 'type': str,
-                'default': None, #'${HOME}/experiments/arldm_run/output_data/{runscript}.h5',
+                'default': None,
             },
             {
                 'name': 'prep_hdf5',
@@ -156,12 +150,12 @@ class Arldm(Application):
                 config_vars['run_name'] = f"{self.config['runscript']}_{self.config['mode']}"
                 config_vars['dataset'] = run_test
 
-                experiment_path = self.config['experiment_path']
+                experiment_input_path = self.config['experiment_input_path']
                 if self.config['local_exp_dir'] is not None:
-                    experiment_path = self.config['local_exp_dir']
-                    self.config['ckpt_dir'] = experiment_path + "/save_ckpt"
-                    self.config['sample_output_dir'] = experiment_path + f"/output_data/sample_out_{self.config['runscript']}_{self.config['mode']}"
-                    self.config['hdf5_file'] = f"{experiment_path}/output_data/{self.config['runscript']}_out.h5"
+                    experiment_input_path = self.config['local_exp_dir']
+                    self.config['ckpt_dir'] = experiment_input_path + "/save_ckpt"
+                    self.config['sample_output_dir'] = experiment_input_path + f"/sample_out_{self.config['runscript']}_{self.config['mode']}"
+                    self.config['hdf5_file'] = f"{experiment_input_path}/{self.config['runscript']}_out.h5"
 
                 config_vars['ckpt_dir'] = self.config['ckpt_dir']
                 config_vars['sample_output_dir'] = self.config['sample_output_dir']
@@ -202,10 +196,11 @@ class Arldm(Application):
             else:
                 raise Exception("Must set the pretrain_model_path")
         
-        if self.config['experiment_path'] is not None:
-            self.config['experiment_path'] = os.path.expandvars(self.config['experiment_path'])
-            # self.env['EXPERIMENT_PATH'] = self.config['experiment_path']
-            self.setenv('EXPERIMENT_PATH', self.config['experiment_path'])
+        experiment_input_path = os.getenv('EXPERIMENT_INPUT_PATH')
+        if experiment_input_path is None:
+            raise Exception("Must set the experiment_input_path")
+        else:
+            self.config['experiment_input_path'] = experiment_input_path
         
         if self.config['conda_env'] is None:
             raise Exception("Must set the conda environment for running ARLDM")
@@ -227,19 +222,19 @@ class Arldm(Application):
             if not pathlib.Path(self.config['arldm_path']).exists():
                 raise Exception(f"`'arldm_path'` does not exist: {self.config['arldm_path']}")
         
-        # check and make -p experiment_path
-        pathlib.Path(self.config['experiment_path']).mkdir(parents=True, exist_ok=True)
+        # check and make -p experiment_input_path
+        pathlib.Path(self.config['experiment_input_path']).mkdir(parents=True, exist_ok=True)
         
         # set ckpt_dir
-        self.config['ckpt_dir'] = f'{self.config["experiment_path"]}/save_ckpt'
+        self.config['ckpt_dir'] = f'{self.config["experiment_input_path"]}/save_ckpt'
         pathlib.Path(self.config['ckpt_dir']).mkdir(parents=True, exist_ok=True)
         
         # set sample_output_dir
-        self.config['sample_output_dir'] = f'{self.config["experiment_path"]}/output_data/sample_out_{self.config["runscript"]}_{self.config["mode"]}'
+        self.config['sample_output_dir'] = f'{self.config["experiment_input_path"]}/sample_out_{self.config["runscript"]}_{self.config["mode"]}'
         pathlib.Path(self.config['sample_output_dir']).mkdir(parents=True, exist_ok=True)
         
         # set sample_output_dir
-        self.config['hdf5_file'] = f'{self.config["experiment_path"]}/output_data/{self.config["runscript"]}_out.h5'
+        self.config['hdf5_file'] = f'{self.config["experiment_input_path"]}/{self.config["runscript"]}_out.h5'
                 
         self._configure_yaml()
         
@@ -248,11 +243,11 @@ class Arldm(Application):
         """
         Prepare the HDF5 file for the ARLDM run
         """
-        experiment_path = self.config['experiment_path'] + "/input_data"
+        experiment_input_path = self.config['experiment_input_path']
         if self.config['local_exp_dir'] is not None:
-            experiment_path = self.config['local_exp_dir'] + "/input_data"
+            experiment_input_path = self.config['local_exp_dir']
 
-        self.log(f"ARLDM _prep_hdf5_file input from {experiment_path} to {self.config['hdf5_file']}")
+        self.log(f"ARLDM _prep_hdf5_file input from {experiment_input_path} to {self.config['hdf5_file']}")
         
         cmd = [
             f"cd {self.config['arldm_path']}; echo Executing from directory `pwd`;",
@@ -262,18 +257,18 @@ class Arldm(Application):
 
         if self.config['runscript'] == 'pororo':
             cmd.append(f'{self.config["arldm_path"]}/data_script/pororo_hdf5.py')
-            cmd.append(f'--data_dir {experiment_path}/pororo')
+            cmd.append(f'--data_dir {experiment_input_path}/pororo')
             cmd.append(f'--save_path {self.config["hdf5_file"]}')
         elif self.config['runscript'] == 'flintstones':
             cmd.append(f'{self.config["arldm_path"]}/data_script/flintstones_hdf5.py')
-            cmd.append(f'--data_dir {experiment_path}/flintstones')
+            cmd.append(f'--data_dir {experiment_input_path}/flintstones')
             cmd.append(f'--save_path {self.config["hdf5_file"]}')
         elif self.config['runscript'] == 'vistsis' or self.config['runscript'] == 'vistdii':
             cmd.append(f'{self.config["arldm_path"]}/data_script/vist_hdf5.py')
-            # experiment_path = f'{experiment_path}/{self.config["runscript"]}'
-            cmd.append(f'--sis_json_dir {experiment_path}/vistsis')
-            cmd.append(f'--dii_json_dir {experiment_path}/vistdii')
-            cmd.append(f'--img_dir {experiment_path}/visit_img')
+            # experiment_input_path = f'{experiment_input_path}/{self.config["runscript"]}'
+            cmd.append(f'--sis_json_dir {experiment_input_path}/vistsis')
+            cmd.append(f'--dii_json_dir {experiment_input_path}/vistdii')
+            cmd.append(f'--img_dir {experiment_input_path}/visit_img')
             cmd.append(f'--save_path {self.config["hdf5_file"]}')
         else:
             raise Exception("Must set the correct ARLDM script to run")
@@ -435,10 +430,10 @@ class Arldm(Application):
 
         :return: None
         """
-        output_h5 = self.config['experiment_path'] + f"/output_data/{self.config['runscript']}_out.h5"
-        output_dir = self.config['experiment_path'] + f"/output_data/sample_out_{self.config['runscript']}_{self.config['mode']}"
+        output_h5 = self.config['experiment_input_path'] + f"/{self.config['runscript']}_out.h5"
+        output_dir = self.config['experiment_input_path'] + f"/sample_out_{self.config['runscript']}_{self.config['mode']}"
         if self.config['local_exp_dir'] is not None:
-            output_dir = self.config['local_exp_dir'] + f"/output_data/sample_out_{self.config['runscript']}_{self.config['mode']}"
+            output_dir = self.config['local_exp_dir'] + f"/sample_out_{self.config['runscript']}_{self.config['mode']}"
         
         # recursive remove all files in output_data directory
         if os.path.exists(output_dir):
