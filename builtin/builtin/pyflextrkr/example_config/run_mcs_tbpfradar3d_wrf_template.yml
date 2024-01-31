@@ -23,9 +23,9 @@ timeout: 360  # [seconds] Dask timeout limit
 
 # Start/end date and time
 startdate: '20150506.0000'
-enddate: '20150506.1600' # smallest possible to run all processing steps
+enddate: '20150506.1600' # 17 files, each ~15-17 MB
 # enddate: '20150506.0800' # smallest possible to run all processing steps
-# enddate: '20150510.0000' # largest possible to run all processing steps
+# enddate: '20150510.0000' # 97 files, total 1.4GB
 
 # Specify tracking input data date/time string format
 # This is the preprocessed file that contains Tb & rainrate
