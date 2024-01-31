@@ -93,26 +93,28 @@ conda deactivate
 
 
 # 2. Running Pyflextrkr
-
+Example is using `TEST_NAME=run_mcs_tbpfradar3d_wrf` (only supported with dataset download).
 ## 2.1. Setup Environment
 Currently setup input path in a shared storage, below is a example on Ares cluster.
 ```bash
-EXPERIMENT_PATH=~/experiments/flextrkr_run # NFS
-INPUT_PATH=$EXPERIMENT_PATH/input_data/run_mcs_tbpfradar3d_wrf # NFS
-mkdir -p $INPUT_PATH
-OUTPUT_PATH=$EXPERIMENT_PATH/output_data
-mkdir -p $OUTPUT_PATH
+TEST_NAME=run_mcs_tbpfradar3d_wrf
+EXPERIMENT_PATH=~/experiments/pyflex_run # NFS
+
+export EXPERIMENT_INPUT_PATH=$EXPERIMENT_PATH/input_data # NFS
+scspkg env set pyflextrkr EXPERIMENT_INPUT_PATH=$EXPERIMENT_INPUT_PATH
+mkdir -p $EXPERIMENT_INPUT_PATH
 ```
 
 ## 2.2. Download Input Data
 Setup example input data `wrf_tbradar.tar.gz` and path.to `run_mcs_tbpfradar3d_wrf.tar.gz`
 ```bash
-wget https://portal.nersc.gov/project/m1867/PyFLEXTRKR/sample_data/tb_radar/wrf_tbradar.tar.gz -O ${INPUT_PATH}/run_mcs_tbpfradar3d_wrf.tar.gz
-
-tar -xvzf ${INPUT_PATH}/run_mcs_tbpfradar3d_wrf.tar.gz -C ${INPUT_PATH}
+cd $EXPERIMENT_INPUT_PATH
+wget https://portal.nersc.gov/project/m1867/PyFLEXTRKR/sample_data/tb_radar/wrf_tbradar.tar.gz -O $TEST_NAME.tar.gz
+mkdir $TEST_NAME
+tar -xvzf $TEST_NAME.tar.gz -C $TEST_NAME
 
 # Remove downloaded tar file
-rm -fv ${INPUT_PATH}/run_mcs_tbpfradar3d_wrf.tar.gz
+rm -rf $EXPERIMENT_INPUT_PATH/$TEST_NAME.tar.gz
 ```
 
 
@@ -153,7 +155,7 @@ module load pyflextrkr
 
 Store the current environment in the pipeline.
 ```bash
-jarvis pipeline env build
+jarvis pipeline env build +PYFLEXTRKR_PATH +EXPERIMENT_INPUT_PATH
 ```
 
 ## 2.6. Add pkgs to the Pipeline
@@ -161,18 +163,13 @@ jarvis pipeline env build
 
 Create a Jarvis pipeline with Pyflextrkr.
 ```bash
-jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
+jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf
 ```
 
-<!-- ```bash
-jarvis pipeline append pyflextrkr conda_env=flextrkr runscript=run_mcs_tbpfradar3d_wrf pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR"
-
-jarvis pkg configure pyflextrkr conda_env=flextrkr runscript=run_mcs_tbpfradar3d_wrf config=${HOME}/jarvis-cd/builtin/builtin/pyflextrkr/example_config/run_mcs_tbpfradar3d_wrf_template.yml
-``` -->
 
 ## 2.7. Run Experiment
 
-Run the experiment
+Run the experiment, output are generated in `$EXPERIMENT_INPUT_PATH/output_data`.
 ```bash
 jarvis pipeline run
 ```
@@ -265,7 +262,7 @@ jarvis pipeline create hermes_pyflextrkr_test
 
 Store the current environment in the pipeline.
 ```bash
-jarvis pipeline env build
+jarvis pipeline env build +PYFLEXTRKR_PATH
 ```
 
 ## 4.5. Add pkgs to the Pipeline
@@ -275,12 +272,12 @@ and pyflextrkr (must use `flush_mode=sync` to prevent [this error](#oserror-log)
 ```bash
 jarvis pipeline append hermes_run --sleep=10 include=$EXPERIMENT_PATH flush_mode=sync
 jarvis pipeline append hermes_api +vfd
-jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR" update_envar=true
+jarvis pipeline append pyflextrkr runscript=$TEST_NAME update_envar=true
 ```
 
 ## 4.6. Run the Experiment
 
-Run the experiment
+Run the experiment, output are generated in `$EXPERIMENT_INPUT_PATH/output_data`.
 ```bash
 jarvis pipeline run
 ```
@@ -299,15 +296,19 @@ For cluster that has node local storage, you can stagein data from shared storag
 
 ## 5.1 Setup Environment
 Currently setup DEFAULT input path in a shared storage, below is a example on Ares cluster using node local nvme.
-```bash
-RUN_SCRIPT=run_mcs_tbpfradar3d_wrf
-EXPERIMENT_PATH=~/experiments/flextrkr_run # NFS
-INPUT_PATH=$EXPERIMENT_PATH/input_data # NFS
-mkdir -p $INPUT_PATH
 
-LOCAL_EXPERIMENT_PATH=/mnt/nvme/$USER/flextrkr_run
+
+The shared storage path is same as before:
+```bash
+export TEST_NAME=run_mcs_tbpfradar3d_wrf
+EXPERIMENT_PATH=~/experiments/pyflex_run # NFS
+EXPERIMENT_INPUT_PATH=$EXPERIMENT_PATH/input_data # NFS
+mkdir -p $EXPERIMENT_INPUT_PATH
+```
+Setup the node local experiment paths:
+```bash
+LOCAL_EXPERIMENT_PATH=/mnt/nvme/$USER/pyflex_run
 LOCAL_INPUT_PATH=$LOCAL_EXPERIMENT_PATH/input_data
-LOCAL_OUTPUT_PATH=$LOCAL_EXPERIMENT_PATH/output_data
 ```
 
 ## 5.2. Download Input Data
@@ -334,25 +335,25 @@ module load pyflextrkr
 
 Store the current environment in the pipeline.
 ```bash
-jarvis pipeline env build
+jarvis pipeline env build +PYFLEXTRKR_PATH
 ```
 
 ## 5.6. Add pkgs to the Pipeline
 Add data_stagein to pipeline before pyflextrkr.
 ```bash 
 jarvis pipeline append data_stagein dest_data_path=$LOCAL_INPUT_PATH \
-user_data_paths=$INPUT_PATH/$RUN_SCRIPT \
-mkdir_datapaths=$LOCAL_INPUT_PATH,$LOCAL_OUTPUT_PATH
+user_data_paths=$EXPERIMENT_INPUT_PATH/$TEST_NAME \
+mkdir_datapaths=$LOCAL_INPUT_PATH
 ```
 
 Create a Jarvis pipeline with Pyflextrkr.
 ```bash
-jarvis pipeline append pyflextrkr runscript=run_mcs_tbpfradar3d_wrf pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR" local_exp_dir=$LOCAL_EXPERIMENT_PATH
+jarvis pipeline append pyflextrkr runscript=$TEST_NAME local_exp_dir=$LOCAL_INPUT_PATH
 ```
 
 ## 5.7. Run the Experiment
 
-Run the experiment
+Run the experiment, output are generated in `$LOCAL_INPUT_PATH/output_data`.
 ```bash
 jarvis pipeline run
 ```
@@ -370,25 +371,24 @@ jarvis pipeline clean
 Every step the same as [Pyflextrkr + Hermes](#4-pyflextrkr--hermes), except for when creating a Jarvis pipeline with Hermes, using the Hermes VFD interceptor:
 ```bash
 # Setup env
-RUN_SCRIPT=run_mcs_tbpfradar3d_wrf
-EXPERIMENT_PATH=~/experiments/flextrkr_run # NFS
+TEST_NAME=run_mcs_tbpfradar3d_wrf
+EXPERIMENT_PATH=~/experiments/pyflex_run # NFS
 INPUT_PATH=$EXPERIMENT_PATH/input_data # NFS
-mkdir -p $INPUT_PATH
+mkdir -p $EXPERIMENT_INPUT_PATH
 
-LOCAL_EXPERIMENT_PATH=/mnt/nvme/$USER/flextrkr_run
+LOCAL_EXPERIMENT_PATH=/mnt/nvme/$USER/pyflex_run
 LOCAL_INPUT_PATH=$LOCAL_EXPERIMENT_PATH/input_data
-LOCAL_OUTPUT_PATH=$LOCAL_EXPERIMENT_PATH/output_data
 
 # add pkg to pipeline
 jarvis pipeline append data_stagein dest_data_path=$LOCAL_INPUT_PATH \
-user_data_paths=$INPUT_PATH/$RUN_SCRIPT \
-mkdir_datapaths=$LOCAL_INPUT_PATH,$LOCAL_OUTPUT_PATH
+user_data_paths=$EXPERIMENT_INPUT_PATH/$TEST_NAME \
+mkdir_datapaths=$LOCAL_INPUT_PATH
 
 jarvis pipeline append hermes_run --sleep=10 include=$LOCAL_EXPERIMENT_PATH
 
 jarvis pipeline append hermes_api +vfd
 
-jarvis pipeline append pyflextrkr runscript=$RUN_SCRIPT pyflextrkr_path="`scspkg pkg src pyflextrkr`/PyFLEXTRKR" update_envar=true local_exp_dir=$LOCAL_EXPERIMENT_PATH
+jarvis pipeline append pyflextrkr runscript=$TEST_NAME update_envar=true local_exp_dir=$LOCAL_INPUT_PATH
 ```
 
 
@@ -404,7 +404,7 @@ free(): invalid size
 2024-01-03 18:49:07,944 - distributed.worker - WARNING - Compute Failed
 Key:       idclouds_tbpf-0bb7839d-ac6e-4e51-b309-ec2bc6667641
 Function:  execute_task
-args:      ((<function idclouds_tbpf at 0x7fce75d6da80>, '/home/mtang11/experiments/flextrkr_runs/input_data/run_mcs_tbpfradar3d_wrf/wrfout_rainrate_tb_zh_mh_2015-05-06_04:00:00.nc', (<class 'dict'>, [['ReflThresh_lowlevel_gap', 20.0], ['abs_ConvThres_aml', 45.0], ['absolutetb_threshs', [160, 330]], ['area_thresh', 36], ['background_Box', 12.0], ['clouddata_path', '/home/mtang11/experiments/flextrkr_runs/input_data/run_mcs_tbpfradar3d_wrf/'], ['clouddatasource', 'model'], ['cloudidmethod', 'label_grow'], ['cloudtb_cloud', 261.0], ['cloudtb_cold', 241.0], ['cloudtb_core', 225.0], ['cloudtb_warm', 261.0], ['col_peakedness_frac', 0.3], ['dask_tmp_dir', '/tmp/pyflextrkr_test'], ['databasename', 'wrfout_rainrate_tb_zh_mh_'], ['datatimeresolution', 1.0], ['dbz_lowlevel_asl', 2.0], ['dbz_thresh', 10], ['duration_range', [2, 300]], ['echotop_gap', 1], ['enddate', '20150506.1600'], ['etop25dBZ_Thresh', 10.0], ['feature_type', 'tb_pf_radar3d'], ['feature_varname', 'feature_number'], ['featuresize_varname',
+args:      ((<function idclouds_tbpf at 0x7fce75d6da80>, '/home/mtang11/experiments/pyflex_runs/input_data/run_mcs_tbpfradar3d_wrf/wrfout_rainrate_tb_zh_mh_2015-05-06_04:00:00.nc', (<class 'dict'>, [['ReflThresh_lowlevel_gap', 20.0], ['abs_ConvThres_aml', 45.0], ['absolutetb_threshs', [160, 330]], ['area_thresh', 36], ['background_Box', 12.0], ['clouddata_path', '/home/mtang11/experiments/pyflex_runs/input_data/run_mcs_tbpfradar3d_wrf/'], ['clouddatasource', 'model'], ['cloudidmethod', 'label_grow'], ['cloudtb_cloud', 261.0], ['cloudtb_cold', 241.0], ['cloudtb_core', 225.0], ['cloudtb_warm', 261.0], ['col_peakedness_frac', 0.3], ['dask_tmp_dir', '/tmp/pyflextrkr_test'], ['databasename', 'wrfout_rainrate_tb_zh_mh_'], ['datatimeresolution', 1.0], ['dbz_lowlevel_asl', 2.0], ['dbz_thresh', 10], ['duration_range', [2, 300]], ['echotop_gap', 1], ['enddate', '20150506.1600'], ['etop25dBZ_Thresh', 10.0], ['feature_type', 'tb_pf_radar3d'], ['feature_varname', 'feature_number'], ['featuresize_varname',
 kwargs:    {}
 Exception: "OSError('Unable to synchronously open file (file signature not found)')"
 
