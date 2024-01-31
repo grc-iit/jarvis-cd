@@ -102,10 +102,11 @@ Currently setup input path in a shared storage, below is a example on Ares clust
 Setup experiment input and ouput paths:
 ```bash
 EXPERIMENT_PATH=~/experiments/arldm_run
-EXPERIMENT_INPUT_PATH=$EXPERIMENT_PATH/input_data
-EXPERIMENT_OUTPUT_PATH=$EXPERIMENT_PATH/output_data
+export EXPERIMENT_INPUT_PATH=$EXPERIMENT_PATH/input_data
 
-mkdir -p $EXPERIMENT_INPUT_PATH $EXPERIMENT_OUTPUT_PATH $EXPERIMENT_INPUT_PATH/zippack
+scspkg env set arldm EXPERIMENT_INPUT_PATH=$EXPERIMENT_INPUT_PATH
+
+mkdir -p $EXPERIMENT_INPUT_PATH $EXPERIMENT_INPUT_PATH/zippack
 ```
 
 ## 2.2. Download Pretrain Model
@@ -217,25 +218,18 @@ Store the current environment in the pipeline.
 jarvis env build arldm \
 +EXPERIMENT_PATH +EXPERIMENT_INPUT_PATH +EXPERIMENT_OUTPUT_PATH \
 +ARLDM_PATH +PRETRAIN_MODEL_PATH
-
 jarvis pipeline env copy arldm
 ```
 
 ## 2.6. Add pkgs to the Pipeline
 Create a Jarvis pipeline with ARLDM.
 ```bash
-jarvis pipeline append arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM"
+jarvis pipeline append arldm runscript=vistsis
 ```
-
-<!-- ```bash
-jarvis pipeline append arldm conda_env=arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM"
-
-jarvis pkg configure arldm conda_env=arldm runscript=run_mcs_tbpfradar3d_wrf config=${HOME}/jarvis-cd/builtin/builtin/arldm/example_config/config_template.yml
-``` -->
 
 ## 2.7. Run Experiment
 
-Run the experiment
+Run the experiment, output are generated in `$EXPERIMENT_INPUT_PATH/output_data`.
 ```bash
 jarvis pipeline run
 ```
@@ -336,34 +330,24 @@ jarvis pipeline create hermes_arldm_test
 
 Store the current environment in the pipeline.
 ```bash
-jarvis pipeline env build
+jarvis pipeline env build +PRETRAIN_MODEL_PATH +EXPERIMENT_INPUT_PATH +ARLDM_PATH
 ```
 
 ## 4.5. Add pkgs to the Pipeline
 
 Create a Jarvis pipeline with Hermes, using the Hermes POSIX interceptor.
 ```bash
-jarvis pipeline append hermes_run --sleep=10 include=$EXPERIMENT_OUTPUT_PATH/${RUN_SCRIPT}_out.h5
+jarvis pipeline append hermes_run --sleep=10 include=$EXPERIMENT_INPUT_PATH/${RUN_SCRIPT}_out.h5
 jarvis pipeline append hermes_api +posix
-jarvis pipeline append arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM" update_envar=true
+jarvis pipeline append arldm runscript=vistsis update_envar=true
 ```
 
-## 4.6. Run the Experiment (TODO)
+## 4.6. Run the Experiment
 
-Run the experiment
+Run the experiment, output are generated in `$EXPERIMENT_INPUT_PATH/output_data`.
 ```bash
 jarvis pipeline run
 ```
-Currently the script runs with error when entering the training.
-
-<!-- Error when using Hermes VFD:
-```log
-Global seed set to 0
-/home/mtang11/downloads/hermes-1.0.0/hrun/include/hrun/api/manager.h:78 158882 LoadServerConfig Loading server configuration: /home/mtang11/jarvis-pipelines/dhm_arldm/hermes_run/hermes_server.yaml
-/tmp/tmp2a22oj34: line 3: 158882 Aborted                 (core dumped) python /mnt/common/mtang11/scripts/scspkg/packages/arldm/src/ARLDM/main.py
-
-ERROR conda.cli.main_run:execute(49): `conda run python /mnt/common/mtang11/scripts/scspkg/packages/arldm/src/ARLDM/main.py` failed. (See above for error)
-``` -->
 
 ## 4.7. Clean Data
 
@@ -382,12 +366,11 @@ Currently setup DEFAULT input path in a shared storage, below is a example on Ar
 ```bash
 RUN_SCRIPT=vistsis # can change to other datasets
 EXPERIMENT_PATH=~/experiments/arldm_run # NFS
-INPUT_PATH=$EXPERIMENT_PATH/input_data # NFS
+SHARED_INPUT_PATH=$EXPERIMENT_PATH/input_data # NFS
 cd $EXPERIMENT_PATH; export PRETRAIN_MODEL_PATH=`realpath model_large.pth`
 
 LOCAL_EXPERIMENT_PATH=/mnt/nvme/$USER/arldm_run
 LOCAL_INPUT_PATH=$LOCAL_EXPERIMENT_PATH/input_data
-LOCAL_OUTPUT_PATH=$LOCAL_EXPERIMENT_PATH/output_data
 ```
 
 ## 5.2. Download Pretrain Model and Input Data
@@ -414,7 +397,7 @@ module load arldm
 
 Store the current environment in the pipeline.
 ```bash
-jarvis pipeline env build
+jarvis pipeline env build +PRETRAIN_MODEL_PATH +EXPERIMENT_INPUT_PATH +ARLDM_PATH
 ```
 
 
@@ -423,27 +406,27 @@ Add data_stagein to pipeline before arldm.
 - For `RUN_SCRIPT=vistsis` you need to stage in three different input directories:
 ```bash 
 jarvis pipeline append data_stagein dest_data_path=$LOCAL_INPUT_PATH \
-user_data_paths=$INPUT_PATH/vistdii,$INPUT_PATH/vistsis,$INPUT_PATH/visit_img,$PRETRAIN_MODEL_PATH \
-mkdir_datapaths=$LOCAL_INPUT_PATH,$LOCAL_OUTPUT_PATH
+user_data_paths=$SHARED_INPUT_PATH/vistdii,$SHARED_INPUT_PATH/vistsis,$SHARED_INPUT_PATH/visit_img,$PRETRAIN_MODEL_PATH \
+mkdir_datapaths=$LOCAL_INPUT_PATH
 ```
 
 - For other `RUN_SCRIPT`, you only need to stagein one directory:
 ```bash 
 RUN_SCRIPT=pororo
 jarvis pipeline append data_stagein dest_data_path=$LOCAL_INPUT_PATH \
-user_data_paths=$INPUT_PATH/$RUN_SCRIPT \
-mkdir_datapaths=$LOCAL_INPUT_PATH,$LOCAL_OUTPUT_PATH
+user_data_paths=$SHARED_INPUT_PATH/$RUN_SCRIPT \
+mkdir_datapaths=$LOCAL_INPUT_PATH
 ```
 
 
 Create a Jarvis pipeline with ARLDM.
 ```bash
-jarvis pipeline append arldm runscript=$RUN_SCRIPT arldm_path="`scspkg pkg src arldm`/ARLDM" local_exp_dir=$LOCAL_EXPERIMENT_PATH
+jarvis pipeline append arldm runscript=$RUN_SCRIPT local_exp_dir=$LOCAL_INPUT_PATH
 ```
 
 ## 5.7. Run the Experiment
 
-Run the experiment
+Run the experiment, output are generated in `$LOCAL_INPUT_PATH/output_data`.
 ```bash
 jarvis pipeline run
 ```
@@ -464,23 +447,22 @@ Every step the same as [ARLDM + Hermes](#4-arldm-with-hermes), except for when c
 # Setup env
 RUN_SCRIPT=vistsis # can change to other datasets
 EXPERIMENT_PATH=~/experiments/arldm_run # NFS
-INPUT_PATH=$EXPERIMENT_PATH/input_data # NFS
+SHARED_INPUT_PATH=$EXPERIMENT_PATH/input_data # NFS
 cd $EXPERIMENT_PATH; export PRETRAIN_MODEL_PATH=`realpath model_large.pth`
 
 LOCAL_EXPERIMENT_PATH=/mnt/nvme/$USER/arldm_run
 LOCAL_INPUT_PATH=$LOCAL_EXPERIMENT_PATH/input_data
-LOCAL_OUTPUT_PATH=$LOCAL_EXPERIMENT_PATH/output_data
 
 # add pkg to pipeline
 jarvis pipeline append data_stagein dest_data_path=$LOCAL_INPUT_PATH \
-user_data_paths=$INPUT_PATH/vistdii,$INPUT_PATH/vistsis,$INPUT_PATH/visit_img,$PRETRAIN_MODEL_PATH \
-mkdir_datapaths=$LOCAL_INPUT_PATH,$LOCAL_OUTPUT_PATH
+user_data_paths=$SHARED_INPUT_PATH/vistdii,$SHARED_INPUT_PATH/vistsis,$SHARED_INPUT_PATH/visit_img,$PRETRAIN_MODEL_PATH \
+mkdir_datapaths=$LOCAL_INPUT_PATH
 
-jarvis pipeline append hermes_run --sleep=10 include=$LOCAL_OUTPUT_PATH/${RUN_SCRIPT}_out.h5
+jarvis pipeline append hermes_run --sleep=10 include=$LOCAL_INPUT_PATH/${RUN_SCRIPT}_out.h5
 
 jarvis pipeline append hermes_api +posix
 
-jarvis pipeline append arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM" update_envar=true local_exp_dir=$LOCAL_EXPERIMENT_PATH
+jarvis pipeline append arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM" update_envar=true local_exp_dir=$LOCAL_INPUT_PATH
 ```
 
 
