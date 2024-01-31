@@ -215,8 +215,7 @@ module load arldm
 
 Store the current environment in the pipeline.
 ```bash
-jarvis pipeline env build
-jarvis pipeline env scan +PRETRAIN_MODEL_PATH +EXPERIMENT_INPUT_PATH +ARLDM_PATH
+jarvis pipeline env build +PRETRAIN_MODEL_PATH +EXPERIMENT_INPUT_PATH +ARLDM_PATH
 ```
 
 ## 2.6. Add pkgs to the Pipeline
@@ -334,7 +333,7 @@ jarvis pipeline create hermes_arldm_test
 
 Store the current environment in the pipeline.
 ```bash
-jarvis pipeline env build
+jarvis pipeline env build +PRETRAIN_MODEL_PATH +EXPERIMENT_INPUT_PATH +ARLDM_PATH
 ```
 
 ## 4.5. Add pkgs to the Pipeline
@@ -411,7 +410,7 @@ module load arldm
 
 Store the current environment in the pipeline.
 ```bash
-jarvis pipeline env build
+jarvis pipeline env build +PRETRAIN_MODEL_PATH +EXPERIMENT_INPUT_PATH +ARLDM_PATH
 ```
 
 
