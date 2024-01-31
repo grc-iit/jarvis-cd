@@ -153,7 +153,7 @@ class Arldm(Application):
                 experiment_input_path = self.config['experiment_input_path']
                 if self.config['local_exp_dir'] is not None:
                     experiment_input_path = self.config['local_exp_dir']
-                    self.config['ckpt_dir'] = experiment_input_path + "/save_ckpt"
+                    self.config['ckpt_dir'] = experiment_input_path + f"/{self.config['runscript']}_save_ckpt"
                     self.config['sample_output_dir'] = experiment_input_path + f"/sample_out_{self.config['runscript']}_{self.config['mode']}"
                     self.config['hdf5_file'] = f"{experiment_input_path}/{self.config['runscript']}_out.h5"
 
@@ -226,7 +226,7 @@ class Arldm(Application):
         pathlib.Path(self.config['experiment_input_path']).mkdir(parents=True, exist_ok=True)
         
         # set ckpt_dir
-        self.config['ckpt_dir'] = f'{self.config["experiment_input_path"]}/save_ckpt'
+        self.config['ckpt_dir'] = f'{self.config["experiment_input_path"]}/{self.config["runscript"]}_save_ckpt'
         pathlib.Path(self.config['ckpt_dir']).mkdir(parents=True, exist_ok=True)
         
         # set sample_output_dir
@@ -247,7 +247,7 @@ class Arldm(Application):
         if self.config['local_exp_dir'] is not None:
             experiment_input_path = self.config['local_exp_dir']
 
-        self.log(f"ARLDM _prep_hdf5_file input from {experiment_input_path} to {self.config['hdf5_file']}")
+        self.log(f"ARLDM _prep_hdf5_file input from to {self.config['hdf5_file']}")
         
         cmd = [
             f"cd {self.config['arldm_path']}; echo Executing from directory `pwd`;",
