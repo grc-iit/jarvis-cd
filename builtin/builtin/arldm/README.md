@@ -221,18 +221,12 @@ jarvis pipeline env build +PRETRAIN_MODEL_PATH +EXPERIMENT_INPUT_PATH +ARLDM_PAT
 ## 2.6. Add pkgs to the Pipeline
 Create a Jarvis pipeline with ARLDM.
 ```bash
-jarvis pipeline append arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM"
+jarvis pipeline append arldm runscript=vistsis
 ```
-
-<!-- ```bash
-jarvis pipeline append arldm conda_env=arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM"
-
-jarvis pkg configure arldm conda_env=arldm runscript=run_mcs_tbpfradar3d_wrf config=${HOME}/jarvis-cd/builtin/builtin/arldm/example_config/config_template.yml
-``` -->
 
 ## 2.7. Run Experiment
 
-Run the experiment
+Run the experiment, output are generated in `$EXPERIMENT_INPUT_PATH/output_data`.
 ```bash
 jarvis pipeline run
 ```
@@ -342,25 +336,15 @@ Create a Jarvis pipeline with Hermes, using the Hermes POSIX interceptor.
 ```bash
 jarvis pipeline append hermes_run --sleep=10 include=$EXPERIMENT_INPUT_PATH/${RUN_SCRIPT}_out.h5
 jarvis pipeline append hermes_api +posix
-jarvis pipeline append arldm runscript=vistsis arldm_path="`scspkg pkg src arldm`/ARLDM" update_envar=true
+jarvis pipeline append arldm runscript=vistsis update_envar=true
 ```
 
-## 4.6. Run the Experiment (TODO)
+## 4.6. Run the Experiment
 
-Run the experiment
+Run the experiment, output are generated in `$EXPERIMENT_INPUT_PATH/output_data`.
 ```bash
 jarvis pipeline run
 ```
-Currently the script runs with error when entering the training.
-
-<!-- Error when using Hermes VFD:
-```log
-Global seed set to 0
-/home/mtang11/downloads/hermes-1.0.0/hrun/include/hrun/api/manager.h:78 158882 LoadServerConfig Loading server configuration: /home/mtang11/jarvis-pipelines/dhm_arldm/hermes_run/hermes_server.yaml
-/tmp/tmp2a22oj34: line 3: 158882 Aborted                 (core dumped) python /mnt/common/mtang11/scripts/scspkg/packages/arldm/src/ARLDM/main.py
-
-ERROR conda.cli.main_run:execute(49): `conda run python /mnt/common/mtang11/scripts/scspkg/packages/arldm/src/ARLDM/main.py` failed. (See above for error)
-``` -->
 
 ## 4.7. Clean Data
 
@@ -434,12 +418,12 @@ mkdir_datapaths=$LOCAL_INPUT_PATH
 
 Create a Jarvis pipeline with ARLDM.
 ```bash
-jarvis pipeline append arldm runscript=$RUN_SCRIPT arldm_path="`scspkg pkg src arldm`/ARLDM" local_exp_dir=$LOCAL_INPUT_PATH
+jarvis pipeline append arldm runscript=$RUN_SCRIPT local_exp_dir=$LOCAL_INPUT_PATH
 ```
 
 ## 5.7. Run the Experiment
 
-Run the experiment
+Run the experiment, output are generated in `$LOCAL_INPUT_PATH/output_data`.
 ```bash
 jarvis pipeline run
 ```

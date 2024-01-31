@@ -353,7 +353,7 @@ jarvis pipeline append pyflextrkr runscript=$TEST_NAME local_exp_dir=$LOCAL_INPU
 
 ## 5.7. Run the Experiment
 
-Run the experiment, output are generated in `$EXPERIMENT_INPUT_PATH/output_data`.
+Run the experiment, output are generated in `$LOCAL_INPUT_PATH/output_data`.
 ```bash
 jarvis pipeline run
 ```
