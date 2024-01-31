@@ -214,7 +214,11 @@ module load arldm
 
 Store the current environment in the pipeline.
 ```bash
-jarvis pipeline env build
+jarvis env build arldm \
++EXPERIMENT_PATH +EXPERIMENT_INPUT_PATH +EXPERIMENT_OUTPUT_PATH \
++ARLDM_PATH +PRETRAIN_MODEL_PATH
+
+jarvis pipeline env copy arldm
 ```
 
 ## 2.6. Add pkgs to the Pipeline
