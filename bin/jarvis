@@ -477,6 +477,7 @@ class JarvisArgs(ArgParse):
         self.add_menu('pipeline update', msg='Re-run configure on all pkgs '
                                              'in a pipeline')
 
+
         # jarvis pipeline append
         self.add_menu('pipeline append',
                       msg='Append a pkg to a pipeline',
@@ -599,9 +600,48 @@ class JarvisArgs(ArgParse):
                           "to track certain variables.",
                       keep_remainder=True)
 
-        # jarvis pipeline
+        # jarvis pipeline env path
+        self.add_menu('pipeline env path',
+                      msg='Get the path to the pipeline env file')
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'A unique name for this pipeline',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis pipeline env show
+        self.add_menu('pipeline env show',
+                      msg='View the jarvis env file')
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'A unique name for this pipeline',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis pkg
         self.add_menu('pkg',
                       msg='Tools to edit pkgs in a pipeline')
+
+        # jarvis pkg help
+        self.add_menu('pkg help',
+                      msg='View the help menu for a package')
+        self.add_args([
+            {
+                'name': 'pkg_type',
+                'msg': 'The type of pkg being added to the pipeline',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
 
         # jarvis pkg configure
         self.add_menu('pkg configure',
@@ -928,7 +968,7 @@ class JarvisArgs(ArgParse):
 
         # jarvis env destroy
         self.add_menu('env destroy',
-                      msg="Destroy a custom environment.")
+                      msg='Destroy a custom environment.')
         self.add_args([
             {
                 'name': 'env_name',
@@ -939,13 +979,39 @@ class JarvisArgs(ArgParse):
             },
         ])
 
+        # jarvis env path
+        self.add_menu('env path',
+                      msg='View the environment file\'s path')
+        self.add_args([
+            {
+                'name': 'env_name',
+                'msg': 'The name of the environment to show',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis env show
+        self.add_menu('env show',
+                      msg='View the environment file\'s output')
+        self.add_args([
+            {
+                'name': 'env_name',
+                'msg': 'The name of the environment to show',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
         # jarvis env list
         self.add_menu('env list',
-                      msg="List all custom environments.")
+                      msg='List all custom environments.')
 
         # jarvis pipeline env copy
         self.add_menu('pipeline env copy',
-                      msg="Copy and modify a custom environment.",
+                      msg='Copy and modify a custom environment.',
                       keep_remainder=True,
                       remainder_as_kv=True)
         self.add_args([
@@ -1085,6 +1151,12 @@ class JarvisArgs(ArgParse):
         kwargs.update(self.remainder_kv)
         Pipeline().build_static_env(kwargs['env_name'], kwargs)
 
+    def env_path(self):
+        print(Pipeline().get_static_env_path(self.kwargs['env_name']))
+
+    def env_show(self):
+        Pipeline().static_env_show(self.kwargs['env_name'])
+
     def env_destroy(self):
         Pipeline().destroy_static_env(self.kwargs['env_name'])
 
@@ -1160,6 +1232,16 @@ class JarvisArgs(ArgParse):
         pipeline_id = self.kwargs['pipeline_id']
         Pipeline().load(pipeline_id, with_config=False).reset()
         self.jarvis.save()
+
+    def pipeline_env_path(self):
+        pipeline_id = self.kwargs['pipeline_id']
+        pipeline = Pipeline().load(pipeline_id)
+        print(pipeline.env_path)
+
+    def pipeline_env_show(self):
+        pipeline_id = self.kwargs['pipeline_id']
+        pipeline = Pipeline().load(pipeline_id)
+        pipeline.env_show()
 
     def pipeline_destroy(self):
         pipeline_id = self.kwargs['pipeline_id']
@@ -1242,6 +1324,14 @@ class JarvisArgs(ArgParse):
 
     def pkg_remove(self):
         Pipeline().load().remove(self.kwargs['pkg_id']).save()
+
+    def pkg_help(self):
+        pkg_type = self.kwargs['pkg_type']
+        pkg = self.jarvis.construct_pkg(pkg_type)
+        menu = pkg.configure_menu()
+        args = PkgArgParse(args=[], menu=menu)
+        args.binary_name = pkg_type
+        args._print_help()
 
     def pkg_configure(self):
         pipeline = Pipeline().load()

@@ -14,6 +14,7 @@ from jarvis_util.jutil_manager import JutilManager
 from jarvis_util.shell.filesystem import Mkdir
 from jarvis_util.shell.pssh_exec import PsshExecInfo
 from enum import Enum
+import yaml
 import inspect
 import pathlib
 import shutil
@@ -336,6 +337,9 @@ class Pkg(ABC):
 
     def view_pkgs(self):
         print(self.to_string_pretty())
+
+    def env_show(self):
+        print(yaml.dump(self.env))
 
     def update_env(self, env, mod_env=None):
         """
@@ -840,6 +844,15 @@ class Pipeline(Pkg):
         config = YamlFile(path).load()
         return self.from_dict(config, do_configure)
 
+    def get_static_env_path(self, env_name):
+        """
+        Get the path to the static environment
+
+        :param env_name: The name of the environment
+        :return: str
+        """
+        return os.path.join(self.jarvis.env_dir, f'{env_name}.yaml')
+
     def copy_static_env(self, env_name, env_track_dict=None):
         """
         Copy a cached environment to this pipeline
@@ -849,10 +862,22 @@ class Pipeline(Pkg):
         to track the environment variable, which are the keys of the dict.
         :return: self
         """
-        static_env_path = os.path.join(self.jarvis.env_dir, f'{env_name}.yaml')
+        static_env_path = self.get_static_env_path(env_name)
         self.env = YamlFile(static_env_path).load()
         self.track_env(env_track_dict)
         self.update()
+        return self
+
+    def static_env_show(self, env_name):
+        """
+        View the contents of the static environment
+
+        :param env_name:  The name of the environment to show
+        :return: self
+        """
+        static_env_path = self.get_static_env_path(env_name)
+        env = YamlFile(static_env_path).load()
+        print(yaml.dump(env))
         return self
 
     def destroy_static_env(self, env_name):
@@ -862,7 +887,7 @@ class Pipeline(Pkg):
         :param env_name: The name of the environment to create
         :return: self
         """
-        static_env_path = os.path.join(self.jarvis.env_dir, f'{env_name}.yaml')
+        static_env_path = self.get_static_env_path(env_name)
         os.remove(static_env_path)
         return self
 
