@@ -97,6 +97,14 @@ conda deactivate
 
 # 2. Running ARLDM
 
+## 2.1.0 Internet Access
+Internet access is required when running this program for the first time, you will encounter below error:
+```log
+  File "/home/$USER/miniconda3/envs/arldm/lib/python3.8/site-packages/transformers/tokenization_utils_base.py", line 1761, in from_pretrained
+    raise EnvironmentError(
+OSError: Can't load tokenizer for 'runwayml/stable-diffusion-v1-5'. If you were trying to load it from 'https://huggingface.co/models', make sure you don't have a local directory with the same name. Otherwise, make sure 'runwayml/stable-diffusion-v1-5' is the correct path to a directory containing all relevant files for a CLIPTokenizer tokenizer.
+```
+
 ## 2.1. Setup Environment
 Currently setup input path in a shared storage, below is a example on Ares cluster.
 Setup experiment input and ouput paths:
