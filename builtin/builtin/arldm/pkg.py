@@ -312,7 +312,7 @@ class Arldm(Application):
         
         start = time.time()
 
-        self.jarvis.debug_local_exec = True
+        self.jutil.debug_local_exec = True
         Exec(conda_cmd,
              LocalExecInfo(env=self.mod_env,
                            do_dbg=self.config['do_dbg'],
@@ -320,7 +320,7 @@ class Arldm(Application):
                            pipe_stdout=self.config['stdout'],
                            pipe_stderr=self.config['stderr'],
                            ))
-        self.jarvis.debug_local_exec = False
+        self.jutil.debug_local_exec = False
         
         end = time.time()
         diff = end - start
