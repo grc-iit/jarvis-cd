@@ -34,5 +34,19 @@ make install
 
 # Usage
 
+Create darshan environment:
 ```bash
+module load darshan
+jarvis env build darshan
+```
+
+Create a pipeline:
+```bash
+jarvis pipeline append darshan log_dir=${HOME}/darshan_logs
+jarvis pipeline append ior
+```
+
+Run the pipeline:
+```bash
+jarvis pipeline run
 ```

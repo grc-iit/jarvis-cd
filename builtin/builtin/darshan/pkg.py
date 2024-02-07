@@ -52,7 +52,9 @@ class Darshan(Interceptor):
         self.env['PBS_JOBID'] = self.config['job_id']
         self.config['DARSHAN_LIB'] = self.find_library('darshan')
         if self.config['DARSHAN_LIB'] is None:
-            raise Exception('Could not find hermes_mpi')
+            raise Exception('Could not find darshan')
+        Mkdir(self.env['DARSHAN_LOG_DIR'],
+              PsshExecInfo(hostfile=self.jarvis.hostfile))
         print(f'Found libdarshan.so at {self.config["DARSHAN_LIB"]}')
 
     def modify_env(self):
