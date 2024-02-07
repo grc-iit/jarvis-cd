@@ -1,4 +1,5 @@
-CM1 is a simulation code.
+Darshan is an I/O profiling tool. This repo intercepts application I/O and
+dumps them into a log that can be parsed to collect metrics such as I/O time.
 
 # Dependencies
 
@@ -49,4 +50,11 @@ jarvis pipeline append ior
 Run the pipeline:
 ```bash
 jarvis pipeline run
+```
+
+# Analysis
+
+There are several ways to analyze the output of Darshan:
+```
+darshan-job-summary.pl ${HOME}/darshan_logs
 ```

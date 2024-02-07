@@ -82,7 +82,7 @@ cd `scspkg pkg src pyflextrkr`/PyFLEXTRKR
 
 YOUR_HDF5_DIR="`which h5cc |sed 's/.\{9\}$//'`"
 
-conda env create -f ares_flextrkr.yml
+conda env create -f ares_flextrkr.yml -n flextrkr
 conda activate flextrkr
 pip install -e .
 HDF5_MPI="OFF" HDF5_DIR=${YOUR_HDF5_DIR} pip install --no-cache-dir --no-binary=h5py h5py==3.8.0
@@ -155,7 +155,8 @@ module load pyflextrkr
 
 Store the current environment in the pipeline.
 ```bash
-jarvis pipeline env build +PYFLEXTRKR_PATH +EXPERIMENT_INPUT_PATH
+jarvis env build pyflextr +PYFLEXTRKR_PATH +EXPERIMENT_INPUT_PATH
+jarvis pipeline env copy pyflextr
 ```
 
 ## 2.6. Add pkgs to the Pipeline
