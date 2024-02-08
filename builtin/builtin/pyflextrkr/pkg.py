@@ -188,7 +188,13 @@ class Pyflextrkr(Application):
             input_path = f"{experiment_input_path}/{self.config['runscript']}/"
             output_path = f"{experiment_input_path}/output_data/{self.config['runscript']}/"
             
-            pathlib.Path(input_path).mkdir(parents=True, exist_ok=True)
+            # Check if input_path exists and has files
+            if pathlib.Path(input_path).exists() == False:
+                raise Exception(f"Input path {input_path} does not exist.")
+            if len(os.listdir(input_path)) == 0:
+                raise Exception(f"Input path {input_path} is empty.")
+            
+            # pathlib.Path(input_path).mkdir(parents=True, exist_ok=True) # this should be done in data stage_in or setup
             pathlib.Path(output_path).mkdir(parents=True, exist_ok=True)
             
             try:
