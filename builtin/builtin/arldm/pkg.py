@@ -28,7 +28,6 @@ class Arldm(Application):
 
         :return: List(dict)
         """
-        self.log(f"ARLDM _configure_menu")
         return [
             {
                 'name': 'conda_env',
@@ -49,8 +48,14 @@ class Arldm(Application):
                 'default': f'{self.pkg_dir}/example_config/update_envar.yml',
             },
             {
-                'name': 'update_envar',
-                'msg': 'Whether to update the conda environment variables (when used with custom VFD, e.g. Hermes)',
+                'name': 'with_hermes',
+                'msg': 'Whether it is used with Hermes (e.g. needs to update environment variables)',
+                'type': bool,
+                'default': False,
+            },
+            {
+                'name': 'with_dayu',
+                'msg': 'Whether it is used with DaYu (e.g. needs to update task files)',
                 'type': bool,
                 'default': False,
             },
@@ -192,7 +197,8 @@ class Arldm(Application):
                     pretrain_model_path = self.config['local_exp_dir'] + "/model_large.pth"
                 self.log(f"PRETRAIN_MODEL_PATH: {pretrain_model_path}")
                 self.config['pretrain_model_path'] = pretrain_model_path
-                self.env['PRETRAIN_MODEL_PATH'] = pretrain_model_path
+                # self.env['PRETRAIN_MODEL_PATH'] = pretrain_model_path
+                self.setenv('PRETRAIN_MODEL_PATH', pretrain_model_path)
             else:
                 raise Exception("Must set the pretrain_model_path")
         else:
@@ -201,7 +207,8 @@ class Arldm(Application):
                 if pretrain_model_path is not None:
                     self.log(f"PRETRAIN_MODEL_PATH: {pretrain_model_path}")
                     self.config['pretrain_model_path'] = pretrain_model_path
-                    self.env['PRETRAIN_MODEL_PATH'] = pretrain_model_path
+                    # self.env['PRETRAIN_MODEL_PATH'] = pretrain_model_path
+                    self.setenv('PRETRAIN_MODEL_PATH', pretrain_model_path)
         
         experiment_input_path = os.getenv('EXPERIMENT_INPUT_PATH')
         if experiment_input_path is None:
@@ -250,11 +257,14 @@ class Arldm(Application):
         """
         Prepare the HDF5 file for the ARLDM run
         """
+        if self.config['with_dayu'] == True:
+            self._set_curr_task_file("arldm_saveh5")
+        
+        self.log(f"ARLDM _prep_hdf5_file input from to {self.config['hdf5_file']}")
+        
         experiment_input_path = self.config['experiment_input_path']
         if self.config['local_exp_dir'] is not None:
             experiment_input_path = self.config['local_exp_dir']
-
-        self.log(f"ARLDM _prep_hdf5_file input from to {self.config['hdf5_file']}")
         
         cmd = [
             f"cd {self.config['arldm_path']}; echo Executing from directory `pwd`;",
@@ -299,6 +309,9 @@ class Arldm(Application):
         """
         Run the ARLDM training run
         """
+        if self.config['with_dayu'] == True:
+            self._set_curr_task_file("arldm_train")
+        
         self.log(f"ARLDM _train: dataset[{self.config['runscript']}]")
         
         # Move config file to arldm_path
@@ -341,18 +354,42 @@ class Arldm(Application):
         """
         self.log(f"ARLDM sampling run: not implemented yet")
 
+    def _set_curr_task_file(self,task):
+        
+        workflow_name = self.mod_env['WORKFLOW_NAME']
+        path_for_task_files = self.mod_env['PATH_FOR_TASK_FILES']
+        vfd_task_file = None
+        vol_task_file = None
+        
+        if workflow_name and path_for_task_files:
+            vfd_task_file = os.path.join(path_for_task_files, f"{workflow_name}_vfd.curr_task")
+            vol_task_file = os.path.join(path_for_task_files, f"{workflow_name}_vol.curr_task")
+            # Create file and parent file if it does not exist
+            pathlib.Path(vfd_task_file).mkdir(parents=True, exist_ok=True)
+            pathlib.Path(vol_task_file).mkdir(parents=True, exist_ok=True)
+            
+
+        # vfd_task_file = /tmp/$USER/pyflextrkr_vfd.curr_task
+        
+        if vfd_task_file and os.path.exists(vfd_task_file):
+            if os.path.isfile(vfd_task_file):
+                with open(vfd_task_file, "w") as file:
+                    file.write(task)
+                print(f"Overwrote: {vfd_task_file} with {task}")
+
+        if vol_task_file and os.path.exists(vol_task_file):
+            if os.path.isfile(vol_task_file):
+                with open(vol_task_file, "w") as file:
+                    file.write(task)
+                print(f"Overwrote: {vol_task_file} with {task}")
+        else:
+            print("Invalid or missing PATH_FOR_TASK_FILES environment variable.")    
+
     def _unset_vfd_vars(self,env_vars_toset):
-        cmd = [
-                'conda', 'env', 'config', 'vars', 'unset',
-        ]
+        cmd = ['conda', 'env', 'config', 'vars', 'unset',]
         
         for env_var in env_vars_toset:
             cmd.append(f'{env_var}')
-            # cmd = [
-            #     'conda', 'env', 'config', 'vars', 'unset',
-            #     f'{env_var}',
-            #     '-n', self.config['conda_env'],
-            # ]
         cmd.append('-n')
         cmd.append(self.config['conda_env'])
         
@@ -362,34 +399,33 @@ class Arldm(Application):
 
     def _set_env_vars(self):
         
-        env_vars_toset = ['HDF5_DRIVER', 'HDF5_PLUGIN_PATH', 
-                          'HERMES_ADAPTER_MODE', 'HERMES_CLIENT_CONF',
-                          'HERMES_CONF', 'HERMES_VFD', 'HERMES_POSIX'
-                          ]
+        # env_vars_toset = ['HDF5_DRIVER', 'HDF5_PLUGIN_PATH', 
+        #                   'HERMES_ADAPTER_MODE', 'HERMES_CLIENT_CONF',
+        #                   'HERMES_CONF', 'HERMES_VFD', 'HERMES_POSIX'
+        #                   ]
+        
+        self.log(f"ARLDM _set_env_vars")
+        
+        env_vars_toset = ['HERMES_ADAPTER_MODE', 'HERMES_CLIENT_CONF',
+                          'HERMES_CONF']
         
         # Unset all env_vars_toset first        
         self._unset_vfd_vars(env_vars_toset)
 
-        try:
-            # Get current environment variables
-            cmd = [ 'conda', 'env', 'config', 'vars', 'set']
-            for env_var in env_vars_toset:
-                env_var_val = self.env[env_var]
-                
-                if env_var_val:
-                    if env_var != 'HDF5_DRIVER': env_var_val = f'{env_var_val}:${env_var}'
-                
-                cmd.append(f'{env_var}={env_var_val}')
+        cmd = [ 'conda', 'env', 'config', 'vars', 'set']
+        for env_var in env_vars_toset:
+            env_var_val = self.env[env_var]
             
-            cmd.append('-n')
-            cmd.append(self.config['conda_env'])
-            cmd = ' '.join(cmd)
-            self.log(f"ARLDM _set_env_vars: {cmd}")
-            Exec(cmd, LocalExecInfo(env=self.mod_env,
-                                    ))
-            
-        except Exception as e:
-            self.log(f"ARLDM: {e}")
+            cmd.append(f'{env_var}={env_var_val}')
+        
+        if 'LD_PRELOAD' in self.mod_env:
+            cmd.append(f'LD_PRELOAD={self.mod_env["LD_PRELOAD"]}:$LD_PRELOAD')
+        
+        cmd.append('-n')
+        cmd.append(self.config['conda_env'])
+        cmd = ' '.join(cmd)
+        self.log(f"ARLDM _set_env_vars: {cmd}")
+        Exec(cmd, LocalExecInfo(env=self.mod_env,))
 
     def start(self):
         """
@@ -401,7 +437,7 @@ class Arldm(Application):
         
         self._configure_yaml()
         
-        if self.config['update_envar'] == True:
+        if self.config['with_hermes'] == True:
             self._set_env_vars()
         
         self.log(f"ARLDM start")
