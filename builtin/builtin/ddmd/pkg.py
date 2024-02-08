@@ -22,6 +22,7 @@ class Ddmd(Application):
         self.train = None
         self.prev_model_json = None
         self.inference = None
+        self.hermes_env_vars = ['HERMES_ADAPTER_MODE', 'HERMES_CLIENT_CONF', 'HERMES_CONF', 'LD_PRELOAD']
 
     def _configure_menu(self):
         """
@@ -129,8 +130,8 @@ class Ddmd(Application):
                 'default': False,
             },
             {
-                'name': 'update_envar',
-                'msg': 'Whether to update the conda environment variables (when used with custom VFD, e.g. Hermes)',
+                'name': 'with_hermes',
+                'msg': 'Whether it is used with Hermes (e.g. needs to update environment variables)',
                 'type': bool,
                 'default': False,
             },
@@ -516,81 +517,43 @@ class Ddmd(Application):
             else:
                 return False
         return True
-            
-    def _unset_vfd_vars(self,env_vars_toset):
-        # Unset env vars in conda_openmm
-        cmd = [ 'conda', 'env', 'config', 'vars', 'unset',]
-        
-        for env_var in env_vars_toset:
-            cmd.append(f'{env_var}')
-        cmd.append('-n')
-        cmd.append(self.config['conda_openmm'])
-        
-        cmd = ' '.join(cmd)
-        Exec(cmd, LocalExecInfo(env=self.mod_env,))
-        self.log(f"DDMD _unset_vfd_vars (conda_openmm): {cmd}")
-        
-        # Unset env vars in conda_pytorch
-        cmd = [ 'conda', 'env', 'config', 'vars', 'unset',]
-        
-        for env_var in env_vars_toset:
-            cmd.append(f'{env_var}')
-        cmd.append('-n')
-        cmd.append(self.config['conda_pytorch'])
-        cmd = ' '.join(cmd)
-        Exec(cmd, LocalExecInfo(env=self.mod_env,))
-        self.log(f"DDMD _unset_vfd_vars (conda_pytorch): {cmd}")
-        
 
-    def _set_env_vars(self):
+    def _unset_vfd_vars(self,env_vars_toset):
         
-        env_vars_toset = ['HDF5_DRIVER', 'HDF5_PLUGIN_PATH', 
-                          'HERMES_ADAPTER_MODE', 'HERMES_CLIENT_CONF',
-                          'HERMES_CONF', 'HERMES_VFD', 'HERMES_POSIX']
+        conda_envs = [self.config['conda_openmm'], self.config['conda_pytorch']]
         
-        # Unset all env_vars_toset first        
-        self._unset_vfd_vars(env_vars_toset)
+        for cenv in conda_envs:
         
-        # Set env vars in conda_openmm
-        try:
-            # Get current environment variables
-            cmd = [ 'conda', 'env', 'config', 'vars', 'set']
-            for env_var in env_vars_toset:
-                env_var_val = self.env[env_var]
-                
-                if env_var_val:
-                    if env_var != 'HDF5_DRIVER': env_var_val = f'{env_var_val}:${env_var}'
-                    cmd.append(f'{env_var}={env_var_val}')
+            cmd = ['conda', 'env', 'config', 'vars', 'unset',]
             
+            for env_var in env_vars_toset:
+                cmd.append(f'{env_var}')
             cmd.append('-n')
-            cmd.append(self.config['conda_openmm'])
+            cmd.append(cenv)
+            
             cmd = ' '.join(cmd)
             Exec(cmd, LocalExecInfo(env=self.mod_env,))
-            # self.log(f"DDMD _set_env_vars: {cmd}")
-            print(f"DDMD _set_env_vars (conda_openmm): {cmd}")
-            
-        except Exception as e:
-            self.log(f"DDMD: {e}")
+            self.log(f"DDMD _unset_vfd_vars for {cenv}: {cmd}")
+
+    def _set_env_vars(self, env_vars_toset):
         
-        # Set env vars in conda_pytorch
-        try:
-            # Get current environment variables
+        conda_envs = [self.config['conda_openmm'], self.config['conda_pytorch']]
+        
+        for cenv in conda_envs:
+            
+            # Unset all env_vars_toset first
+            self._unset_vfd_vars(env_vars_toset)
+
             cmd = [ 'conda', 'env', 'config', 'vars', 'set']
             for env_var in env_vars_toset:
-                env_var_val = self.env[env_var]
-                
-                if env_var_val:
-                    if env_var != 'HDF5_DRIVER': env_var_val = f'{env_var_val}:${env_var}'
-                    cmd.append(f'{env_var}={env_var_val}')
+                env_var_val = self.mod_env[env_var]
+                cmd.append(f'{env_var}={env_var_val}')
             
             cmd.append('-n')
-            cmd.append(self.config['conda_pytorch'])
+            cmd.append(cenv)
             cmd = ' '.join(cmd)
+            self.log(f"DDMD _set_env_vars for {cenv}: {cmd}")
             Exec(cmd, LocalExecInfo(env=self.mod_env,))
-            # self.log(f"DDMD _set_env_vars: {cmd}")
-            print(f"DDMD _set_env_vars (conda_pytorch): {cmd}")
-        except Exception as e:
-            self.log(f"DDMD: {e}")
         
 
     def start(self):
@@ -604,9 +567,10 @@ class Ddmd(Application):
         print("INFO: removing all previous runs")
         self.clean()
 
-        if self.config['update_envar']:
-            self.log(f"DDMD: Updating conda environment variables")
-            self._set_env_vars()
+        if self.config['with_hermes'] == True:
+            self._set_env_vars(self.hermes_env_vars)
+        else:
+            self._unset_vfd_vars(self.hermes_env_vars)
 
         # Check if all the OpenMM files exist
         if self._check_openmm() == False and self.config['skip_sim'] == True:
