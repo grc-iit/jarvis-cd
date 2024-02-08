@@ -307,9 +307,9 @@ class HermesRun(Service):
         elif self.config['flush_mode'] == 'sync':
             hermes_client['flushing_mode'] = 'kSync'
         if self.config['include'] is not None:
-            hermes_client['path_inclusions'].append(self.config['include'])
+            hermes_client['path_inclusions'] += self.config['include']
         if self.config['exclude'] is not None:
-            hermes_client['path_exclusions'].append(self.config['exclude'])
+            hermes_client['path_exclusions'] += self.config['exclude']
 
         # Get storage info
         if len(self.config['devices']) == 0:
