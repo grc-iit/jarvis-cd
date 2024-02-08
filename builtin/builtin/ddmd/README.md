@@ -7,7 +7,7 @@ See the [official repo](https://github.com/DeepDriveMD/DeepDriveMD-pipeline) for
 1. [Installation](#1-installation)
 2. [Running DDMD](#2-running-ddmd)
 3. [DDMD with Slurm](#3-ddmd-with-slurm)
-4. [DDMD + Hermes (FIXME)](#4-ddmd--hermes)
+4. [DDMD + Hermes](#4-ddmd--hermes)
 5. [DDMD on Node Local Storage (FIXME)](#5-ddmd-on-node-local-storage)
 6. [DDMD + Hermes on Node Local Storage (FIXME)](#6-ddmd--hermes-on-node-local-storage)
 7. DDMD + Hermes with Multinodes Slurm (TODO)
@@ -285,20 +285,10 @@ Run the experiment
 ```bash
 jarvis pipeline run
 ```
-Currently the script runs with error when entering the training.
-
-Error log:
-```log
-Global seed set to 0
-/home/mtang11/downloads/hermes-1.0.0/hrun/include/hrun/api/manager.h:78 158882 LoadServerConfig Loading server configuration: /home/mtang11/jarvis-pipelines/dhm_ddmd/hermes_run/hermes_server.yaml
-/tmp/tmp2a22oj34: line 3: 158882 Aborted                 (core dumped) python /mnt/common/mtang11/scripts/scspkg/packages/ddmd/src/DDMD/main.py
-
-ERROR conda.cli.main_run:execute(49): `conda run python /mnt/common/mtang11/scripts/scspkg/packages/ddmd/src/DDMD/main.py` failed. (See above for error)
-```
 
 ## 4.7. Clean Data
 
-To clean data produced by Hermes + DDMD:
+To clean data produced by DDMD:
 ```bash
 jarvis pipeline clean
 ```

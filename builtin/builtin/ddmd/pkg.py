@@ -22,6 +22,7 @@ class Ddmd(Application):
         self.train = None
         self.prev_model_json = None
         self.inference = None
+        self.hermes_env_vars = ['HERMES_ADAPTER_MODE', 'HERMES_CLIENT_CONF', 'HERMES_CONF', 'LD_PRELOAD']
 
     def _configure_menu(self):
         """
@@ -127,7 +128,13 @@ class Ddmd(Application):
                 'msg': 'Use a shorted pipeline',
                 'type': bool,
                 'default': False,
-            }
+            },
+            {
+                'name': 'with_hermes',
+                'msg': 'Whether it is used with Hermes (e.g. needs to update environment variables)',
+                'type': bool,
+                'default': False,
+            },
             
         ]
 
@@ -510,7 +517,44 @@ class Ddmd(Application):
             else:
                 return False
         return True
+
+    def _unset_vfd_vars(self,env_vars_toset):
+        
+        conda_envs = [self.config['conda_openmm'], self.config['conda_pytorch']]
+        
+        for cenv in conda_envs:
+        
+            cmd = ['conda', 'env', 'config', 'vars', 'unset',]
             
+            for env_var in env_vars_toset:
+                cmd.append(f'{env_var}')
+            cmd.append('-n')
+            cmd.append(cenv)
+            
+            cmd = ' '.join(cmd)
+            Exec(cmd, LocalExecInfo(env=self.mod_env,))
+            self.log(f"DDMD _unset_vfd_vars for {cenv}: {cmd}")
+
+    def _set_env_vars(self, env_vars_toset):
+        
+        conda_envs = [self.config['conda_openmm'], self.config['conda_pytorch']]
+        
+        for cenv in conda_envs:
+            
+            # Unset all env_vars_toset first
+            self._unset_vfd_vars(env_vars_toset)
+
+            cmd = [ 'conda', 'env', 'config', 'vars', 'set']
+            for env_var in env_vars_toset:
+                env_var_val = self.mod_env[env_var]
+                cmd.append(f'{env_var}={env_var_val}')
+            
+            cmd.append('-n')
+            cmd.append(cenv)
+            cmd = ' '.join(cmd)
+            self.log(f"DDMD _set_env_vars for {cenv}: {cmd}")
+            Exec(cmd, LocalExecInfo(env=self.mod_env,))
+        
 
     def start(self):
         """
@@ -522,7 +566,12 @@ class Ddmd(Application):
         
         print("INFO: removing all previous runs")
         self.clean()
-        
+
+        if self.config['with_hermes'] == True:
+            self._set_env_vars(self.hermes_env_vars)
+        else:
+            self._unset_vfd_vars(self.hermes_env_vars)
+
         # Check if all the OpenMM files exist
         if self._check_openmm() == False and self.config['skip_sim'] == True:
             print("ERROR: OpenMM files not found, cannot skip simulation")
