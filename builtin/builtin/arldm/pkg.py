@@ -19,7 +19,13 @@ class Arldm(Application):
         Initialize paths
         """
         self.pkg_type = 'arldm'
-
+        self.hermes_env_vars = ['HERMES_ADAPTER_MODE', 'HERMES_CLIENT_CONF', 
+                                'HERMES_CONF', 'LD_PRELOAD']
+        # self.hermes_env_vars = ['HDF5_DRIVER', 'HDF5_PLUGIN_PATH', 
+        #                   'HERMES_ADAPTER_MODE', 'HERMES_CLIENT_CONF',
+        #                   'HERMES_CONF', 'HERMES_VFD', 'HERMES_POSIX'
+        #                   ]
+        
     def _configure_menu(self):
         """
         Create a CLI menu for the configurator method.
@@ -399,17 +405,9 @@ class Arldm(Application):
         Exec(cmd, LocalExecInfo(env=self.mod_env,))
         self.log(f"ARLDM _unset_vfd_vars: {cmd}")
 
-    def _set_env_vars(self):
-        
-        # env_vars_toset = ['HDF5_DRIVER', 'HDF5_PLUGIN_PATH', 
-        #                   'HERMES_ADAPTER_MODE', 'HERMES_CLIENT_CONF',
-        #                   'HERMES_CONF', 'HERMES_VFD', 'HERMES_POSIX'
-        #                   ]
+    def _set_env_vars(self, env_vars_toset):
         
         self.log(f"ARLDM _set_env_vars")
-        
-        env_vars_toset = ['HERMES_ADAPTER_MODE', 'HERMES_CLIENT_CONF',
-                          'HERMES_CONF', 'LD_PRELOAD'] #'HERMES_VFD',
         
         # Unset all env_vars_toset first        
         self._unset_vfd_vars(env_vars_toset)
@@ -436,9 +434,9 @@ class Arldm(Application):
         self._configure_yaml()
         
         if self.config['with_hermes'] == True:
-            self._set_env_vars()
+            self._set_env_vars(self.hermes_env_vars)
         else:
-            self._unset_vfd_vars(['LD_PRELOAD'])
+            self._unset_vfd_vars(self.hermes_env_vars)
         
         
         self.log(f"ARLDM start")
@@ -493,6 +491,7 @@ class Arldm(Application):
         else:
             self.log(f'No file to remove: {output_h5}')
         
-        # Clear cache
-        self.log(f'Clearing cache')
-        Exec(self.config['flush_mem_cmd'], LocalExecInfo(env=self.mod_env,))
+        ## Clear cache manually
+        # # Clear cache
+        # self.log(f'Clearing cache')
+        # Exec(self.config['flush_mem_cmd'], LocalExecInfo(env=self.mod_env,))
