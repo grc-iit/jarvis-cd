@@ -267,7 +267,7 @@ class Arldm(Application):
             experiment_input_path = self.config['local_exp_dir']
         
         cmd = [
-            f"cd {self.config['arldm_path']}; echo Executing from directory `pwd`;",
+            # f"cd {self.config['arldm_path']}; echo Executing from directory `pwd`;",
             'conda','run', '-n', self.config['conda_env'], # conda environment
             'python',
         ]
@@ -293,7 +293,9 @@ class Arldm(Application):
         prep_cmd = ' '.join(cmd)
         
         start = time.time()
-        Exec(prep_cmd, LocalExecInfo(env=self.mod_env,))
+        Exec(prep_cmd, LocalExecInfo(
+            env=self.mod_env,
+            cwd=self.config['arldm_path']))
         
         end = time.time()
         diff = end - start
@@ -407,19 +409,15 @@ class Arldm(Application):
         self.log(f"ARLDM _set_env_vars")
         
         env_vars_toset = ['HERMES_ADAPTER_MODE', 'HERMES_CLIENT_CONF',
-                          'HERMES_CONF']
+                          'HERMES_CONF', 'LD_PRELOAD'] #'HERMES_VFD',
         
         # Unset all env_vars_toset first        
         self._unset_vfd_vars(env_vars_toset)
 
         cmd = [ 'conda', 'env', 'config', 'vars', 'set']
         for env_var in env_vars_toset:
-            env_var_val = self.env[env_var]
-            
+            env_var_val = self.mod_env[env_var]
             cmd.append(f'{env_var}={env_var_val}')
-        
-        if 'LD_PRELOAD' in self.mod_env:
-            cmd.append(f'LD_PRELOAD={self.mod_env["LD_PRELOAD"]}:$LD_PRELOAD')
         
         cmd.append('-n')
         cmd.append(self.config['conda_env'])
@@ -439,6 +437,9 @@ class Arldm(Application):
         
         if self.config['with_hermes'] == True:
             self._set_env_vars()
+        else:
+            self._unset_vfd_vars(['LD_PRELOAD'])
+        
         
         self.log(f"ARLDM start")
         
