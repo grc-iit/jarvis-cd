@@ -19,7 +19,7 @@ class JarvisArgs(ArgParse):
 
     def define_init_opts(self):
         # jarvis init
-        self.add_menu('init',
+        self.add_cmd('init',
                       msg='Initialize jarvis cd configuration')
         self.add_args([
             {
@@ -48,11 +48,11 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis celan
-        self.add_menu('reset',
+        self.add_cmd('reset',
                       msg='Clean all pipelines and configurations')
 
         # jarvis config print
-        self.add_menu('config print',
+        self.add_cmd('config print',
                       msg='Print jarvis directories')
 
         # jarvis bootstrap
@@ -60,7 +60,7 @@ class JarvisArgs(ArgParse):
                       msg='Bootstrap jarvis from a particular machine')
 
         # jarvis bootstrap from
-        self.add_menu('bootstrap from',
+        self.add_cmd('bootstrap from',
                       msg='Initialize jarvis from an existing machine')
         self.add_args([
             {
@@ -72,11 +72,11 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis bootstrap list
-        self.add_menu('bootstrap list',
+        self.add_cmd('bootstrap list',
                       msg='List all machines')
 
         # jarvis hostfile set
-        self.add_menu('hostfile set',
+        self.add_cmd('hostfile set',
                       msg='Define the hostfile for the job')
         self.add_args([
             {
@@ -93,11 +93,11 @@ class JarvisArgs(ArgParse):
                       msg='Resources to build a resource graph for a machine')
 
         # jarvis resource-graph init
-        self.add_menu('resource-graph init',
+        self.add_cmd('resource-graph init',
                       msg='Create an empty resource graph')
 
         # jarvis resource-graph build
-        self.add_menu('resource-graph build',
+        self.add_cmd('resource-graph build',
                       msg='Introspect resource graph for this machine')
         self.add_args([
             {
@@ -115,11 +115,11 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis resource-graph build
-        self.add_menu('resource-graph prune',
+        self.add_cmd('resource-graph prune',
                       msg='An interactive CLI for modifying the resource graph')
 
         # jarvis resource-graph add storage
-        self.add_menu('resource-graph add storage',
+        self.add_cmd('resource-graph add storage',
                       msg='Add a storage device or PFS to track')
         self.add_args([
             {
@@ -154,7 +154,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis resource-graph add net
-        self.add_menu('resource-graph add net',
+        self.add_cmd('resource-graph add net',
                       msg='Add a network to track')
         self.add_args([
             {
@@ -176,7 +176,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis resource-graph filter fs
-        self.add_menu('resource-graph filter fs',
+        self.add_cmd('resource-graph filter fs',
                       msg='Consider only mounts matching query')
         self.add_args([
             {
@@ -193,7 +193,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis resource-graph filter net
-        self.add_menu('resource-graph filter net',
+        self.add_cmd('resource-graph filter net',
                       msg='Consider only mounts matching query')
         self.add_args([
             {
@@ -216,11 +216,11 @@ class JarvisArgs(ArgParse):
 
     def define_repo_opts(self):
         # jarvis repo
-        self.add_menu('repo',
+        self.add_cmd('repo',
                       msg='Tools to manage the Jarvis repos')
 
         # jarvis repo add
-        self.add_menu('repo add',
+        self.add_cmd('repo add',
                       msg='Register a jarvis repo')
         self.add_args([
             {
@@ -233,7 +233,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis repo create
-        self.add_menu('repo create',
+        self.add_cmd('repo create',
                       msg='Create a pkg in the primary repo')
         self.add_args([
             {
@@ -254,7 +254,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis repo promote
-        self.add_menu('repo promote',
+        self.add_cmd('repo promote',
                       msg='Make a repo the primary repo for '
                           'subsequent repo create commands')
         self.add_args([
@@ -268,7 +268,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis repo remove
-        self.add_menu('repo remove',
+        self.add_cmd('repo remove',
                       msg='Remove a repo from consideration')
         self.add_args([
             {
@@ -281,7 +281,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis repo list
-        self.add_menu('repo list',
+        self.add_cmd('repo list',
                       msg='List the set of repos, or list the set of pkgs')
         self.add_args([
             {
@@ -295,7 +295,7 @@ class JarvisArgs(ArgParse):
 
     def define_pipeline_opts(self):
         # jarvis cd
-        self.add_menu('cd',
+        self.add_cmd('cd',
                       msg='Make all jarvis operations apply to a '
                           'certain pipeline')
         self.add_args([
@@ -307,11 +307,11 @@ class JarvisArgs(ArgParse):
                 'default': None
             },
         ])
-        self.add_menu('getcwd',
+        self.add_cmd('getcwd',
                       msg='Get currently focused pipeline')
 
         # jarvis path
-        self.add_menu('path',
+        self.add_cmd('path',
                       msg='Get the path of a jarvis pipeline or pkg')
         self.add_args([
             {
@@ -360,7 +360,7 @@ class JarvisArgs(ArgParse):
                       msg='Tools to create + edit a pipeline')
 
         # jarvis pipeline list
-        self.add_menu('pipeline list',
+        self.add_cmd('pipeline list',
                       msg='List all created pipelines')
         self.add_args([
             {
@@ -374,7 +374,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline create
-        self.add_menu('pipeline create',
+        self.add_cmd('pipeline create',
                       msg='Create a pipeline')
         self.add_args([
             {
@@ -387,7 +387,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline load yaml
-        self.add_menu('pipeline load yaml',
+        self.add_cmd('pipeline load yaml',
                       msg='Create a pipeline from a yaml schema')
         self.add_args([
             {
@@ -407,7 +407,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline run yaml
-        self.add_menu('pipeline run yaml',
+        self.add_cmd('pipeline run yaml',
                       msg='Create a pipeline from a yaml schema')
         self.add_args([
             {
@@ -420,7 +420,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline iterate
-        self.add_menu('pipeline iterate',
+        self.add_cmd('pipeline iterate',
                       msg='Create a pipeline from a yaml schema and iterate')
         self.add_args([
             {
@@ -433,7 +433,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline print
-        self.add_menu('pipeline print', msg="List all pkgs in a pipeline.")
+        self.add_cmd('pipeline print', msg="List all pkgs in a pipeline.")
         self.add_args([
             {
                 'name': 'pipeline_id',
@@ -446,7 +446,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline reset
-        self.add_menu('pipeline reset', msg='Clear a pipeline')
+        self.add_cmd('pipeline reset', msg='Clear a pipeline')
         self.add_args([
             {
                 'name': 'pipeline_id',
@@ -460,7 +460,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline destroy
-        self.add_menu('pipeline destroy', msg='Delete a pipeline')
+        self.add_cmd('pipeline destroy', msg='Delete a pipeline')
         self.add_args([
             {
                 'name': 'pipeline_id',
@@ -474,12 +474,12 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline update
-        self.add_menu('pipeline update', msg='Re-run configure on all pkgs '
+        self.add_cmd('pipeline update', msg='Re-run configure on all pkgs '
                                              'in a pipeline')
 
 
         # jarvis pipeline append
-        self.add_menu('pipeline append',
+        self.add_cmd('pipeline append',
                       msg='Append a pkg to a pipeline',
                       keep_remainder=True)
         self.add_args([
@@ -510,7 +510,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline prepend
-        self.add_menu('pipeline prepend',
+        self.add_cmd('pipeline prepend',
                       msg='Prepend a pkg to a pipeline',
                       keep_remainder=True)
         self.add_args([
@@ -541,7 +541,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline insert
-        self.add_menu('pipeline insert',
+        self.add_cmd('pipeline insert',
                       msg='Prepend a pkg to a pipeline',
                       keep_remainder=True)
         self.add_args([
@@ -579,7 +579,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # pipeline env build
-        self.add_menu('pipeline env build',
+        self.add_cmd('pipeline env build',
                       msg="Cache relevant environment vars. Use +ENV_VAR and"
                           "-ENV_VAR in remainder list to indicate whether "
                           "to track certain variables.",
@@ -587,21 +587,21 @@ class JarvisArgs(ArgParse):
                       remainder_as_kv=True)
 
         # jarvis pipeline env scan
-        self.add_menu('pipeline env scan',
+        self.add_cmd('pipeline env scan',
                       msg="Reload environment vars. Use +ENV_VAR to indicate"
                           "which variables to track.",
                       keep_remainder=True,
                       remainder_as_kv=True)
 
         # jarvis pipeline env track
-        self.add_menu('pipeline env track',
+        self.add_cmd('pipeline env track',
                       msg="Add or remove environment vars. Use +ENV_VAR and"
                           "-ENV_VAR in remainder list to indicate whether "
                           "to track certain variables.",
                       keep_remainder=True)
 
         # jarvis pipeline env path
-        self.add_menu('pipeline env path',
+        self.add_cmd('pipeline env path',
                       msg='Get the path to the pipeline env file')
         self.add_args([
             {
@@ -614,7 +614,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline env show
-        self.add_menu('pipeline env show',
+        self.add_cmd('pipeline env show',
                       msg='View the jarvis env file')
         self.add_args([
             {
@@ -631,7 +631,7 @@ class JarvisArgs(ArgParse):
                       msg='Tools to edit pkgs in a pipeline')
 
         # jarvis pkg help
-        self.add_menu('pkg help',
+        self.add_cmd('pkg help',
                       msg='View the help menu for a package')
         self.add_args([
             {
@@ -644,7 +644,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pkg configure
-        self.add_menu('pkg configure',
+        self.add_cmd('pkg configure',
                       msg="Configure a pkg in the pipeline",
                       keep_remainder=True,
                       aliases=['pkg config'])
@@ -668,7 +668,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pkg unlink
-        self.add_menu('pkg unlink', msg="Unlink a pkg from the pipeline.")
+        self.add_cmd('pkg unlink', msg="Unlink a pkg from the pipeline.")
         self.add_args([
             {
                 'name': 'pkg_id',
@@ -681,7 +681,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pkg remove
-        self.add_menu('pkg remove', msg="Remove a pkg from the pipeline.")
+        self.add_cmd('pkg remove', msg="Remove a pkg from the pipeline.")
         self.add_args([
             {
                 'name': 'pkg_id',
@@ -693,7 +693,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis pipeline [run/start/stop/clean/status]
-        self.add_menu('pipeline run',
+        self.add_cmd('pipeline run',
                       msg="Run + terminate a pipeline",
                       keep_remainder=True)
         self.add_args([
@@ -738,22 +738,22 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        self.add_menu('pipeline start',
+        self.add_cmd('pipeline start',
                       msg="Start a pipeline",
                       keep_remainder=True)
-        self.add_menu('pipeline stop',
+        self.add_cmd('pipeline stop',
                       msg="Stop a pipeline",
                       keep_remainder=True)
-        self.add_menu('pipeline kill',
+        self.add_cmd('pipeline kill',
                       msg="Kill a pipeline",
                       keep_remainder=True)
-        self.add_menu('pipeline clean',
+        self.add_cmd('pipeline clean',
                       msg="Clean a pipeline",
                       keep_remainder=True)
-        self.add_menu('pipeline status',
+        self.add_cmd('pipeline status',
                       msg="Get the status of a pipeline",
                       keep_remainder=True)
-        self.add_menu('pipeline load',
+        self.add_cmd('pipeline load',
                       msg="Load a pipeline from a file",
                       keep_remainder=True)
         self.add_args([
@@ -765,12 +765,12 @@ class JarvisArgs(ArgParse):
                 'default': None
             }
         ])
-        self.add_menu('pipeline save',
+        self.add_cmd('pipeline save',
                       msg="Save the current pipeline",
                       keep_remainder=True)
 
         # jarvis pipeline sbatch
-        self.add_menu('pipeline sbatch', msg="Run the current pipeline through sbatch")
+        self.add_cmd('pipeline sbatch', msg="Run the current pipeline through sbatch")
         self.add_args([
             {
                 'name': 'job_name',
@@ -881,7 +881,7 @@ class JarvisArgs(ArgParse):
             }
         ])
 
-        self.add_menu('pipeline pbs', msg="Run the current pipeline through pbs")
+        self.add_cmd('pipeline pbs', msg="Run the current pipeline through pbs")
         self.add_args([
             {
                 'name': 'nnodes',
@@ -953,7 +953,7 @@ class JarvisArgs(ArgParse):
 
     def define_env_opts(self):
         # jarvis env build
-        self.add_menu('env build',
+        self.add_cmd('env build',
                       msg="Create a custom environment.",
                       keep_remainder=True,
                       remainder_as_kv=True)
@@ -968,7 +968,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis env destroy
-        self.add_menu('env destroy',
+        self.add_cmd('env destroy',
                       msg='Destroy a custom environment.')
         self.add_args([
             {
@@ -981,7 +981,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis env path
-        self.add_menu('env path',
+        self.add_cmd('env path',
                       msg='View the environment file\'s path')
         self.add_args([
             {
@@ -994,7 +994,7 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis env show
-        self.add_menu('env show',
+        self.add_cmd('env show',
                       msg='View the environment file\'s output')
         self.add_args([
             {
@@ -1007,11 +1007,11 @@ class JarvisArgs(ArgParse):
         ])
 
         # jarvis env list
-        self.add_menu('env list',
+        self.add_cmd('env list',
                       msg='List all custom environments.')
 
         # jarvis pipeline env copy
-        self.add_menu('pipeline env copy',
+        self.add_cmd('pipeline env copy',
                       msg='Copy and modify a custom environment.',
                       keep_remainder=True,
                       remainder_as_kv=True)

@@ -25,7 +25,7 @@ import time
 
 class PkgArgParse(ArgParse):
     def define_options(self):
-        self.add_menu()
+        self.add_cmd()
         self.add_args(self.custom_info['menu'])
 
     def main_menu(self):
