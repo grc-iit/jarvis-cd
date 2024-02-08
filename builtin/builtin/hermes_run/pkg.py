@@ -28,138 +28,214 @@ class HermesRun(Service):
         """
         return [
             {
-                'name': 'ram',
-                'msg': 'Amount of RAM to use for buffering',
-                'type': str,
-                'default': '0'
-            },
-            {
                 'name': 'data_shm',
                 'msg': 'Data buffering space',
                 'type': str,
-                'default': '8g'
+                'default': '8g',
+                'class': 'communication',
+                'rank': 1,
             },
             {
                 'name': 'rdata_shm',
                 'msg': 'Runtime data buffering space',
                 'type': str,
-                'default': '8g'
+                'default': '8g',
+                'class': 'communication',
+                'rank': 1,
             },
             {
                 'name': 'task_shm',
                 'msg': 'Task buffering space',
                 'type': str,
-                'default': '0g'
-            },
-            {
-                'name': 'port',
-                'msg': 'The port to listen for data on',
-                'type': int,
-                'default': 8080
-            },
-            {
-                'name': 'provider',
-                'msg': 'The libfabric provider type to use (e.g., sockets)',
-                'type': str,
-                'default': None
-            },
-            {
-                'name': 'include',
-                'msg': 'Specify paths to include',
-                'type': str,
-                'default': None
-            },
-            {
-                'name': 'threads',
-                'msg': 'the number of rpc threads to create',
-                'type': int,
-                'default': 32
-            },
-            {
-                'name': 'recency_max',
-                'msg': 'time before blob is considered stale (sec)',
-                'type': float,
-                'default': 1
-            },
-            {
-                'name': 'borg_min_cap',
-                'msg': 'Capacity percentage before reorganizing can begin',
-                'type': float,
-                'default': 0
-            },
-            {
-                'name': 'flush_period',
-                'msg': 'Period of time to check for flushing (milliseconds)',
-                'type': int,
-                'default': 5000
-            },
-            {
-                'name': 'qdepth',
-                'msg': 'The depth of queues',
-                'type': int,
-                'default': 100000
-            },
-            {
-                'name': 'pqdepth',
-                'msg': 'The depth of the process queue',
-                'type': int,
-                'default': 48
-            },
-            {
-                'name': 'qlanes',
-                'msg': 'The number of lanes per queue',
-                'type': int,
-                'default': 4
-            },
-            {
-                'name': 'dworkers',
-                'msg': 'The number of core-dedicated workers',
-                'type': int,
-                'default': 2
-            },
-            {
-                'name': 'oworkers',
-                'msg': 'The number of overlapping workers',
-                'type': int,
-                'default': 4
-            },
-            {
-                'name': 'oworkers_per_core',
-                'msg': 'Overlapping workers per core',
-                'type': int,
-                'default': 32
+                'default': '0g',
+                'class': 'communication',
+                'rank': 1,
             },
             {
                 'name': 'shm_name',
                 'msg': 'The base shared-memory name',
                 'type': str,
-                'default': 'hrun_shm_${USER}'
+                'default': 'hrun_shm_${USER}',
+                'class': 'communication',
+                'rank': 1,
             },
             {
-                'name': 'dpe',
-                'msg': 'The DPE to use by default',
+                'name': 'port',
+                'msg': 'The port to listen for data on',
+                'type': int,
+                'default': 8080,
+                'class': 'communication',
+                'rank': 1,
+            },
+            {
+                'name': 'provider',
+                'msg': 'The libfabric provider type to use (e.g., sockets)',
                 'type': str,
-                'default': 'MinimizeIoTime'
+                'default': None,
+                'class': 'communication',
+                'rank': 1,
+            },
+            {
+                'name': 'domain',
+                'msg': 'The libfabric domain to use (e.g., lo)',
+                'type': str,
+                'default': None,
+                'class': 'communication',
+                'rank': 1,
+            },
+            {
+                'name': 'threads',
+                'msg': 'the number of rpc threads to create',
+                'type': int,
+                'default': 32,
+                'class': 'communication',
+                'rank': 1,
+            },
+            {
+                'name': 'recency_max',
+                'msg': 'time before blob is considered stale (sec)',
+                'type': float,
+                'default': 1,
+                'class': 'buffer organizer',
+                'rank': 1,
+            },
+            {
+                'name': 'borg_min_cap',
+                'msg': 'Capacity percentage before reorganizing can begin',
+                'type': float,
+                'default': 0,
+                'class': 'buffer organizer',
+                'rank': 1,
+            },
+            {
+                'name': 'flush_period',
+                'msg': 'Period of time to check for flushing (milliseconds)',
+                'type': int,
+                'default': 5000,
+                'class': 'buffer organizer',
+                'rank': 1,
+            },
+            {
+                'name': 'qdepth',
+                'msg': 'The depth of queues',
+                'type': int,
+                'default': 100000,
+                'class': 'queuing',
+                'rank': 1,
+            },
+            {
+                'name': 'pqdepth',
+                'msg': 'The depth of the process queue',
+                'type': int,
+                'default': 48,
+                'class': 'queuing',
+                'rank': 1,
+            },
+            {
+                'name': 'qlanes',
+                'msg': 'The number of lanes per queue',
+                'type': int,
+                'default': 4,
+                'class': 'queuing',
+                'rank': 1,
+            },
+            {
+                'name': 'dworkers',
+                'msg': 'The number of core-dedicated workers',
+                'type': int,
+                'default': 2,
+                'class': 'queuing',
+                'rank': 1,
+            },
+            {
+                'name': 'oworkers',
+                'msg': 'The number of overlapping workers',
+                'type': int,
+                'default': 4,
+                'class': 'queuing',
+                'rank': 1,
+            },
+            {
+                'name': 'oworkers_per_core',
+                'msg': 'Overlapping workers per core',
+                'type': int,
+                'default': 32,
+                'class': 'queuing',
+                'rank': 1,
+            },
+            {
+                'name': 'include',
+                'msg': 'Specify paths to include',
+                'type': list,
+                'default': [],
+                'class': 'adapter',
+                'rank': 1,
+                'args': [
+                    {
+                        'name': 'path',
+                        'msg': 'The path to be included',
+                        'type': str
+                    },
+                ],
+                'aliases': ['i']
+            },
+            {
+                'name': 'exclude',
+                'msg': 'Specify paths to exclude',
+                'type': list,
+                'default': [],
+                'class': 'adapter',
+                'rank': 1,
+                'args': [
+                    {
+                        'name': 'path',
+                        'msg': 'The path to be excluded',
+                        'type': str
+                    },
+                ],
+                'aliases': ['e']
             },
             {
                 'name': 'adapter_mode',
                 'msg': 'The adapter mode to use for Hermes',
                 'type': str,
                 'default': 'default',
-                'choices': ['default', 'scratch', 'bypass']
+                'choices': ['default', 'scratch', 'bypass'],
+                'class': 'adapter',
+                'rank': 1,
             },
             {
                 'name': 'flush_mode',
                 'msg': 'The flushing mode to use for adapters',
                 'type': str,
                 'default': 'async',
-                'choices': ['sync', 'async']
+                'choices': ['sync', 'async'],
+                'class': 'adapter',
+                'rank': 1,
             },
             {
                 'name': 'page_size',
                 'msg': 'The page size to use for adapters',
                 'type': str,
-                'default': '1m'
+                'default': '1m',
+                'class': 'adapter',
+                'rank': 1,
+            },
+            {
+                'name': 'ram',
+                'msg': 'Amount of RAM to use for buffering',
+                'type': str,
+                'default': '0',
+                'class': 'dpe',
+                'rank': 1,
+            },
+            {
+                'name': 'dpe',
+                'msg': 'The DPE to use by default',
+                'type': str,
+                'default': 'MinimizeIoTime',
+                'class': 'dpe',
+                'rank': 1,
             },
             {
                 'name': 'devices',
@@ -177,7 +253,9 @@ class HermesRun(Service):
                         'msg': 'The number of devices being',
                         'type': int
                     }
-                ]
+                ],
+                'class': 'dpe',
+                'rank': 1,
             }
         ]
 
@@ -230,6 +308,8 @@ class HermesRun(Service):
             hermes_client['flushing_mode'] = 'kSync'
         if self.config['include'] is not None:
             hermes_client['path_inclusions'].append(self.config['include'])
+        if self.config['exclude'] is not None:
+            hermes_client['path_exclusions'].append(self.config['exclude'])
 
         # Get storage info
         if len(self.config['devices']) == 0:

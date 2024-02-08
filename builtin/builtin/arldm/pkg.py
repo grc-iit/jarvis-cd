@@ -300,9 +300,8 @@ class Arldm(Application):
         
         
         cmd = [
-            f"cd {self.config['arldm_path']}; echo Executing from directory `pwd`;",
             'conda','run', '-n', self.config['conda_env'], # conda environment
-            'python',
+            'python'
         ]
 
         if self.config['arldm_path'] and self.config['runscript']:
@@ -311,14 +310,16 @@ class Arldm(Application):
         conda_cmd = ' '.join(cmd)
         
         start = time.time()
-        
+
+        self.jutil.debug_local_exec = True
         Exec(conda_cmd,
              LocalExecInfo(env=self.mod_env,
                            do_dbg=self.config['do_dbg'],
                            dbg_port=self.config['dbg_port'],
                            pipe_stdout=self.config['stdout'],
                            pipe_stderr=self.config['stderr'],
-                           ))
+                           cwd=self.config['arldm_path']))
+        self.jutil.debug_local_exec = False
         
         end = time.time()
         diff = end - start

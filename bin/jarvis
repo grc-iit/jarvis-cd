@@ -646,7 +646,8 @@ class JarvisArgs(ArgParse):
         # jarvis pkg configure
         self.add_menu('pkg configure',
                       msg="Configure a pkg in the pipeline",
-                      keep_remainder=True)
+                      keep_remainder=True,
+                      aliases=['pkg config'])
         self.add_args([
             {
                 'name': 'pkg_id',
