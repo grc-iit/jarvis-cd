@@ -9,16 +9,6 @@ fs:
   parent: null
   shared: false
   uuid: null
-- avail: 33554432000
-  dev_type: ssd
-  device: sda2
-  fs_type: null
-  host: localhost
-  model: INTEL SSDSC2KG96
-  mount: /
-  parent: sda
-  shared: false
-  uuid: null
 - avail: 2147483648000
   dev_type: hdd
   device: null
