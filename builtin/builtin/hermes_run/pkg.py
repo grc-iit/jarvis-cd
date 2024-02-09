@@ -3,7 +3,7 @@ This module provides classes and methods to launch the HermesRun service.
 hrun is ....
 """
 
-from jarvis_cd.basic.pkg import Service
+from jarvis_cd.basic.pkg import Service, Color
 from jarvis_util import *
 
 
@@ -494,9 +494,8 @@ class HermesRun(Service):
         :return: None
         """
         for path in self.config['borg_paths']:
-            self.log(f'Removing {path}', Color.RED)
-            Rm(path,
-               PsshExecInfo(hostfile=self.jarvis.hostfile))
+            self.log(f'Removing {path}', Color.YELLOW)
+            Rm(path, PsshExecInfo(hostfile=self.jarvis.hostfile))
 
     def status(self):
         """
