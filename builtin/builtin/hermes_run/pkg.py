@@ -324,6 +324,7 @@ class HermesRun(Service):
         if len(dev_df) == 0:
             raise Exception('Hermes needs at least one storage device')
         devs = dev_df.rows
+        self.config['borg_paths'] = []
         for i, dev in enumerate(devs):
             dev_type = dev['dev_type']
             custom_name = f'{dev_type}_{i}'
@@ -352,6 +353,7 @@ class HermesRun(Service):
                 'borg_capacity_thresh': [0.0, 1.0],
                 'slab_sizes': ['4KB', '16KB', '64KB', '1MB']
             }
+            self.config['borg_paths'].append(mount)
             Mkdir(mount, PsshExecInfo(hostfile=self.jarvis.hostfile,
                                       env=self.env))
         if 'ram' in self.config and self.config['ram'] != '0':
@@ -491,7 +493,10 @@ class HermesRun(Service):
 
         :return: None
         """
-        pass
+        for path in self.config['borg_paths']:
+            self.log(f'Removing {path}', Color.RED)
+            Rm(path,
+               PsshExecInfo(hostfile=self.jarvis.hostfile))
 
     def status(self):
         """

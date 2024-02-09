@@ -5,6 +5,7 @@ pkg types in Jarvis.
 
 from abc import ABC, abstractmethod
 from jarvis_cd.basic.jarvis_manager import JarvisManager
+from jarvis_util.util.logging import ColorPrinter, Color
 from jarvis_util.util.naming import to_snake_case
 from jarvis_util.serialize.yaml_file import YamlFile
 from jarvis_util.shell.local_exec import LocalExecInfo
@@ -30,12 +31,6 @@ class PkgArgParse(ArgParse):
 
     def main_menu(self):
         pass
-
-
-class Color(Enum):
-    GREEN = '\033[92m{}\033[0m'
-    RED = '\033[{}\033[0m'
-    CYAN = '\033[96m{}\033[0m'
 
 
 class Pkg(ABC):
@@ -73,10 +68,7 @@ class Pkg(ABC):
         self.stop_time = 0
 
     def log(self, msg, color=None):
-        if color is not None:
-            print(color.value.format(msg))
-        else:
-            print(msg)
+        ColorPrinter.print(msg, color)
 
     def _init_common(self, global_id, root):
         """
