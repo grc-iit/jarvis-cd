@@ -19,6 +19,8 @@ class Pyflextrkr(Application):
         Initialize paths
         """
         self.pkg_type = 'pyflextrkr'
+        self.hermes_env_vars = ['HERMES_ADAPTER_MODE', 'HERMES_CLIENT_CONF', 
+                                'HERMES_CONF', 'LD_PRELOAD']
 
     def _configure_menu(self):
         """
@@ -68,12 +70,6 @@ class Pyflextrkr(Application):
                 'default': f"{Package(self.pkg_type).pkg_root}/src/PyFLEXTRKR",
             },
             {
-                'name': 'log_file',
-                'msg': 'File path to log stdout',
-                'type': str,
-                'default': None,
-            },
-            {
                 'name': 'experiment_input_path',
                 'msg': 'Absolute path to the experiment run input and output files',
                 'type': str,
@@ -84,6 +80,7 @@ class Pyflextrkr(Application):
                 'msg': 'Parallel mode for Pyflextrkr: 0 (serial), 1 (local cluster), 2 (Dask MPI)',
                 'type': int,
                 'default': 1,
+                'choices': [0,1,2],
             },
             {
                 'name': 'nprocesses',
@@ -104,8 +101,8 @@ class Pyflextrkr(Application):
                 'default': None,
             },
             {
-                'name': 'update_envar',
-                'msg': 'Update HDF5_DRIVER and HDF5_PLUGIN_PATH in conda environment',
+                'name': 'with_hermes',
+                'msg': 'Whether it is used with Hermes (e.g. needs to update environment variables)',
                 'type': bool,
                 'default': False,
             },
@@ -131,10 +128,6 @@ class Pyflextrkr(Application):
         # Check if pyflextrkr_path not exists
         if pathlib.Path(self.config['pyflextrkr_path']).exists() == False:
             raise Exception(f"`pyflextrkr_path` {self.config['pyflextrkr_path']} does not exist.")
-        
-        # Check if run_parallel is 0, 1, or 2
-        if self.config['run_parallel'] not in [0,1,2]:
-            raise Exception("run_parallel must be 0 (serial), 1 (local cluster), or 2 (Dask MPI)")
         
         if self.config['conda_env'] is None:
             raise Exception("Must set the conda environment for running Pyflextrkr")
@@ -173,8 +166,7 @@ class Pyflextrkr(Application):
         else:
             # check that path exists
             pathlib.Path(self.config['pyflextrkr_path']).exists()
-            self.config['log_file'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
-            self.config['stdout'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
+            # self.config['stdout'] = f'{self.config["pyflextrkr_path"]}/pyflextrkr_run.log'
         
 
     def _configure_yaml(self):
@@ -196,7 +188,13 @@ class Pyflextrkr(Application):
             input_path = f"{experiment_input_path}/{self.config['runscript']}/"
             output_path = f"{experiment_input_path}/output_data/{self.config['runscript']}/"
             
-            pathlib.Path(input_path).mkdir(parents=True, exist_ok=True)
+            # Check if input_path exists and has files
+            if pathlib.Path(input_path).exists() == False:
+                raise Exception(f"Input path {input_path} does not exist.")
+            if len(os.listdir(input_path)) == 0:
+                raise Exception(f"Input path {input_path} is empty.")
+            
+            # pathlib.Path(input_path).mkdir(parents=True, exist_ok=True) # this should be done in data stage_in or setup
             pathlib.Path(output_path).mkdir(parents=True, exist_ok=True)
             
             try:
@@ -237,39 +235,37 @@ class Pyflextrkr(Application):
                 yaml.dump(config_vars, open(new_yaml_file, 'w'), default_flow_style=False)
             except yaml.YAMLError as exc:
                 self.log(exc)
-        self.config['config'] = new_yaml_file
-    
-    def _unset_vfd_vars(self,env_vars_toset):
-        for env_var in env_vars_toset:
-            cmd = [
-                'conda', 'env', 'config', 'vars', 'unset',
-                f'{env_var}',
-                '-n', self.config['conda_env'],
-            ]
-            cmd = ' '.join(cmd)
-            Exec(cmd, LocalExecInfo(env=self.mod_env,))
-            self.log(f"Pyflextrkr: {env_var} is unset")
-
-    def _set_env_vars(self):
-        
-        env_vars_toset = ['HDF5_DRIVER', 'HDF5_PLUGIN_PATH']
-        
-        if self.config['update_envar'] == False:
-            self._unset_vfd_vars(env_vars_toset)
-
-        try:
-            # Get current environment variables
-            for env_var in env_vars_toset:
-                env_var_val = self.env[env_var]
-                cmd = [ 'conda', 'env', 'config', 'vars', 'set',
-                    f'{env_var}={env_var_val}',
-                    '-n', self.config['conda_env'],]
-                cmd = ' '.join(cmd)
-                self.log(f"Pyflextrkr: {cmd}")
-                Exec(cmd, LocalExecInfo(env=self.mod_env,))
+        self.config['config'] = new_yaml_file 
             
-        except Exception as e:
-            self._unset_vfd_vars(env_vars_toset)
+    def _unset_vfd_vars(self,env_vars_toset):
+        cmd = ['conda', 'env', 'config', 'vars', 'unset',]
+        
+        for env_var in env_vars_toset:
+            cmd.append(f'{env_var}')
+        cmd.append('-n')
+        cmd.append(self.config['conda_env'])
+        
+        cmd = ' '.join(cmd)
+        Exec(cmd, LocalExecInfo(env=self.mod_env,))
+        self.log(f"Pyflextrkr _unset_vfd_vars: {cmd}")
+
+    def _set_env_vars(self, env_vars_toset):
+        
+        self.log(f"Pyflextrkr _set_env_vars")
+        
+        # Unset all env_vars_toset first
+        self._unset_vfd_vars(env_vars_toset)
+
+        cmd = [ 'conda', 'env', 'config', 'vars', 'set']
+        for env_var in env_vars_toset:
+            env_var_val = self.mod_env[env_var]
+            cmd.append(f'{env_var}={env_var_val}')
+        
+        cmd.append('-n')
+        cmd.append(self.config['conda_env'])
+        cmd = ' '.join(cmd)
+        self.log(f"Pyflextrkr _set_env_vars: {cmd}")
+        Exec(cmd, LocalExecInfo(env=self.mod_env,))
         
     
     def _construct_cmd(self):
@@ -338,22 +334,25 @@ class Pyflextrkr(Application):
         :return: None
         """
         
-        self._set_env_vars()
+        if self.config['with_hermes'] == True:
+            self._set_env_vars(self.hermes_env_vars)
+        else:
+            self._unset_vfd_vars(self.hermes_env_vars)
         
         ## Configure yaml file before start
         self._configure_yaml()
         self._construct_cmd()
         
         self.log(f"Pyflextrkr run_cmd: {self.config['run_cmd']}")
-        # self.log(f"Pyflextrkr log_file : {self.config['log_file']}")
-        
         
         start = time.time()
         
         Exec(self.config['run_cmd'],
              LocalExecInfo(env=self.mod_env,
-                           hide_output=False,
-                           collect_output=True,
+                           do_dbg=self.config['do_dbg'],
+                           dbg_port=self.config['dbg_port'],
+                           pipe_stdout=self.config['stdout'],
+                           pipe_stderr=self.config['stderr'],
                            ))
         
         end = time.time()
@@ -397,9 +396,10 @@ class Pyflextrkr(Application):
         self.log(f'Removing {output_dir}')
         Rm(output_dir)
         
-        # Clear cache
-        self.log(f'Clearing cache')
-        Exec(self.config['flush_mem_cmd'], LocalExecInfo(env=self.mod_env,))
+        ## Do not clear cache in script, clear cache manually
+        # # Clear cache
+        # self.log(f'Clearing cache')
+        # Exec(self.config['flush_mem_cmd'], LocalExecInfo(env=self.mod_env,))
         
         # output_dir = self.config['output'] + "*"
         # self.log(f'Removing {output_dir}')
