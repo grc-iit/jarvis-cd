@@ -88,13 +88,35 @@ class JarvisArgs(ArgParse):
             },
         ])
 
+        # jarvis config
+        self.add_menu('config',
+                      msg='View or print configure file',
+                      aliases=['conf'])
+
+        # jarvis config print
+        self.add_cmd('config print',
+                     msg='Print the configuration file')
+
+        # jarvis config path
+        self.add_cmd('config path',
+                     msg='Print the configuration file path')
+
         # jarvis resource-graph
         self.add_menu('resource-graph',
-                      msg='Resources to build a resource graph for a machine')
+                      msg='Resources to build a resource graph for a machine',
+                      aliases=['rg'])
 
         # jarvis resource-graph init
         self.add_cmd('resource-graph init',
                       msg='Create an empty resource graph')
+
+        # jarvis resource-graph show
+        self.add_cmd('resource-graph show',
+                     msg='Show the resource graph')
+
+        # jarvis resource-graph show
+        self.add_cmd('resource-graph path',
+                     msg='Get the path to the resource graph')
 
         # jarvis resource-graph build
         self.add_cmd('resource-graph build',
@@ -1037,6 +1059,9 @@ class JarvisArgs(ArgParse):
     def config_print(self):
         self.jarvis.print_config()
 
+    def config_path(self):
+        self.jarvis.print_config_path()
+
     def bootstrap_from(self):
         self.jarvis.bootstrap_from(self.kwargs['MACHINE'])
 
@@ -1069,6 +1094,14 @@ class JarvisArgs(ArgParse):
 
     def resource_graph_init(self):
         self.jarvis.resource_graph_init()
+        self.jarvis.save()
+
+    def resource_graph_show(self):
+        self.jarvis.resource_graph_show()
+        self.jarvis.save()
+
+    def resource_graph_path(self):
+        self.jarvis.resource_graph_path()
         self.jarvis.save()
 
     def resource_graph_build(self):

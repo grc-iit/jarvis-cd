@@ -198,6 +198,9 @@ class JarvisManager:
     def print_config(self):
         print(yaml.dump(self.jarvis_conf))
 
+    def print_config_path(self):
+        print(self.jarvis_conf_path)
+
     def resource_graph_init(self):
         """
         Create an empty resource graph
@@ -205,6 +208,25 @@ class JarvisManager:
         :return: None
         """
         self.resource_graph = ResourceGraph()
+
+    def resource_graph_show(self):
+        """
+        Print the resource graph
+
+        :return: None
+        """
+        print("fs:")
+        self.resource_graph.print_df(self.resource_graph.fs)
+        print("net:")
+        self.resource_graph.print_df(self.resource_graph.net)
+
+    def resource_graph_path(self):
+        """
+        Print the resource graph file path
+
+        :return: None
+        """
+        print(self.resource_graph_path)
 
     def resource_graph_build(self):
         """
