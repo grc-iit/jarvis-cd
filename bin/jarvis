@@ -18,6 +18,10 @@ class JarvisArgs(ArgParse):
         self.jutil.debug_mpi_exec = False
 
     def define_init_opts(self):
+        # jarvis
+        self.add_menu(msg='A tool for configuring and deploying '
+                          'complex workflows')
+
         # jarvis init
         self.add_cmd('init',
                       msg='Initialize jarvis cd configuration')
