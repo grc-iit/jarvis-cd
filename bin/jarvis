@@ -800,6 +800,13 @@ class JarvisArgs(ArgParse):
         self.add_cmd('pipeline sbatch', msg="Run the current pipeline through sbatch")
         self.add_args([
             {
+                'name': 'pipeline_name',
+                'msg': 'The pipeline to run',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+            {
                 'name': 'job_name',
                 'msg': 'The name given to this job',
                 'required': True,
@@ -1409,7 +1416,9 @@ class JarvisArgs(ArgParse):
         exit(pipeline.exit_code)
 
     def pipeline_sbatch(self):
-        pipeline_name = Pipeline().load().global_id
+        pipeline_name = self.kwargs['pipeline_name']
+        pipeline = Pipeline().load(pipeline_name)
+        pipeline_name = pipeline.global_id
         if not self.kwargs['job_name']:
             job_name = f'{pipeline_name}_{self.kwargs["nnodes"]}'
             print(f'No name set for the job. Setting it to {job_name}')
