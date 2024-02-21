@@ -65,6 +65,12 @@ class Ior(Application):
                 'default': False,
             },
             {
+                'name': 'reps',
+                'msg': 'Number of times to repeat',
+                'type': int,
+                'default': 1,
+            },
+            {
                 'name': 'nprocs',
                 'msg': 'Number of processes',
                 'type': int,
@@ -121,6 +127,8 @@ class Ior(Application):
             cmd.append('-r')
         if self.config['fpp']:
             cmd.append('-F')
+        if self.config['reps'] > 1:
+            cmd.append(f'-i {self.config["reps"]}')
         if '.' in os.path.basename(self.config['out']):
             os.makedirs(str(pathlib.Path(self.config['out']).parent),
                         exist_ok=True)
