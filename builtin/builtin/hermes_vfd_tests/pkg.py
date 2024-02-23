@@ -27,7 +27,7 @@ class HermesVfdTests(Application):
         return [
             {
                 'name': 'test_file',
-                'choices': ['vfd_basic'],
+                'choices': ['vfd_basic', 'vfd_py_test'],
                 'msg': '',
                 'type': str,
                 'default': None,
@@ -86,6 +86,16 @@ class HermesVfdTests(Application):
                 vfd_cmd.append('~[mode=scratch]')
             vfd_cmd.append('--reporter compact -d yes')
             cmd = ' '.join(vfd_cmd)
+        node = Exec(cmd,
+                    LocalExecInfo(env=self.mod_env,
+                                  do_dbg=self.config['do_dbg'],
+                                  dbg_port=self.config['dbg_port'],
+                                  pipe_stdout=self.config['stdout'],
+                                  pipe_stderr=self.config['stderr']))
+        return node.exit_code
+
+    def test_vfd_py_test(self):
+        cmd = f'python3 {self.env["HERMES_ROOT"]}/bin/hermes_vfd_py_test.py'
         node = Exec(cmd,
                     LocalExecInfo(env=self.mod_env,
                                   do_dbg=self.config['do_dbg'],
