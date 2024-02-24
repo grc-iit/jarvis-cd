@@ -986,6 +986,10 @@ class JarvisArgs(ArgParse):
         ])
 
     def define_env_opts(self):
+        # jarvis env
+        self.add_menu('env',
+                      msg='Tools to edit jarvis environments')
+
         # jarvis env build
         self.add_cmd('env build',
                       msg="Create a custom environment.",
