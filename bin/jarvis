@@ -1111,7 +1111,7 @@ class JarvisArgs(ArgParse):
         self.jarvis.save()
 
     def resource_graph_path(self):
-        self.jarvis.resource_graph_path()
+        print(self.jarvis.resource_graph_path)
         self.jarvis.save()
 
     def resource_graph_build(self):

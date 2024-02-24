@@ -220,14 +220,6 @@ class JarvisManager:
         print("net:")
         self.resource_graph.print_df(self.resource_graph.net)
 
-    def resource_graph_path(self):
-        """
-        Print the resource graph file path
-
-        :return: None
-        """
-        print(self.resource_graph_path)
-
     def resource_graph_build(self):
         """
         Introspect the system and construct a resource graph.
