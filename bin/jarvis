@@ -719,6 +719,30 @@ class JarvisArgs(ArgParse):
             },
         ])
 
+        # jarvis pkg src
+        self.add_cmd('pkg src', msg="Print the path to the pkg.py file.")
+        self.add_args([
+            {
+                'name': 'pkg_type',
+                'msg': 'The type of the pkg being displayed',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis pkg root
+        self.add_cmd('pkg root', msg="Print the path to the pkg directory.")
+        self.add_args([
+            {
+                'name': 'pkg_type',
+                'msg': 'The type of the pkg being displayed',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
         # jarvis pipeline [run/start/stop/clean/status]
         self.add_cmd('pipeline run',
                       msg="Run + terminate a pipeline",
@@ -1380,6 +1404,16 @@ class JarvisArgs(ArgParse):
         args = PkgArgParse(args=[], menu=menu)
         args.binary_name = pkg_type
         args._print_help()
+
+    def pkg_src(self):
+        pkg_type = self.kwargs['pkg_type']
+        pkg = self.jarvis.construct_pkg(pkg_type)
+        print(f'{pkg.pkg_dir}/pkg.py')
+
+    def pkg_root(self):
+        pkg_type = self.kwargs['pkg_type']
+        pkg = self.jarvis.construct_pkg(pkg_type)
+        print(pkg.pkg_dir)
 
     def pkg_configure(self):
         pipeline = Pipeline().load()
