@@ -61,7 +61,7 @@ class HermesVfdTests(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        pass
+        self.config['HERMES_ROOT'] = self.find_library('hermes_vfd')
 
     def start(self):
         """

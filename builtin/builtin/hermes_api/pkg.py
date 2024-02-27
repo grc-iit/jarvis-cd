@@ -62,28 +62,32 @@ class HermesApi(Interceptor):
         """
         has_one = False
         if self.config['mpi']:
-            self.config['HERMES_MPIIO'] = self.find_library('hermes_mpiio')
-            if self.config['HERMES_MPIIO'] is None:
+            self.env['HERMES_MPIIO'] = self.find_library('hermes_mpiio')
+            if self.env['HERMES_MPIIO'] is None:
                 raise Exception('Could not find hermes_mpi')
-            print(f'Found libhermes_mpiio.so at {self.config["HERMES_MPIIO"]}')
+            self.env['HERMES_ROOT'] = str(pathlib.Path(self.env['HERMES_MPIIO']).parent.parent)
+            print(f'Found libhermes_mpiio.so at {self.env["HERMES_MPIIO"]}')
             has_one = True
         if self.config['posix']:
-            self.config['HERMES_POSIX'] = self.find_library('hermes_posix')
-            if self.config['HERMES_POSIX'] is None:
+            self.env['HERMES_POSIX'] = self.find_library('hermes_posix')
+            if self.env['HERMES_POSIX'] is None:
                 raise Exception('Could not find hermes_posix')
-            print(f'Found libhermes_posix.so at {self.config["HERMES_POSIX"]}')
+            self.env['HERMES_ROOT'] = str(pathlib.Path(self.env['HERMES_POSIX']).parent.parent)
+            print(f'Found libhermes_posix.so at {self.env["HERMES_POSIX"]}')
             has_one = True
         if self.config['stdio']:
-            self.config['HERMES_STDIO'] = self.find_library('hermes_stdio')
-            if self.config['HERMES_STDIO'] is None:
+            self.env['HERMES_STDIO'] = self.find_library('hermes_stdio')
+            if self.env['HERMES_STDIO'] is None:
                 raise Exception('Could not find hermes_posix')
-            print(f'Found libhermes_stdio.so at {self.config["HERMES_STDIO"]}')
+            self.env['HERMES_ROOT'] = str(pathlib.Path(self.env['HERMES_STDIO']).parent.parent)
+            print(f'Found libhermes_stdio.so at {self.env["HERMES_STDIO"]}')
             has_one = True
         if self.config['vfd']:
-            self.config['HERMES_VFD'] = self.find_library('hdf5_hermes_vfd')
-            if self.config['HERMES_VFD'] is None:
+            self.env['HERMES_VFD'] = self.find_library('hdf5_hermes_vfd')
+            if self.env['HERMES_VFD'] is None:
                 raise Exception('Could not find hdf5_hermes_vfd')
-            print(f'Found libhdf5_hermes_vfd.so at {self.config["HERMES_VFD"]}')
+            self.env['HERMES_ROOT'] = str(pathlib.Path(self.env['HERMES_VFD']).parent.parent)
+            print(f'Found libhdf5_hermes_vfd.so at {self.env["HERMES_VFD"]}')
             has_one = True
         if not has_one:
             raise Exception('Hermes API not selected')
@@ -95,13 +99,13 @@ class HermesApi(Interceptor):
         :return: None
         """
         if self.config['mpi']:
-            self.append_env('LD_PRELOAD', self.config['HERMES_MPIIO'])
+            self.append_env('LD_PRELOAD', self.env['HERMES_MPIIO'])
         if self.config['posix']:
-            self.append_env('LD_PRELOAD', self.config['HERMES_POSIX'])
+            self.append_env('LD_PRELOAD', self.env['HERMES_POSIX'])
         if self.config['stdio']:
-            self.append_env('LD_PRELOAD', self.config['HERMES_STDIO'])
+            self.append_env('LD_PRELOAD', self.env['HERMES_STDIO'])
         if self.config['vfd']:
             plugin_path_parent = (
-                str(pathlib.Path(self.config['HERMES_VFD']).parent))
+                str(pathlib.Path(self.env['HERMES_VFD']).parent))
             self.setenv('HDF5_PLUGIN_PATH', plugin_path_parent)
             self.setenv('HDF5_DRIVER', 'hdf5_hermes_vfd')
