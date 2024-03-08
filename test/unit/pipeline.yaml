@@ -10,14 +10,5 @@ pkgs:
     ram: 24g
     do_dbg: true
     dbg_port: 4000
-  - pkg_type: mm_kmeans
-    pkg_name: mm_kmeans
-    path: ${HOME}/mm_data/kmeans.bin
-    window_size: 256m
-    nprocs: 1
-    ppn: 24
-    api: mega
-    max_iter: 4
-    k: 8
-    do_dbg: true
-    dbg_port: 4001
+  - pkg_type: ior
+    pkg_name: ior

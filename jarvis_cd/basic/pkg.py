@@ -630,18 +630,16 @@ class SimplePkg(Pkg):
         Mkdir(self.private_dir,
               PsshExecInfo(hostfile=self.jarvis.hostfile))
         menu = self.configure_menu()
-        args = []
-        if not rebuild:
-            default_args = ArgParse.default_kwargs(menu)
-            for key in default_args.keys():
-                if key not in kwargs and key in self.config:
-                    if self.config[key] is not None:
-                        args.append(f'{key}={self.config[key]}')
-                    else:
-                        args.append(f'{key}=')
-        args += [f'{key}={val}' for key, val in kwargs.items()]
+        args = [f'{key}={val}' for key, val in kwargs.items()]
         parser = PkgArgParse(args=args, menu=menu)
-        self.config.update(parser.kwargs)
+        if rebuild:
+            self.config.update(parser.kwargs)
+        else:
+            self.config.update(parser.real_kwargs)
+            for key in parser.kwargs:
+                if key not in self.config:
+                    self.config[key] = parser.kwargs[key]
+        kwargs.update(self.config)
 
     @staticmethod
     def copy_template_file(src, dst, replacements=None):

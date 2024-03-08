@@ -80,7 +80,7 @@ class Ior(Application):
                 'name': 'ppn',
                 'msg': 'The number of processes per node',
                 'type': int,
-                'default': None,
+                'default': 16,
             },
             {
                 'name': 'out',
