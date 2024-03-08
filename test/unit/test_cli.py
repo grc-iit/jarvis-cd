@@ -4,6 +4,7 @@ Test CLI unit test class
 from jarvis_util.shell.local_exec import LocalExecInfo
 from jarvis_util.shell.exec import Exec
 from jarvis_cd.basic.jarvis_manager import JarvisManager
+from jarvis_cd.basic.pkg import Pipeline
 from unittest import TestCase
 import os
 import yaml
@@ -135,6 +136,13 @@ class TestCli(TestCase):
         self.assertTrue(
             not os.path.exists(f'{self.jarvis.config_dir}/test_pipeline'))
         self.rm_test_repo()
+
+    def test_jarvis_load_yaml(self):
+        self.jarvis = JarvisManager.get_instance()
+        path = f'{self.jarvis.jarvis_root}/test/unit/pipeline.yaml'
+        pipeline = Pipeline().from_yaml(path).save()
+        self.jarvis.cd(pipeline.global_id)
+        self.jarvis.save()
 
     def verify_pipeline(self, stdout, expected_lines):
         lines = stdout['localhost'].strip().splitlines()

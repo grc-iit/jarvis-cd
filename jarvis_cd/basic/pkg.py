@@ -592,19 +592,6 @@ class SimplePkg(Pkg):
         """
         return []
 
-    def get_type_map(self):
-        """
-        Get the mapping between keys and types
-
-        :return: dict
-        """
-        menu = self.configure_menu()
-        type_map = {}
-        for opt in menu:
-            if 'type' in opt:
-                type_map[opt['name']] = opt['type']
-        return type_map
-
     def configure(self, **kwargs):
         if 'reinit' not in kwargs:
             kwargs['reinit'] = False
@@ -642,17 +629,19 @@ class SimplePkg(Pkg):
         """
         Mkdir(self.private_dir,
               PsshExecInfo(hostfile=self.jarvis.hostfile))
-        default_args = ArgParse.default_kwargs(self.configure_menu())
+        menu = self.configure_menu()
+        args = []
         if not rebuild:
-            default_args.update(self.config)
-        default_args.update(kwargs)
-        self.config = default_args
-        type_map = self.get_type_map()
-        for key, val in self.config.items():
-            if (key in type_map and
-                    type_map[key] is not None and
-                    val is not None):
-                self.config[key] = type_map[key](self.config[key])
+            default_args = ArgParse.default_kwargs(menu)
+            for key in default_args.keys():
+                if key not in kwargs and key in self.config:
+                    if self.config[key] is not None:
+                        args.append(f'{key}={self.config[key]}')
+                    else:
+                        args.append(f'{key}=')
+        args += [f'{key}={val}' for key, val in kwargs.items()]
+        parser = PkgArgParse(args=args, menu=menu)
+        self.config.update(parser.kwargs)
 
     @staticmethod
     def copy_template_file(src, dst, replacements=None):

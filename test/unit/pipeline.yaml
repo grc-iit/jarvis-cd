@@ -1,6 +1,23 @@
 name: test_ppl
+env: mega_mmap
 pkgs:
-  - pkg_type: asan
-    pkg_name: asan
-  - pkg_type: ior
-    pkg_name: ior
+  - pkg_type: hermes_run
+    pkg_name: hermes_run
+    sleep: 6
+    include: ${HOME}/mm_data
+    pqdepth: 8
+    qdepth: 64
+    ram: 24g
+    do_dbg: true
+    dbg_port: 4000
+  - pkg_type: mm_kmeans
+    pkg_name: mm_kmeans
+    path: ${HOME}/mm_data/kmeans.bin
+    window_size: 256m
+    nprocs: 1
+    ppn: 24
+    api: mega
+    max_iter: 4
+    k: 8
+    do_dbg: true
+    dbg_port: 4001
