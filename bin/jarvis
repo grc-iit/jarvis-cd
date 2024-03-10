@@ -242,7 +242,7 @@ class JarvisArgs(ArgParse):
 
     def define_repo_opts(self):
         # jarvis repo
-        self.add_cmd('repo',
+        self.add_menu('repo',
                       msg='Tools to manage the Jarvis repos')
 
         # jarvis repo add
