@@ -264,6 +264,7 @@ class JarvisManager:
         """
 
         repo_name = os.path.basename(path)
+        path = os.path.abspath(path)
         for repo in self.repos:
             if repo['name'] == repo_name:
                 repo['path'] = path
@@ -354,6 +355,9 @@ class JarvisManager:
         :return: None
         """
         repo = self.get_repo(repo_name)
+        if not os.path.exists(repo['path']):
+            print(f'Repo {repo["path"]} does not exist')
+            return
         pkg_types = os.listdir(os.path.join(repo['path'], repo['name']))
         pkg_types.sort()
         print(f'{repo["name"]}: {repo["path"]}')
