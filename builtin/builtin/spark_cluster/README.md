@@ -6,9 +6,9 @@ spack install openjdk@11
 spack load openjdk@11
 scspkg create spark
 cd `scspkg pkg src spark`
-wget https://dlcdn.apache.org/spark/spark-3.4.1/spark-3.4.1.tgz
-tar -xzf spark-3.4.1.tgz
-cd spark-3.4.1
+wget https://dlcdn.apache.org/spark/spark-3.5.1/spark-3.5.1.tgz
+tar -xzf spark-3.5.1.tgz
+cd spark-3.5.1
 ./build/mvn -T 16 -DskipTests clean package
 scspkg env set spark SPARK_SCRIPTS=${PWD}
 scspkg env prepend spark PATH "${PWD}/bin"

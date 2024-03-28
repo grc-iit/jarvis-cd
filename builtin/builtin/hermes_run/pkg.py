@@ -465,8 +465,8 @@ class HermesRun(Service):
              LocalExecInfo(hostfile=self.jarvis.hostfile,
                            env=self.env,
                            exec_async=False,
-                           do_dbg=self.config['do_dbg'],
-                           dbg_port=self.config['dbg_port'],
+                           # do_dbg=self.config['do_dbg'],
+                           # dbg_port=self.config['dbg_port'] + 2,
                            hide_output=self.config['hide_output']))
         self.log('Client Exited?')
         if self.daemon_pkg is not None:

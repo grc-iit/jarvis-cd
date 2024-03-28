@@ -65,7 +65,7 @@ class HermesUnitTests(Application):
         nprocs = self.config['nprocs']
         if self.config['nprocs'] is None:
             nprocs = len(self.jarvis.hostfile)
-        test_ipc_execs = ['TestIpc', 'TestIO']
+        test_ipc_execs = ['TestIpc', 'TestAsyncIpc', 'TestIO', 'TestIpcMultithread4', 'TestIpcMultithread8']
         test_config_execs = [
             'TestHermesPaths'
         ]
