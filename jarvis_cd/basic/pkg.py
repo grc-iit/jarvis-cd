@@ -68,11 +68,8 @@ class PipelineIterator:
         self.iter_vars = ppl.config['iterator']['vars']
         self.iter_loop = ppl.config['iterator']['loop']
         self.repeat = ppl.config['iterator']['repeat']
-        iter_out = ppl.config['iterator']['output']
-        iter_out = iter_out.replace('$shared_dir', ppl.shared_dir)
-        iter_out = iter_out.replace('$config_dir', ppl.config_dir)
-        iter_out = iter_out.replace('$private_dir', ppl.private_dir)
-        self.iter_out = iter_out
+        ppl.set_config_env_vars()
+        self.iter_out = os.path.expandvars(ppl.config['iterator']['output'])
         self.stats_path = f'{self.iter_out}/stats_dict.csv'
         self.stats = []
 
@@ -1074,6 +1071,13 @@ class Pipeline(Pkg):
             pkg.configure()
         return self
 
+    def set_config_env_vars(self):
+        if self.iterator is not None:
+            os.environ['ITER_DIR'] = self.iterator.iter_out
+        os.environ['SHARED_DIR'] = self.shared_dir
+        os.environ['PRIVATE_DIR'] = self.private_dir
+        os.environ['CONFIG_DIR'] = self.config_dir
+
     def run_iter(self, resume=False):
         """
         Run the pipeline repeatedly with new configurations
@@ -1085,6 +1089,10 @@ class Pipeline(Pkg):
             if conf_dict is None:
                 break
             for i in range(self.iterator.repeat):
+                cur_iter_tmp = os.path.join(
+                    self.iterator.iter_out,
+                    f'{self.iterator.iter_count}-{i}')
+                self.set_config_env_vars()
                 self.log(f'[ITER] Iteration'
                          f'[(param) {self.iterator.iter_count}/{self.iterator.max_iter_count}]'
                          f'[(rep) {i + 1}/{self.iterator.repeat}]: '

@@ -16,4 +16,4 @@ loop:
   - [first.port, second.port]
   - [third.port]
 repeat: 3
-output: "$shared_dir/output"
+output: "$SHARED_DIR/output"
