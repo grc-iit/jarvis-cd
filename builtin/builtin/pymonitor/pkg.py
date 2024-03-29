@@ -62,7 +62,7 @@ class Pymonitor(Service):
         """
         self.log(f'Pymonitor started on {self.config["dir"]}')
         Monitor(self.config['frequency'],
-                self.env['dir'],
+                self.config['dir'],
                 PsshExecInfo(env=self.env,
                             hostfile=self.jarvis.hostfile,
                             exec_async=True))
