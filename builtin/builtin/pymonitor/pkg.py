@@ -62,6 +62,7 @@ class Pymonitor(Service):
         :return: None
         """
         self.log(f'Pymonitor started on {self.config["dir"]}')
+        self.env['PYTHONBUFFERED'] = '0'
         Monitor(self.config['frequency'],
                 self.config['dir'],
                 PsshExecInfo(env=self.env,
