@@ -138,6 +138,7 @@ class PipelineIterator:
     def config_pkgs(self, conf_dict):
         for pkg, conf in conf_dict.items():
             pkg.configure(**conf)
+            pkg.save()
 
     def save_run(self, conf_dict):
         stat_dict = {**self.linear_conf_dict}
