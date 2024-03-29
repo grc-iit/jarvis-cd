@@ -1080,12 +1080,13 @@ class Pipeline(Pkg):
         self.iterator = PipelineIterator(self)
         self.iterator.begin()
         while True:
+            conf_dict = self.iterator.next()
+            if conf_dict is None:
+                break
             for i in range(self.iterator.repeat):
-                conf_dict = self.iterator.next()
-                if conf_dict is None:
-                    break
-                self.log(f'[ITER] Iteration[{self.iterator.iter_count}/{self.iterator.max_iter_count}]'
-                         f'[rep {i}/{self.iterator.repeat}]: '
+                self.log(f'[ITER] Iteration'
+                         f'[(param) {self.iterator.iter_count}/{self.iterator.max_iter_count}]'
+                         f'[(rep) {i + 1}/{self.iterator.repeat}]: '
                          f'{self.iterator.linear_conf_dict}', Color.MAGENTA)
                 self.iterator.config_pkgs(conf_dict)
                 self.run()
