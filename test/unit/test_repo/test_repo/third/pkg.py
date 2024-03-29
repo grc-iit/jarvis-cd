@@ -20,7 +20,13 @@ class Third(Application):
 
         :return: List(dict)
         """
-        return []
+        return [
+            {
+                'name': 'port',
+                'msg': 'The port to listen for data on',
+                'type': int
+            },
+        ]
 
     def _configure(self, **kwargs):
         """

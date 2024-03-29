@@ -22,6 +22,7 @@ import shutil
 import math
 import os
 import time
+import pandas as pd
 
 
 class PkgArgParse(ArgParse):
@@ -33,6 +34,122 @@ class PkgArgParse(ArgParse):
         pass
 
 
+class PipelineZip:
+    """
+    A class to represent a zip of pipeline configurations
+    """
+    def __init__(self):
+        self.zip = []
+        self.zip_len = 0
+
+    def add_param_set(self, pkg, var_name, var_vals):
+        self.zip_len = len(var_vals)
+        self.zip.append((pkg, var_name, var_vals))
+
+
+class PipelineIterator:
+    """
+    Grid searching pipeline parameters
+    """
+    def __init__(self, ppl, config):
+        """
+        Initialize grid search
+
+        fors: A list of lists [(pkg, var_name, var_vals)]
+        """
+        self.fors = []
+        self.cur_iters = []
+        self.cur_pos = []
+        self.iter_count = 0
+        self.conf_dict = {}
+        self.linear_conf_dict = {}
+        self.iter_vars = config['iterator']['vars']
+        self.iter_loop = config['iterator']['loop']
+        iter_out = config['iterator']['output']
+        iter_out = iter_out.replace('$shared_dir', ppl.shared_dir)
+        iter_out = iter_out.replace('$config_dir', ppl.config_dir)
+        iter_out = iter_out.replace('$private_dir', ppl.private_dir)
+        self.iter_out = iter_out
+        self.stats_dict_path = f'{self.iter_out}/stats_dict.csv'
+        self.ppl = ppl
+        self.stats = []
+
+        Mkdir(self.iter_out)
+        self.iter_vars = self.iter_vars
+        for zip_set in self.iter_loop:
+            self.add_for()
+            for zip_name in zip_set:
+                pkg_name, var_name = zip_name.split('.')
+                pkg = ppl.sub_pkgs_dict[pkg_name]
+                self.add_to_for_zip(pkg, var_name, self.iter_vars[zip_name])
+
+    def add_for(self):
+        self.fors.append(PipelineZip())
+
+    def add_to_for_zip(self, pkg, var_name, var_vals):
+        for_zip = self.fors[-1]
+        for_zip.add_param_set(pkg, var_name, var_vals)
+        self.conf_dict[pkg] = {}
+
+    def begin(self):
+        for i in range(len(self.fors)):
+            self.cur_iters.append(iter(range(self.fors[i].zip_len)))
+            if i == len(self.fors) - 1:
+                self.cur_pos.append(0)
+            else:
+                self.cur_pos.append(next(self.cur_iters[i]))
+        self.conf_dict = self.current()
+
+    def resume(self, cur_pos):
+        self.cur_pos = cur_pos
+        for i in range(len(self.fors)):
+            self.cur_iters.append(iter(range(
+                cur_pos[i], self.fors[i].zip_len)))
+        self.conf_dict = self.current()
+
+    def current(self):
+        for i in range(len(self.cur_iters)):
+            for pkg, var_name, var_vals in self.fors[i].zip:
+                self.conf_dict[pkg][var_name] = var_vals[self.cur_pos[i]]
+        for pkg, conf in self.conf_dict.items():
+            for key, val in conf.items():
+                self.linear_conf_dict[f'{pkg.pkg_id}.{key}'] = val
+        return self.conf_dict
+
+    def next(self):
+        for i in range(len(self.cur_iters) - 1, -1, -1):
+            try:
+                self.cur_pos[i] = next(self.cur_iters[i])
+                break
+            except StopIteration:
+                if i == 0:
+                    return None
+                else:
+                    self.cur_iters[i] = iter(range(self.fors[i].zip_len))
+                    self.cur_pos[i] = next(self.cur_iters[i])
+        conf_dict = self.current()
+        return conf_dict
+
+    def config_pkgs(self, conf_dict):
+        for pkg, conf in conf_dict.items():
+            pkg.configure(**conf)
+
+    def save_run(self, conf_dict):
+        stat_dict = {**self.linear_conf_dict}
+        # Get the package-specific stats
+        for pkg in self.ppl.sub_pkgs:
+            if hasattr(pkg, '_get_stat'):
+                pkg._get_stat(stat_dict)
+        # Save the stats to the list
+        self.stats.append(stat_dict)
+
+    def analysis(self):
+        for pkg in self.ppl.sub_pkgs:
+            if hasattr(pkg, '_analysis'):
+                pkg._analysis()
+        df = pd.DataFrame(self.stats)
+        df.to_csv(self.stats_dict_path, index=False)
+
 class Pkg(ABC):
     """
     Represents a generic Jarvis pkg. Includes methods to load configurations
@@ -42,8 +159,27 @@ class Pkg(ABC):
     def __init__(self):
         """
         Initialize paths
-
-        :param pkg_type: The type of this package
+        
+        jarvis: the JarvisManager singleton
+        jutil: the JutilManager singleton
+        pkg_type: the type of this package (semantic string)
+        root: the root package of this package
+        global_id: the unique identifier for this package (dot-separated string)
+        pkg_id: the semantic name of this package (last part of globl_id)
+        pkg_dir: the code's source directory
+        config_dir: the directory where configuration data is stored
+        private_dir: the directory where private data is stored
+        shared_dir: the directory where shared data is stored
+        config_path: the path to the configuration file
+        config: the configuration data
+        sub_pkgs: the sub-packages of this package (ordered list)
+        sub_pkgs_dict: the sub-packages of this package (dict)
+        env_path: the path to the environment file
+        env: the environment data
+        mod_env: the environment data + LD_PRELOAD
+        iter_vars: the iteration variables
+        iter_loop: the iteration loop
+        iter_out: the iteration output
         """
         self.jarvis = JarvisManager.get_instance()
         self.jutil = JutilManager.get_instance()
@@ -60,9 +196,11 @@ class Pkg(ABC):
         self.config_path = None
         self.config = None
         self.sub_pkgs = []
+        self.sub_pkgs_dict = {}
         self.env_path = None
         self.env = None
         self.mod_env = None
+        self.iterator = None
         self.exit_code = 0
         self.start_time = 0
         self.stop_time = 0
@@ -151,6 +289,7 @@ class Pkg(ABC):
             sub_pkg = self.jarvis.construct_pkg(sub_pkg_type)
             sub_pkg.load(f'{self.global_id}.{sub_pkg_id}', self.root)
             self.sub_pkgs.append(sub_pkg)
+            self.sub_pkgs_dict[sub_pkg.pkg_id] = sub_pkg
         self._init()
         return self
 
@@ -250,6 +389,7 @@ class Pkg(ABC):
             pkg.update_env(self.env)
             pkg.configure(**kwargs)
         self.sub_pkgs.insert(off, pkg)
+        self.sub_pkgs_dict[pkg.pkg_id] = pkg
         return self
 
     def append(self, pkg_type, pkg_id=None, do_configure=True, **kwargs):
@@ -790,7 +930,7 @@ class Pipeline(Pkg):
         YamlFile(static_env_path).save(self.env)
         return self
 
-    def from_dict(self, config, do_configure=True):
+    def from_yaml_dict(self, config, do_configure=True):
         """
         Create a pipeline from a YAML file
 
@@ -821,7 +961,42 @@ class Pipeline(Pkg):
         :return: self
         """
         config = YamlFile(path).load()
-        return self.from_dict(config, do_configure)
+        if 'loop' in config:
+            return self.from_yaml_iter_dict(config, do_configure)
+        else:
+            return self.from_yaml_dict(config, do_configure)
+
+    def from_yaml_iter_dict(self, config, do_configure=True):
+        """
+        Create a pipeline + iterator from a YAML file
+        YAML format:
+        config:
+          name: pipeline_name
+          pkgs:
+            - pkg_type: OrangeFS
+              pkg_name: orangefs
+              num_servers: 2
+              num_clients: 4
+        vars:
+            pkg_id:
+              - var1: [val1, val2, val3]
+              - var2: [val1, val2, val3]
+              - var3: [hello]
+        loop:
+            - [pkg_name.var1, pkg_name.var2]
+            - [pkg_name.var3]
+        output: my_dir
+
+        :param path:
+        :param do_configure: Whether to append and configure
+        :return: self
+        """
+        self.from_yaml_dict(config['config'], do_configure)
+        self.config['iterator'] = {}
+        self.config['iterator']['vars'] = config['vars']
+        self.config['iterator']['loop'] = config['loop']
+        self.config['iterator']['output'] = config['output']
+        return self
 
     def get_static_env_path(self, env_name):
         """
@@ -892,6 +1067,21 @@ class Pipeline(Pkg):
             pkg.configure()
         return self
 
+    def run_iter(self, resume=False):
+        """
+        Run the pipeline repeatedly with new configurations
+        """
+        self.iterator = PipelineIterator(self, self.config)
+        self.iterator.begin()
+        while True:
+            conf_dict = self.iterator.next()
+            if conf_dict is None:
+                break
+            self.iterator.config_pkgs(conf_dict)
+            self.run()
+            self.iterator.save_run(conf_dict)
+        self.iterator.analysis()
+
     def run(self):
         """
         Start and stop the pipeline
@@ -927,9 +1117,9 @@ class Pipeline(Pkg):
                 self.mod_env.update(self.env)
             self.exit_code += pkg.exit_code
             end = time.time()
-            self.start_time = end - start
+            pkg.start_time = end - start
             self.log(f'{pkg.pkg_id}: '
-                     f'Start finished in {self.start_time} seconds',
+                     f'Start finished in {pkg.start_time} seconds',
                      color=Color.GREEN)
 
     def stop(self):
@@ -945,9 +1135,9 @@ class Pipeline(Pkg):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.stop()
             end = time.time()
-            self.stop_time = end - start
+            pkg.stop_time = end - start
             self.log(f'{pkg.pkg_id}: '
-                     f'Stop finished in {self.stop_time} seconds',
+                     f'Stop finished in {pkg.stop_time} seconds',
                      color=Color.GREEN)
 
     def kill(self):

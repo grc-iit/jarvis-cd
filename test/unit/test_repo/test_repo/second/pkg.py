@@ -20,7 +20,13 @@ class Second(Interceptor):
 
         :return: List(dict)
         """
-        return []
+        return [
+            {
+                'name': 'port',
+                'msg': 'The port to listen for data on',
+                'type': int
+            },
+        ]
 
     def _configure(self, **kwargs):
         """
@@ -32,6 +38,15 @@ class Second(Interceptor):
         :return: None
         """
         print(f'{kwargs}')
+
+    def _get_stat(self, stat_dict):
+        """
+        Get statistics from the application.
+
+        :param stat_dict: A dictionary of statistics.
+        :return: None
+        """
+        stat_dict[f'{self.pkg_id}.runtime'] = self.start_time
 
     def modify_env(self):
         """

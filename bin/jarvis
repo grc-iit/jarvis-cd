@@ -446,19 +446,6 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarvis pipeline iterate
-        self.add_cmd('pipeline iterate',
-                      msg='Create a pipeline from a yaml schema and iterate')
-        self.add_args([
-            {
-                'name': 'path',
-                'msg': 'The pipeline schema file path',
-                'required': True,
-                'pos': True,
-                'default': None
-            },
-        ])
-
         # jarvis pipeline print
         self.add_cmd('pipeline print', msg="List all pkgs in a pipeline.")
         self.add_args([
@@ -786,6 +773,14 @@ class JarvisArgs(ArgParse):
                 'pos': False,
                 'default': None,
                 'type': str
+            },
+            {
+                'name': 'resume',
+                'msg': 'Resume an iterative pipeline',
+                'required': False,
+                'pos': False,
+                'default': False,
+                'type': bool
             },
         ])
 
@@ -1283,23 +1278,6 @@ class JarvisArgs(ArgParse):
         self.jarvis.save()
         exit(pipeline.exit_code)
 
-    def pipeline_iterate(self):
-        # path = self.kwargs['path']
-        # params = YamlFile(path).load()
-        # case_list = []
-        # for key, val_list in params.items():
-        #     if isinstance(val_list, list):
-        #         case_list.append([(key, val) for val in val_list])
-        # cases = itertools.product(*case_list)
-        # for case in cases:
-        #     key = case[0]
-        #     val = case[1]
-        #     params[key] = val
-        #     pipeline = Pipeline().from_dict(path).save()
-        # self.jarvis.cd(pipeline.global_id)
-        # self.jarvis.save()
-        pass
-
     def pipeline_reset(self):
         pipeline_id = self.kwargs['pipeline_id']
         Pipeline().load(pipeline_id, with_config=False).reset()
@@ -1448,7 +1426,10 @@ class JarvisArgs(ArgParse):
             hostfile.save(file_location)
             self.jarvis.set_hostfile(file_location)
             pipeline.update().save()  # this calls the config step
-        pipeline.run()
+        if 'iterator' in pipeline.config:
+            pipeline.run_iter()
+        else:
+            pipeline.run()
         exit(pipeline.exit_code)
 
     def pipeline_sbatch(self):
