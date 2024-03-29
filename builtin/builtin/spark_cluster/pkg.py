@@ -63,13 +63,13 @@ class SparkCluster(Service):
         # Start the master node
         Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/start-master.sh',
              PsshExecInfo(env=self.env,
-                          hosts=self.jarvis.hostfile.subset(self.config['num_nodes'])))
+                          hosts=self.jarvis.hostfile.subset(1)))
         time.sleep(1)
         # Start the worker nodes
         Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/start-worker.sh '
              f'{self.env["SPARK_MASTER_HOST"]}:{self.env["SPARK_MASTER_PORT"]}',
              PsshExecInfo(env=self.mod_env,
-                          hosts=self.jarvis.hostfile))
+                          hosts=self.jarvis.hostfile.subset(self.config['num_nodes'])))
         time.sleep(self.config['sleep'])
 
     def stop(self):
