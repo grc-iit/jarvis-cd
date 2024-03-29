@@ -51,6 +51,7 @@ class Pymonitor(Service):
             self.config['dir'] = f'{self.shared_dir}/logs'
         self.config['dir'] = os.path.expandvars(self.config['dir'])
         Mkdir(self.config['dir'])
+        self.env['MONITOR_DIR'] = self.config['dir']
 
     def start(self):
         """
@@ -61,7 +62,7 @@ class Pymonitor(Service):
         """
         self.log(f'Pymonitor started on {self.config["dir"]}')
         Monitor(self.config['frequency'],
-                self.config['dir'],
+                self.env['dir'],
                 PsshExecInfo(env=self.env,
                             hostfile=self.jarvis.hostfile,
                             exec_async=True))
