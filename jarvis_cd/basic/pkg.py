@@ -12,7 +12,7 @@ from jarvis_util.shell.local_exec import LocalExecInfo
 from jarvis_util.shell.exec import Exec
 from jarvis_util.util.argparse import ArgParse
 from jarvis_util.jutil_manager import JutilManager
-from jarvis_util.shell.filesystem import Mkdir
+from jarvis_util.shell.filesystem import Mkdir, Rm
 from jarvis_util.shell.pssh_exec import PsshExecInfo
 from enum import Enum
 import yaml
@@ -51,27 +51,28 @@ class PipelineIterator:
     """
     Grid searching pipeline parameters
     """
-    def __init__(self, ppl, config):
+    def __init__(self, ppl):
         """
         Initialize grid search
 
         fors: A list of lists [(pkg, var_name, var_vals)]
         """
+        self.ppl = ppl
         self.fors = []
         self.cur_iters = []
         self.cur_pos = []
         self.iter_count = 0
+        self.max_iter_count = 0
         self.conf_dict = {}
         self.linear_conf_dict = {}
-        self.iter_vars = config['iterator']['vars']
-        self.iter_loop = config['iterator']['loop']
-        iter_out = config['iterator']['output']
+        self.iter_vars = ppl.config['iterator']['vars']
+        self.iter_loop = ppl.config['iterator']['loop']
+        iter_out = ppl.config['iterator']['output']
         iter_out = iter_out.replace('$shared_dir', ppl.shared_dir)
         iter_out = iter_out.replace('$config_dir', ppl.config_dir)
         iter_out = iter_out.replace('$private_dir', ppl.private_dir)
         self.iter_out = iter_out
-        self.stats_dict_path = f'{self.iter_out}/stats_dict.csv'
-        self.ppl = ppl
+        self.stats_path = f'{self.iter_out}/stats_dict.csv'
         self.stats = []
 
         Mkdir(self.iter_out)
@@ -99,6 +100,8 @@ class PipelineIterator:
             else:
                 self.cur_pos.append(next(self.cur_iters[i]))
         self.conf_dict = self.current()
+        self.iter_count = 0
+        self.max_iter_count = math.prod([for_zip.zip_len for for_zip in self.fors])
 
     def resume(self, cur_pos):
         self.cur_pos = cur_pos
@@ -128,6 +131,7 @@ class PipelineIterator:
                     self.cur_iters[i] = iter(range(self.fors[i].zip_len))
                     self.cur_pos[i] = next(self.cur_iters[i])
         conf_dict = self.current()
+        self.iter_count += 1
         return conf_dict
 
     def config_pkgs(self, conf_dict):
@@ -148,7 +152,7 @@ class PipelineIterator:
             if hasattr(pkg, '_analysis'):
                 pkg._analysis()
         df = pd.DataFrame(self.stats)
-        df.to_csv(self.stats_dict_path, index=False)
+        df.to_csv(self.stats_path, index=False)
 
 class Pkg(ABC):
     """
@@ -1071,16 +1075,22 @@ class Pipeline(Pkg):
         """
         Run the pipeline repeatedly with new configurations
         """
-        self.iterator = PipelineIterator(self, self.config)
+        self.iterator = PipelineIterator(self)
         self.iterator.begin()
         while True:
             conf_dict = self.iterator.next()
             if conf_dict is None:
                 break
+            self.log(f'[ITER] Iteration[{self.iterator.iter_count}/{self.iterator.max_iter_count}]: '
+                     f'{self.iterator.linear_conf_dict}', Color.MAGENTA)
             self.iterator.config_pkgs(conf_dict)
             self.run()
             self.iterator.save_run(conf_dict)
+            self.clean(with_iter_out=False)
+        self.log(f'[ITER] Beginning analysis', Color.MAGENTA)
         self.iterator.analysis()
+        self.log(f'[ITER] Finished analysis', Color.MAGENTA)
+        self.log(f'[ITER] Stored results in: {self.iterator.stats_path}', Color.MAGENTA)
 
     def run(self):
         """
@@ -1106,7 +1116,7 @@ class Pipeline(Pkg):
         """
         self.mod_env = self.env.copy()
         for pkg in self.sub_pkgs:
-            self.log(f'{pkg.pkg_id}: Start', color=Color.GREEN)
+            self.log(f'[RUN] {pkg.pkg_id}: Start', color=Color.GREEN)
             start = time.time()
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
@@ -1118,7 +1128,7 @@ class Pipeline(Pkg):
             self.exit_code += pkg.exit_code
             end = time.time()
             pkg.start_time = end - start
-            self.log(f'{pkg.pkg_id}: '
+            self.log(f'[RUN] {pkg.pkg_id}: '
                      f'Start finished in {pkg.start_time} seconds',
                      color=Color.GREEN)
 
@@ -1129,14 +1139,14 @@ class Pipeline(Pkg):
         :return: None
         """
         for pkg in reversed(self.sub_pkgs):
-            self.log(f'{pkg.pkg_id}: Stop', color=Color.GREEN)
+            self.log(f'[RUN] {pkg.pkg_id}: Stop', color=Color.GREEN)
             start = time.time()
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.stop()
             end = time.time()
             pkg.stop_time = end - start
-            self.log(f'{pkg.pkg_id}: '
+            self.log(f'[RUN] {pkg.pkg_id}: '
                      f'Stop finished in {pkg.stop_time} seconds',
                      color=Color.GREEN)
 
@@ -1147,25 +1157,29 @@ class Pipeline(Pkg):
         :return: None
         """
         for pkg in reversed(self.sub_pkgs):
-            self.log(f'{pkg.pkg_id}: Killing', color=Color.GREEN)
+            self.log(f'[RUN] {pkg.pkg_id}: Killing', color=Color.GREEN)
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
                 if hasattr(pkg, 'kill'):
                     pkg.kill()
-            self.log(f'{pkg.pkg_id}: Finished killing', color=Color.GREEN)
+            self.log(f'[RUN] {pkg.pkg_id}: Finished killing', color=Color.GREEN)
 
-    def clean(self):
+    def clean(self, with_iter_out=True):
         """
         Clean the pipeline
 
+        with_iter_out: Clean the iteration output
         :return: None
         """
         for pkg in reversed(self.sub_pkgs):
-            self.log(f'{pkg.pkg_id}: Cleaning', color=Color.GREEN)
+            self.log(f'[RUN] {pkg.pkg_id}: Cleaning', color=Color.GREEN)
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.clean()
-            self.log(f'{pkg.pkg_id}: Finished cleaning', color=Color.GREEN)
+            self.log(f'[RUN] {pkg.pkg_id}: Finished cleaning', color=Color.GREEN)
+        if with_iter_out:
+            self.iterator = PipelineIterator(self)
+            Rm(self.iterator.iter_out)
 
     def status(self):
         """
@@ -1175,12 +1189,12 @@ class Pipeline(Pkg):
         """
         statuses = []
         for pkg in reversed(self.sub_pkgs):
-            self.log(f'{pkg.pkg_id}: Getting status', color=Color.GREEN)
+            self.log(f'[RUN] {pkg.pkg_id}: Getting status', color=Color.GREEN)
             status = None
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
                 status = pkg.status()
                 statuses.append(status)
-            self.log(f'{pkg.pkg_id}: Status was {status}',
+            self.log(f'[RUN] {pkg.pkg_id}: Status was {status}',
                      color=Color.GREEN)
         return math.prod(statuses)
