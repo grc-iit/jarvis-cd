@@ -66,6 +66,7 @@ class Pymonitor(Service):
                 PsshExecInfo(env=self.env,
                             hostfile=self.jarvis.hostfile,
                             exec_async=True))
+        timer.sleep(self.config['sleep'])
 
     def stop(self):
         """
