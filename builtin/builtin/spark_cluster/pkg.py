@@ -27,15 +27,16 @@ class SparkCluster(Service):
         """
         return [
             {
-                'name': 'port',  # The name of the parameter
-                'msg': '',  # Describe this parameter
-                'type': int,  # What is the parameter type?
-                'default': 7077,  # What is the default value if not required?
-                # Does this parameter have specific valid inputs?
-                'choices': [],
-                # When type is list, what do the entries of the list mean?
-                # A list of dicts just like this one.
-                'args': [],
+                'name': 'port',
+                'msg': '',
+                'type': int,
+                'default': 7077,
+            },
+            {
+                'name': 'num_nodes',
+                'msg': '',
+                'type': int,
+                'default': 1,
             },
         ]
 
@@ -62,7 +63,7 @@ class SparkCluster(Service):
         # Start the master node
         Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/start-master.sh',
              PsshExecInfo(env=self.env,
-                          hosts=self.jarvis.hostfile.subset(1)))
+                          hosts=self.jarvis.hostfile.subset(self.config['num_nodes'])))
         time.sleep(1)
         # Start the worker nodes
         Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/start-worker.sh '
