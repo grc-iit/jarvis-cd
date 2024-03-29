@@ -311,6 +311,13 @@ class Pkg(ABC):
             pkg.save()
         return self
 
+    def set_config_env_vars(self):
+        if self.iterator is not None:
+            os.environ['ITER_DIR'] = self.iterator.iter_out
+        os.environ['SHARED_DIR'] = self.shared_dir
+        os.environ['PRIVATE_DIR'] = self.private_dir
+        os.environ['CONFIG_DIR'] = self.config_dir
+
     def clear(self):
         """
         Destroy a pipeline's sub-pkgs
@@ -1072,13 +1079,6 @@ class Pipeline(Pkg):
             pkg.env = self.env
             pkg.configure()
         return self
-
-    def set_config_env_vars(self):
-        if self.iterator is not None:
-            os.environ['ITER_DIR'] = self.iterator.iter_out
-        os.environ['SHARED_DIR'] = self.shared_dir
-        os.environ['PRIVATE_DIR'] = self.private_dir
-        os.environ['CONFIG_DIR'] = self.config_dir
 
     def run_iter(self, resume=False):
         """
