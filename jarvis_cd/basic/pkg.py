@@ -67,6 +67,7 @@ class PipelineIterator:
         self.linear_conf_dict = {}
         self.iter_vars = ppl.config['iterator']['vars']
         self.iter_loop = ppl.config['iterator']['loop']
+        self.repeat = ppl.config['iterator']['repeat']
         iter_out = ppl.config['iterator']['output']
         iter_out = iter_out.replace('$shared_dir', ppl.shared_dir)
         iter_out = iter_out.replace('$config_dir', ppl.config_dir)
@@ -1000,6 +1001,7 @@ class Pipeline(Pkg):
         self.config['iterator']['vars'] = config['vars']
         self.config['iterator']['loop'] = config['loop']
         self.config['iterator']['output'] = config['output']
+        self.config['iterator']['repeat'] = config['repeat']
         return self
 
     def get_static_env_path(self, env_name):
@@ -1078,15 +1080,17 @@ class Pipeline(Pkg):
         self.iterator = PipelineIterator(self)
         self.iterator.begin()
         while True:
-            conf_dict = self.iterator.next()
-            if conf_dict is None:
-                break
-            self.log(f'[ITER] Iteration[{self.iterator.iter_count}/{self.iterator.max_iter_count}]: '
-                     f'{self.iterator.linear_conf_dict}', Color.MAGENTA)
-            self.iterator.config_pkgs(conf_dict)
-            self.run()
-            self.iterator.save_run(conf_dict)
-            self.clean(with_iter_out=False)
+            for i in range(self.iterator.repeat):
+                conf_dict = self.iterator.next()
+                if conf_dict is None:
+                    break
+                self.log(f'[ITER] Iteration[{self.iterator.iter_count}/{self.iterator.max_iter_count}]'
+                         f'[rep {i}/{self.iterator.repeat}]: '
+                         f'{self.iterator.linear_conf_dict}', Color.MAGENTA)
+                self.iterator.config_pkgs(conf_dict)
+                self.run()
+                self.iterator.save_run(conf_dict)
+                self.clean(with_iter_out=False)
         self.log(f'[ITER] Beginning analysis', Color.MAGENTA)
         self.iterator.analysis()
         self.log(f'[ITER] Finished analysis', Color.MAGENTA)
