@@ -32,10 +32,10 @@ class Pymonitor(Service):
                 'default': 1
             },
             {
-                'name': 'monitor_dir',
+                'name': 'dir',
                 'msg': 'Directory to store monitor logs',
-                'type': bool,
-                'default': False,
+                'type': str,
+                'default': None,
             },
         ]
 
@@ -47,7 +47,9 @@ class Pymonitor(Service):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.config['api'] = self.config['api'].upper()
+        if self.config['dir'] is None:
+            self.config['dir'] = f'{self.shared_dir}/logs'
+        Mkdir(self.config['dir'])
 
     def start(self):
         """
@@ -56,8 +58,9 @@ class Pymonitor(Service):
 
         :return: None
         """
+        self.log(f'Pymonitor started on {self.config["dir"]}')
         Monitor(self.config['frequency'],
-                self.config['monitor_dir'],
+                self.config['dir'],
                 PsshExecInfo(env=self.env,
                             hostfile=self.jarvis.hostfile,
                             exec_async=True))
@@ -71,6 +74,9 @@ class Pymonitor(Service):
         """
         Kill('.*pymonitor.*', PsshExecInfo(env=self.env))
 
+    def status(self):
+        pass
+
     def clean(self):
         """
         Destroy all data for an application. E.g., OrangeFS will delete all
@@ -78,4 +84,4 @@ class Pymonitor(Service):
 
         :return: None
         """
-        Rm(self.config['monitor_dir'])
+        Rm(self.config['dir'])
