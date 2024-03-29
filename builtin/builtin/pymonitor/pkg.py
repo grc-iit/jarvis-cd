@@ -49,6 +49,7 @@ class Pymonitor(Service):
         """
         if self.config['dir'] is None:
             self.config['dir'] = f'{self.shared_dir}/logs'
+        self.config['dir'] = os.path.expandvars(self.config['dir'])
         Mkdir(self.config['dir'])
 
     def start(self):
