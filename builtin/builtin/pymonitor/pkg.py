@@ -52,7 +52,7 @@ class Pymonitor(Service):
         self.config['dir'] = os.path.expandvars(self.config['dir'])
         Mkdir(self.config['dir'])
         self.env['MONITOR_DIR'] = self.config['dir']
-        self.log(f'The config dir is {self.config["dir"]}', Color.YELLOW)
+        self.log(f'The config dir is {self.config["dir"]}')
 
     def start(self):
         """

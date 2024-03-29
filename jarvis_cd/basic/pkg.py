@@ -136,7 +136,6 @@ class PipelineIterator:
     def config_pkgs(self, conf_dict):
         for pkg, conf in conf_dict.items():
             pkg.set_config_env_vars()
-            print(f'CONFIGURING {pkg.pkg_id} WITH {conf}')
             pkg.configure(**conf)
             pkg.save()
 
