@@ -311,9 +311,9 @@ class Pkg(ABC):
             pkg.save()
         return self
 
-    def set_config_env_vars(self):
-        if self.iterator is not None:
-            os.environ['ITER_DIR'] = self.iterator.iter_out
+    def set_config_env_vars(self, cur_iter_temp=None):
+        if cur_iter_temp is not None:
+            os.environ['ITER_DIR'] = cur_iter_temp
         os.environ['SHARED_DIR'] = self.shared_dir
         os.environ['PRIVATE_DIR'] = self.private_dir
         os.environ['CONFIG_DIR'] = self.config_dir
@@ -1094,7 +1094,7 @@ class Pipeline(Pkg):
                 cur_iter_tmp = os.path.join(
                     self.iterator.iter_out,
                     f'{self.iterator.iter_count}-{i}')
-                self.set_config_env_vars()
+                self.set_config_env_vars(cur_iter_tmp)
                 self.log(f'[ITER] Iteration'
                          f'[(param) {self.iterator.iter_count}/{self.iterator.max_iter_count}]'
                          f'[(rep) {i + 1}/{self.iterator.repeat}]: '
