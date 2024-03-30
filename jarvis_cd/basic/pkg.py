@@ -1106,7 +1106,7 @@ class Pipeline(Pkg):
                          f'[(rep) {i + 1}/{self.iterator.repeat}]: '
                          f'{self.iterator.linear_conf_dict}', Color.MAGENTA)
                 self.iterator.config_pkgs(conf_dict)
-                self.run()
+                self.run(kill=True)
                 self.iterator.save_run(conf_dict)
                 self.clean(with_iter_out=False)
         self.log(f'[ITER] Beginning analysis', Color.MAGENTA)
@@ -1115,14 +1115,18 @@ class Pipeline(Pkg):
         self.log(f'[ITER] Stored results in: {self.iterator.stats_path}', Color.MAGENTA)
         conf_dict = self.iterator.next()
 
-    def run(self):
+    def run(self, kill=False):
         """
         Start and stop the pipeline
 
+        :param kill: Whether to kill the pipeline
         :return: None
         """
         self.start()
-        self.stop()
+        if kill:
+            self.kill()
+        else:
+            self.stop()
 
     def start(self):
         """
