@@ -190,6 +190,8 @@ class Pkg(ABC):
         iter_vars: the iteration variables
         iter_loop: the iteration loop
         iter_out: the iteration output
+        stats_path: the path to the statistics file
+        stats: the statistics list
         """
         self.jarvis = JarvisManager.get_instance()
         self.jutil = JutilManager.get_instance()
@@ -214,6 +216,7 @@ class Pkg(ABC):
         self.exit_code = 0
         self.start_time = 0
         self.stop_time = 0
+        self.skip_run = False
 
     def log(self, msg, color=None):
         ColorPrinter.print(msg, color)
