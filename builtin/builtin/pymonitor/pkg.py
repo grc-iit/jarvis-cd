@@ -37,6 +37,12 @@ class Pymonitor(Service):
                 'type': str,
                 'default': None,
             },
+            {
+                'name': 'num_nodes',
+                'msg': 'Number of nodes to run monitor on. 0 means all',
+                'type': int,
+                'default': 0,
+            },
         ]
 
     def _configure(self, **kwargs):
@@ -63,10 +69,13 @@ class Pymonitor(Service):
         """
         self.log(f'Pymonitor started on {self.config["dir"]}')
         self.env['PYTHONBUFFERED'] = '0'
+        hostfile = self.jarvis.hostfile
+        if self.config['num_nodes'] > 0:
+            hostfile = hostfile.get_subset(self.config['num_nodes'])
         Monitor(self.config['frequency'],
                 self.config['dir'],
                 PsshExecInfo(env=self.env,
-                            hostfile=self.jarvis.hostfile,
+                            hostfile=hostfile,
                             exec_async=True))
         time.sleep(self.config['sleep'])
 
