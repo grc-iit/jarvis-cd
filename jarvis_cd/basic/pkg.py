@@ -1197,6 +1197,8 @@ class Pipeline(Pkg):
         :return: None
         """
         for pkg in reversed(self.sub_pkgs):
+            if pkg.skip_run:
+                continue
             self.log(f'[RUN] {pkg.pkg_id}: Cleaning', color=Color.GREEN)
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
