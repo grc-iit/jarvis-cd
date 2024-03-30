@@ -98,14 +98,12 @@ class PipelineIterator:
     def begin(self):
         for i in range(len(self.fors)):
             self.cur_iters.append(iter(range(self.fors[i].zip_len)))
-            if i == len(self.fors) - 1:
-                self.cur_pos.append(0)
-            else:
-                self.cur_pos.append(next(self.cur_iters[i]))
+            self.cur_pos.append(next(self.cur_iters[i]))
         self.cur_pos_diff = [1] * len(self.cur_pos)
         self.conf_dict = self.current()
         self.iter_count = 0
         self.max_iter_count = math.prod([for_zip.zip_len for for_zip in self.fors])
+        return self.conf_dict
 
     def current(self):
         for i in range(len(self.cur_iters)):
@@ -1095,11 +1093,8 @@ class Pipeline(Pkg):
         Run the pipeline repeatedly with new configurations
         """
         self.iterator = PipelineIterator(self)
-        self.iterator.begin()
-        while True:
-            conf_dict = self.iterator.next()
-            if conf_dict is None:
-                break
+        conf_dict = self.iterator.begin()
+        while conf_dict is not None:
             self.clean(with_iter_out=False)
             for i in range(self.iterator.repeat):
                 cur_iter_tmp = os.path.join(
@@ -1118,6 +1113,7 @@ class Pipeline(Pkg):
         self.iterator.analysis()
         self.log(f'[ITER] Finished analysis', Color.MAGENTA)
         self.log(f'[ITER] Stored results in: {self.iterator.stats_path}', Color.MAGENTA)
+        conf_dict = self.iterator.next()
 
     def run(self):
         """
