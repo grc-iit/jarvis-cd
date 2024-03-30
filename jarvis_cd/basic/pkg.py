@@ -1097,6 +1097,7 @@ class Pipeline(Pkg):
             conf_dict = self.iterator.next()
             if conf_dict is None:
                 break
+            self.clean(with_iter_out=False)
             for i in range(self.iterator.repeat):
                 cur_iter_tmp = os.path.join(
                     self.iterator.iter_out,
