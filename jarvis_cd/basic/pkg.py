@@ -58,9 +58,11 @@ class PipelineIterator:
         fors: A list of lists [(pkg, var_name, var_vals)]
         """
         self.ppl = ppl
+        self.norerun = set(ppl.config['iterator']['norerun'])
         self.fors = []
         self.cur_iters = []
         self.cur_pos = []
+        self.cur_pos_diff = []
         self.iter_count = 0
         self.max_iter_count = 0
         self.conf_dict = {}
@@ -102,26 +104,22 @@ class PipelineIterator:
         self.iter_count = 0
         self.max_iter_count = math.prod([for_zip.zip_len for for_zip in self.fors])
 
-    def resume(self, cur_pos):
-        self.cur_pos = cur_pos
-        for i in range(len(self.fors)):
-            self.cur_iters.append(iter(range(
-                cur_pos[i], self.fors[i].zip_len)))
-        self.conf_dict = self.current()
-
     def current(self):
         for i in range(len(self.cur_iters)):
             for pkg, var_name, var_vals in self.fors[i].zip:
                 self.conf_dict[pkg][var_name] = var_vals[self.cur_pos[i]]
+                pkg.iter_diff = self.cur_pos_diff[i]
         for pkg, conf in self.conf_dict.items():
             for key, val in conf.items():
                 self.linear_conf_dict[f'{pkg.pkg_id}.{key}'] = val
         return self.conf_dict
 
     def next(self):
+        self.cur_pos_diff = [0] * len(self.cur_pos)
         for i in range(len(self.cur_iters) - 1, -1, -1):
             try:
                 self.cur_pos[i] = next(self.cur_iters[i])
+                self.cur_pos_diff[i] = 1
                 break
             except StopIteration:
                 if i == 0:
@@ -129,12 +127,16 @@ class PipelineIterator:
                 else:
                     self.cur_iters[i] = iter(range(self.fors[i].zip_len))
                     self.cur_pos[i] = next(self.cur_iters[i])
+                    self.cur_pos_diff[i] = 1
         conf_dict = self.current()
         self.iter_count += 1
         return conf_dict
 
     def config_pkgs(self, conf_dict):
         for pkg, conf in conf_dict.items():
+            pkg.skip_run = False
+            if pkg.pkg_id in self.norerun and pkg.iter_diff == 0:
+                pkg.skip_run = True
             pkg.set_config_env_vars()
             pkg.configure(**conf)
             pkg.save()
@@ -1009,6 +1011,7 @@ class Pipeline(Pkg):
         self.config['iterator']['loop'] = config['loop']
         self.config['iterator']['output'] = config['output']
         self.config['iterator']['repeat'] = config['repeat']
+        self.config['iterator']['norerun'] = config['norerun']
         return self
 
     def get_static_env_path(self, env_name):
@@ -1133,6 +1136,8 @@ class Pipeline(Pkg):
         self.mod_env = self.env.copy()
         for pkg in self.sub_pkgs:
             self.log(f'[RUN] {pkg.pkg_id}: Start', color=Color.GREEN)
+            if pkg.skip_run:
+                continue
             start = time.time()
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
