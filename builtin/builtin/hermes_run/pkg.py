@@ -412,9 +412,11 @@ class HermesRun(Service):
         protocol = net_info['provider']
         domain = net_info['domain']
         hostfile_path = self.hostfile.path
-        if hostfile_path is None:
+        if self.hostfile.path is None:
             hostfile_path = ''
             domain = ''
+        if self.config['domain'] is not None:
+            domain = self.config['domain']
         hermes_server['rpc'] = {
             'host_file': hostfile_path,
             'protocol': protocol,
