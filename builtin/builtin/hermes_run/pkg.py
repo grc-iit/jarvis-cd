@@ -16,6 +16,7 @@ class HermesRun(Service):
         Initialize paths
         """
         self.daemon_pkg = None
+        self.hostfile_path = f'{self.shared_dir}/hostfile'
         pass
 
     def _configure_menu(self):
@@ -267,6 +268,11 @@ class HermesRun(Service):
             }
         ]
 
+    def get_hostfile(self):
+        self.hostfile = self.jarvis.hostfile
+        if self.config['num_nodes'] > 0 and self.hostfile.path is not None:
+            self.hostfile = Hostfile(hostfile=self.hostfile_path)
+
     def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
@@ -276,11 +282,13 @@ class HermesRun(Service):
         application.
         :return: None
         """
-        self._configure_server()
-
-    def _configure_server(self):
         rg = self.jarvis.resource_graph
-        hosts = self.jarvis.hostfile
+
+        # Create hostfile
+        self.hostfile = self.jarvis.hostfile
+        if self.config['num_nodes'] > 0 and self.hostfile.path is not None:
+            self.hostfile = self.hostfile.subset(self.config['num_nodes'])
+            self.hostfile.save(self.hostfile_path)
 
         # Begin making hermes_run config
         hermes_server = {
@@ -362,7 +370,7 @@ class HermesRun(Service):
                 'slab_sizes': ['4KB', '16KB', '64KB', '1MB']
             }
             self.config['borg_paths'].append(mount)
-            Mkdir(mount, PsshExecInfo(hostfile=self.jarvis.hostfile,
+            Mkdir(mount, PsshExecInfo(hostfile=self.hostfile,
                                       env=self.env))
         if 'ram' in self.config and self.config['ram'] != '0':
             hermes_server['devices']['ram'] = {
@@ -378,11 +386,11 @@ class HermesRun(Service):
             }
 
         # Get network Info
-        if len(hosts) > 1:
-            net_info = rg.find_net_info(hosts, strip_ips=True, shared=True)
+        if len(self.hostfile) > 1:
+            net_info = rg.find_net_info(self.hostfile, strip_ips=True, shared=True)
         else:
-            # net_info = rg.find_net_info(hosts, strip_ips=True)
-            net_info = rg.find_net_info(hosts)
+            # net_info = rg.find_net_info(self.hostfile, strip_ips=True)
+            net_info = rg.find_net_info(self.hostfile)
         provider = self.config['provider']
         if provider is None:
             opts = net_info['provider'].unique().list()
@@ -403,7 +411,7 @@ class HermesRun(Service):
         net_info = net_info.rows[0]
         protocol = net_info['provider']
         domain = net_info['domain']
-        hostfile_path = self.jarvis.hostfile.path
+        hostfile_path = self.hostfile.path
         if hostfile_path is None:
             hostfile_path = ''
             domain = ''
@@ -418,8 +426,8 @@ class HermesRun(Service):
             'recency_max': self.config['recency_max'],
             'flush_period': self.config['flush_period']
         }
-        if self.jarvis.hostfile.path is None:
-            hermes_server['rpc']['host_names'] = self.jarvis.hostfile.hosts
+        if self.hostfile.path is None:
+            hermes_server['rpc']['host_names'] = self.hostfile.hosts
         hermes_server['default_placement_policy'] = self.config['dpe']
         if self.config['adapter_mode'] == 'default':
             adapter_mode = 'kDefault'
@@ -449,11 +457,9 @@ class HermesRun(Service):
         """
         self.log(self.env['HERMES_CONF'])
         self.log(self.env['HERMES_CLIENT_CONF'])
-        hostfile = self.jarvis.hostfile
-        if self.config['num_nodes'] > 0:
-            hostfile = hostfile.subset(self.config['num_nodes'])
+        self.get_hostfile()
         self.daemon_pkg = Exec('hrun_start_runtime',
-                                PsshExecInfo(hostfile=hostfile,
+                                PsshExecInfo(hostfile=self.hostfile,
                                              env=self.mod_env,
                                              exec_async=True,
                                              do_dbg=self.config['do_dbg'],
@@ -472,8 +478,9 @@ class HermesRun(Service):
         :return: None
         """
         self.log('Stopping hermes_run')
+        self.get_hostfile()
         Exec('hrun_stop_runtime',
-             LocalExecInfo(hostfile=self.jarvis.hostfile,
+             LocalExecInfo(hostfile=self.hostfile,
                            env=self.env,
                            exec_async=False,
                            # do_dbg=self.config['do_dbg'],
@@ -485,15 +492,13 @@ class HermesRun(Service):
         self.log('Daemon Exited?')
 
     def kill(self):
-        hostfile = self.jarvis.hostfile
-        if self.config['num_nodes'] > 0:
-            hostfile = hostfile.subset(self.config['num_nodes'])
+        self.get_hostfile()
         Kill('hrun',
-             PsshExecInfo(hostfile=hostfile,
+             PsshExecInfo(hostfile=self.hostfile,
                           env=self.env))
         if self.config['do_dbg']:
             Kill('gdbserver',
-                 PsshExecInfo(hostfile=self.jarvis.hostfile,
+                 PsshExecInfo(hostfile=self.hostfile,
                               env=self.env))
         self.log('Client Exited?')
         if self.daemon_pkg is not None:
@@ -507,9 +512,10 @@ class HermesRun(Service):
 
         :return: None
         """
+        self.get_hostfile()
         for path in self.config['borg_paths']:
             self.log(f'Removing {path}', Color.YELLOW)
-            Rm(path, PsshExecInfo(hostfile=self.jarvis.hostfile))
+            Rm(path, PsshExecInfo(hostfile=self.hostfile))
 
     def status(self):
         """
