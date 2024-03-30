@@ -71,7 +71,7 @@ class Pymonitor(Service):
         self.env['PYTHONBUFFERED'] = '0'
         hostfile = self.jarvis.hostfile
         if self.config['num_nodes'] > 0:
-            hostfile = hostfile.get_subset(self.config['num_nodes'])
+            hostfile = hostfile.subset(self.config['num_nodes'])
         Monitor(self.config['frequency'],
                 self.config['dir'],
                 PsshExecInfo(env=self.env,
