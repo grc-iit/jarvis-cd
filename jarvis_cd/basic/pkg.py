@@ -102,7 +102,7 @@ class PipelineIterator:
                 self.cur_pos.append(0)
             else:
                 self.cur_pos.append(next(self.cur_iters[i]))
-        self.change = [1] * len(self.cur_pos)
+        self.cur_pos_diff = [1] * len(self.cur_pos)
         self.conf_dict = self.current()
         self.iter_count = 0
         self.max_iter_count = math.prod([for_zip.zip_len for for_zip in self.fors])
