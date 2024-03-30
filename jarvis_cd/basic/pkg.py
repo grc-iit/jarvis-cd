@@ -1143,9 +1143,11 @@ class Pipeline(Pkg):
         """
         self.mod_env = self.env.copy()
         for pkg in self.sub_pkgs:
-            self.log(f'[RUN] {pkg.pkg_id}: Start', color=Color.GREEN)
             if pkg.skip_run:
-                continue
+                self.log(f'[RUN] (skipping) {pkg.pkg_id}: Start', color=Color.YELLOW)
+            else:
+                self.log(f'[RUN] {pkg.pkg_id}: Start', color=Color.GREEN)
+
             start = time.time()
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
@@ -1202,8 +1204,9 @@ class Pipeline(Pkg):
         """
         for pkg in reversed(self.sub_pkgs):
             if pkg.skip_run:
-                continue
-            self.log(f'[RUN] {pkg.pkg_id}: Cleaning', color=Color.GREEN)
+                self.log(f'[RUN] (skipping) {pkg.pkg_id}: Cleaning', color=Color.YELLOW)
+            else:
+                self.log(f'[RUN] {pkg.pkg_id}: Cleaning', color=Color.GREEN)
             if isinstance(pkg, Service):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.clean()
