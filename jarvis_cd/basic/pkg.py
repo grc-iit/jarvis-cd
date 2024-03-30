@@ -1013,7 +1013,8 @@ class Pipeline(Pkg):
         self.config['iterator']['loop'] = config['loop']
         self.config['iterator']['output'] = config['output']
         self.config['iterator']['repeat'] = config['repeat']
-        self.config['iterator']['norerun'] = config['norerun']
+        if 'norerun' in config:
+            self.config['iterator']['norerun'] = config['norerun']
         return self
 
     def get_static_env_path(self, env_name):
