@@ -1109,11 +1109,11 @@ class Pipeline(Pkg):
                 self.run(kill=True)
                 self.iterator.save_run(conf_dict)
                 self.clean(with_iter_out=False)
+            conf_dict = self.iterator.next()
         self.log(f'[ITER] Beginning analysis', Color.MAGENTA)
         self.iterator.analysis()
         self.log(f'[ITER] Finished analysis', Color.MAGENTA)
         self.log(f'[ITER] Stored results in: {self.iterator.stats_path}', Color.MAGENTA)
-        conf_dict = self.iterator.next()
 
     def run(self, kill=False):
         """
