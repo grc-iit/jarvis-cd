@@ -58,7 +58,9 @@ class PipelineIterator:
         fors: A list of lists [(pkg, var_name, var_vals)]
         """
         self.ppl = ppl
-        self.norerun = set(ppl.config['iterator']['norerun'])
+        self.norerun = set()
+        if 'norerun' in ppl.config['iterator']:
+            self.norerun = set(ppl.config['iterator']['norerun'])
         self.fors = []
         self.cur_iters = []
         self.cur_pos = []
