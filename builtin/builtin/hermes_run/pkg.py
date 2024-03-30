@@ -28,6 +28,14 @@ class HermesRun(Service):
         """
         return [
             {
+                'name': 'num_nodes',
+                'msg': 'Number of nodes to run hermes on. 0 means all',
+                'type': int,
+                'default': 0,
+                'class': 'communication',
+                'rank': 1,
+            },
+            {
                 'name': 'data_shm',
                 'msg': 'Data buffering space',
                 'type': str,
@@ -441,8 +449,11 @@ class HermesRun(Service):
         """
         self.log(self.env['HERMES_CONF'])
         self.log(self.env['HERMES_CLIENT_CONF'])
+        hostfile = self.jarvis.hostfile
+        if self.config['num_nodes'] > 0:
+            hostfile = hostfile.subset(self.config['num_nodes'])
         self.daemon_pkg = Exec('hrun_start_runtime',
-                                PsshExecInfo(hostfile=self.jarvis.hostfile,
+                                PsshExecInfo(hostfile=hostfile,
                                              env=self.mod_env,
                                              exec_async=True,
                                              do_dbg=self.config['do_dbg'],
@@ -474,8 +485,11 @@ class HermesRun(Service):
         self.log('Daemon Exited?')
 
     def kill(self):
+        hostfile = self.jarvis.hostfile
+        if self.config['num_nodes'] > 0:
+            hostfile = hostfile.subset(self.config['num_nodes'])
         Kill('hrun',
-             PsshExecInfo(hostfile=self.jarvis.hostfile,
+             PsshExecInfo(hostfile=hostfile,
                           env=self.env))
         if self.config['do_dbg']:
             Kill('gdbserver',
