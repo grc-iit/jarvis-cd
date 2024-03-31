@@ -1193,6 +1193,8 @@ class Pipeline(Pkg):
                 pkg.update_env(self.env, self.mod_env)
                 if hasattr(pkg, 'kill'):
                     pkg.kill()
+                else:
+                    pkg.stop()
             self.log(f'[RUN] {pkg.pkg_id}: Finished killing', color=Color.GREEN)
 
     def clean(self, with_iter_out=True):
