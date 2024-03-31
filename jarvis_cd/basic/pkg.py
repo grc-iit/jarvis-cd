@@ -1102,7 +1102,7 @@ class Pipeline(Pkg):
                     f'{self.iterator.iter_count}-{i}')
                 self.set_config_env_vars(cur_iter_tmp)
                 self.log(f'[ITER] Iteration'
-                         f'[(param) {self.iterator.iter_count}/{self.iterator.max_iter_count}]'
+                         f'[(param) {self.iterator.iter_count + 1}/{self.iterator.max_iter_count}]'
                          f'[(rep) {i + 1}/{self.iterator.repeat}]: '
                          f'{self.iterator.linear_conf_dict}', Color.BRIGHT_BLUE)
                 self.iterator.config_pkgs(conf_dict)
