@@ -89,6 +89,9 @@ class SparkCluster(Service):
              PsshExecInfo(env=self.env,
                           hosts=self.jarvis.hostfile))
 
+    def kill(self):
+        self.stop()
+
     def clean(self):
         """
         Destroy all data for an application. E.g., OrangeFS will delete all
