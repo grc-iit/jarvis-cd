@@ -88,6 +88,9 @@ class Pymonitor(Service):
         """
         Kill('.*pymonitor.*', PsshExecInfo(env=self.env))
 
+    def kill(self):
+        self.stop()
+
     def status(self):
         pass
 
