@@ -1104,16 +1104,16 @@ class Pipeline(Pkg):
                 self.log(f'[ITER] Iteration'
                          f'[(param) {self.iterator.iter_count}/{self.iterator.max_iter_count}]'
                          f'[(rep) {i + 1}/{self.iterator.repeat}]: '
-                         f'{self.iterator.linear_conf_dict}', Color.MAGENTA)
+                         f'{self.iterator.linear_conf_dict}', Color.BRIGHT_BLUE)
                 self.iterator.config_pkgs(conf_dict)
                 self.run(kill=True)
                 self.iterator.save_run(conf_dict)
                 self.clean(with_iter_out=False)
             conf_dict = self.iterator.next()
-        self.log(f'[ITER] Beginning analysis', Color.MAGENTA)
+        self.log(f'[ITER] Beginning analysis', Color.BRIGHT_BLUE)
         self.iterator.analysis()
-        self.log(f'[ITER] Finished analysis', Color.MAGENTA)
-        self.log(f'[ITER] Stored results in: {self.iterator.stats_path}', Color.MAGENTA)
+        self.log(f'[ITER] Finished analysis', Color.BRIGHT_BLUE)
+        self.log(f'[ITER] Stored results in: {self.iterator.stats_path}', Color.BRIGHT_BLUE)
 
     def run(self, kill=False):
         """
