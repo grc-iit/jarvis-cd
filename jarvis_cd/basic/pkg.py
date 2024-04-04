@@ -788,7 +788,12 @@ class SimplePkg(Pkg):
         Mkdir(self.private_dir,
               PsshExecInfo(hostfile=self.jarvis.hostfile))
         menu = self.configure_menu()
-        args = [f'{key}={val}' for key, val in kwargs.items()]
+        args = []
+        for key, val in kwargs.items():
+            if val is not None:
+                args.append(f'{key}={val}')
+            else:
+                args.append(f'{key}=')
         parser = PkgArgParse(args=args, menu=menu)
         if rebuild:
             self.config.update(parser.kwargs)
