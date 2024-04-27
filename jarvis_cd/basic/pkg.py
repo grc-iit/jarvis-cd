@@ -790,6 +790,7 @@ class SimplePkg(Pkg):
         menu = self.configure_menu()
         menu_keys = {m['name']: True for m in menu}
         args = []
+        # Convert kwargs into a list of CLI strings
         for key, val in kwargs.items():
             if val is not None:
                 args.append(f'{key}={val}')
@@ -797,12 +798,24 @@ class SimplePkg(Pkg):
                 args.append(f'{key}=')
         parser = PkgArgParse(args=args, menu=menu)
         if rebuild:
+            # This will overwrite the entire configuration
+            # Any parameters unspecified in the input kwargs dict
+            # will be set to their default value
             self.config.update(parser.kwargs)
         else:
+            # This will update the config with only the
+            # parameters specified in the input kwargs dict.
             self.config.update(parser.real_kwargs)
+            # If a pipeline existed before an update was made to this
+            # pkg changing the parameter sets, this will ensure
+            # that the config is updated with the new parameters.
             for key in parser.kwargs:
                 if key not in self.config:
                     self.config[key] = parser.kwargs[key]
+        # This will ensure the kwargs dict contains all
+        # CLI-configurable values for this pkg. The config
+        # contains many parameters that may be set internally
+        # by the application.
         for key, val in self.config.items():
             if key not in menu_keys:
                 continue
