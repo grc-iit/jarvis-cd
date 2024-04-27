@@ -788,6 +788,7 @@ class SimplePkg(Pkg):
         Mkdir(self.private_dir,
               PsshExecInfo(hostfile=self.jarvis.hostfile))
         menu = self.configure_menu()
+        menu_keys = {m['name']: True for m in menu}
         args = []
         for key, val in kwargs.items():
             if val is not None:
@@ -802,7 +803,10 @@ class SimplePkg(Pkg):
             for key in parser.kwargs:
                 if key not in self.config:
                     self.config[key] = parser.kwargs[key]
-        kwargs.update(self.config)
+        for key, val in self.config.items():
+            if key not in menu_keys:
+                continue
+            kwargs[key] = val
 
     @staticmethod
     def copy_template_file(src, dst, replacements=None):
