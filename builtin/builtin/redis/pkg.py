@@ -100,6 +100,8 @@ class Redis(Application):
                               hostfile=hostfile,
                               do_dbg=self.config['do_dbg'],
                               dbg_port=self.config['dbg_port']))
+            self.log(f'Sleeping for {self.config["sleep"]} seconds', color=Color.YELLOW)
+            time.sleep(self.config['sleep'])
 
     def stop(self):
         """
