@@ -298,6 +298,9 @@ class Pkg(ABC):
         self.config = YamlFile(self.config_path).load()
         for sub_pkg_type, sub_pkg_id in self.config['sub_pkgs']:
             sub_pkg = self.jarvis.construct_pkg(sub_pkg_type)
+            if sub_pkg is None:
+                self.log(f'Could not find pkg: {sub_pkg_type}. Skipping.', Color.RED)
+                continue
             sub_pkg.load(f'{self.global_id}.{sub_pkg_id}', self.root)
             self.sub_pkgs.append(sub_pkg)
             self.sub_pkgs_dict[sub_pkg.pkg_id] = sub_pkg
@@ -366,7 +369,8 @@ class Pkg(ABC):
         :return: None
         """
         for pkg in self.sub_pkgs:
-            pkg.destroy()
+            if pkg is not None:
+                pkg.destroy()
         try:
             shutil.rmtree(self.config_dir)
         except FileNotFoundError:
@@ -452,7 +456,8 @@ class Pkg(ABC):
         :return: self
         """
         pkg = self.get_pkg(pkg_id)
-        pkg.destroy()
+        if pkg:
+            pkg.destroy()
         self.unlink(pkg_id)
         return self
 
