@@ -45,7 +45,10 @@ class Redis(Application):
         """
         # Create the redis hostfile
         self.copy_template_file(f'{self.pkg_dir}/config/redis.conf',
-                                f'{self.shared_dir}/redis.conf')
+                                f'{self.shared_dir}/redis.conf',
+                                {
+                                    'PORT': self.config['port']
+                                })
 
     def start(self):
         """
@@ -64,8 +67,6 @@ class Redis(Application):
         cmd = [
             'redis-server',
             f'{self.shared_dir}/redis.conf',
-            f'--port {self.config["port"]}',
-            f'--appendonly yes',
         ]
         if len(hostfile) > 1:
             cmd += [
