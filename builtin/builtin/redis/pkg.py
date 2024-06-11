@@ -59,7 +59,7 @@ class Redis(Application):
         """
 
         hostfile = self.jarvis.hostfile
-        host_str = [f'{host}:{self.config["port"]}' for host in hostfile.hosts]
+        host_str = [f'{host}:{self.config["port"]}' for host in hostfile.hosts_ip]
         host_str = ' '.join(host_str)
         cluster_config_file = f'{self.private_dir}/nodes.conf'
         # Create redis servers
