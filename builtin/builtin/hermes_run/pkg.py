@@ -223,6 +223,12 @@ class HermesRun(Service):
                 'rank': 1,
             },
             {
+                'name': 'log_verbosity',
+                'msg': 'Verbosity of the ouput, 0 for fatal, 1 for info',
+                'type': int,
+                'default': '0',
+            },
+            {
                 'name': 'page_size',
                 'msg': 'The page size to use for adapters',
                 'type': str,
@@ -289,7 +295,7 @@ class HermesRun(Service):
         if self.config['num_nodes'] > 0 and self.hostfile.path is not None:
             self.hostfile = self.hostfile.subset(self.config['num_nodes'])
             self.hostfile.save(self.hostfile_path)
-
+        self.env['HERMES_LOG_VERBOSITY'] = str(self.config['log_verbosity'])
         # Begin making hermes_run config
         hermes_server = {
             'work_orchestrator': {
