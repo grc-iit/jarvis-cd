@@ -91,16 +91,16 @@ class Redis(Application):
             cmd = [
                 'redis-cli',
                 f'--cluster create {host_str}',
-                '--cluster-replicas 0'
-                '--cluster-yes yes'
+                '--cluster-replicas 0',
+                '--cluster-yes'
             ]
             cmd = ' '.join(cmd)
             print(cmd)
             Exec(cmd,
-                 PsshExecInfo(env=self.mod_env,
-                              hostfile=hostfile,
-                              do_dbg=self.config['do_dbg'],
-                              dbg_port=self.config['dbg_port']))
+                 LocalExecInfo(env=self.mod_env,
+                               hostfile=hostfile,
+                               do_dbg=self.config['do_dbg'],
+                               dbg_port=self.config['dbg_port']))
             self.log(f'Sleeping for {self.config["sleep"]} seconds', color=Color.YELLOW)
             time.sleep(self.config['sleep'])
 
