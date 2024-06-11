@@ -91,7 +91,7 @@ class Redis(Application):
             cmd = [
                 'redis-cli',
                 f'--cluster create {host_str}',
-                '--cluster-replicas 1'
+                '--cluster-replicas 0'
             ]
             cmd = ' '.join(cmd)
             print(cmd)
