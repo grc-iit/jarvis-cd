@@ -115,7 +115,7 @@ class RedisBenchmark(Application):
             f'--threads {self.config["nthreads"]}',
             f'-d {self.config["req_size"]}',
             f'-p {self.config["port"]}',
-            f'-h {hostfile.hosts_ip[0]}',
+            f'-h {hostfile.hosts[0]}',
         ]
         if len(hostfile) > 1:
             cmd.append(f'--cluster')
