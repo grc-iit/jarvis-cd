@@ -44,7 +44,8 @@ class Redis(Application):
         :return: None
         """
         # Create the redis hostfile
-        pass
+        self.copy_template_file(f'{self.pkg_dir}/config/redis.conf',
+                                f'{self.private_dir}/redis.conf')
 
     def start(self):
         """
@@ -62,6 +63,7 @@ class Redis(Application):
         self.log('Starting individual servers', color=Color.YELLOW)
         cmd = [
             'redis-server',
+            f'{self.private_dir}/redis.conf',
             f'--port {self.config["port"]}',
             f'--appendonly yes',
         ]
