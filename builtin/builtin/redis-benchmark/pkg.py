@@ -81,6 +81,14 @@ class RedisBenchmark(Application):
                 'choices': [],
                 'args': [],
             },
+            {
+                'name': 'node',
+                'msg': 'The node id to use for the cluster',
+                'type': int,
+                'default': 0,
+                'choices': [],
+                'args': [],
+            },
         ]
 
     def _configure(self, **kwargs):
@@ -115,10 +123,12 @@ class RedisBenchmark(Application):
             f'--threads {self.config["nthreads"]}',
             f'-d {self.config["req_size"]}',
             f'-p {self.config["port"]}',
-            f'-h {hostfile.hosts[0]}',
         ]
         if len(hostfile) > 1:
-            cmd.append(f'--cluster')
+            cmd += [
+                f'-h {hostfile.hosts[self.config["node"]]}',
+                f'--cluster'
+            ]
         Exec(' '.join(cmd),
              LocalExecInfo(env=self.mod_env,
                            hostfile=hostfile,
