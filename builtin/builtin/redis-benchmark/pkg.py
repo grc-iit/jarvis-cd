@@ -129,18 +129,6 @@ class RedisBenchmark(Application):
                 f'-h {hostfile.hosts[self.config["node"]]}',
                 f'--cluster'
             ]
-            self.log('Flushing all data and resetting the cluster', color=Color.YELLOW)
-            for host in hostfile.hosts:
-                Exec(f'redis-cli -p {self.config["port"]} -h {host} flushall',
-                     LocalExecInfo(env=self.mod_env,
-                                   hostfile=hostfile,
-                                   do_dbg=self.config['do_dbg'],
-                                   dbg_port=self.config['dbg_port']))
-                Exec(f'redis-cli -p {self.config["port"]} -h {host} cluster reset',
-                     LocalExecInfo(env=self.mod_env,
-                                   hostfile=hostfile,
-                                   do_dbg=self.config['do_dbg'],
-                                   dbg_port=self.config['dbg_port']))
         self.log('Starting the cluster', color=Color.YELLOW)
         Exec(' '.join(cmd),
              LocalExecInfo(env=self.mod_env,

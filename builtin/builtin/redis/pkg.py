@@ -87,6 +87,19 @@ class Redis(Application):
 
         # Create redis clients
         if len(hostfile) > 1:
+            self.log('Flushing all data and resetting the cluster', color=Color.YELLOW)
+            for host in hostfile.hosts:
+                Exec(f'redis-cli -p {self.config["port"]} -h {host} flushall',
+                     LocalExecInfo(env=self.mod_env,
+                                   hostfile=hostfile,
+                                   do_dbg=self.config['do_dbg'],
+                                   dbg_port=self.config['dbg_port']))
+                Exec(f'redis-cli -p {self.config["port"]} -h {host} cluster reset',
+                     LocalExecInfo(env=self.mod_env,
+                                   hostfile=hostfile,
+                                   do_dbg=self.config['do_dbg'],
+                                   dbg_port=self.config['dbg_port']))
+
             self.log('Creating the cluster', color=Color.YELLOW)
             cmd = [
                 'redis-cli',
