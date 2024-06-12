@@ -130,7 +130,7 @@ class RedisBenchmark(Application):
                 f'--cluster'
             ]
             self.log('Flushing all data and resetting the cluster', color=Color.YELLOW)
-            for host in range(hostfile.hosts):
+            for host in hostfile.hosts:
                 Exec(f'redis-cli -p {self.config["port"]} -h {host} flushall',
                      LocalExecInfo(env=self.mod_env,
                                    hostfile=hostfile,
