@@ -30,19 +30,19 @@ class CosmicTagger(Application):
                 'name': 'train_file',
                 'msg': 'Train filename (not abspath)',
                 'type': str,
-                'default': None,
+                'default': 'cosmic_tagging_light.h5',
             },
             {
                 'name': 'test_file',
                 'msg': 'Test filename (not abspath)',
                 'type': str,
-                'default': None,
+                'default': 'cosmic_tagging_test.h5',
             },
             {
                 'name': 'dataset_dir',
                 'msg': 'Dataset directory (abspath)',
                 'type': str,
-                'default': None,
+                'default': '/home/llogan/Documents/Apps/CosmicTagger/example_data/',
             },
         ]
             

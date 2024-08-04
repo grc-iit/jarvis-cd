@@ -1,6 +1,6 @@
-#defaults:
-#  - base_config
-#  - _self_
+defaults:
+  - base_config
+  - _self_
 data:
   aux_file: ##TEST_FILE##
   data_directory: ##DATASET_DIR##
@@ -8,9 +8,7 @@ data:
   downsample: 1
   file: ##TRAIN_FILE##
   synthetic: False
-framework:
-  environment_variables:
-    TF_XLA_FLAGS: --tf_xla_auto_jit=2
+framework: 
   inter_op_parallelism_threads: 2
   intra_op_parallelism_threads: 24
   name: tensorflow
@@ -22,11 +20,11 @@ mode:
   optimizer:
     gradient_accumulation: 1
     learning_rate: 0.0003
-    loss_balance_scheme: light
+    loss_balance_scheme: focal
     name: adam
   summary_iteration: 1
-  weights_location:
-network:
+  # weights_location:
+network: 
   batch_norm: True
   bias: True
   block_concat: False
@@ -35,25 +33,24 @@ network:
   blocks_per_layer: 2
   bottleneck_deepest: 256
   connections: concat
-  conv_mode: 2D
+  conv_mode: conv_2D
   data_format: channels_last
   downsampling: max_pooling
   filter_size_deepest: 5
-  growth_rate: 1
+  growth_rate: additive
   n_initial_filters: 16
   name: uresnet
   network_depth: 6
   residual: True
   upsampling: interpolation
   weight_decay: 0.0
-run:
+output_dir: output/tensorflow/uresnet/test/
+run: 
   aux_iterations: 10
-  aux_minibatch_size: 16
   compute_mode: CPU
   distributed: False
   id: test
-  iterations: 1
-  minibatch_size: 16
-  output_dir: output/tensorflow/uresnet/test/
+  iterations: 500
+  minibatch_size: 2
   precision: float32
   profile: False
