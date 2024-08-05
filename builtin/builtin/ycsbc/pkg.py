@@ -84,11 +84,12 @@ class Ycsbc(Application):
         ]
         cmd = ' '.join(cmd)
         print(cmd)
-        Exec(cmd,
+        self.exec = Exec(cmd,
              LocalExecInfo(env=self.mod_env,
                            hostfile=self.jarvis.hostfile,
                            do_dbg=self.config['do_dbg'],
-                           dbg_port=self.config['dbg_port']))
+                           dbg_port=self.config['dbg_port'],
+                           collect_output=True))
 
     def stop(self):
         """
@@ -107,3 +108,16 @@ class Ycsbc(Application):
         :return: None
         """
         pass
+
+    def _get_stat(self, stat_dict):
+        """
+        Get statistics from the application.
+
+        :param stat_dict: A dictionary of statistics.
+        :return: None
+        """
+        output = self.exec.stdout['localhost']
+        if 'throughput(ops/sec)' in output:
+            throughput = re.search(r'throughput\(ops\/sec\): ([0-9.]+)', output).group(1)
+            stat_dict[f'{self.pkg_id}.throughput'] = throughput
+        stat_dict[f'{self.pkg_id}.runtime'] = self.start_time

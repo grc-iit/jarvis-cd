@@ -154,7 +154,7 @@ class PipelineIterator:
     def analysis(self):
         for pkg in self.ppl.sub_pkgs:
             if hasattr(pkg, '_analysis'):
-                pkg._analysis()
+                pkg._analysis(self.stats)
         df = pd.DataFrame(self.stats)
         df.to_csv(self.stats_path, index=False)
 
