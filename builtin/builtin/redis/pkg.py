@@ -29,7 +29,7 @@ class Redis(Application):
                 'name': 'port',
                 'msg': 'The port to use for the cluster',
                 'type': int,
-                'default': 7000,
+                'default': 6379,
                 'choices': [],
                 'args': [],
             },
