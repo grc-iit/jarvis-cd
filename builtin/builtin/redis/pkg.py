@@ -135,6 +135,4 @@ class Redis(Application):
 
         :return: None
         """
-        Rm(self.config['out'] + '*',
-           PsshExecInfo(env=self.env,
-                        hostfile=self.jarvis.hostfile))
+        pass

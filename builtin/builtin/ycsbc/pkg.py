@@ -30,7 +30,7 @@ class Ycsbc(Application):
                 'msg': 'The DB to test',
                 'type': str,
                 'default': 'rocksdb',
-                'choices': ['hermes', 'rocksdb', 'leveldb'],
+                'choices': ['hermes', 'rocksdb', 'leveldb', 'redis'],
                 'args': [],
             },
             {
@@ -97,9 +97,7 @@ class Ycsbc(Application):
 
         :return: None
         """
-        Kill('redis-server',
-             PsshExecInfo(env=self.env,
-                          hostfile=self.jarvis.hostfile))
+        pass
 
     def clean(self):
         """
@@ -108,6 +106,4 @@ class Ycsbc(Application):
 
         :return: None
         """
-        Rm(self.config['out'] + '*',
-           PsshExecInfo(env=self.env,
-                        hostfile=self.jarvis.hostfile))
+        pass
