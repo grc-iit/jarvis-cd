@@ -70,7 +70,7 @@ class HermesUnitTests(Application):
             'TestHermesPaths'
         ]
         test_hermes_execs = [
-            'TestHermesPut1n', 'TestHermesPut',
+            'TestHermesPut1n', 'TestHermesPut', 'TestHermesSerializedPutGet',
             'TestHermesAsyncPut', 'TestHermesAsyncPutLocalFlush', 'TestHermesPutGet',
             'TestHermesPartialPutGet', 'TestHermesBlobDestroy',
             'TestHermesBucketDestroy', 'TestHermesReorganizeBlob',
