@@ -183,7 +183,7 @@ class JarvisManager:
         """
         configs = os.listdir(f'{self.jarvis_root}/builtin/config')
         for config in configs:
-            print(config)
+            print(config.replace('.yaml', ''))
 
     def reset(self):
         """
