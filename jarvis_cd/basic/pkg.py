@@ -1240,7 +1240,7 @@ class Pipeline(Pkg):
                 pkg.update_env(self.env, self.mod_env)
                 pkg.clean()
             self.log(f'[RUN] {pkg.pkg_id}: Finished cleaning', color=Color.GREEN)
-        if with_iter_out:
+        if with_iter_out and 'iterator' in self.config:
             self.iterator = PipelineIterator(self)
             Rm(self.iterator.iter_out)
 
