@@ -54,7 +54,7 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres):
             {
                 'name': 'name',
                 'msg': 'The name of the orangefs installation',
-                'type': int,
+                'type': str,
                 'default': 'orangefs',
             },
             {
