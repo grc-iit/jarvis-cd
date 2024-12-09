@@ -269,10 +269,14 @@ class JarvisManager:
             if repo['name'] == repo_name:
                 repo['path'] = path
                 return
+        if not os.path.exists(os.path.join(path, repo_name)):
+            print('Error: repo must have a subdirectory with the same name')
+            exit(1)
         self.repos.insert(0, {
             'path': path,
             'name': repo_name
         })
+        print(f'Added the {repo_name} repo')
 
     def create_pkg(self, pkg_cls, pkg_type):
         """
