@@ -268,6 +268,7 @@ class JarvisManager:
         for repo in self.repos:
             if repo['name'] == repo_name:
                 repo['path'] = path
+                print(f'Updated the {repo_name} to path {path}')
                 return
         if not os.path.exists(os.path.join(path, repo_name)):
             print('Error: repo must have a subdirectory with the same name')
