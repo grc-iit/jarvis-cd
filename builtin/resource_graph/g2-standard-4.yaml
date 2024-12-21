@@ -1,0 +1,31 @@
+fs:
+- avail: 107238916608
+  dev_type: null
+  device: nvme0n1p1
+  fs_mount: null
+  fs_size: null
+  fs_type: null
+  host: localhost
+  model: nvme_card-pd
+  mount: ${HOME}
+  parent: nvme0n1
+  rota: 0
+  sector_size: 512
+  shared: false
+  size: 107238916608
+  tran: nvme
+  use%: null
+  used: null
+  uuid: null
+hosts:
+- localhost
+net:
+- domain: lo
+  fabric: ''
+  host: localhost
+  protocol: FI_PROTO_SOCK_TCP
+  provider: sockets
+  shared: null
+  speed: 0
+  type: FI_EP_DGRAM
+  version: '121.0'
