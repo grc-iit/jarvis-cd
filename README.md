@@ -26,52 +26,9 @@ You'll have to do this for each new terminal.
 spack load py-jarvis-cd
 ```
 
-# 2. Manual Installation
+# 2. Building the Jarvis Configuration
 
-## 2.1. Jarvis-Util
-Jarvis-CD depends on jarvis-util. jarvis-util contains functions to execute
-binaries in python and collect their output.
-
-```bash
-git clone https://github.com/grc-iit/jarvis-util.git
-cd jarvis-util
-python3 -m pip install -r requirements.txt
-python3 -m pip install -e .
-```
-
-## 2.2. Scspkg
-
-Scspkg is a tool for building modulefiles using a CLI. It's not strictly
-necessary for Jarvis to function, but many of the readmes use it to provide
-structure to manual installations.
-
-```bash
-git clone https://github.com/grc-iit/scspkg.git
-python3 -m pip install -r requirements.txt
-python3 -m pip install -e .
-echo "module use \`scspkg module dir\`" >> ~/.bashrc
-```
-
-The wiki for scspkg is [here](https://github.com/grc-iit/scspkg.git).
-
-# 2.3. Jarvis-CD
-
-```bash
-cd /path/to/jarvis-cd
-python3 -m pip install -r requirements.txt
-python3 -m pip install -e .
-```
-
-# 2.4. Net Test
-
-Network test tool for identifying valid networks.
-```bash
-spack install chi-nettest
-```
-
-# 3. Configuring Jarvis
-
-## 3.1. Bootstrapping for a single-node machine
+## 2.1. Bootstrapping for a single-node machine
 
 You may be trying to test things on just a single node. 
 
@@ -80,7 +37,7 @@ In this case, run:
 jarvis bootstrap from local
 ```
 
-## 3.2. Bootstrapping from a specific machine
+## 2.2. Bootstrapping from a specific machine
 
 Jarvis has been pre-configured on some machines. To bootstrap from
 one of them, run the following:
@@ -96,7 +53,7 @@ To check the set of available machines to bootstrap from, run:
 jarvis bootstrap list
 ```
 
-## 3.3. Creating a new configuration
+## 2.3. Creating a new configuration
 
 A configuration can be generated as follows:
 ```bash
@@ -115,9 +72,52 @@ this parameter can be set later.
 
 For a personal machine, these directories can be the same directory.
 
-# 4. Building the Resource Graph
+# 3. Building the Resource Graph
 
 Python jarvis:
 ```bash
 jarvis rg build
+```
+
+# 4. Manual Installation (Mainly Devs)
+
+## 4.1. Jarvis-Util
+Jarvis-CD depends on jarvis-util. jarvis-util contains functions to execute
+binaries in python and collect their output.
+
+```bash
+git clone https://github.com/grc-iit/jarvis-util.git
+cd jarvis-util
+python3 -m pip install -r requirements.txt
+python3 -m pip install -e .
+```
+
+## 4.2. Scspkg
+
+Scspkg is a tool for building modulefiles using a CLI. It's not strictly
+necessary for Jarvis to function, but many of the readmes use it to provide
+structure to manual installations.
+
+```bash
+git clone https://github.com/grc-iit/scspkg.git
+python3 -m pip install -r requirements.txt
+python3 -m pip install -e .
+echo "module use \`scspkg module dir\`" >> ~/.bashrc
+```
+
+The wiki for scspkg is [here](https://github.com/grc-iit/scspkg.git).
+
+# 4.3. Jarvis-CD
+
+```bash
+cd /path/to/jarvis-cd
+python3 -m pip install -r requirements.txt
+python3 -m pip install -e .
+```
+
+# 4.4. Net Test
+
+Network test tool for identifying valid networks.
+```bash
+spack install chi-nettest
 ```
