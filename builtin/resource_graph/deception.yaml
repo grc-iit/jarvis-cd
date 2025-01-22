@@ -3,7 +3,7 @@ fs:
   dev_type: nvme
   device: nvme0n1
   fs_type: null
-  host: localhost
+  needs_root: false
   model: INTEL SSDPEKKA512G8
   mount: /scratch/${USER}
   parent: null
@@ -13,7 +13,7 @@ fs:
   dev_type: hdd
   device: null
   fs_type: null
-  host: localhost
+  needs_root: false
   model: null
   mount: /rcfs/projects/chess/${USER}
   parent: null
@@ -24,7 +24,6 @@ hosts:
 net:
 - domain: mlx5_0:1
   fabric: 172.17.0.0/16
-  host: localhost
   protocol: FI_PROTO_SOCK_TCP
   provider: ucx+rc_verbs
   shared: true

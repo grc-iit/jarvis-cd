@@ -5,7 +5,7 @@ fs:
   fs_mount: null
   fs_size: null
   fs_type: null
-  host: localhost
+  needs_root: false
   model: nvme_card-pd
   mount: ${HOME}
   parent: nvme0n1
@@ -22,7 +22,6 @@ hosts:
 net:
 - domain: lo
   fabric: ''
-  host: localhost
   protocol: FI_PROTO_SOCK_TCP
   provider: sockets
   shared: null
