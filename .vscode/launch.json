@@ -6,7 +6,7 @@
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/bin/jarvis",
-            "args": ["rg", "modify"],
+            "args": ["rg", "show"],
             "console": "integratedTerminal",
             "justMyCode": false,
             "env": {

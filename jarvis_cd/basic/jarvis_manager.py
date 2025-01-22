@@ -102,6 +102,7 @@ class JarvisManager:
         :return: None
         """
         if not os.path.exists(self.jarvis_conf_path):
+            print('No configuration was found. Run jarvis init or bootstrap.')
             return
         self.jarvis_conf = {}
         # Read global jarvis conf
@@ -128,6 +129,7 @@ class JarvisManager:
         except Exception as e:
             print(f'Failed to open hostfile {self.jarvis_conf["HOSTFILE"]}')
             self.hostfile = Hostfile()
+        return self
 
     def save(self):
         """
@@ -167,10 +169,11 @@ class JarvisManager:
         """
         if machine == 'local':
             #
-            self.jarvis.create(
+            self.create(
                 os.path.join(self.local_config_dir, 'config'),
                 os.path.join(self.local_config_dir, 'private'),
                 os.path.join(self.local_config_dir, 'shared'))
+            self.save()
             return
         os.makedirs(self.local_config_dir, exist_ok=True)
         config_path = f'{self.jarvis_root}/builtin/config/{machine}.yaml'
@@ -210,14 +213,6 @@ class JarvisManager:
 
     def print_config_path(self):
         print(self.jarvis_conf_path)
-
-    def resource_graph_init(self):
-        """
-        Create an empty resource graph
-
-        :return: None
-        """
-        self.resource_graph = ResourceGraph()
 
     def resource_graph_show(self):
         """

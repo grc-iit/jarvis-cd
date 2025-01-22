@@ -110,10 +110,6 @@ class JarvisArgs(ArgParse):
                       msg='Resources to build a resource graph for a machine',
                       aliases=['rg'])
 
-        # jarvis resource-graph init
-        self.add_cmd('resource-graph init',
-                      msg='Create an empty resource graph')
-
         # jarvis resource-graph show
         self.add_cmd('resource-graph show',
                      msg='Show the resource graph')
@@ -1128,15 +1124,10 @@ class JarvisArgs(ArgParse):
 
     def hostfile_set(self):
         self.jarvis.set_hostfile(self.kwargs['path'])
-        pipelines = self.jarvis.list_pipelines()
-        self.jarvis.save()
-
-    def resource_graph_init(self):
-        self.jarvis.resource_graph_init()
         self.jarvis.save()
 
     def resource_graph_show(self):
-        self.jarvis.resource_graph_show()
+        self.jarvis.load().resource_graph_show()
         self.jarvis.save()
 
     def resource_graph_path(self):
