@@ -230,6 +230,13 @@ class JarvisManager:
         self.resource_graph.build(
             PsshExecInfo(hostfile=self.hostfile))
 
+    def resource_graph_modify(self):
+        """
+        Modify the resource graph to retest resources
+        """
+        self.resource_graph.modify(
+            PsshExecInfo(hostfile=self.hostfile))
+
     def list_pipelines(self):
         """
         Get a list of all created pipelines

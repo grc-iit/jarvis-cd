@@ -127,12 +127,6 @@ class JarvisArgs(ArgParse):
                       msg='Introspect resource graph for this machine')
         self.add_args([
             {
-                'name': 'walkthrough',
-                'msg': 'A guide for building a resource graph',
-                'type': bool,
-                'default': False
-            },
-            {
                 'name': 'introspect',
                 'msg': 'Whether or not to do an introspect before building',
                 'type': bool,
@@ -140,10 +134,10 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarvis resource-graph build
-        self.add_cmd('resource-graph prune',
-                      msg='An interactive CLI for modifying the resource graph')
-
+        # jarvis resource-graph modify
+        self.add_cmd('resource-graph modify',
+                      msg='Modify the resource graph to introspect new resources')
+        
         # jarvis resource-graph add storage
         self.add_cmd('resource-graph add storage',
                       msg='Add a storage device or PFS to track')
@@ -1146,6 +1140,10 @@ class JarvisArgs(ArgParse):
                 introspect)
         else:
             self.jarvis.resource_graph_build()
+        self.jarvis.save()
+
+    def resource_graph_modify(self):
+        self.jarvis.resource_graph_modify()
         self.jarvis.save()
 
     def resource_graph_prune(self):
