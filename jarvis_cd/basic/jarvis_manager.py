@@ -165,6 +165,13 @@ class JarvisManager:
         :param machine: The machine config to copy
         :return: None
         """
+        if machine == 'local':
+            #
+            self.jarvis.create(
+                os.path.join(self.local_config_dir, 'config'),
+                os.path.join(self.local_config_dir, 'private'),
+                os.path.join(self.local_config_dir, 'shared'))
+            return
         os.makedirs(self.local_config_dir, exist_ok=True)
         config_path = f'{self.jarvis_root}/builtin/config/{machine}.yaml'
         if os.path.exists(config_path):

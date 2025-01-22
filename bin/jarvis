@@ -50,8 +50,8 @@ class JarvisArgs(ArgParse):
                 'pos': True
             }
         ])
-
-        # jarvis celan
+        
+        # jarvis reset
         self.add_cmd('reset',
                       msg='Clean all pipelines and configurations')
 
