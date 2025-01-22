@@ -127,16 +127,28 @@ class JarvisArgs(ArgParse):
                       msg='Introspect resource graph for this machine')
         self.add_args([
             {
-                'name': 'introspect',
-                'msg': 'Whether or not to do an introspect before building',
-                'type': bool,
-                'default': True
+                'name': 'net_sleep',
+                'msg': 'How long to sleep in network tests',
+                'type': float,
+                'default': 5,
+                'pos': False,
+                'required': False
             },
         ])
 
         # jarvis resource-graph modify
         self.add_cmd('resource-graph modify',
                       msg='Modify the resource graph to introspect new resources')
+        self.add_args([
+            {
+                'name': 'net_sleep',
+                'msg': 'How long to sleep in network tests',
+                'type': float,
+                'default': 5,
+                'pos': False,
+                'required': False
+            },
+        ])
         
         # jarvis resource-graph add storage
         self.add_cmd('resource-graph add storage',
@@ -1132,14 +1144,8 @@ class JarvisArgs(ArgParse):
         self.jarvis.save()
 
     def resource_graph_build(self):
-        walkthrough = self.kwargs['walkthrough']
-        introspect = self.kwargs['introspect']
-        if walkthrough:
-            self.jarvis.resource_graph.walkthrough_build(
-                PsshExecInfo(hostfile=self.jarvis.hostfile),
-                introspect)
-        else:
-            self.jarvis.resource_graph_build()
+        net_sleep = self.kwargs['net_sleep']
+        self.jarvis.resource_graph_build(net_sleep)
         self.jarvis.save()
 
     def resource_graph_modify(self):

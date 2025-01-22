@@ -220,7 +220,7 @@ class JarvisManager:
         print("net:")
         self.resource_graph.print_df(self.resource_graph.net)
 
-    def resource_graph_build(self):
+    def resource_graph_build(self, net_sleep):
         """
         Introspect the system and construct a resource graph.
 
@@ -228,14 +228,14 @@ class JarvisManager:
         """
         self.resource_graph = ResourceGraph()
         self.resource_graph.build(
-            PsshExecInfo(hostfile=self.hostfile))
+            PsshExecInfo(hostfile=self.hostfile), net_sleep=net_sleep)
 
-    def resource_graph_modify(self):
+    def resource_graph_modify(self, net_sleep):
         """
         Modify the resource graph to retest resources
         """
         self.resource_graph.modify(
-            PsshExecInfo(hostfile=self.hostfile))
+            PsshExecInfo(hostfile=self.hostfile), net_sleep=net_sleep)
 
     def list_pipelines(self):
         """
