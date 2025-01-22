@@ -47,15 +47,15 @@ class JarvisManager:
         self.shared_dir = None
         # The current pipeline (per-user)
         self.cur_pipeline = None
+        # Path to local jarvis configuration directory
+        self.local_config_dir = os.path.join(os.environ['HOME'], '.jarvis')
         # The path to the global jarvis configuration (root user)
-        self.jarvis_conf_path = os.path.join(self.jarvis_root,
-                                             'config',
+        self.jarvis_conf_path = os.path.join(self.local_config_dir, 
                                              'jarvis_config.yaml')
         # The Jarvis configuration (per-user)
         self.jarvis_conf = None
         #  The path to the jarvis resource graph (global across users)
-        self.resource_graph_path = os.path.join(self.jarvis_root,
-                                                'config',
+        self.resource_graph_path = os.path.join(self.local_config_dir, 
                                                 'resource_graph.yaml')
         # The Jarvis resource graph (global across users)
         self.resource_graph = None
@@ -95,24 +95,6 @@ class JarvisManager:
         os.makedirs(f'{self.jarvis_root}/config', exist_ok=True)
         self.save()
 
-    def save(self):
-        """
-        Save the jarvis config to config/jarvis_config.yaml
-
-        :return: None
-        """
-        # Update jarvis conf
-        if self.jarvis_conf:
-            self.jarvis_conf['CUR_PIPELINE'] = self.cur_pipeline
-            self.jarvis_conf['REPOS'] = self.repos
-            self.jarvis_conf['HOSTFILE'] = self.hostfile.path
-        # Save global resource graph
-        if self.resource_graph:
-            self.resource_graph.save(self.resource_graph_path)
-        # Save global and per-user conf
-        if self.jarvis_conf:
-            YamlFile(self.jarvis_conf_path).save(self.jarvis_conf)
-
     def load(self):
         """
         Load the jarvis config from config/jarvis_config.yaml
@@ -146,6 +128,24 @@ class JarvisManager:
         except Exception as e:
             print(f'Failed to open hostfile {self.jarvis_conf["HOSTFILE"]}')
             self.hostfile = Hostfile()
+
+    def save(self):
+        """
+        Save the jarvis config to config/jarvis_config.yaml
+
+        :return: None
+        """
+        # Update jarvis conf
+        if self.jarvis_conf:
+            self.jarvis_conf['CUR_PIPELINE'] = self.cur_pipeline
+            self.jarvis_conf['REPOS'] = self.repos
+            self.jarvis_conf['HOSTFILE'] = self.hostfile.path
+        # Save global resource graph
+        if self.resource_graph:
+            self.resource_graph.save(self.resource_graph_path)
+        # Save global and per-user conf
+        if self.jarvis_conf:
+            YamlFile(self.jarvis_conf_path).save(self.jarvis_conf)
 
     def set_hostfile(self, path):
         """
