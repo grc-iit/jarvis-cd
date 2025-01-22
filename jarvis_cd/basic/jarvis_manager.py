@@ -102,13 +102,16 @@ class JarvisManager:
         :return: None
         """
         # Update jarvis conf
-        self.jarvis_conf['CUR_PIPELINE'] = self.cur_pipeline
-        self.jarvis_conf['REPOS'] = self.repos
-        self.jarvis_conf['HOSTFILE'] = self.hostfile.path
+        if self.jarvis_conf:
+            self.jarvis_conf['CUR_PIPELINE'] = self.cur_pipeline
+            self.jarvis_conf['REPOS'] = self.repos
+            self.jarvis_conf['HOSTFILE'] = self.hostfile.path
         # Save global resource graph
-        self.resource_graph.save(self.resource_graph_path)
+        if self.resource_graph:
+            self.resource_graph.save(self.resource_graph_path)
         # Save global and per-user conf
-        YamlFile(self.jarvis_conf_path).save(self.jarvis_conf)
+        if self.jarvis_conf:
+            YamlFile(self.jarvis_conf_path).save(self.jarvis_conf)
 
     def load(self):
         """
