@@ -103,12 +103,14 @@ class OrangefsFuse(Service):
             dev_types = ['hdd', 'ssd', 'nvme', 'dimm']
             for dev_type in dev_types:
                 dev_df = rg.find_storage(dev_types=[dev_type],
-                                         shared=False)
+                                         shared=False,
+                                         needs_root=False)
                 if len(dev_df) != 0:
                     break
         else:
             dev_df = rg.find_storage(dev_types=[self.config['dev_type']],
-                                     shared=False)
+                                     shared=False,
+                                     needs_root=False)
         if len(dev_df) == 0:
             raise Exception('Could not find any storage devices :(')
 
