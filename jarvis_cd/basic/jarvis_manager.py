@@ -92,7 +92,7 @@ class JarvisManager:
         self.add_repo(f'{self.jarvis_root}/builtin')
         self.resource_graph = ResourceGraph()
         self.hostfile = Hostfile()
-        os.makedirs(f'{self.jarvis_root}/config', exist_ok=True)
+        os.makedirs(self.local_config_dir, exist_ok=True)
         self.save()
 
     def load(self):
@@ -165,17 +165,17 @@ class JarvisManager:
         :param machine: The machine config to copy
         :return: None
         """
-        os.makedirs(f'{self.jarvis_root}/config', exist_ok=True)
+        os.makedirs(self.local_config_dir, exist_ok=True)
         config_path = f'{self.jarvis_root}/builtin/config/{machine}.yaml'
         if os.path.exists(config_path):
             config = expand_env(YamlFile(config_path).load())
-            new_config_path = f'{self.jarvis_root}/config/jarvis_config.yaml'
+            new_config_path = f'{self.local_config_dir}/jarvis_config.yaml'
             YamlFile(new_config_path).save(config)
 
         rg_path = f'{self.jarvis_root}/builtin/resource_graph/{machine}.yaml'
         if os.path.exists(rg_path):
             self.resource_graph = ResourceGraph().load(rg_path)
-            new_rg_path = f'{self.jarvis_root}/config/resource_graph.yaml'
+            new_rg_path = f'{self.local_config_dir}/resource_graph.yaml'
             self.resource_graph.save(new_rg_path)
 
     def bootstrap_list(self):
