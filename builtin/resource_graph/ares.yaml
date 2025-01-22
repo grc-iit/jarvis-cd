@@ -3,48 +3,45 @@ fs:
   dev_type: ssd
   device: /dev/sdb1
   fs_type: xfs
-  host: localhost
   model: Samsung SSD 860
   mount: /mnt/ssd/${USER}
   parent: /dev/sdb
   shared: false
   uuid: 45b6abb3-7786-4b68-95d0-a8fac92e0d70
+  needs_root: false
 - avail: 500GB
   dev_type: hdd
   device: null
   fs_type: xfs
-  host: localhost
   model: null
   mount: ${HOME}
   parent: null
   shared: true
   uuid: null
+  needs_root: false
 - avail: 240GB
   dev_type: nvme
   device: /dev/nvme0n1p1
   fs_type: xfs
-  host: localhost
   model: TOSHIBA-RD400
   mount: /mnt/nvme/${USER}
   parent: /dev/nvme0n1
   shared: false
   uuid: cbc9b18c-fbb0-4ab7-a9fd-8cc719a93f64
+  needs_root: false
 - avail: 900GB
   dev_type: hdd
   device: /dev/sdc1
   fs_type: xfs
-  host: localhost
   model: ST1000LM049-2GH1
   mount: /mnt/hdd/${USER}
   parent: /dev/sdc
   shared: false
   uuid: 7857cbad-2e46-40c2-835a-b297bc5ee1d2
-hosts:
-- localhost
+  needs_root: false
 net:
 - domain: lo
   fabric: 127.0.0.1/32
-  host: localhost
   protocol: FI_PROTO_RXM
   provider: tcp;ofi_rxm
   shared: false
@@ -53,7 +50,6 @@ net:
   version: '114.10'
 - domain: eno1
   fabric: 172.20.0.0/16
-  host: localhost
   protocol: FI_PROTO_UDP
   provider: udp
   shared: true
@@ -62,7 +58,6 @@ net:
   version: '114.10'
 - domain: lo
   fabric: 127.0.0.1/32
-  host: localhost
   protocol: FI_PROTO_SOCK_TCP
   provider: tcp
   shared: false
@@ -71,7 +66,6 @@ net:
   version: '114.10'
 - domain: lo
   fabric: 127.0.0.1/32
-  host: localhost
   protocol: FI_PROTO_UDP
   provider: udp
   shared: false
@@ -80,7 +74,6 @@ net:
   version: '114.10'
 - domain: enp47s0np0
   fabric: 172.25.0.0/16
-  host: localhost
   protocol: FI_PROTO_RXD
   provider: udp;ofi_rxd
   shared: true
@@ -89,7 +82,6 @@ net:
   version: '114.10'
 - domain: eno1
   fabric: 172.20.0.0/16
-  host: localhost
   protocol: FI_PROTO_RXM
   provider: tcp;ofi_rxm
   shared: true
@@ -98,7 +90,6 @@ net:
   version: '114.10'
 - domain: lo
   fabric: 127.0.0.1/32
-  host: localhost
   protocol: FI_PROTO_SOCK_TCP
   provider: sockets
   shared: false
@@ -107,7 +98,6 @@ net:
   version: '114.10'
 - domain: lo
   fabric: 127.0.0.1/32
-  host: localhost
   protocol: FI_PROTO_RXD
   provider: udp;ofi_rxd
   shared: false
@@ -116,7 +106,6 @@ net:
   version: '114.10'
 - domain: eno1
   fabric: 172.20.0.0/16
-  host: localhost
   protocol: FI_PROTO_SOCK_TCP
   provider: tcp
   shared: true
@@ -125,7 +114,6 @@ net:
   version: '114.10'
 - domain: enp47s0np0
   fabric: 172.25.0.0/16
-  host: localhost
   protocol: FI_PROTO_RXM
   provider: tcp;ofi_rxm
   shared: true
@@ -134,7 +122,6 @@ net:
   version: '114.10'
 - domain: enp47s0np0
   fabric: 172.25.0.0/16
-  host: localhost
   protocol: FI_PROTO_UDP
   provider: udp
   shared: true
@@ -143,7 +130,6 @@ net:
   version: '114.10'
 - domain: enp47s0np0
   fabric: 172.25.0.0/16
-  host: localhost
   protocol: FI_PROTO_SOCK_TCP
   provider: sockets
   shared: true
@@ -152,7 +138,6 @@ net:
   version: '114.10'
 - domain: enp47s0np0
   fabric: 172.25.0.0/16
-  host: localhost
   protocol: FI_PROTO_SOCK_TCP
   provider: tcp
   shared: true
@@ -161,7 +146,6 @@ net:
   version: '114.10'
 - domain: eno1
   fabric: 172.20.0.0/16
-  host: localhost
   protocol: FI_PROTO_SOCK_TCP
   provider: sockets
   shared: true
@@ -170,7 +154,6 @@ net:
   version: '114.10'
 - domain: eno1
   fabric: 172.20.0.0/16
-  host: localhost
   protocol: FI_PROTO_RXD
   provider: udp;ofi_rxd
   shared: true
@@ -179,7 +162,6 @@ net:
   version: '114.10'
 - domain: ''
   fabric: 172.25.0.0/16
-  host: localhost
   protocol: ''
   provider: ofi+verbs;ofi_rxm
   shared: true

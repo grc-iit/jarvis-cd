@@ -6,35 +6,55 @@ We provide a builtin repo which contains various applications to deploy.
 We refer to applications as "jarivs pkgs" which can be connected to form
 "deployment pipelines".
 
-# 0.1 Dependencies
+# 1. Installation
 
-## 0.1.1. Jarvis-Util
+Get the GRC spack repo:
+```bash
+git clone https://github.com/grc-iit/grc-repo
+spack repo add grc-repo
+```
+
+Install jarvis-cd:
+```bash
+spack external find python
+spack install py-jarvis-cd
+```
+
+Spack packages must be loaded to use them.
+You'll have to do this for each new terminal.
+```bash
+spack load py-jarvis-cd
+```
+
+# 2. Manual Installation
+
+## 2.1. Jarvis-Util
 Jarvis-CD depends on jarvis-util. jarvis-util contains functions to execute
 binaries in python and collect their output.
 
 ```bash
-git clone https://github.com/scs-lab/jarvis-util.git
+git clone https://github.com/grc-iit/jarvis-util.git
 cd jarvis-util
 python3 -m pip install -r requirements.txt
 python3 -m pip install -e .
 ```
 
-## 0.1.2. Scspkg
+## 2.2. Scspkg
 
 Scspkg is a tool for building modulefiles using a CLI. It's not strictly
 necessary for Jarvis to function, but many of the readmes use it to provide
 structure to manual installations.
 
 ```bash
-git clone https://github.com/scs-lab/scspkg.git
+git clone https://github.com/grc-iit/scspkg.git
 python3 -m pip install -r requirements.txt
 python3 -m pip install -e .
 echo "module use \`scspkg module dir\`" >> ~/.bashrc
 ```
 
-The wiki for scspkg is [here](https://github.com/scs-lab/scspkg.git).
+The wiki for scspkg is [here](https://github.com/grc-iit/scspkg.git).
 
-# 0.2. Installation
+# 2.3. Jarvis-CD
 
 ```bash
 cd /path/to/jarvis-cd
@@ -42,11 +62,27 @@ python3 -m pip install -r requirements.txt
 python3 -m pip install -e .
 ```
 
-# 0.3. Configuring Jarvis
+# 2.4. Net Test
 
-## 0.3.1. Bootstrapping from a specific machine
+Network test tool for identifying valid networks.
+```bash
+spack install chi-nettest
+```
 
-Jarivs has been pre-configured on some machines. To bootstrap from
+# 3. Configuring Jarvis
+
+## 3.1. Bootstrapping for a single-node machine
+
+You may be trying to test things on just a single node. 
+
+In this case, run:
+```bash
+jarvis bootstrap from local
+```
+
+## 3.2. Bootstrapping from a specific machine
+
+Jarvis has been pre-configured on some machines. To bootstrap from
 one of them, run the following:
 
 ```bash
@@ -60,7 +96,7 @@ To check the set of available machines to bootstrap from, run:
 jarvis bootstrap list
 ```
 
-## 0.3.2. Creating a new configuration
+## 3.3. Creating a new configuration
 
 A configuration can be generated as follows:
 ```bash
@@ -78,3 +114,10 @@ require this, but on machines without a global filesystem (e.g., Chameleon Cloud
 this parameter can be set later.
 
 For a personal machine, these directories can be the same directory.
+
+# 4. Building the Resource Graph
+
+Python jarvis:
+```bash
+jarvis rg build
+```

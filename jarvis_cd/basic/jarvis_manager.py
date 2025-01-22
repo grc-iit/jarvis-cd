@@ -47,15 +47,15 @@ class JarvisManager:
         self.shared_dir = None
         # The current pipeline (per-user)
         self.cur_pipeline = None
+        # Path to local jarvis configuration directory
+        self.local_config_dir = os.path.join(os.environ['HOME'], '.jarvis')
         # The path to the global jarvis configuration (root user)
-        self.jarvis_conf_path = os.path.join(self.jarvis_root,
-                                             'config',
+        self.jarvis_conf_path = os.path.join(self.local_config_dir, 
                                              'jarvis_config.yaml')
         # The Jarvis configuration (per-user)
         self.jarvis_conf = None
         #  The path to the jarvis resource graph (global across users)
-        self.resource_graph_path = os.path.join(self.jarvis_root,
-                                                'config',
+        self.resource_graph_path = os.path.join(self.local_config_dir, 
                                                 'resource_graph.yaml')
         # The Jarvis resource graph (global across users)
         self.resource_graph = None
@@ -92,23 +92,8 @@ class JarvisManager:
         self.add_repo(f'{self.jarvis_root}/builtin')
         self.resource_graph = ResourceGraph()
         self.hostfile = Hostfile()
-        os.makedirs(f'{self.jarvis_root}/config', exist_ok=True)
+        os.makedirs(self.local_config_dir, exist_ok=True)
         self.save()
-
-    def save(self):
-        """
-        Save the jarvis config to config/jarvis_config.yaml
-
-        :return: None
-        """
-        # Update jarvis conf
-        self.jarvis_conf['CUR_PIPELINE'] = self.cur_pipeline
-        self.jarvis_conf['REPOS'] = self.repos
-        self.jarvis_conf['HOSTFILE'] = self.hostfile.path
-        # Save global resource graph
-        self.resource_graph.save(self.resource_graph_path)
-        # Save global and per-user conf
-        YamlFile(self.jarvis_conf_path).save(self.jarvis_conf)
 
     def load(self):
         """
@@ -117,6 +102,7 @@ class JarvisManager:
         :return: None
         """
         if not os.path.exists(self.jarvis_conf_path):
+            print('No configuration was found. Run jarvis init or bootstrap.')
             return
         self.jarvis_conf = {}
         # Read global jarvis conf
@@ -143,6 +129,25 @@ class JarvisManager:
         except Exception as e:
             print(f'Failed to open hostfile {self.jarvis_conf["HOSTFILE"]}')
             self.hostfile = Hostfile()
+        return self
+
+    def save(self):
+        """
+        Save the jarvis config to config/jarvis_config.yaml
+
+        :return: None
+        """
+        # Update jarvis conf
+        if self.jarvis_conf:
+            self.jarvis_conf['CUR_PIPELINE'] = self.cur_pipeline
+            self.jarvis_conf['REPOS'] = self.repos
+            self.jarvis_conf['HOSTFILE'] = self.hostfile.path
+        # Save global resource graph
+        if self.resource_graph:
+            self.resource_graph.save(self.resource_graph_path)
+        # Save global and per-user conf
+        if self.jarvis_conf:
+            YamlFile(self.jarvis_conf_path).save(self.jarvis_conf)
 
     def set_hostfile(self, path):
         """
@@ -162,17 +167,25 @@ class JarvisManager:
         :param machine: The machine config to copy
         :return: None
         """
-        os.makedirs(f'{self.jarvis_root}/config', exist_ok=True)
+        if machine == 'local':
+            #
+            self.create(
+                os.path.join(self.local_config_dir, 'config'),
+                os.path.join(self.local_config_dir, 'private'),
+                os.path.join(self.local_config_dir, 'shared'))
+            self.save()
+            return
+        os.makedirs(self.local_config_dir, exist_ok=True)
         config_path = f'{self.jarvis_root}/builtin/config/{machine}.yaml'
         if os.path.exists(config_path):
             config = expand_env(YamlFile(config_path).load())
-            new_config_path = f'{self.jarvis_root}/config/jarvis_config.yaml'
+            new_config_path = f'{self.local_config_dir}/jarvis_config.yaml'
             YamlFile(new_config_path).save(config)
 
         rg_path = f'{self.jarvis_root}/builtin/resource_graph/{machine}.yaml'
         if os.path.exists(rg_path):
             self.resource_graph = ResourceGraph().load(rg_path)
-            new_rg_path = f'{self.jarvis_root}/config/resource_graph.yaml'
+            new_rg_path = f'{self.local_config_dir}/resource_graph.yaml'
             self.resource_graph.save(new_rg_path)
 
     def bootstrap_list(self):
@@ -201,14 +214,6 @@ class JarvisManager:
     def print_config_path(self):
         print(self.jarvis_conf_path)
 
-    def resource_graph_init(self):
-        """
-        Create an empty resource graph
-
-        :return: None
-        """
-        self.resource_graph = ResourceGraph()
-
     def resource_graph_show(self):
         """
         Print the resource graph
@@ -220,7 +225,7 @@ class JarvisManager:
         print("net:")
         self.resource_graph.print_df(self.resource_graph.net)
 
-    def resource_graph_build(self):
+    def resource_graph_build(self, net_sleep):
         """
         Introspect the system and construct a resource graph.
 
@@ -228,7 +233,14 @@ class JarvisManager:
         """
         self.resource_graph = ResourceGraph()
         self.resource_graph.build(
-            PsshExecInfo(hostfile=self.hostfile))
+            PsshExecInfo(hostfile=self.hostfile), net_sleep=net_sleep)
+
+    def resource_graph_modify(self, net_sleep):
+        """
+        Modify the resource graph to retest resources
+        """
+        self.resource_graph.modify(
+            PsshExecInfo(hostfile=self.hostfile), net_sleep=net_sleep)
 
     def list_pipelines(self):
         """
@@ -268,11 +280,16 @@ class JarvisManager:
         for repo in self.repos:
             if repo['name'] == repo_name:
                 repo['path'] = path
+                print(f'Updated the {repo_name} to path {path}')
                 return
+        if not os.path.exists(os.path.join(path, repo_name)):
+            print('Error: repo must have a subdirectory with the same name')
+            exit(1)
         self.repos.insert(0, {
             'path': path,
             'name': repo_name
         })
+        print(f'Added the {repo_name} repo')
 
     def create_pkg(self, pkg_cls, pkg_type):
         """

@@ -50,8 +50,8 @@ class JarvisArgs(ArgParse):
                 'pos': True
             }
         ])
-
-        # jarvis celan
+        
+        # jarvis reset
         self.add_cmd('reset',
                       msg='Clean all pipelines and configurations')
 
@@ -110,10 +110,6 @@ class JarvisArgs(ArgParse):
                       msg='Resources to build a resource graph for a machine',
                       aliases=['rg'])
 
-        # jarvis resource-graph init
-        self.add_cmd('resource-graph init',
-                      msg='Create an empty resource graph')
-
         # jarvis resource-graph show
         self.add_cmd('resource-graph show',
                      msg='Show the resource graph')
@@ -127,23 +123,29 @@ class JarvisArgs(ArgParse):
                       msg='Introspect resource graph for this machine')
         self.add_args([
             {
-                'name': 'walkthrough',
-                'msg': 'A guide for building a resource graph',
-                'type': bool,
-                'default': False
-            },
-            {
-                'name': 'introspect',
-                'msg': 'Whether or not to do an introspect before building',
-                'type': bool,
-                'default': True
+                'name': 'net_sleep',
+                'msg': 'How long to sleep in network tests',
+                'type': float,
+                'default': 5,
+                'pos': False,
+                'required': False
             },
         ])
 
-        # jarvis resource-graph build
-        self.add_cmd('resource-graph prune',
-                      msg='An interactive CLI for modifying the resource graph')
-
+        # jarvis resource-graph modify
+        self.add_cmd('resource-graph modify',
+                      msg='Modify the resource graph to introspect new resources')
+        self.add_args([
+            {
+                'name': 'net_sleep',
+                'msg': 'How long to sleep in network tests',
+                'type': float,
+                'default': 5,
+                'pos': False,
+                'required': False
+            },
+        ])
+        
         # jarvis resource-graph add storage
         self.add_cmd('resource-graph add storage',
                       msg='Add a storage device or PFS to track')
@@ -1122,15 +1124,10 @@ class JarvisArgs(ArgParse):
 
     def hostfile_set(self):
         self.jarvis.set_hostfile(self.kwargs['path'])
-        pipelines = self.jarvis.list_pipelines()
-        self.jarvis.save()
-
-    def resource_graph_init(self):
-        self.jarvis.resource_graph_init()
         self.jarvis.save()
 
     def resource_graph_show(self):
-        self.jarvis.resource_graph_show()
+        self.jarvis.load().resource_graph_show()
         self.jarvis.save()
 
     def resource_graph_path(self):
@@ -1138,14 +1135,12 @@ class JarvisArgs(ArgParse):
         self.jarvis.save()
 
     def resource_graph_build(self):
-        walkthrough = self.kwargs['walkthrough']
-        introspect = self.kwargs['introspect']
-        if walkthrough:
-            self.jarvis.resource_graph.walkthrough_build(
-                PsshExecInfo(hostfile=self.jarvis.hostfile),
-                introspect)
-        else:
-            self.jarvis.resource_graph_build()
+        net_sleep = self.kwargs['net_sleep']
+        self.jarvis.resource_graph_build(net_sleep)
+        self.jarvis.save()
+
+    def resource_graph_modify(self):
+        self.jarvis.resource_graph_modify()
         self.jarvis.save()
 
     def resource_graph_prune(self):
