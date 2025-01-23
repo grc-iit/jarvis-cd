@@ -1,14 +1,15 @@
+# Jarvis-CD
 Jarvis-CD is a unified platform for deploying various applications, including
 storage systems and benchmarks. Many applications have complex configuration
 spaces and are difficult to deploy across different machines.
 
 We provide a builtin repo which contains various applications to deploy.
-We refer to applications as "jarvis pkgs" which can be connected to form
+We refer to applications as "jarivs pkgs" which can be connected to form
 "deployment pipelines".
 
-# Installation
+## Installation
 
-Get the GRC spack repo:
+Get the GRC spack repo (if you haven't already):
 ```bash
 git clone https://github.com/grc-iit/grc-repo
 spack repo add grc-repo
@@ -26,9 +27,9 @@ You'll have to do this for each new terminal.
 spack load py-jarvis-cd
 ```
 
-# Building the Jarvis Configuration
+## Building the Jarvis Configuration
 
-## Bootstrapping for a single-node machine
+### Bootstrapping for a single-node machine
 
 You may be trying to test things on just a single node. 
 
@@ -37,7 +38,7 @@ In this case, run:
 jarvis bootstrap from local
 ```
 
-## Bootstrapping from a specific machine
+### Bootstrapping from a specific machine
 
 Jarvis has been pre-configured on some machines. To bootstrap from
 one of them, run the following:
@@ -53,7 +54,7 @@ To check the set of available machines to bootstrap from, run:
 jarvis bootstrap list
 ```
 
-## Creating a new configuration
+### Creating a new configuration
 
 A configuration can be generated as follows:
 ```bash
@@ -72,16 +73,29 @@ this parameter can be set later.
 
 For a personal machine, these directories can be the same directory.
 
-# Building the Resource Graph
+## Building the Resource Graph
 
-Python jarvis:
+The resource graph is a snapshot of your systems network and storage.
+Many packages depend on it for their configurations. The Hermes I/O system, for example,
+uses this to identify valid networks and buffering locations.
 ```bash
 jarvis rg build
 ```
 
-# Manual Installation (Mainly Devs)
+To view the resource-graph, do this:
+```bash
+jarvis rg show
+```
 
-## Jarvis-Util
+To edit the resource-graph, you can edit the file directly using 
+an editor of your choice. Below uses nano for the editor.
+```bash
+nano $(jarvis rg path)
+```
+
+## Manual Installation (Mainly Devs)
+
+### Jarvis-Util
 Jarvis-CD depends on jarvis-util. jarvis-util contains functions to execute
 binaries in python and collect their output.
 
@@ -92,7 +106,7 @@ python3 -m pip install -r requirements.txt
 python3 -m pip install -e .
 ```
 
-## Scspkg
+### Scspkg
 
 Scspkg is a tool for building modulefiles using a CLI. It's not strictly
 necessary for Jarvis to function, but many of the readmes use it to provide
@@ -107,7 +121,7 @@ echo "module use \`scspkg module dir\`" >> ~/.bashrc
 
 The wiki for scspkg is [here](https://github.com/grc-iit/scspkg.git).
 
-## Jarvis-CD
+### Jarvis-CD
 
 ```bash
 cd /path/to/jarvis-cd
@@ -115,7 +129,7 @@ python3 -m pip install -r requirements.txt
 python3 -m pip install -e .
 ```
 
-## Net Test
+### Net Test
 
 Network test tool for identifying valid networks.
 ```bash
