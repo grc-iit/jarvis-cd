@@ -26,12 +26,7 @@ ret = setuptools.setup(
         "Operating System :: OS Independent",
         "Topic :: Software Development :: Libraries :: Python Modules",
         "Topic :: Application Configuration",
-    ],
-     cmdclass={
-        'install': CustomInstallCommand,
-        'develop': CustomDevelopCommand,
-        'egg_info': CustomEggInfoCommand,
-    },
+    ]
 )
 
 # Install the builtin directory to ~/.jarvis
