@@ -49,6 +49,8 @@ class JarvisManager:
         self.cur_pipeline = None
         # Path to local jarvis configuration directory
         self.local_config_dir = os.path.join(os.environ['HOME'], '.jarvis')
+        # Path to local jarvis builtin package directory
+        self.builtin_dir = os.path.join(self.local_config_dir, 'builtin')
         # The path to the global jarvis configuration (root user)
         self.jarvis_conf_path = os.path.join(self.local_config_dir, 
                                              'jarvis_config.yaml')
@@ -89,7 +91,7 @@ class JarvisManager:
             'HOSTFILE': None,
             'CUR_PIPELINE': None,
         }
-        self.add_repo(f'{self.jarvis_root}/builtin')
+        self.add_repo(self.builtin_dir)
         self.resource_graph = ResourceGraph()
         self.hostfile = Hostfile()
         os.makedirs(self.local_config_dir, exist_ok=True)
@@ -176,13 +178,13 @@ class JarvisManager:
             self.save()
             return
         os.makedirs(self.local_config_dir, exist_ok=True)
-        config_path = f'{self.jarvis_root}/builtin/config/{machine}.yaml'
+        config_path = f'{self.builtin_dir}/config/{machine}.yaml'
         if os.path.exists(config_path):
             config = expand_env(YamlFile(config_path).load())
             new_config_path = f'{self.local_config_dir}/jarvis_config.yaml'
             YamlFile(new_config_path).save(config)
 
-        rg_path = f'{self.jarvis_root}/builtin/resource_graph/{machine}.yaml'
+        rg_path = f'{self.builtin_dir}/resource_graph/{machine}.yaml'
         if os.path.exists(rg_path):
             self.resource_graph = ResourceGraph().load(rg_path)
             new_rg_path = f'{self.local_config_dir}/resource_graph.yaml'
@@ -194,7 +196,7 @@ class JarvisManager:
 
         :return: None
         """
-        configs = os.listdir(f'{self.jarvis_root}/builtin/config')
+        configs = os.listdir(f'{self.builtin_dir}/config')
         for config in configs:
             print(config.replace('.yaml', ''))
 

@@ -1,0 +1,7 @@
+#!/usr/bin/env elvish
+use vars.env
+env PATH = @PATH@
+env PYTHONPATH = @PYTHONPATH@
+env PYTHON = @PYTHON@
+env JARVIS_PY_PATH = @JARVIS_PY_PATH@
+run (env.PYTHON) (env.JARVIS_PY_PATH) $args
