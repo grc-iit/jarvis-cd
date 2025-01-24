@@ -71,26 +71,42 @@ each machine has the same view of data in the directory. Most jarvis pkgs
 require this, but on machines without a global filesystem (e.g., Chameleon Cloud),
 this parameter can be set later.
 
-For a personal machine, these directories can be the same directory.
+For a personal machine, these directories can be the same directory. 
 
-## Building the Resource Graph
+In addition to initializing the jarvis conf file, you must also build a resource graph.
+
+#### Set the active Hostfile
+
+The hostfile contains the set of nodes that the pipeline will run over.
+This is structured the same way as a traditional MPI hostfile.
+
+An example hostfile:
+
+```txt
+ares-comp-20
+ares-comp-[21-25]
+```
+
+To set the active hostfile, run:
+
+```bash
+jarvis hostfile set /path/to/hostfile
+```
+
+Note that every time you change the hostfile, you will need to update the
+pipeline. Jarvis does not automatically detect changes to this file.
+
+```bash
+jarvis ppl update
+```
+
+#### Building the Resource Graph
 
 The resource graph is a snapshot of your systems network and storage.
 Many packages depend on it for their configurations. The Hermes I/O system, for example,
 uses this to identify valid networks and buffering locations.
 ```bash
 jarvis rg build
-```
-
-To view the resource-graph, do this:
-```bash
-jarvis rg show
-```
-
-To edit the resource-graph, you can edit the file directly using 
-an editor of your choice. Below uses nano for the editor.
-```bash
-nano $(jarvis rg path)
 ```
 
 ## Manual Installation (Mainly Devs)
