@@ -31,6 +31,8 @@ setuptools.setup(
 )
 
 # Detect the current shell
+shell_path = os.environ.get('SHELL', '')
+shell_name = os.path.basename(shell_path).lower()
 supported_shells = {'csh', 'dash', 'elvish', 'fish', 'ksh', 'bash', 'tcsh', 'zsh'}
 detected_shell = next((sh for sh in supported_shells if sh in shell_name), 'sh') 
 print(f"Detected Shell: {detected_shell}") 
@@ -45,8 +47,6 @@ python_env = os.getenv('PYTHONPATH', '')
 jarvis_py_path = os.path.join(install_dir, 'jarvis.py')
 jarvis_path = os.path.join(install_dir, 'jarvis')
 path = os.getenv('PATH', '')
-shell_path = os.environ.get('SHELL', '')
-shell_name = os.path.basename(shell_path).lower()
 jarvis_tmpl = os.path.join(cur_dir, 'bin', f'jarvis.{detected_shell}.tmpl')
 
 # Create the jarvis script for the current shell
