@@ -104,7 +104,7 @@ class JarvisManager:
         :return: None
         """
         if not os.path.exists(self.jarvis_conf_path):
-            print('No configuration was found. Run jarvis init or bootstrap.'
+            print('No configuration was found. Run jarvis init or bootstrap. '
                   'If you are currently running those commands, please ignore this message.')
             return
         self.jarvis_conf = {}
