@@ -101,7 +101,7 @@ jarvis ppl update
 ## Building the Resource Graph
 
 NOTE: This step only needs to be run if you did ``jarvis bootstrap from local`` or ``jarvis init``. 
-If you bootstrap from a specific machine, then you're finished.
+If you bootstrap from a specific machine, then skip this section.
 
 The resource graph is a snapshot of your systems network and storage.
 Many packages depend on it for their configurations. The Hermes I/O system, for example,
