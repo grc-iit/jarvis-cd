@@ -30,6 +30,7 @@ ret = setuptools.setup(
 )
 
 # Install the builtin directory to ~/.jarvis
+project_dir = os.path.dirname(os.path.realpath(__file__))
 local_builtin_path = os.path.join(project_dir, 'builtin')
 install_builtin_path = os.path.join(os.environ['HOME'], '.jarvis', 'builtin')  
 if not os.path.exists(os.path.dirname(install_builtin_path)):
