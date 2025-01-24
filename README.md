@@ -73,9 +73,7 @@ this parameter can be set later.
 
 For a personal machine, these directories can be the same directory. 
 
-In addition to initializing the jarvis conf file, you must also build a resource graph.
-
-#### Set the active Hostfile
+## Set the active Hostfile
 
 The hostfile contains the set of nodes that the pipeline will run over.
 This is structured the same way as a traditional MPI hostfile.
@@ -100,7 +98,10 @@ pipeline. Jarvis does not automatically detect changes to this file.
 jarvis ppl update
 ```
 
-#### Building the Resource Graph
+## Building the Resource Graph
+
+NOTE: This step only needs to be run if you did ``jarvis bootstrap from local`` or ``jarvis init``. 
+If you bootstrap from a specific machine, then you're finished.
 
 The resource graph is a snapshot of your systems network and storage.
 Many packages depend on it for their configurations. The Hermes I/O system, for example,
