@@ -5,8 +5,8 @@
             "name": "Debug jarvis rg build",
             "type": "python",
             "request": "launch",
-            "program": "${workspaceFolder}/bin/jarvis",
-            "args": ["rg", "show"],
+            "program": "/home/llogan/.venv/bin/pip",
+            "args": ["install", "-e", "."],
             "console": "integratedTerminal",
             "justMyCode": false,
             "env": {
