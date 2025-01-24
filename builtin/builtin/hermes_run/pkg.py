@@ -347,7 +347,6 @@ class HermesRun(Service):
         if len(dev_df) == 0:
             raise Exception('Hermes needs at least one storage device')
         
-        print(dev_df)
         devs = dev_df.rows
         self.config['borg_paths'] = []
         for i, dev in enumerate(devs):
