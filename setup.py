@@ -2,6 +2,7 @@ import setuptools
 import os
 import sys 
 import shutil
+import sysconfig
 
 setuptools.setup(
     name="jarvis_cd",
@@ -34,17 +35,22 @@ detected_shell = next((sh for sh in supported_shells if sh in shell_name), 'sh')
 print(f"Detected Shell: {detected_shell}") 
 
 # Get environment paths
-project_dir = os.path.dirname(os.path.realpath(__file__))
-install_dir = sys.prefix
+project_dir = os.path.dirname(os.path.realpath(__file__)) 
 if os.name == 'nt':
     install_bin_dir = os.path.join(sys.prefix, 'Scripts')
 else:
     install_bin_dir = os.path.join(sys.prefix, 'bin') 
 
+# Get the site-packages directory where setuptools installs packages
+if hasattr(sys, 'real_prefix'):  # For virtualenv
+    install_lib_dir = os.path.join(sys.prefix, 'lib', f'python{sys.version_info.major}.{sys.version_info.minor}', 'site-packages')
+else:  # For system Python or venv
+    install_lib_dir = sysconfig.get_path('purelib')
+
 # Get environment variables
 terp_path = sys.executable
 python_env = os.getenv('PYTHONPATH', '')
-python_env = f'{install_dir}:{python_env}'
+python_env = f'{install_lib_dir}:{python_env}'
 jarvis_py_path = os.path.join(install_bin_dir, 'jarvis.py')
 jarvis_path = os.path.join(install_bin_dir, 'jarvis')
 path = os.getenv('PATH', '')
