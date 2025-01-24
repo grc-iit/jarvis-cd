@@ -33,16 +33,20 @@ supported_shells = {'csh', 'dash', 'elvish', 'fish', 'ksh', 'bash', 'tcsh', 'zsh
 detected_shell = next((sh for sh in supported_shells if sh in shell_name), 'sh') 
 print(f"Detected Shell: {detected_shell}") 
 
-# Get environment variables and paths
+# Get environment paths
 project_dir = os.path.dirname(os.path.realpath(__file__))
+install_dir = sys.prefix
 if os.name == 'nt':
-    install_dir = os.path.join(sys.prefix, 'Scripts')
+    install_bin_dir = os.path.join(sys.prefix, 'Scripts')
 else:
-    install_dir = os.path.join(sys.prefix, 'bin') 
+    install_bin_dir = os.path.join(sys.prefix, 'bin') 
+
+# Get environment variables
 terp_path = sys.executable
 python_env = os.getenv('PYTHONPATH', '')
-jarvis_py_path = os.path.join(install_dir, 'jarvis.py')
-jarvis_path = os.path.join(install_dir, 'jarvis')
+python_env = f'{install_dir}:{python_env}'
+jarvis_py_path = os.path.join(install_bin_dir, 'jarvis.py')
+jarvis_path = os.path.join(install_bin_dir, 'jarvis')
 path = os.getenv('PATH', '')
 jarvis_tmpl = os.path.join(project_dir, 'bin', f'jarvis.{detected_shell}.tmpl')
 
