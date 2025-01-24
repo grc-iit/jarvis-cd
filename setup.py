@@ -3,13 +3,9 @@ import os
 import sys 
 import shutil
 
-cur_dir = os.path.dirname(os.path.realpath(__file__))
-
 setuptools.setup(
     name="jarvis_cd",
     packages=setuptools.find_packages(),
-    scripts=['bin/jarvis.py'],
-    # scripts=[f'bin/{f}' for f in os.listdir(os.path.join(cur_dir, 'bin'))],
     version="0.0.1",
     author="Luke Logan",
     author_email="llogan@hawk.iit.edu",
@@ -38,6 +34,7 @@ detected_shell = next((sh for sh in supported_shells if sh in shell_name), 'sh')
 print(f"Detected Shell: {detected_shell}") 
 
 # Get environment variables and paths
+project_dir = os.path.dirname(os.path.realpath(__file__))
 if os.name == 'nt':
     install_dir = os.path.join(sys.prefix, 'Scripts')
 else:
@@ -47,10 +44,14 @@ python_env = os.getenv('PYTHONPATH', '')
 jarvis_py_path = os.path.join(install_dir, 'jarvis.py')
 jarvis_path = os.path.join(install_dir, 'jarvis')
 path = os.getenv('PATH', '')
-jarvis_tmpl = os.path.join(cur_dir, 'bin', f'jarvis.{detected_shell}.tmpl')
+jarvis_tmpl = os.path.join(project_dir, 'bin', f'jarvis.{detected_shell}.tmpl')
+
+# Copy jarvis.py to the install directory
+print(f'Creating {jarvis_py_path}')
+shutil.copy(os.path.join(project_dir, 'bin', 'jarvis.py'), jarvis_py_path)
 
 # Create the jarvis script for the current shell
-with open(os.path.join(cur_dir,jarvis_tmpl), 'r') as template:
+with open(os.path.join(project_dir,jarvis_tmpl), 'r') as template:
     jarvis_template = template.read()
 print(f'Creating {jarvis_path}')
 with open(jarvis_path, 'w') as fp:
@@ -68,7 +69,7 @@ if not os.path.exists(os.path.dirname(install_jarvis_path)):
 shutil.copy(jarvis_path, install_jarvis_path)
 
 # Install the builtin directory to ~/.jarvis
-local_builtin_path = os.path.join(cur_dir, 'builtin')
+local_builtin_path = os.path.join(project_dir, 'builtin')
 install_builtin_path = os.path.join(os.environ['HOME'], '.jarvis', 'builtin')  
 if not os.path.exists(os.path.dirname(install_builtin_path)):
     os.makedirs(os.path.dirname(install_builtin_path))
