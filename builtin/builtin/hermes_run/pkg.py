@@ -346,6 +346,8 @@ class HermesRun(Service):
             dev_df = sdf.concat(dev_list)
         if len(dev_df) == 0:
             raise Exception('Hermes needs at least one storage device')
+        
+        print(dev_df)
         devs = dev_df.rows
         self.config['borg_paths'] = []
         for i, dev in enumerate(devs):
@@ -364,7 +366,8 @@ class HermesRun(Service):
                 bandwidth = '120MBps'
                 latency = '5ms'
             else:
-                continue
+                bandwidth = '120MBps'
+                latency = '5ms'
             mount = f'{mount}/hermes_data'
             hermes_server['devices'][custom_name] = {
                 'mount_point': mount,
