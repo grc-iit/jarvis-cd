@@ -1127,7 +1127,7 @@ class JarvisArgs(ArgParse):
         self.jarvis.save()
 
     def resource_graph_show(self):
-        self.jarvis.load().resource_graph_show()
+        self.jarvis.resource_graph_show()
         self.jarvis.save()
 
     def resource_graph_path(self):
