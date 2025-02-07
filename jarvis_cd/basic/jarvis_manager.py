@@ -267,7 +267,7 @@ class JarvisManager:
         """
         self.cur_pipeline = pipeline_id
 
-    def add_repo(self, path):
+    def add_repo(self, path, force):
         """
         Induct a repo into the jarvis managers repo search variable.
         Does not create data on the filesystem.
@@ -275,6 +275,7 @@ class JarvisManager:
         :param path: The path to the repo to induct. The basename of the
         repo is assumed to be its repo name. E.g., for /home/hi/myrepo,
         my repo would be the basename.
+        :param force: If true, overwrite the repo if it already exists
         :return: None
         """
 
@@ -282,9 +283,13 @@ class JarvisManager:
         path = os.path.abspath(path)
         for repo in self.repos:
             if repo['name'] == repo_name:
-                repo['path'] = path
-                print(f'Updated the {repo_name} to path {path}')
-                return
+                if os.path.exists(repo['path']) and not force:
+                    print("Warning: repo already exists. Use --force to overwrite")
+                    return
+                else:
+                    repo['path'] = path
+                    print(f'Updated the {repo_name} to path {path}')
+                    return
         if not os.path.exists(os.path.join(path, repo_name)):
             print('Error: repo must have a subdirectory with the same name')
             exit(1)
