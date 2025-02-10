@@ -258,6 +258,13 @@ class JarvisArgs(ArgParse):
                 'pos': True,
                 'default': None
             },
+            {
+                'name': 'force',
+                'msg': 'Force the repo to be added',
+                'required': False,
+                'pos': False,
+                'default': False
+            }
         ])
 
         # jarvis repo create
@@ -1180,7 +1187,7 @@ class JarvisArgs(ArgParse):
     """
 
     def repo_add(self):
-        self.jarvis.add_repo(self.kwargs['repo_path'])
+        self.jarvis.add_repo(self.kwargs['repo_path'], self.kwargs['force'])
         self.jarvis.save()
 
     def repo_create(self):
