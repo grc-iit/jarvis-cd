@@ -91,7 +91,7 @@ class JarvisManager:
             'HOSTFILE': None,
             'CUR_PIPELINE': None,
         }
-        self.add_repo(self.builtin_dir)
+        self.add_repo(self.builtin_dir, True)
         self.resource_graph = ResourceGraph()
         self.hostfile = Hostfile()
         os.makedirs(self.local_config_dir, exist_ok=True)
