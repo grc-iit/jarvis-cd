@@ -1147,7 +1147,8 @@ class JarvisArgs(ArgParse):
         self.jarvis.save()
 
     def resource_graph_modify(self):
-        self.jarvis.resource_graph_modify()
+        net_sleep = self.kwargs['net_sleep']
+        self.jarvis.resource_graph_modify(net_sleep)
         self.jarvis.save()
 
     def resource_graph_prune(self):
