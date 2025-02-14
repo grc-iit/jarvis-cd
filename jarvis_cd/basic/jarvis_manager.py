@@ -17,6 +17,7 @@ from jarvis_util.shell.pssh_exec import PsshExecInfo
 from jarvis_util.shell.local_exec import LocalExecInfo
 import getpass
 import yaml
+import shutil
 
 
 class JarvisManager:
