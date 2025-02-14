@@ -459,8 +459,8 @@ class JarvisArgs(ArgParse):
             },
         ])
 
-        # jarivs pipeline index use 
-        self.add_cmd('pipeline index use',
+        # jarivs pipeline index load 
+        self.add_cmd('pipeline index load',
                       msg='Show pipeline indexes')
         self.add_args([
             {
@@ -1578,7 +1578,7 @@ class JarvisArgs(ArgParse):
         output_dir = self.kwargs['output_dir']
         PipelineIndex(index_query).copy(output_dir)
 
-    def pipeline_index_use(self):
+    def pipeline_index_load(self):
         index_query = self.kwargs['index_query']
         PipelineIndex(index_query).use()
 
