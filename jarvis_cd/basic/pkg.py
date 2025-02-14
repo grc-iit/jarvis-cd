@@ -1322,7 +1322,7 @@ class PipelineIndex:
         shutil.copy2(self.index_path, output_path)
         return self
         
-    def use(self):
+    def load_script(self):
         if self.index_path is None:
             return self
         pipeline = Pipeline().from_yaml(self.index_path).save()
