@@ -4,7 +4,7 @@ from jarvis_cd.basic.jarvis_manager import JarvisManager
 from jarvis_util import *
 from jarvis_util.shell.slurm_exec import SlurmExec, SlurmExecInfo, SlurmHostfile
 from jarvis_util.shell.pbs_exec import PbsExec, PbsExecInfo
-from jarvis_cd.basic.pkg import Pipeline, PkgArgParse
+from jarvis_cd.basic.pkg import Pipeline, PkgArgParse, PipelineIndex
 
 
 class JarvisArgs(ArgParse):
@@ -12,6 +12,8 @@ class JarvisArgs(ArgParse):
         self.jarvis = JarvisManager.get_instance()
         self.jutil = JutilManager.get_instance()
         self.define_init_opts()
+        self.define_pipeline_pkg_opts()
+        self.define_pipeline_index_opts()
         self.define_pipeline_opts()
         self.define_repo_opts()
         self.define_env_opts()
@@ -50,8 +52,8 @@ class JarvisArgs(ArgParse):
                 'pos': True
             }
         ])
-
-        # jarvis celan
+        
+        # jarvis reset
         self.add_cmd('reset',
                       msg='Clean all pipelines and configurations')
 
@@ -110,10 +112,6 @@ class JarvisArgs(ArgParse):
                       msg='Resources to build a resource graph for a machine',
                       aliases=['rg'])
 
-        # jarvis resource-graph init
-        self.add_cmd('resource-graph init',
-                      msg='Create an empty resource graph')
-
         # jarvis resource-graph show
         self.add_cmd('resource-graph show',
                      msg='Show the resource graph')
@@ -127,23 +125,29 @@ class JarvisArgs(ArgParse):
                       msg='Introspect resource graph for this machine')
         self.add_args([
             {
-                'name': 'walkthrough',
-                'msg': 'A guide for building a resource graph',
-                'type': bool,
-                'default': False
-            },
-            {
-                'name': 'introspect',
-                'msg': 'Whether or not to do an introspect before building',
-                'type': bool,
-                'default': True
+                'name': 'net_sleep',
+                'msg': 'How long to sleep in network tests',
+                'type': float,
+                'default': 5,
+                'pos': False,
+                'required': False
             },
         ])
 
-        # jarvis resource-graph build
-        self.add_cmd('resource-graph prune',
-                      msg='An interactive CLI for modifying the resource graph')
-
+        # jarvis resource-graph modify
+        self.add_cmd('resource-graph modify',
+                      msg='Modify the resource graph to introspect new resources')
+        self.add_args([
+            {
+                'name': 'net_sleep',
+                'msg': 'How long to sleep in network tests',
+                'type': float,
+                'default': 5,
+                'pos': False,
+                'required': False
+            },
+        ])
+        
         # jarvis resource-graph add storage
         self.add_cmd('resource-graph add storage',
                       msg='Add a storage device or PFS to track')
@@ -256,6 +260,13 @@ class JarvisArgs(ArgParse):
                 'pos': True,
                 'default': None
             },
+            {
+                'name': 'force',
+                'msg': 'Force the repo to be added',
+                'required': False,
+                'pos': False,
+                'default': False
+            }
         ])
 
         # jarvis repo create
@@ -317,6 +328,148 @@ class JarvisArgs(ArgParse):
                 'pos': True,
                 'default': None
             },
+        ])
+
+    def define_pipeline_pkg_opts(self):
+        # jarvis pkg
+        self.add_menu('pkg',
+                      msg='Tools to edit pkgs in a pipeline')
+
+        # jarvis pkg help
+        self.add_cmd('pkg help',
+                      msg='View the help menu for a package')
+        self.add_args([
+            {
+                'name': 'pkg_type',
+                'msg': 'The type of pkg being added to the pipeline',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis pkg configure
+        self.add_cmd('pkg configure',
+                      msg="Configure a pkg in the pipeline",
+                      keep_remainder=True,
+                      aliases=['pkg config', 'pkg conf'])
+        self.add_args([
+            {
+                'name': 'pkg_id',
+                'msg': 'The unique name of the pkg being added to '
+                       'the pipeline.',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'conf',
+                'msg': 'Should be run the configure step on the pkg',
+                'required': False,
+                'pos': False,
+                'default': True,
+                'type': bool
+            },
+        ])
+
+        # jarvis pkg unlink
+        self.add_cmd('pkg unlink', msg="Unlink a pkg from the pipeline.")
+        self.add_args([
+            {
+                'name': 'pkg_id',
+                'msg': 'The unique name of the pkg being added to '
+                       'the pipeline.',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis pkg remove
+        self.add_cmd('pkg remove', msg="Remove a pkg from the pipeline.")
+        self.add_args([
+            {
+                'name': 'pkg_id',
+                'msg': 'The unique name of the pkg removed',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis pkg src
+        self.add_cmd('pkg src', msg="Print the path to the pkg.py file.")
+        self.add_args([
+            {
+                'name': 'pkg_type',
+                'msg': 'The type of the pkg being displayed',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarvis pkg root
+        self.add_cmd('pkg root', msg="Print the path to the pkg directory.")
+        self.add_args([
+            {
+                'name': 'pkg_type',
+                'msg': 'The type of the pkg being displayed',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+    def define_pipeline_index_opts(self):
+        # jarvis pipeline index 
+        self.add_menu('pipeline index', 
+                      msg='Stored pipeline files')
+        
+        # jarvis pipeline index show
+        self.add_cmd('pipeline index show',
+                      msg='Show pipeline indexes')
+        self.add_args([
+            {
+                'name': 'index_query',
+                'msg': 'List index files or subdirectories',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarivs pipeline index copy 
+        self.add_cmd('pipeline index copy',
+                      msg='Show pipeline indexes')
+        self.add_args([
+            {
+                'name': 'index_query',
+                'msg': 'List index files or subdirectories',
+                'required': True,
+                'pos': True,
+                'default': None
+            },
+            {
+                'name': 'output_dir',
+                'msg': 'List index files or subdirectories',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
+
+        # jarivs pipeline index load 
+        self.add_cmd('pipeline index load',
+                      msg='Show pipeline indexes')
+        self.add_args([
+            {
+                'name': 'index_query',
+                'msg': 'List index files or subdirectories',
+                'required': True,
+                'pos': True,
+                'default': None
+            }
         ])
 
     def define_pipeline_opts(self):
@@ -635,96 +788,6 @@ class JarvisArgs(ArgParse):
                 'name': 'pipeline_id',
                 'msg': 'A unique name for this pipeline',
                 'required': False,
-                'pos': True,
-                'default': None
-            },
-        ])
-
-        # jarvis pkg
-        self.add_menu('pkg',
-                      msg='Tools to edit pkgs in a pipeline')
-
-        # jarvis pkg help
-        self.add_cmd('pkg help',
-                      msg='View the help menu for a package')
-        self.add_args([
-            {
-                'name': 'pkg_type',
-                'msg': 'The type of pkg being added to the pipeline',
-                'required': True,
-                'pos': True,
-                'default': None
-            },
-        ])
-
-        # jarvis pkg configure
-        self.add_cmd('pkg configure',
-                      msg="Configure a pkg in the pipeline",
-                      keep_remainder=True,
-                      aliases=['pkg config', 'pkg conf'])
-        self.add_args([
-            {
-                'name': 'pkg_id',
-                'msg': 'The unique name of the pkg being added to '
-                       'the pipeline.',
-                'required': True,
-                'pos': True,
-                'default': None
-            },
-            {
-                'name': 'conf',
-                'msg': 'Should be run the configure step on the pkg',
-                'required': False,
-                'pos': False,
-                'default': True,
-                'type': bool
-            },
-        ])
-
-        # jarvis pkg unlink
-        self.add_cmd('pkg unlink', msg="Unlink a pkg from the pipeline.")
-        self.add_args([
-            {
-                'name': 'pkg_id',
-                'msg': 'The unique name of the pkg being added to '
-                       'the pipeline.',
-                'required': True,
-                'pos': True,
-                'default': None
-            },
-        ])
-
-        # jarvis pkg remove
-        self.add_cmd('pkg remove', msg="Remove a pkg from the pipeline.")
-        self.add_args([
-            {
-                'name': 'pkg_id',
-                'msg': 'The unique name of the pkg removed',
-                'required': True,
-                'pos': True,
-                'default': None
-            },
-        ])
-
-        # jarvis pkg src
-        self.add_cmd('pkg src', msg="Print the path to the pkg.py file.")
-        self.add_args([
-            {
-                'name': 'pkg_type',
-                'msg': 'The type of the pkg being displayed',
-                'required': True,
-                'pos': True,
-                'default': None
-            },
-        ])
-
-        # jarvis pkg root
-        self.add_cmd('pkg root', msg="Print the path to the pkg directory.")
-        self.add_args([
-            {
-                'name': 'pkg_type',
-                'msg': 'The type of the pkg being displayed',
-                'required': True,
                 'pos': True,
                 'default': None
             },
@@ -1122,11 +1185,6 @@ class JarvisArgs(ArgParse):
 
     def hostfile_set(self):
         self.jarvis.set_hostfile(self.kwargs['path'])
-        pipelines = self.jarvis.list_pipelines()
-        self.jarvis.save()
-
-    def resource_graph_init(self):
-        self.jarvis.resource_graph_init()
         self.jarvis.save()
 
     def resource_graph_show(self):
@@ -1138,14 +1196,13 @@ class JarvisArgs(ArgParse):
         self.jarvis.save()
 
     def resource_graph_build(self):
-        walkthrough = self.kwargs['walkthrough']
-        introspect = self.kwargs['introspect']
-        if walkthrough:
-            self.jarvis.resource_graph.walkthrough_build(
-                PsshExecInfo(hostfile=self.jarvis.hostfile),
-                introspect)
-        else:
-            self.jarvis.resource_graph_build()
+        net_sleep = self.kwargs['net_sleep']
+        self.jarvis.resource_graph_build(net_sleep)
+        self.jarvis.save()
+
+    def resource_graph_modify(self):
+        net_sleep = self.kwargs['net_sleep']
+        self.jarvis.resource_graph_modify(net_sleep)
         self.jarvis.save()
 
     def resource_graph_prune(self):
@@ -1185,7 +1242,7 @@ class JarvisArgs(ArgParse):
     """
 
     def repo_add(self):
-        self.jarvis.add_repo(self.kwargs['repo_path'])
+        self.jarvis.add_repo(self.kwargs['repo_path'], self.kwargs['force'])
         self.jarvis.save()
 
     def repo_create(self):
@@ -1508,6 +1565,22 @@ class JarvisArgs(ArgParse):
 
     def pipeline_save(self):
         Pipeline().load().status()
+
+    """
+    PIPELINE INDEX CLI
+    """
+    def pipeline_index_show(self):
+        index_query = self.kwargs['index_query']
+        PipelineIndex(index_query).show()
+    
+    def pipeline_index_copy(self):
+        index_query = self.kwargs['index_query']
+        output_dir = self.kwargs['output_dir']
+        PipelineIndex(index_query).copy(output_dir)
+
+    def pipeline_index_load(self):
+        index_query = self.kwargs['index_query']
+        PipelineIndex(index_query).load_script()
 
 
 if __name__ == '__main__':

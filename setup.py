@@ -1,6 +1,11 @@
 import setuptools
+import os
+import sys 
+import shutil
+import sysconfig
 
-setuptools.setup(
+
+ret = setuptools.setup(
     name="jarvis_cd",
     packages=setuptools.find_packages(),
     scripts=['bin/jarvis'],
@@ -21,13 +26,13 @@ setuptools.setup(
         "Operating System :: OS Independent",
         "Topic :: Software Development :: Libraries :: Python Modules",
         "Topic :: Application Configuration",
-    ],
-    install_requires=[
-        'pyyaml',
-        # 'pylint==2.15.0',
-        # 'coverage==5.5',
-        # 'coverage-lcov==0.2.4',
-        # 'pytest==6.2.5',
-        'jarvis-util @ git+https://github.com/scs-lab/jarvis-util.git#egg=jarvis-util'
     ]
 )
+
+# Install the builtin directory to ~/.jarvis
+project_dir = os.path.dirname(os.path.realpath(__file__))
+local_builtin_path = os.path.join(project_dir, 'builtin')
+install_builtin_path = os.path.join(os.environ['HOME'], '.jarvis', 'builtin')  
+if not os.path.exists(os.path.dirname(install_builtin_path)):
+    os.makedirs(os.path.dirname(install_builtin_path))
+shutil.copytree(local_builtin_path, install_builtin_path, dirs_exist_ok=True)

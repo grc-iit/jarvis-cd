@@ -4,5 +4,5 @@ HOSTFILE: null
 PRIVATE_DIR: /scratch/${USER}/jarvis-pipelines # local SSD
 REPOS:
 - name: builtin
-  path: ${HOME}/jarvis-cd/builtin
+  path: ${HOME}/.jarvis/builtin
 SHARED_DIR: ${HOME}/jarvis-pipelines

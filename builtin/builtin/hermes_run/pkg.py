@@ -336,15 +336,17 @@ class HermesRun(Service):
         # Get storage info
         if len(self.config['devices']) == 0:
             # Get all the fastest storage device mount points on machine
-            dev_df = rg.find_storage()
+            dev_df = rg.find_storage(needs_root=False)
         else:
             # Get the storage devices for the user
             dev_list = [rg.find_storage(dev_types=dev_type,
-                                        count_per_pkg=count)
+                                        count_per_pkg=count,
+                                        needs_root=False)
                         for dev_type, count in self.config['devices']]
             dev_df = sdf.concat(dev_list)
         if len(dev_df) == 0:
             raise Exception('Hermes needs at least one storage device')
+        
         devs = dev_df.rows
         self.config['borg_paths'] = []
         for i, dev in enumerate(devs):
@@ -363,7 +365,8 @@ class HermesRun(Service):
                 bandwidth = '120MBps'
                 latency = '5ms'
             else:
-                continue
+                bandwidth = '120MBps'
+                latency = '5ms'
             mount = f'{mount}/hermes_data'
             hermes_server['devices'][custom_name] = {
                 'mount_point': mount,

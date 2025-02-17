@@ -1261,3 +1261,79 @@ class Pipeline(Pkg):
             self.log(f'[RUN] {pkg.pkg_id}: Status was {status}',
                      color=Color.GREEN)
         return math.prod(statuses)
+
+
+class PipelineIndex:
+    """
+    Manage pipeline indexes for Jarvis
+    """
+    def __init__(self, index_query):
+        self.jarvis = JarvisManager.get_instance()
+        self.inex_query = index_query
+        self.index_path = self.to_path(index_query)
+
+    def to_path(self, index_query):
+        """
+        Converts an index query to pipeline index
+        """
+        split_query = index_query.split('.')
+        repo_name = split_query[0]
+        repo = self.jarvis.get_repo(repo_name)
+        if repo is None:
+            print(f'Could not find repo {repo_name}')
+            return
+        repo_path = repo['path']
+        root_index_path = os.path.join(repo_path, 'pipelines')
+        base_index_path = os.path.join(root_index_path, *split_query[1:])
+        if not os.path.exists(root_index_path):
+            print(f'repo {repo_name} has no pipeline indexes')
+            return
+        index_path = self._find_ext(base_index_path)
+        if not os.path.exists(index_path):
+            print(f'Could not find index {index_query} ({index_path})')
+            return
+        return index_path
+    
+    def _find_ext(self, base_path):
+        for ext in ['', '.yaml', '.yml']:
+            path = f'{base_path}{ext}'
+            if os.path.exists(path):
+                return path
+        return None
+
+    def show(self):
+        """
+        Print all pipeline indexes
+
+        :return: None
+        """
+        if self.index_path is None:
+            return self
+        for pipeline in os.listdir(self.index_path):
+            if pipeline.endswith('.yaml'):
+                print(pipeline.replace('.yaml', '')) 
+        return self
+
+    def copy(self, output_path):
+        if self.index_path is None:
+            return self
+        if output_path is None:
+            output_path = os.getcwd()
+        shutil.copy2(self.index_path, output_path)
+        return self
+        
+    def load_script(self):
+        if self.index_path is None:
+            return self
+        pipeline = Pipeline().from_yaml(self.index_path).save()
+        # try:
+        #     pipeline = Pipeline().from_yaml(self.index_path).save()
+        # except:
+        #     print(f'Could not load pipeline {self.index_path}')
+        #     return self
+        self.jarvis.cd(pipeline.global_id)
+        return self
+
+    def save(self):
+        self.jarvis.save()
+        return self
