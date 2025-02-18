@@ -1311,7 +1311,9 @@ class PipelineIndex:
             return self
         for pipeline in os.listdir(self.index_path):
             if pipeline.endswith('.yaml'):
-                print(pipeline.replace('.yaml', '')) 
+                print(pipeline.replace('.yaml', ''))
+            elif os.path.isdir(os.path.join(self.index_path, pipeline)):
+                print(f'|- {pipeline} (repo)')
         return self
 
     def copy(self, output_path):
