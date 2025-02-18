@@ -1309,11 +1309,21 @@ class PipelineIndex:
         """
         if self.index_path is None:
             return self
+        yamls = []
+        dirs = []
         for pipeline in os.listdir(self.index_path):
             if pipeline.endswith('.yaml'):
-                print(pipeline.replace('.yaml', ''))
+                yamls.append(pipeline.replace('.yaml', ''))
             elif os.path.isdir(os.path.join(self.index_path, pipeline)):
-                print(f'|- {pipeline} (repo)')
+                dirs.append(pipeline)
+
+        print('SCRIPTS:')
+        for script in yamls:
+            print(f'  |- {script}')
+
+        print(f'SUB INDEXES:')
+        for subrepo in dirs:
+            print(f'  |- {subrepo}')
         return self
 
     def copy(self, output_path):
