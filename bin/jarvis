@@ -1580,7 +1580,7 @@ class JarvisArgs(ArgParse):
 
     def pipeline_index_load(self):
         index_query = self.kwargs['index_query']
-        PipelineIndex(index_query).load_script()
+        PipelineIndex(index_query).load_script().save()
 
 
 if __name__ == '__main__':
