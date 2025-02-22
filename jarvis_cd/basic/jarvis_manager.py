@@ -118,7 +118,12 @@ class JarvisManager:
         if os.path.exists(self.jarvis_repos_path):
             self.repos = YamlFile(self.jarvis_repos_path).load()['REPOS']
         else:
-            self.repos = {'REPOS': []}
+            self.repos = [
+                {
+                    'path': self.builtin_dir,
+                    'name': 'builtin'
+                }
+            ]
         # Get the various jarvis paths
         self.config_dir = expand_env(self.jarvis_conf['CONFIG_DIR'])
         self.env_dir = os.path.join(self.config_dir, 'env')
