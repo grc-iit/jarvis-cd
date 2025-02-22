@@ -52,9 +52,12 @@ class JarvisManager:
         self.local_config_dir = os.path.join(os.environ['HOME'], '.jarvis')
         # Path to local jarvis builtin package directory
         self.builtin_dir = os.path.join(self.local_config_dir, 'builtin')
-        # The path to the global jarvis configuration (root user)
+        # Path to the global jarvis configuration
         self.jarvis_conf_path = os.path.join(self.local_config_dir, 
                                              'jarvis_config.yaml')
+        # Path to the global jarvis resource graph
+        self.jarvis_repos_path = os.path.join(self.local_config_dir,
+                                              'repos.yaml')
         # The Jarvis configuration (per-user)
         self.jarvis_conf = None
         #  The path to the jarvis resource graph (global across users)
@@ -111,7 +114,12 @@ class JarvisManager:
         self.jarvis_conf = {}
         # Read global jarvis conf
         self.jarvis_conf.update(YamlFile(self.jarvis_conf_path).load())
-        self.repos = self.jarvis_conf['REPOS']
+        # Read repos conf
+        if os.path.exists(self.jarvis_repos_path):
+            self.repos = YamlFile(self.jarvis_repos_path).load()['REPOS']
+        else:
+            self.repos = {'REPOS': []}
+        # Get the various jarvis paths
         self.config_dir = expand_env(self.jarvis_conf['CONFIG_DIR'])
         self.env_dir = os.path.join(self.config_dir, 'env')
         os.makedirs(f'{self.config_dir}', exist_ok=True)
@@ -144,8 +152,9 @@ class JarvisManager:
         # Update jarvis conf
         if self.jarvis_conf:
             self.jarvis_conf['CUR_PIPELINE'] = self.cur_pipeline
-            self.jarvis_conf['REPOS'] = self.repos
             self.jarvis_conf['HOSTFILE'] = self.hostfile.path
+        # Update repos
+        YamlFile(self.jarvis_repos_path).save({'REPOS': self.repos})
         # Save global resource graph
         if self.resource_graph:
             self.resource_graph.save(self.resource_graph_path)
