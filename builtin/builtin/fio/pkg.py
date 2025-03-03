@@ -83,7 +83,7 @@ class Fio(Application):
             },
             {
                 'name': 'random',
-                'msg': 'Use random I/O'
+                'msg': 'Use random I/O',
                 'type': bool,
                 'default': False,
             },
