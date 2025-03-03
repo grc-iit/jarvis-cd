@@ -138,7 +138,7 @@ class Fio(Application):
             f'--numjobs={self.config["nprocs"]}',
             f'--direct={direct}',
             f'--randrepeat={random}',
-            f'--output={self.config["out"]}',
+            f'--filename={self.config["out"]}',
             f'--name=job',
         ]
         # The path
