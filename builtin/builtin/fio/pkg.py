@@ -139,6 +139,7 @@ class Fio(Application):
             f'--direct={direct}',
             f'--randrepeat={random}',
             f'--output={self.config["out"]}',
+            f'--name=job',
         ]
         # The path
         if '.' in os.path.basename(self.config['out']):
