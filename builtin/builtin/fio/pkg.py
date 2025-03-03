@@ -6,7 +6,7 @@ from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 
 
-class Ior(Application):
+class Fio(Application):
     """
     This class provides methods to launch the Ior application.
     """
