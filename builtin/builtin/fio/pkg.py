@@ -88,6 +88,12 @@ class Fio(Application):
                 'default': False,
             },
             {
+                'name': 'engine',
+                'msg': 'backend engine',
+                'type': bool,
+                'default': 'psync',
+            },
+            {
                 'name': 'log',
                 'msg': 'Path to IOR output log',
                 'type': str,
@@ -139,6 +145,7 @@ class Fio(Application):
             f'--direct={direct}',
             f'--randrepeat={random}',
             f'--filename={self.config["out"]}',
+            f'--ioengine={self.config["engine"]}',
             f'--name=job',
         ]
         # The path
