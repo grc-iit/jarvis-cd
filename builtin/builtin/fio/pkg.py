@@ -153,6 +153,7 @@ class Fio(Application):
                          hostfile=self.jarvis.hostfile,
                          do_dbg=self.config['do_dbg'],
                          dbg_port=self.config['dbg_port']))
+        print(' '.join(cmd))
 
     def stop(self):
         """
