@@ -103,7 +103,7 @@ class Fio(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.config['api'] = self.config['api'].upper()
+        pass
 
     def start(self):
         """
