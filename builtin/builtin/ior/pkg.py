@@ -4,6 +4,7 @@ Ior is ....
 """
 from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
+import os
 
 
 class Ior(Application):
@@ -121,6 +122,7 @@ class Ior(Application):
             f'-a {self.config["api"]}',
             f'-o {self.config["out"]}',
         ]
+        out = os.path.expandvars(self.config['out'])
         if self.config['write']:
             cmd.append('-w')
         if self.config['read']:
@@ -129,11 +131,11 @@ class Ior(Application):
             cmd.append('-F')
         if self.config['reps'] > 1:
             cmd.append(f'-i {self.config["reps"]}')
-        if '.' in os.path.basename(self.config['out']):
-            os.makedirs(str(pathlib.Path(self.config['out']).parent),
+        if '.' in os.path.basename(out):
+            os.makedirs(str(pathlib.Path(out).parent),
                         exist_ok=True)
         else:
-            os.makedirs(self.config['out'], exist_ok=True)
+            os.makedirs(out, exist_ok=True)
         # pipe_stdout=self.config['log']
         Exec('which mpiexec',
              LocalExecInfo(env=self.mod_env))
