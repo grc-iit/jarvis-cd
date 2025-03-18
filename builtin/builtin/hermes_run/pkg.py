@@ -395,11 +395,7 @@ class HermesRun(Service):
             }
 
         # Get network Info
-        if len(self.hostfile) > 1:
-            net_info = rg.find_net_info(self.hostfile, strip_ips=True, shared=True)
-        else:
-            # net_info = rg.find_net_info(self.hostfile, strip_ips=True)
-            net_info = rg.find_net_info(self.hostfile)
+        net_info = rg.find_net_info(self.hostfile, strip_ips=True, shared=True)
         provider = self.config['provider']
         if provider is None:
             opts = net_info['provider'].unique().list()
