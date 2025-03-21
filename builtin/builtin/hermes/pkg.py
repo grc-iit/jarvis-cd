@@ -137,10 +137,12 @@ class Hermes(Service):
                                       env=self.env))
 
         # Get network Info
-        if len(hosts) > 1:
-            net_info = rg.find_net_info(hosts, shared=True)
-        else:
-            net_info = rg.find_net_info(hosts)
+        net_info = rg.find_net_info(self.jarvis.hostfile, strip_ips=True, 
+                                    local=len(hosts) == 1, env=self.env)
+        # if len(hosts) > 1:
+        #     net_info = rg.find_net_info(hosts, shared=True)
+        # else:
+        #     net_info = rg.find_net_info(hosts)
         if len(net_info) == 0:
             raise Exception(f'Failed to find any networks')
         provider = self.config['provider']
