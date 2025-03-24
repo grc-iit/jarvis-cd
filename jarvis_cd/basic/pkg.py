@@ -975,9 +975,23 @@ class Pipeline(Pkg):
         YamlFile(static_env_path).save(self.env)
         return self
 
-    def from_yaml_dict(self, config, do_configure=True):
+    def from_yaml(self, path, do_configure=True):
         """
         Create a pipeline from a YAML file
+
+        :param path:
+        :param do_configure: Whether to append and configure
+        :return: self
+        """
+        config = YamlFile(path).load()
+        if 'loop' in config:
+            return self.from_yaml_iter_dict(config, path, do_configure)
+        else:
+            return self.from_yaml_dict(config, path, do_configure)
+
+    def from_yaml_dict(self, config, path=None, do_configure=True):
+        """
+        Create a pipeline from a YAML dict
 
         :param path:
         :param do_configure: Whether to append and configure
@@ -986,6 +1000,8 @@ class Pipeline(Pkg):
         pipeline_id = config['name']
         self.create(pipeline_id)
         self.reset()
+        if path:
+            self.config['JARVIS_YAML_PATH'] = path
         if 'env' in config:
             self.copy_static_env(config['env'])
         for sub_pkg in config['pkgs']:
@@ -997,21 +1013,7 @@ class Pipeline(Pkg):
                         do_configure, **sub_pkg)
         return self
 
-    def from_yaml(self, path, do_configure=True):
-        """
-        Create a pipeline from a YAML file
-
-        :param path:
-        :param do_configure: Whether to append and configure
-        :return: self
-        """
-        config = YamlFile(path).load()
-        if 'loop' in config:
-            return self.from_yaml_iter_dict(config, do_configure)
-        else:
-            return self.from_yaml_dict(config, do_configure)
-
-    def from_yaml_iter_dict(self, config, do_configure=True):
+    def from_yaml_iter_dict(self, config, path=None, do_configure=True):
         """
         Create a pipeline + iterator from a YAML file
         YAML format:
@@ -1036,7 +1038,7 @@ class Pipeline(Pkg):
         :param do_configure: Whether to append and configure
         :return: self
         """
-        self.from_yaml_dict(config['config'], do_configure)
+        self.from_yaml_dict(config['config'], path, do_configure)
         self.config['iterator'] = {}
         self.config['iterator']['vars'] = config['vars']
         self.config['iterator']['loop'] = config['loop']
@@ -1102,6 +1104,16 @@ class Pipeline(Pkg):
         envs = os.listdir(self.jarvis.env_dir)
         for env in envs:
             print(env)
+        return self
+
+    def update_yaml(self):
+        """
+        Reload the pipeline from the stored yaml file
+        """
+        if 'JARVIS_YAML_PATH' in self.config:
+            self.from_yaml(self.config['JARVIS_YAML_PATH'])
+        else:
+            self.update()
         return self
 
     def update(self):

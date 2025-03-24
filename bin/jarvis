@@ -586,6 +586,20 @@ class JarvisArgs(ArgParse):
             },
         ])
 
+        # jarvis pipeline update
+        self.add_cmd('pipeline update yaml', msg='Reload yaml file from its source')
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'Delete the jarvis directories containing metadata'
+                       'for the pipeline. Will apply to current pipeline by'
+                       'default.',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
+
         # jarvis pipeline run yaml
         self.add_cmd('pipeline run yaml',
                       msg='Create a pipeline from a yaml schema')
@@ -643,6 +657,17 @@ class JarvisArgs(ArgParse):
         # jarvis pipeline update
         self.add_cmd('pipeline update', msg='Re-run configure on all pkgs '
                                              'in a pipeline')
+        self.add_args([
+            {
+                'name': 'pipeline_id',
+                'msg': 'Delete the jarvis directories containing metadata'
+                       'for the pipeline. Will apply to current pipeline by'
+                       'default.',
+                'required': False,
+                'pos': True,
+                'default': None
+            },
+        ])
 
 
         # jarvis pipeline append
@@ -1327,6 +1352,10 @@ class JarvisArgs(ArgParse):
         self.jarvis.cd(pipeline.global_id)
         self.jarvis.save()
 
+    def pipeline_update_yaml(self):
+        ppl_id = self.kwargs['pipeline_id']
+        Pipeline().load(ppl_id).update_yaml().save()
+
     def pipeline_run_yaml(self):
         path = self.kwargs['path']
         pipeline = Pipeline().from_yaml(path).save()
@@ -1424,7 +1453,8 @@ class JarvisArgs(ArgParse):
         self.maybe_configure(pipeline, pkg_id)
 
     def pipeline_update(self):
-        Pipeline().load().update().save()
+        ppl_id = self.kwargs['pipeline_id']
+        Pipeline().load(ppl_id).update().save()
 
     def pkg_unlink(self):
         Pipeline().load().unlink(self.kwargs['pkg_id']).save()
