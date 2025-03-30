@@ -95,11 +95,23 @@ class JarvisManager:
             'HOSTFILE': None,
             'CUR_PIPELINE': None,
         }
-        self.add_repo(self.builtin_dir, True)
+        self.load_repos()
         self.resource_graph = ResourceGraph()
         self.hostfile = Hostfile()
         os.makedirs(self.local_config_dir, exist_ok=True)
         self.save()
+
+    def load_repos(self):
+        # Read repos conf
+        if os.path.exists(self.jarvis_repos_path):
+            self.repos = YamlFile(self.jarvis_repos_path).load()['REPOS']
+        else:
+            self.repos = [
+                {
+                    'path': self.builtin_dir,
+                    'name': 'builtin'
+                }
+            ]
 
     def load(self):
         """
@@ -114,16 +126,8 @@ class JarvisManager:
         self.jarvis_conf = {}
         # Read global jarvis conf
         self.jarvis_conf.update(YamlFile(self.jarvis_conf_path).load())
-        # Read repos conf
-        if os.path.exists(self.jarvis_repos_path):
-            self.repos = YamlFile(self.jarvis_repos_path).load()['REPOS']
-        else:
-            self.repos = [
-                {
-                    'path': self.builtin_dir,
-                    'name': 'builtin'
-                }
-            ]
+        # Read repos files
+        self.load_repos()
         # Get the various jarvis paths
         self.config_dir = expand_env(self.jarvis_conf['CONFIG_DIR'])
         self.env_dir = os.path.join(self.config_dir, 'env')
@@ -193,6 +197,7 @@ class JarvisManager:
                 os.path.join(self.local_config_dir, 'shared'))
             self.save()
             return
+        self.load_repos()
         os.makedirs(self.local_config_dir, exist_ok=True)
         config_path = f'{self.builtin_dir}/config/{machine}.yaml'
         if os.path.exists(config_path):
