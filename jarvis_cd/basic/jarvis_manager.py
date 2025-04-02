@@ -15,6 +15,7 @@ from jarvis_util.introspect.system_info import ResourceGraph
 from jarvis_util.shell.filesystem import Mkdir
 from jarvis_util.shell.pssh_exec import PsshExecInfo
 from jarvis_util.shell.local_exec import LocalExecInfo
+from pathlib import Path
 import getpass
 import yaml
 import shutil
@@ -49,7 +50,7 @@ class JarvisManager:
         # The current pipeline (per-user)
         self.cur_pipeline = None
         # Path to local jarvis configuration directory
-        self.local_config_dir = os.path.join(os.environ['HOME'], '.jarvis')
+        self.local_config_dir = os.path.join(Path.home(), '.jarvis')
         # Path to local jarvis builtin package directory
         self.builtin_dir = os.path.join(self.local_config_dir, 'builtin')
         # Path to the global jarvis configuration

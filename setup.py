@@ -3,6 +3,7 @@ import os
 import sys 
 import shutil
 import sysconfig
+from pathlib import Path
 
 
 ret = setuptools.setup(
@@ -32,7 +33,7 @@ ret = setuptools.setup(
 # Install the builtin directory to ~/.jarvis
 project_dir = os.path.dirname(os.path.realpath(__file__))
 local_builtin_path = os.path.join(project_dir, 'builtin')
-install_builtin_path = os.path.join(os.environ['HOME'], '.jarvis', 'builtin')  
+install_builtin_path = os.path.join(Path.home(), '.jarvis', 'builtin')  
 if not os.path.exists(os.path.dirname(install_builtin_path)):
     os.makedirs(os.path.dirname(install_builtin_path))
 shutil.copytree(local_builtin_path, install_builtin_path, dirs_exist_ok=True)
