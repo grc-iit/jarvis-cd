@@ -66,6 +66,15 @@ class MyRepo(Application):
         """
         pass
 
+    def kill(self):
+        """
+        Forcibly a running application. E.g., OrangeFS will terminate the servers,
+        clients, and metadata services.
+
+        :return: None
+        """
+        pass
+
     def clean(self):
         """
         Destroy all data for an application. E.g., OrangeFS will delete all
