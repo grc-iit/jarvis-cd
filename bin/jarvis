@@ -1236,7 +1236,7 @@ class JarvisArgs(ArgParse):
 
     def resource_graph_build(self):
         self.make_hostfile_from_sched(Path.home())
-        if not self.run_on_first_host():
+        if not self.run_on_first_host(self.jarvis.hostfile):
             return
         net_sleep = self.kwargs['net_sleep']
         self.jarvis.resource_graph_build(net_sleep)
