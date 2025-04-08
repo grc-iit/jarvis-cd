@@ -334,8 +334,8 @@ class JarvisManager:
                   encoding='utf-8') as fp:
             text = fp.read()
 
-        # Replace MyRepo with the pkg name
-        text = text.replace('MyRepo', to_camel_case(pkg_type))
+        # Replace MyPkg with the pkg name
+        text = text.replace('MyPkg', to_camel_case(pkg_type))
 
         # Write the specialized data
         repo_name = self.repos[0]['name']

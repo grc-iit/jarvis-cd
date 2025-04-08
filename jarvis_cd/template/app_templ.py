@@ -1,14 +1,14 @@
 """
-This module provides classes and methods to launch the MyRepo application.
-MyRepo is ....
+This module provides classes and methods to launch the MyPkg application.
+MyPkg is ....
 """
 from jarvis_cd.basic.pkg import Application
 from jarvis_util import *
 
 
-class MyRepo(Application):
+class MyPkg(Application):
     """
-    This class provides methods to launch the MyRepo application.
+    This class provides methods to launch the MyPkg application.
     """
     def _init(self):
         """

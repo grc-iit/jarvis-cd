@@ -1,14 +1,14 @@
 """
-This module provides classes and methods to inject the MyRepo interceptor.
-MyRepo is ....
+This module provides classes and methods to inject the MyPkg interceptor.
+MyPkg is ....
 """
 from jarvis_cd.basic.pkg import Interceptor
 from jarvis_util import *
 
 
-class MyRepo(Interceptor):
+class MyPkg(Interceptor):
     """
-    This class provides methods to inject the MyRepo interceptor.
+    This class provides methods to inject the MyPkg interceptor.
     """
     def _init(self):
         """
