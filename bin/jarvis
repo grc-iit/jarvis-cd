@@ -1537,11 +1537,11 @@ class JarvisArgs(ArgParse):
                 return False
         return True
 
-    def make_hostfile_from_sched(self, conf_dir):
+    def make_hostfile_from_sched(self, conf_dir, host_suffix=None):
         file_location = os.path.join(conf_dir,
                                      'jarvis_hostfile.txt')
         if self.kwargs['slurm_host']:
-            SlurmHostfile(file_location, self.kwargs['host_suffix'])
+            SlurmHostfile(file_location, host_suffix)
             self.jarvis.set_hostfile(file_location)
             return True
         if self.kwargs['pbs_host']:

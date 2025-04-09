@@ -6,7 +6,7 @@
             "type": "python",
             "request": "launch",
             "program": "${workspaceFolder}/bin/jarvis",
-            "args": ["ppl", "load", "yaml", "/home/llogan/Documents/Projects/iowarp/content-transfer-engine/test/jarvis_hermes/pipelines/viz/viz.yaml"],
+            "args": ["rg", "build"],
             "console": "integratedTerminal",
             "justMyCode": false
         }
