@@ -1526,6 +1526,7 @@ class JarvisArgs(ArgParse):
         self.make_hostfile_from_sched(Path.home())
         if self.run_on_first_host(self.jarvis.hostfile):
             print('1')
+            self.jarvis.save()
         else:
             print('0')
 
