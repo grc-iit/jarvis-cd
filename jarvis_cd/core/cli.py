@@ -4,6 +4,7 @@ from pathlib import Path
 from jarvis_cd.util.argparse import ArgParse
 from jarvis_cd.core.config import Jarvis
 from jarvis_cd.core.pipeline import Pipeline
+from jarvis_cd.core.pipeline_test import is_pipeline_test, PipelineTest, load_yaml_auto, run_yaml_auto
 from jarvis_cd.core.pipeline_index import PipelineIndexManager
 from jarvis_cd.core.repository import RepositoryManager
 from jarvis_cd.core.pkg import Pkg
@@ -22,6 +23,7 @@ class JarvisCLI(ArgParse):
         self.jarvis = None
         self.jarvis_config = None
         self.current_pipeline = None
+        self._current_test = None  # Pipeline test instance
         self.pipeline_index_manager = None
         self.repo_manager = None
         self.env_manager = None
@@ -953,19 +955,24 @@ class JarvisCLI(ArgParse):
         self.current_pipeline.append(package_spec, package_alias, config_args)
         
     def ppl_run(self):
-        """Run pipeline"""
+        """Run pipeline (auto-detects regular pipeline vs pipeline test)"""
         self._ensure_initialized()
         load_type = self.kwargs.get('load_type', 'current')
         pipeline_file = self.kwargs.get('pipeline_file')
-        
+
         if load_type == 'yaml':
             if not pipeline_file:
                 raise ValueError("Pipeline file is required when load_type is 'yaml'")
-            # Load and run pipeline file in one command
-            pipeline = Pipeline()
-            pipeline.run(load_type, pipeline_file)
-            self.current_pipeline = pipeline
+            # Auto-detect and run pipeline file
+            run_yaml_auto(pipeline_file)
         else:
+            # Check if we have a loaded pipeline test
+            if hasattr(self, '_current_test') and self._current_test is not None:
+                # Run the loaded pipeline test
+                self._current_test.run()
+                self._current_test = None
+                return
+
             # Run current pipeline
             if not self.current_pipeline:
                 current_name = self.jarvis_config.get_current_pipeline()
@@ -973,7 +980,7 @@ class JarvisCLI(ArgParse):
                     self.current_pipeline = Pipeline(current_name)
                 else:
                     raise ValueError("No current pipeline to run")
-            
+
             self.current_pipeline.run()
         
     def ppl_start(self):
@@ -1039,17 +1046,38 @@ class JarvisCLI(ArgParse):
         print(status)
         
     def ppl_load(self):
-        """Load pipeline from file"""
+        """Load pipeline from file (auto-detects regular pipeline vs pipeline test)"""
         self._ensure_initialized()
         load_type = self.kwargs['load_type']
         pipeline_file = self.kwargs['pipeline_file']
 
-        pipeline = Pipeline()
-        pipeline.load(load_type, pipeline_file)
-        pipeline.build_container_if_needed()
-        pipeline.configure_all_packages()
+        if load_type == 'yaml':
+            # Auto-detect pipeline type
+            is_test, obj = load_yaml_auto(pipeline_file)
 
-        self.current_pipeline = pipeline
+            if is_test:
+                # Pipeline test - store for later run
+                self._current_test = obj
+                self.current_pipeline = None
+                print(f"Loaded pipeline test: {obj.name}")
+                print(f"  Total combinations: {len(obj.combinations)}")
+                print(f"  Repeat count: {obj.repeat}")
+                print(f"  Total runs: {len(obj.combinations) * obj.repeat}")
+                print("Run with 'jarvis ppl run' to execute the test")
+            else:
+                # Regular pipeline
+                obj.build_container_if_needed()
+                obj.configure_all_packages()
+                self.current_pipeline = obj
+                self._current_test = None
+        else:
+            # Non-YAML load type - use traditional method
+            pipeline = Pipeline()
+            pipeline.load(load_type, pipeline_file)
+            pipeline.build_container_if_needed()
+            pipeline.configure_all_packages()
+            self.current_pipeline = pipeline
+            self._current_test = None
         
     def ppl_update(self):
         """Update pipeline from last loaded file"""
