@@ -212,9 +212,9 @@ class PipelineTest:
         """Print parameter values for a combination."""
         if combo:
             params_str = ', '.join(f'{k}={v}' for k, v in combo.items())
-            logger.info(f"  Parameters: {params_str}")
+            logger.print(Color.CYAN, f"  Parameters: {params_str}")
         else:
-            logger.info(f"  Parameters: (none)")
+            logger.print(Color.CYAN, f"  Parameters: (none)")
 
     def load(self, pipeline_file: str):
         """
@@ -409,9 +409,9 @@ class PipelineTest:
                 )
                 self._print_params(combo)
                 if self.repeat > 1:
-                    logger.info(f"  Repeat: {repeat_idx + 1}/{self.repeat}")
+                    logger.print(Color.CYAN, f"  Repeat: {repeat_idx + 1}/{self.repeat}")
                 if self.output:
-                    logger.info(f"  Output: {self.output}")
+                    logger.print(Color.CYAN, f"  Output: {self.output}")
 
                 # Apply variables to configuration
                 modified_config = self._apply_variables(self.config, combo)
@@ -444,7 +444,7 @@ class PipelineTest:
                 # Confirm persistence
                 if self.output:
                     csv_path = Path(self.output) / 'results.csv'
-                    logger.info(f"  Results persisted to: {csv_path}")
+                    logger.print(Color.CYAN, f"  Results persisted to: {csv_path}")
 
                 logger.print(
                     Color.CYAN,
