@@ -761,16 +761,25 @@ class Pipeline:
         try:
             # Use PkgArgParse to parse and convert arguments
             argparse = pkg_instance.get_argparse()
-            # Parse arguments - prepend 'configure' command
-            parsed_args = argparse.parse(['configure'] + config_args)
+
+            # Get defaults by parsing with no user args
+            argparse.parse(['configure'])
+            defaults = argparse.kwargs.copy()
+
+            # Parse with user args
+            argparse.parse(['configure'] + config_args)
             converted_args = argparse.kwargs
 
-            # Update package configuration with converted values
-            pkg_def['config'].update(converted_args)
+            # Only keep args the user explicitly provided (differ from defaults)
+            explicit_args = {k: v for k, v in converted_args.items()
+                            if k not in defaults or defaults[k] != v}
+
+            # Update package configuration with only explicit values
+            pkg_def['config'].update(explicit_args)
 
             # Configure the package instance
             if hasattr(pkg_instance, 'configure'):
-                pkg_instance.configure(**converted_args)
+                pkg_instance.configure(**explicit_args)
                 print(f"Configured package {pkg_id} successfully")
             else:
                 print(f"Package {pkg_id} has no configure method")

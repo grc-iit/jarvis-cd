@@ -12,7 +12,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
 from jarvis_cd.core.pipeline import Pipeline
-from jarvis_cd.util.logger import logger
+from jarvis_cd.util.logger import logger, Color
 
 
 def is_pipeline_test(yaml_data: Dict[str, Any]) -> bool:
@@ -212,9 +212,9 @@ class PipelineTest:
         """Print parameter values for a combination."""
         if combo:
             params_str = ', '.join(f'{k}={v}' for k, v in combo.items())
-            logger.info(f"  Parameters: {params_str}")
+            logger.print(Color.CYAN, f"  Parameters: {params_str}")
         else:
-            logger.info(f"  Parameters: (none)")
+            logger.print(Color.CYAN, f"  Parameters: (none)")
 
     def load(self, pipeline_file: str):
         """
@@ -402,19 +402,22 @@ class PipelineTest:
                     continue
 
                 remaining = total_runs - current_run
-                logger.pipeline(
-                    f"Run {current_run}/{total_runs}: "
-                    f"Combination {combo_idx + 1}, "
-                    f"Repeat {repeat_idx + 1} "
-                    f"({remaining} remaining)"
+                logger.print(
+                    Color.CYAN,
+                    f"--- BEGIN Iteration {current_run}/{total_runs} "
+                    f"({remaining} remaining) ---"
                 )
                 self._print_params(combo)
+                if self.repeat > 1:
+                    logger.print(Color.CYAN, f"  Repeat: {repeat_idx + 1}/{self.repeat}")
+                if self.output:
+                    logger.print(Color.CYAN, f"  Output: {self.output}")
 
                 # Apply variables to configuration
                 modified_config = self._apply_variables(self.config, combo)
 
                 # Create a unique name for this run
-                run_name = f"{self.name}_c{combo_idx}_r{repeat_idx}"
+                run_name = f"{self.name}_run{current_run}"
                 modified_config['name'] = run_name
 
                 try:
@@ -437,6 +440,16 @@ class PipelineTest:
 
                 self.results.append(result)
                 self._write_csv_log()
+
+                # Confirm persistence
+                if self.output:
+                    csv_path = Path(self.output) / 'results.csv'
+                    logger.print(Color.CYAN, f"  Results persisted to: {csv_path}")
+
+                logger.print(
+                    Color.CYAN,
+                    f"--- END Iteration {current_run}/{total_runs} ---"
+                )
 
         # Write final YAML results
         self._write_yaml_results()
