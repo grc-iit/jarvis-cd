@@ -66,6 +66,156 @@ class PipelineTest:
         self.combinations = []  # Generated test combinations
         self.results = []  # Collected results
 
+    @staticmethod
+    def _parse_csv_value(value_str):
+        """
+        Parse a CSV string value back to a Python type.
+
+        Attempts int, then float, then falls back to string.
+
+        :param value_str: String value from CSV
+        :return: Parsed Python value
+        """
+        try:
+            return int(value_str)
+        except (ValueError, TypeError):
+            pass
+        try:
+            return float(value_str)
+        except (ValueError, TypeError):
+            pass
+        return value_str
+
+    def _load_csv_log(self):
+        """
+        Load previously completed results from CSV log for resume support.
+
+        Reads {output}/results.csv and reconstructs result dicts.
+
+        :return: Number of loaded results (0 if no CSV or output is None)
+        """
+        if not self.output:
+            return 0
+
+        csv_path = Path(self.output) / 'results.csv'
+        if not csv_path.exists():
+            return 0
+
+        # Determine known variable names
+        all_var_names = set()
+        for combo in self.combinations:
+            all_var_names.update(combo.keys())
+
+        loaded_results = []
+        try:
+            with open(csv_path, 'r', newline='') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    result = {
+                        'combination_idx': int(row.get('combination_idx', 0)),
+                        'repeat_idx': int(row.get('repeat_idx', 0)),
+                        'status': row.get('status', 'unknown'),
+                    }
+
+                    # Parse runtime
+                    runtime_str = row.get('runtime', '')
+                    if runtime_str:
+                        result['runtime'] = self._parse_csv_value(runtime_str)
+
+                    # Parse variables (known var names)
+                    variables = {}
+                    for var_name in all_var_names:
+                        if var_name in row and row[var_name] != '':
+                            variables[var_name] = self._parse_csv_value(row[var_name])
+                    result['variables'] = variables
+
+                    # Parse stats (remaining columns)
+                    meta_keys = {'run_idx', 'combination_idx', 'repeat_idx',
+                                 'status', 'runtime', 'error'}
+                    stat_keys = set(row.keys()) - meta_keys - all_var_names
+                    stats = {}
+                    for key in stat_keys:
+                        if row[key] != '':
+                            stats[key] = self._parse_csv_value(row[key])
+                    if stats:
+                        result['stats'] = stats
+
+                    # Parse error
+                    error_str = row.get('error', '')
+                    if error_str:
+                        result['error'] = error_str
+
+                    loaded_results.append(result)
+        except Exception as e:
+            logger.warning(f"Failed to load CSV log: {e}")
+            return 0
+
+        # Sanity check
+        total_runs = len(self.combinations) * self.repeat
+        if len(loaded_results) > total_runs:
+            logger.warning(
+                f"CSV log has {len(loaded_results)} results but test only has "
+                f"{total_runs} total runs. Starting fresh."
+            )
+            return 0
+
+        self.results = loaded_results
+        return len(loaded_results)
+
+    def _write_csv_log(self):
+        """
+        Write all current results to CSV log file.
+
+        Full overwrite each time to handle dynamic stat columns correctly.
+        Called after each run completes.
+        """
+        if not self.output:
+            return
+
+        output_dir = Path(self.output)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Get all variable names and stat keys
+        all_var_names = set()
+        all_stat_keys = set()
+        for result in self.results:
+            all_var_names.update(result.get('variables', {}).keys())
+            all_stat_keys.update(result.get('stats', {}).keys())
+
+        all_var_names = sorted(all_var_names)
+        all_stat_keys = sorted(all_stat_keys)
+
+        csv_path = output_dir / 'results.csv'
+        with open(csv_path, 'w', newline='') as f:
+            fieldnames = ['run_idx', 'combination_idx', 'repeat_idx', 'status', 'runtime'] + \
+                        all_var_names + all_stat_keys + ['error']
+            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
+            writer.writeheader()
+
+            for idx, result in enumerate(self.results):
+                row = {
+                    'run_idx': idx,
+                    'combination_idx': result.get('combination_idx', 0),
+                    'repeat_idx': result.get('repeat_idx', 0),
+                    'status': result.get('status', 'unknown'),
+                    'runtime': result.get('runtime', ''),
+                    'error': result.get('error', '')
+                }
+                # Add variables
+                row.update(result.get('variables', {}))
+                # Add stats
+                row.update(result.get('stats', {}))
+
+                writer.writerow(row)
+
+    def _print_params(self, combo):
+        """Print parameter values for a combination."""
+        if combo:
+            params_str = ', '.join(f'{k}={v}' for k, v in combo.items())
+            logger.info(f"  Parameters: {params_str}")
+        else:
+            logger.info(f"  Parameters: (none)")
+
     def load(self, pipeline_file: str):
         """
         Load pipeline test from YAML file.
@@ -219,22 +369,46 @@ class PipelineTest:
         """
         Run all test combinations.
 
+        Supports resuming from a previous partial run by reading existing CSV
+        results and skipping already-completed runs.
+
         For each combination:
         1. Apply variables to create a modified pipeline configuration
         2. Run the pipeline repeat times
         3. Collect statistics from packages
-        4. Store results
+        4. Store results and write CSV incrementally
         """
         total_runs = len(self.combinations) * self.repeat
-        current_run = 0
 
-        logger.pipeline(f"Starting pipeline test: {self.name}")
-        logger.info(f"Total runs: {total_runs}")
+        # Try to resume from existing CSV log
+        completed_runs = self._load_csv_log()
+
+        if completed_runs > 0:
+            logger.pipeline(f"Resuming pipeline test: {self.name}")
+            logger.info(f"  Found {completed_runs}/{total_runs} completed runs, "
+                        f"resuming from run {completed_runs + 1}")
+        else:
+            logger.pipeline(f"Starting pipeline test: {self.name}")
+            logger.info(f"Total runs: {total_runs}")
+
+        current_run = 0
 
         for combo_idx, combo in enumerate(self.combinations):
             for repeat_idx in range(self.repeat):
                 current_run += 1
-                logger.pipeline(f"Run {current_run}/{total_runs}: Combination {combo_idx + 1}, Repeat {repeat_idx + 1}")
+
+                # Skip already-completed runs
+                if current_run <= completed_runs:
+                    continue
+
+                remaining = total_runs - current_run
+                logger.pipeline(
+                    f"Run {current_run}/{total_runs}: "
+                    f"Combination {combo_idx + 1}, "
+                    f"Repeat {repeat_idx + 1} "
+                    f"({remaining} remaining)"
+                )
+                self._print_params(combo)
 
                 # Apply variables to configuration
                 modified_config = self._apply_variables(self.config, combo)
@@ -257,10 +431,15 @@ class PipelineTest:
                         'error': str(e)
                     }
 
-                self.results.append(result)
+                # Log result
+                runtime_str = f"{result.get('runtime', 0):.2f}s" if 'runtime' in result else 'N/A'
+                logger.info(f"  Status: {result.get('status', 'unknown')}, Runtime: {runtime_str}")
 
-        # Write results
-        self._write_results()
+                self.results.append(result)
+                self._write_csv_log()
+
+        # Write final YAML results
+        self._write_yaml_results()
 
         logger.success(f"Pipeline test completed: {len(self.results)} runs")
 
@@ -330,13 +509,12 @@ class PipelineTest:
 
         return result
 
-    def _write_results(self):
+    def _write_yaml_results(self):
         """
-        Write results to output directory.
+        Write results to YAML file.
 
-        Creates:
-        - results.csv: CSV file with all results
-        - results.yaml: YAML file with full result details
+        Creates results.yaml with full result details.
+        CSV output is handled incrementally by _write_csv_log().
         """
         if not self.output:
             logger.info("No output directory specified, skipping result export")
@@ -344,42 +522,6 @@ class PipelineTest:
 
         output_dir = Path(self.output)
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Get all variable names and stat keys
-        all_var_names = set()
-        all_stat_keys = set()
-        for result in self.results:
-            all_var_names.update(result.get('variables', {}).keys())
-            all_stat_keys.update(result.get('stats', {}).keys())
-
-        all_var_names = sorted(all_var_names)
-        all_stat_keys = sorted(all_stat_keys)
-
-        # Write CSV file
-        csv_path = output_dir / 'results.csv'
-        with open(csv_path, 'w', newline='') as f:
-            fieldnames = ['run_idx', 'combination_idx', 'repeat_idx', 'status', 'runtime'] + \
-                        all_var_names + all_stat_keys + ['error']
-            writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction='ignore')
-            writer.writeheader()
-
-            for idx, result in enumerate(self.results):
-                row = {
-                    'run_idx': idx,
-                    'combination_idx': result.get('combination_idx', 0),
-                    'repeat_idx': result.get('repeat_idx', 0),
-                    'status': result.get('status', 'unknown'),
-                    'runtime': result.get('runtime', ''),
-                    'error': result.get('error', '')
-                }
-                # Add variables
-                row.update(result.get('variables', {}))
-                # Add stats
-                row.update(result.get('stats', {}))
-
-                writer.writerow(row)
-
-        logger.info(f"Results written to: {csv_path}")
 
         # Write YAML file with full details
         yaml_path = output_dir / 'results.yaml'
