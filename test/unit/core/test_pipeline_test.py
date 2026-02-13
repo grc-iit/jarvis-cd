@@ -2,6 +2,7 @@
 Tests for pipeline test functionality (grid search experiments).
 """
 import os
+import csv
 import sys
 import yaml
 import tempfile
@@ -540,8 +541,8 @@ class TestPipelineTestResultsOutput(unittest.TestCase):
         """Clean up temporary directory."""
         shutil.rmtree(self.test_dir)
 
-    def test_write_results_creates_csv(self):
-        """Results should be written to CSV file."""
+    def test_write_csv_log_creates_csv(self):
+        """CSV log should be written to CSV file."""
         output_dir = os.path.join(self.test_dir, 'output')
 
         test = PipelineTest()
@@ -569,7 +570,7 @@ class TestPipelineTestResultsOutput(unittest.TestCase):
             }
         ]
 
-        test._write_results()
+        test._write_csv_log()
 
         # Check CSV file exists
         csv_path = os.path.join(output_dir, 'results.csv')
@@ -583,7 +584,7 @@ class TestPipelineTestResultsOutput(unittest.TestCase):
             self.assertIn('pkg.param', content)
             self.assertIn('pkg.throughput', content)
 
-    def test_write_results_creates_yaml(self):
+    def test_write_yaml_results_creates_yaml(self):
         """Results should be written to YAML file."""
         output_dir = os.path.join(self.test_dir, 'output')
 
@@ -602,7 +603,7 @@ class TestPipelineTestResultsOutput(unittest.TestCase):
             }
         ]
 
-        test._write_results()
+        test._write_yaml_results()
 
         # Check YAML file exists
         yaml_path = os.path.join(output_dir, 'results.yaml')
@@ -615,7 +616,7 @@ class TestPipelineTestResultsOutput(unittest.TestCase):
             self.assertEqual(data['total_runs'], 1)
             self.assertEqual(len(data['results']), 1)
 
-    def test_write_results_no_output_skips(self):
+    def test_write_yaml_results_no_output_skips(self):
         """No output directory should skip writing."""
         test = PipelineTest()
         test.name = 'no_output_test'
@@ -623,7 +624,207 @@ class TestPipelineTestResultsOutput(unittest.TestCase):
         test.results = []
 
         # Should not raise any errors
-        test._write_results()
+        test._write_yaml_results()
+
+
+class TestPipelineTestResume(unittest.TestCase):
+    """Tests for resume functionality via CSV log."""
+
+    def setUp(self):
+        """Create temporary directory for test files."""
+        self.test_dir = tempfile.mkdtemp(prefix='jarvis_test_')
+
+    def tearDown(self):
+        """Clean up temporary directory."""
+        shutil.rmtree(self.test_dir)
+
+    def _create_csv(self, output_dir, rows, fieldnames=None):
+        """Helper to create a CSV file with given rows."""
+        os.makedirs(output_dir, exist_ok=True)
+        csv_path = os.path.join(output_dir, 'results.csv')
+        if fieldnames is None:
+            fieldnames = ['run_idx', 'combination_idx', 'repeat_idx',
+                          'status', 'runtime', 'pkg.param', 'error']
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(row)
+        return csv_path
+
+    def test_resume_skips_completed_runs(self):
+        """Resume should load existing results and report count."""
+        output_dir = os.path.join(self.test_dir, 'output')
+
+        # Create CSV with 2 completed rows
+        rows = [
+            {'run_idx': 0, 'combination_idx': 0, 'repeat_idx': 0,
+             'status': 'success', 'runtime': '10.5', 'pkg.param': '1', 'error': ''},
+            {'run_idx': 1, 'combination_idx': 1, 'repeat_idx': 0,
+             'status': 'success', 'runtime': '11.2', 'pkg.param': '2', 'error': ''},
+        ]
+        self._create_csv(output_dir, rows)
+
+        test = PipelineTest()
+        test.vars = {'pkg.param': [1, 2, 3]}
+        test.loop = [['pkg.param']]
+        test.repeat = 1
+        test.output = output_dir
+        test._build_combinations()
+
+        completed = test._load_csv_log()
+
+        self.assertEqual(completed, 2)
+        self.assertEqual(len(test.results), 2)
+
+    def test_resume_empty_csv(self):
+        """Resume should return 0 for missing CSV."""
+        output_dir = os.path.join(self.test_dir, 'output')
+
+        test = PipelineTest()
+        test.vars = {'pkg.param': [1, 2]}
+        test.loop = [['pkg.param']]
+        test.repeat = 1
+        test.output = output_dir
+        test._build_combinations()
+
+        completed = test._load_csv_log()
+
+        self.assertEqual(completed, 0)
+        self.assertEqual(len(test.results), 0)
+
+    def test_resume_no_output(self):
+        """Resume should return 0 when output is None."""
+        test = PipelineTest()
+        test.output = None
+
+        completed = test._load_csv_log()
+
+        self.assertEqual(completed, 0)
+
+    def test_resume_reconstructs_results(self):
+        """Loaded results should have correct structure."""
+        output_dir = os.path.join(self.test_dir, 'output')
+
+        fieldnames = ['run_idx', 'combination_idx', 'repeat_idx',
+                      'status', 'runtime', 'pkg.param', 'pkg.throughput', 'error']
+        rows = [
+            {'run_idx': 0, 'combination_idx': 0, 'repeat_idx': 0,
+             'status': 'success', 'runtime': '10.5', 'pkg.param': '1',
+             'pkg.throughput': '100', 'error': ''},
+        ]
+        self._create_csv(output_dir, rows, fieldnames)
+
+        test = PipelineTest()
+        test.vars = {'pkg.param': [1, 2]}
+        test.loop = [['pkg.param']]
+        test.repeat = 1
+        test.output = output_dir
+        test._build_combinations()
+
+        test._load_csv_log()
+
+        result = test.results[0]
+        self.assertEqual(result['combination_idx'], 0)
+        self.assertEqual(result['repeat_idx'], 0)
+        self.assertEqual(result['status'], 'success')
+        self.assertEqual(result['runtime'], 10.5)
+        self.assertEqual(result['variables'], {'pkg.param': 1})
+        self.assertIn('pkg.throughput', result.get('stats', {}))
+        self.assertEqual(result['stats']['pkg.throughput'], 100)
+
+    def test_resume_too_many_rows_starts_fresh(self):
+        """CSV with more rows than total runs should start fresh."""
+        output_dir = os.path.join(self.test_dir, 'output')
+
+        # Create CSV with 5 rows but test only has 2 total runs
+        rows = [
+            {'run_idx': i, 'combination_idx': 0, 'repeat_idx': 0,
+             'status': 'success', 'runtime': '10.0', 'pkg.param': '1', 'error': ''}
+            for i in range(5)
+        ]
+        self._create_csv(output_dir, rows)
+
+        test = PipelineTest()
+        test.vars = {'pkg.param': [1, 2]}
+        test.loop = [['pkg.param']]
+        test.repeat = 1
+        test.output = output_dir
+        test._build_combinations()
+
+        completed = test._load_csv_log()
+
+        self.assertEqual(completed, 0)
+        self.assertEqual(len(test.results), 0)
+
+
+class TestPipelineTestCsvLog(unittest.TestCase):
+    """Tests for incremental CSV logging."""
+
+    def setUp(self):
+        """Create temporary directory for test files."""
+        self.test_dir = tempfile.mkdtemp(prefix='jarvis_test_')
+
+    def tearDown(self):
+        """Clean up temporary directory."""
+        shutil.rmtree(self.test_dir)
+
+    def test_csv_log_written_incrementally(self):
+        """CSV log should exist after first result is written."""
+        output_dir = os.path.join(self.test_dir, 'output')
+
+        test = PipelineTest()
+        test.output = output_dir
+        test.results = [
+            {
+                'combination_idx': 0,
+                'repeat_idx': 0,
+                'variables': {'pkg.param': 1},
+                'status': 'success',
+                'runtime': 10.5,
+                'stats': {}
+            }
+        ]
+
+        test._write_csv_log()
+
+        csv_path = os.path.join(output_dir, 'results.csv')
+        self.assertTrue(os.path.exists(csv_path))
+
+    def test_csv_log_contains_all_results(self):
+        """CSV log row count should match result count."""
+        output_dir = os.path.join(self.test_dir, 'output')
+
+        test = PipelineTest()
+        test.output = output_dir
+        test.results = [
+            {
+                'combination_idx': i,
+                'repeat_idx': 0,
+                'variables': {'pkg.param': i + 1},
+                'status': 'success',
+                'runtime': 10.0 + i,
+                'stats': {'pkg.throughput': 100 + i * 10}
+            }
+            for i in range(5)
+        ]
+
+        test._write_csv_log()
+
+        csv_path = os.path.join(output_dir, 'results.csv')
+        with open(csv_path, 'r') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            self.assertEqual(len(rows), 5)
+
+    def test_csv_log_no_output_skips(self):
+        """No output directory should skip CSV writing."""
+        test = PipelineTest()
+        test.output = None
+        test.results = [{'status': 'success'}]
+
+        # Should not raise any errors
+        test._write_csv_log()
 
 
 if __name__ == '__main__':

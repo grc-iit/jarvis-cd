@@ -10,7 +10,8 @@ Pipeline tests are used to run experiment sets using a grid search. They allow y
 4. [Variables and Loop](#variables-and-loop)
 5. [Output and Statistics](#output-and-statistics)
 6. [CLI Commands](#cli-commands)
-7. [Custom Statistics](#custom-statistics)
+7. [Resume and Progress](#resume-and-progress)
+8. [Custom Statistics](#custom-statistics)
 
 ## Overview
 
@@ -315,6 +316,56 @@ This means you can use the same commands for both:
 jarvis ppl load yaml regular_pipeline.yaml
 jarvis ppl load yaml pipeline_test.yaml
 ```
+
+## Resume and Progress
+
+### Incremental CSV Logging
+
+Pipeline test results are written to CSV incrementally after each run completes. This means that if a long-running test crashes or is interrupted mid-way, all completed results are preserved in `results.csv`.
+
+### Resuming a Test
+
+To resume an interrupted test, simply re-run the same command:
+
+```bash
+jarvis ppl run yaml /path/to/test.yaml
+```
+
+The test runner will:
+1. Check for an existing `results.csv` in the output directory
+2. Load any previously completed results
+3. Skip runs that are already done
+4. Continue from the next incomplete run
+
+When resuming, you'll see output like:
+
+```
+Resuming pipeline test: my_experiment
+  Found 15/60 completed runs, resuming from run 16
+```
+
+### Progress Output
+
+During execution, the test runner prints progress information for each run:
+
+```
+Run 16/60: Combination 6, Repeat 1 (44 remaining)
+  Parameters: ior.nprocs=4, ior.block=2G
+  Status: success, Runtime: 45.20s
+```
+
+This includes:
+- Current run number and total
+- Combination and repeat indices
+- Number of remaining runs
+- Parameter values for the current run
+- Result status and runtime after completion
+
+### Notes
+
+- The YAML results file (`results.yaml`) is written once at the end of all runs
+- If the CSV has more rows than the test's total runs (e.g., the test configuration changed), the test starts fresh
+- Resume works by matching run count, so the test configuration (vars, loop, repeat) should remain the same between runs
 
 ## Custom Statistics
 
