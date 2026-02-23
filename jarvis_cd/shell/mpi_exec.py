@@ -105,6 +105,16 @@ class OpenMpiExec(LocalMpiExec):
         params.append('--oversubscribe')
         params.append('--allow-run-as-root')  # For docker
 
+        # Derive --prefix from PATH so remote nodes can find prted
+        env_path = self.mpi_env.get('PATH', '')
+        if env_path:
+            import os
+            for path_dir in env_path.split(os.pathsep):
+                if os.path.isfile(os.path.join(path_dir, 'prted')):
+                    prefix = os.path.dirname(path_dir)
+                    params.append(f'--prefix {prefix}')
+                    break
+
         # Set SSH port if explicitly specified (SSH config will be used otherwise)
         if self.ssh_port and self.ssh_port != 22:
             params.append(f'--mca plm_rsh_args "-p {self.ssh_port}"')

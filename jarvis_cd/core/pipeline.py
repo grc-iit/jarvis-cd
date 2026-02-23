@@ -410,6 +410,11 @@ class Pipeline:
             if load_type and pipeline_file:
                 self.load(load_type, pipeline_file)
 
+            # Configure all packages before starting
+            # This runs _configure() on each package, which sets up
+            # environment variables (e.g., CHI_SERVER_CONF) needed by start()
+            self.configure_all_packages()
+
             self.start()
             logger.pipeline("Pipeline started successfully. Stopping packages...")
             self.stop()
@@ -941,7 +946,8 @@ class Pipeline:
                 print(f"Warning: Could not auto-build environment: {e}")
                 self.env = {}
         elif isinstance(env_field, str):
-            # Reference to named environment
+            # Reference to named environment (deprecated)
+            print(f"Warning: String env references are deprecated. Use inline dict overrides instead.")
             env_name = env_field
             try:
                 from jarvis_cd.core.environment import EnvironmentManager
@@ -962,21 +968,17 @@ class Pipeline:
                     print(f"Warning: Could not build named environment '{env_name}': {build_error}")
                     self.env = {}
         elif isinstance(env_field, dict):
-            # Inline environment dictionaries are not allowed
-            raise ValueError(
-                "Inline environment dictionaries are not supported in pipeline YAML files.\n"
-                "The 'env' field must be either:\n"
-                "  1. A string referencing a named environment (e.g., env: production_environment)\n"
-                "  2. Omitted to auto-build from the current shell environment\n\n"
-                "To use custom environment variables:\n"
-                "  Option 1 - Create a named environment (reusable across pipelines):\n"
-                "    1. Create: jarvis env build <env_name> <commands...>\n"
-                "    2. Reference in pipeline YAML: env: <env_name>\n\n"
-                "  Option 2 - Build environment for current pipeline (pipeline-specific):\n"
-                "    1. Load pipeline: jarvis ppl load yaml <pipeline.yaml>\n"
-                "    2. Build environment: jarvis ppl env build <commands...>\n"
-                "    3. Pipeline will use the built environment automatically"
-            )
+            # Inline dict: auto-capture environment, then overlay user overrides
+            try:
+                from jarvis_cd.core.environment import EnvironmentManager
+                env_manager = EnvironmentManager(self.jarvis)
+                self.env = env_manager._capture_current_environment()
+            except Exception as e:
+                print(f"Warning: Could not auto-build environment: {e}")
+                self.env = {}
+            # Apply user overrides from YAML
+            self.env.update(env_field)
+            print(f"Built environment with {len(self.env)} variables ({len(env_field)} overrides from pipeline YAML)")
         else:
             raise ValueError(
                 f"Invalid 'env' field type: {type(env_field).__name__}. "
