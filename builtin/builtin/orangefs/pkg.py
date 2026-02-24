@@ -1,5 +1,7 @@
-from jarvis_cd.basic.pkg import Service
-from jarvis_util import *
+from jarvis_cd.core.pkg import Service, Color
+from jarvis_cd.shell import Exec, LocalExecInfo, SshExecInfo, PsshExecInfo, ScpExecInfo, PscpExecInfo
+from jarvis_cd.shell.process import Mkdir, Rm, Pscp
+from jarvis_cd.util.hostfile import Hostfile
 from .custom_kern import OrangefsCustomKern
 from .ares import OrangefsAres
 from .fuse import OrangefsFuse
@@ -86,9 +88,9 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres, OrangefsFuse):
             self.config['sudoenv'] = False
 
         # Configure and save hosts
-        self.client_hosts = self.jarvis.hostfile
-        self.server_hosts = self.jarvis.hostfile
-        self.md_hosts = self.jarvis.hostfile
+        self.client_hosts = self.hostfile
+        self.server_hosts = self.hostfile
+        self.md_hosts = self.hostfile
         self.config['client_host_set'] = self.client_hosts.hosts
         self.config['server_host_set'] = self.server_hosts.hosts
         self.config['md_host_set'] = self.md_hosts.hosts
@@ -101,7 +103,7 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres, OrangefsFuse):
         Pscp([self.config['client_hosts_path'],
               self.config['server_hosts_path'],
               self.config['metadata_hosts_path']],
-             PsshExecInfo(hosts=self.jarvis.hostfile, env=self.env))
+             PsshExecInfo(hosts=self.hostfile, env=self.env)).run()
         self.log('Distributed client, server, and metadata hostfiles', Color.YELLOW)
 
         # Locate storage hardware
@@ -140,18 +142,18 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres, OrangefsFuse):
             self.config['pfs_conf']
         ]
         pvfs_gen_cmd = " ".join(pvfs_gen_cmd)
-        Exec(pvfs_gen_cmd, LocalExecInfo(env=self.env))
+        Exec(pvfs_gen_cmd, LocalExecInfo(env=self.env)).run()
         Pscp(self.config['pfs_conf'],
-             PsshExecInfo(hosts=self.jarvis.hostfile, env=self.env))
+             PsshExecInfo(hosts=self.hostfile, env=self.env)).run()
         self.log(f"Generated pvfs2 config: {self.config['pfs_conf']}", Color.YELLOW)
 
         # Create storage directories
         Mkdir(self.config['mount'], PsshExecInfo(hosts=self.client_hosts,
-                                                 env=self.env))
+                                                 env=self.env)).run()
         Mkdir(self.config['storage'], PsshExecInfo(hosts=self.server_hosts,
-                                                   env=self.env))
+                                                   env=self.env)).run()
         Mkdir(self.config['metadata'], PsshExecInfo(hosts=self.md_hosts,
-                                                    env=self.env))
+                                                    env=self.env)).run()
         self.log(f"Create mount, metadata and storage directories", Color.YELLOW)
         self.log(f"Mount at: {self.config['mount']}", Color.YELLOW)
 
@@ -167,8 +169,8 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres, OrangefsFuse):
                     mount_point=self.config['mount'],
                     client_pvfs2tab=self.config['pvfs2tab']))
         Pscp(self.config['pvfs2tab'],
-             PsshExecInfo(hosts=self.jarvis.hostfile,
-                          env=self.env))
+             PsshExecInfo(hosts=self.hostfile,
+                          env=self.env)).run()
         self.env['PVFS2TAB_FILE'] = self.config['pvfs2tab']
         self.log(f"Create PVFS2TAB_FILE: {self.config['pvfs2tab']}", Color.YELLOW)
 
@@ -180,7 +182,7 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres, OrangefsFuse):
             self.log(server_start_cmds, Color.YELLOW)
             Exec(server_start_cmds,
                  SshExecInfo(hostfile=host,
-                             env=self.env))
+                             env=self.env)).run()
 
     def _load_config(self):
         if 'sudoenv' not in self.config:
@@ -192,7 +194,9 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres, OrangefsFuse):
 
     def start(self):
         self._load_config() 
-        if self.config['ofs_mode'] == 'fuse':
+        if self.config['ofs_mode'] == 'ares':
+            self.ares_start()
+        elif self.config['ofs_mode'] == 'fuse':
             self.fuse_start()
         else:
             self.custom_start()
@@ -210,23 +214,23 @@ class Orangefs(Service, OrangefsCustomKern, OrangefsAres, OrangefsFuse):
         self._load_config()
         Rm([self.config['mount'], self.config['client_log']],
            PsshExecInfo(hosts=self.client_hosts,
-                        env=self.env))
+                        env=self.env)).run()
         Rm([self.config['storage'], self.config['log']],
            PsshExecInfo(hosts=self.server_hosts,
-                        env=self.env))
+                        env=self.env)).run()
         Rm(self.config['metadata'],
            PsshExecInfo(hosts=self.md_hosts,
-                        env=self.env))
+                        env=self.env)).run()
 
     def status(self):
         self._load_config()
         Exec('mount | grep pvfs',
              PsshExecInfo(hosts=self.server_hosts,
-                          env=self.env))
+                          env=self.env)).run()
         verify_server_cmd = [
             f'pvfs2-ping -m {self.config["mount"]} | grep \"appears to be correctly configured\"'
         ]
         Exec(verify_server_cmd,
              PsshExecInfo(hosts=self.client_hosts,
-                          env=self.env))
+                          env=self.env)).run()
         return True

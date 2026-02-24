@@ -2,8 +2,10 @@
 This module provides classes and methods to launch the Gadget2 application.
 Gadget2 is ....
 """
-from jarvis_cd.basic.pkg import Application
-from jarvis_util import *
+from jarvis_cd.core.pkg import Application
+from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo
+from jarvis_cd.shell.process import Mkdir, Rm
+from jarvis_cd.util.config_parser import YamlFile
 
 
 class Gadget2(Application):
@@ -149,15 +151,13 @@ class Gadget2(Application):
         build_dir = f'{self.shared_dir}/build'
         exec_path = f'{build_dir}/bin/Gadget2'
         paramfile = f'{self.config_dir}/{test_case}.param'
-        Mkdir(self.config['out'])
+        Mkdir(self.config['out']).run()
         Exec(f'{exec_path} {paramfile}',
              MpiExecInfo(nprocs=self.config['nprocs'],
                          ppn=self.config['ppn'],
-                         hostfile=self.jarvis.hostfile,
+                         hostfile=self.hostfile,
                          env=self.mod_env,
-                         cwd=self.env['GADGET2_PATH'],
-                         do_dbg=self.config['do_dbg'],
-                         dbg_port=self.config['dbg_port']))
+                         cwd=self.env['GADGET2_PATH'])).run()
 
     def stop(self):
         """
@@ -176,4 +176,4 @@ class Gadget2(Application):
         :return: None
         """
         build_dir = f'{self.shared_dir}/build'
-        Rm([self.config['out']])
+        Rm([self.config['out']]).run()

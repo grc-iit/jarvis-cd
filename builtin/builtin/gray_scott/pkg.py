@@ -3,8 +3,11 @@ This module provides classes and methods to launch the Gray Scott application.
 Gray Scott is a 3D 7-point stencil code for modeling the diffusion of two
 substances.
 """
-from jarvis_cd.basic.pkg import Application, Color
-from jarvis_util import *
+from jarvis_cd.core.pkg import Application
+from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
+from jarvis_cd.shell.process import Mkdir, Rm
+from jarvis_cd.util.config_parser import JsonFile
+from jarvis_cd.util.logger import Color
 import time
 import pathlib
 
@@ -122,8 +125,8 @@ class GrayScott(Application):
             adios_dir = os.path.join(self.shared_dir, 'gray-scott-output')
             self.config['output'] = os.path.join(adios_dir,
                                                  'data')
-            Mkdir(adios_dir, PsshExecInfo(hostfile=self.jarvis.hostfile,
-                                          env=self.env))
+            Mkdir(adios_dir, PsshExecInfo(hostfile=self.hostfile,
+                                          env=self.env)).run()
         settings_json = {
             'L': self.config['L'],
             'Du': self.config['Du'],
@@ -138,8 +141,8 @@ class GrayScott(Application):
             'adios_config': self.adios2_xml_path
         }
         Mkdir(self.config['output'],
-              PsshExecInfo(hostfile=self.jarvis.hostfile,
-                           env=self.env))
+              PsshExecInfo(hostfile=self.hostfile,
+                           env=self.env)).run()
         JsonFile(self.settings_json_path).save(settings_json)
 
         if self.config['engine'].lower() == 'bp5':
@@ -163,8 +166,8 @@ class GrayScott(Application):
         Exec(f'gray-scott {self.settings_json_path}',
              MpiExecInfo(nprocs=self.config['nprocs'],
                          ppn=self.config['ppn'],
-                         hostfile=self.jarvis.hostfile,
-                         env=self.mod_env))
+                         hostfile=self.hostfile,
+                         env=self.mod_env)).run()
         end = time.time()
         diff = end - start
         self.log(f'TIME: {diff} seconds', color=Color.GREEN)
@@ -187,4 +190,4 @@ class GrayScott(Application):
         """
         output_dir = self.config['output'] + "*"
         print(f'Removing {output_dir}')
-        Rm(output_dir)
+        Rm(output_dir).run()

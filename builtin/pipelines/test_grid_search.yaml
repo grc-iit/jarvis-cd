@@ -1,0 +1,26 @@
+# Pipeline Test Example: Grid Search
+# This demonstrates pipeline tests for running experiment sets with grid search.
+#
+# Usage:
+#   jarvis ppl run yaml test_grid_search.yaml
+#
+# This test varies the message parameter of example_app to demonstrate
+# the grid search functionality.
+
+config:
+  name: grid_search_example
+  pkgs:
+    - pkg_type: example_app
+      pkg_name: app
+      message: "default message"
+      output_file: test_output.txt
+
+vars:
+  app.message: ["Hello World", "Test Message", "Final Message"]
+
+loop:
+  - [app.message]
+
+repeat: 2
+
+output: /tmp/jarvis_grid_search_results

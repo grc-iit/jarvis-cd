@@ -2,8 +2,9 @@
 This module provides classes and methods to launch the NyxLya application.
 NyxLya is ....
 """
-from jarvis_cd.basic.pkg import Application
-from jarvis_util import *
+from jarvis_cd.core.pkg import Application
+from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
+from jarvis_cd.shell.process import Mkdir, Rm
 
 
 class NyxLya(Application):
@@ -95,8 +96,8 @@ class NyxLya(Application):
         
         if self.config['output'] is None:
             self.config['output'] = f'{self.nyx_lya_path}/outputs'
-            Mkdir(self.config['output'], PsshExecInfo(hostfile=self.jarvis.hostfile,
-                                          env=self.env))
+            Mkdir(self.config['output'], PsshExecInfo(hostfile=self.hostfile,
+                                          env=self.env)).run()
 
         # copy a template inputs file from NYX installation path to the pkg directory
         self.copy_template_file(f'{self.nyx_lya_path}/inputs', self.inputs_path)
@@ -148,8 +149,8 @@ class NyxLya(Application):
         Exec(f'{self.nyx_lya_path}/nyx_LyA {self.inputs_path}',
              MpiExecInfo(nprocs=self.config['nprocs'],
                          ppn=self.config['ppn'],
-                         hostfile=self.jarvis.hostfile,
-                         env=self.env))
+                         hostfile=self.hostfile,
+                         env=self.env)).run()
 
     def stop(self):
         """
@@ -169,4 +170,4 @@ class NyxLya(Application):
         """
         output_dir = self.config['output'] + "*"
         print(f'Removing {output_dir}')
-        Rm(output_dir)
+        Rm(output_dir).run()

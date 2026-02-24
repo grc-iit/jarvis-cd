@@ -2,8 +2,9 @@
 This module provides classes and methods to launch the Arldm application.
 Arldm is ....
 """
-from jarvis_cd.basic.pkg import Application
-from jarvis_util import *
+from jarvis_cd.core.pkg import Application
+from jarvis_cd.shell import Exec, LocalExecInfo
+from jarvis_cd.shell.process import Rm
 import os, pathlib
 import time
 import yaml
@@ -301,7 +302,7 @@ class Arldm(Application):
         start = time.time()
         Exec(prep_cmd, LocalExecInfo(
             env=self.mod_env,
-            cwd=self.config['arldm_path']))
+            cwd=self.config['arldm_path'])).run()
         
         end = time.time()
         diff = end - start
@@ -324,7 +325,7 @@ class Arldm(Application):
         
         # Move config file to arldm_path
         Exec(f"cp {self.config['config']} {self.config['arldm_path']}/config.yaml",
-             LocalExecInfo(env=self.mod_env,))
+             LocalExecInfo(env=self.mod_env,)).run()
         
         
         cmd = [
@@ -342,11 +343,9 @@ class Arldm(Application):
         self.jutil.debug_local_exec = True
         Exec(conda_cmd,
              LocalExecInfo(env=self.mod_env,
-                           do_dbg=self.config['do_dbg'],
-                           dbg_port=self.config['dbg_port'],
                            pipe_stdout=self.config['stdout'],
                            pipe_stderr=self.config['stderr'],
-                           cwd=self.config['arldm_path']))
+                           cwd=self.config['arldm_path'])).run()
         self.jutil.debug_local_exec = False
         
         end = time.time()
@@ -402,7 +401,7 @@ class Arldm(Application):
         cmd.append(self.config['conda_env'])
         
         cmd = ' '.join(cmd)
-        Exec(cmd, LocalExecInfo(env=self.mod_env,))
+        Exec(cmd, LocalExecInfo(env=self.mod_env,)).run()
         self.log(f"ARLDM _unset_vfd_vars: {cmd}")
 
     def _set_env_vars(self, env_vars_toset):
@@ -421,7 +420,7 @@ class Arldm(Application):
         cmd.append(self.config['conda_env'])
         cmd = ' '.join(cmd)
         self.log(f"ARLDM _set_env_vars: {cmd}")
-        Exec(cmd, LocalExecInfo(env=self.mod_env,))
+        Exec(cmd, LocalExecInfo(env=self.mod_env,)).run()
 
     def start(self):
         """
@@ -481,13 +480,13 @@ class Arldm(Application):
         # recursive remove all files in output_data directory
         if os.path.exists(output_dir):
             self.log(f'Removing {output_dir}')
-            Rm(output_dir)
+            Rm(output_dir).run()
         else:
             self.log(f'No directory to remove: {output_dir}')
         
         if os.path.exists(output_h5):     
             self.log(f'Removing {output_h5}')
-            Rm(output_h5)
+            Rm(output_h5).run()
         else:
             self.log(f'No file to remove: {output_h5}')
         

@@ -2,8 +2,8 @@
 This module provides classes and methods to launch the Redis benchmark tool.
 Redis cluster is used if the hostfile has many hosts
 """
-from jarvis_cd.basic.pkg import Application
-from jarvis_util import *
+from jarvis_cd.core.pkg import Application
+from jarvis_cd.shell import Exec, LocalExecInfo
 
 
 class RedisBenchmark(Application):
@@ -109,7 +109,7 @@ class RedisBenchmark(Application):
         :return: None
         """
 
-        hostfile = self.jarvis.hostfile
+        hostfile = self.hostfile
         bench_type = [
             'set' if self.config['write'] else '',
             'get' if self.config['read'] else '',
@@ -132,9 +132,7 @@ class RedisBenchmark(Application):
         self.log('Starting the cluster', color=Color.YELLOW)
         Exec(' '.join(cmd),
              LocalExecInfo(env=self.mod_env,
-                           hostfile=hostfile,
-                           do_dbg=self.config['do_dbg'],
-                           dbg_port=self.config['dbg_port']))
+                           hostfile=hostfile)).run()
 
     def stop(self):
         """
@@ -152,15 +150,11 @@ class RedisBenchmark(Application):
 
         :return: None
         """
-        hostfile = self.jarvis.hostfile
+        hostfile = self.hostfile
         for host in range(hostfile.hosts):
             Exec(f'redis-cli -p {self.config["port"]} -h {host} flushall',
                  LocalExecInfo(env=self.mod_env,
-                               hostfile=hostfile,
-                               do_dbg=self.config['do_dbg'],
-                               dbg_port=self.config['dbg_port']))
+                               hostfile=hostfile)).run()
             Exec(f'redis-cli -p {self.config["port"]} -h {host} cluster reset',
                  LocalExecInfo(env=self.mod_env,
-                               hostfile=hostfile,
-                               do_dbg=self.config['do_dbg'],
-                               dbg_port=self.config['dbg_port']))
+                               hostfile=hostfile)).run()

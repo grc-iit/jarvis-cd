@@ -2,8 +2,8 @@
 This module provides classes and methods to launch the MyShell application.
 MyShell is ....
 """
-from jarvis_cd.basic.pkg import Application
-from jarvis_util import *
+from jarvis_cd.core.pkg import Application
+from jarvis_cd.shell import Exec, LocalExecInfo
 
 
 class MyShell(Application):
@@ -34,7 +34,7 @@ class MyShell(Application):
             },
         ]
 
-    def configure(self, **kwargs):
+    def _configure(self, **kwargs):
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -42,7 +42,6 @@ class MyShell(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        self.update_config(kwargs, rebuild=False)
         self.config['script'] = self.config['script']
 
     def start(self):
@@ -58,7 +57,7 @@ class MyShell(Application):
         if self.config['script']:
             cmd.append(self.config['script'])
         # pipe_stdout=self.config['log']
-        Exec(' '.join(cmd))
+        Exec(' '.join(cmd), LocalExecInfo()).run()
 
     def stop(self):
         """

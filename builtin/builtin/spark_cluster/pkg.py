@@ -3,8 +3,8 @@ This module provides classes and methods to launch the SparkCluster service.
 SparkCluster is ....
 """
 
-from jarvis_cd.basic.pkg import Service
-from jarvis_util import *
+from jarvis_cd.core.pkg import Service
+from jarvis_cd.shell import Exec, PsshExecInfo
 
 
 class SparkCluster(Service):
@@ -49,7 +49,7 @@ class SparkCluster(Service):
         :return: None
         """
         self.config['SPARK_SCRIPTS'] = self.env['SPARK_SCRIPTS']
-        self.env['SPARK_MASTER_HOST'] = self.jarvis.hostfile.hosts[0]
+        self.env['SPARK_MASTER_HOST'] = self.hostfile.hosts[0]
         self.env['SPARK_MASTER_PORT'] = '7077'
         self.env['SPARK_WORKER_PORT'] = '7078'
 
@@ -63,13 +63,13 @@ class SparkCluster(Service):
         # Start the master node
         Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/start-master.sh',
              PsshExecInfo(env=self.env,
-                          hosts=self.jarvis.hostfile.subset(1)))
+                          hosts=self.hostfile.subset(1))).run()
         time.sleep(1)
         # Start the worker nodes
         Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/start-worker.sh '
              f'{self.env["SPARK_MASTER_HOST"]}:{self.env["SPARK_MASTER_PORT"]}',
              PsshExecInfo(env=self.mod_env,
-                          hosts=self.jarvis.hostfile.subset(self.config['num_nodes'])))
+                          hosts=self.hostfile.subset(self.config['num_nodes']))).run()
         time.sleep(self.config['sleep'])
 
     def stop(self):
@@ -82,12 +82,12 @@ class SparkCluster(Service):
         # Start the master node
         Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/stop-master.sh',
              PsshExecInfo(env=self.env,
-                          hosts=self.jarvis.hostfile.subset(1)))
+                          hosts=self.hostfile.subset(1))).run()
         # Start the worker nodes
         Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/stop-worker.sh '
              f'{self.env["SPARK_MASTER_HOST"]}',
              PsshExecInfo(env=self.env,
-                          hosts=self.jarvis.hostfile))
+                          hosts=self.hostfile)).run()
 
     def clean(self):
         """
