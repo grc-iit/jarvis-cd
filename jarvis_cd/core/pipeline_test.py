@@ -454,12 +454,51 @@ class PipelineTest:
         # Write final YAML results
         self._write_yaml_results()
 
+        # Generate plots if any package defines _plot
+        self._run_plots()
+
         logger.success(f"Pipeline test completed: {len(self.results)} runs")
 
         # Print summary
         successful = sum(1 for r in self.results if r.get('status') == 'success')
         failed = len(self.results) - successful
         logger.info(f"Summary: {successful} successful, {failed} failed")
+
+    def _run_plots(self):
+        """
+        Call _plot on packages that define it.
+
+        Creates a pipeline from the base config to access package instances,
+        then calls _plot(results_csv, output_dir) on each that has the method.
+        """
+        if not self.output:
+            return
+
+        csv_path = str(Path(self.output) / 'results.csv')
+        if not os.path.exists(csv_path):
+            return
+
+        try:
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+                yaml.dump(self.config, f, default_flow_style=False)
+                temp_yaml = f.name
+
+            pipeline = Pipeline()
+            pipeline.load('yaml', temp_yaml)
+            os.unlink(temp_yaml)
+
+            for pkg_def in pipeline.packages:
+                try:
+                    pkg_instance = pipeline._load_package_instance(pkg_def, pipeline.env)
+                    if hasattr(pkg_instance, '_plot'):
+                        logger.info(f"Generating plots for {pkg_def.get('pkg_id', 'unknown')}")
+                        pkg_instance._plot(csv_path, self.output)
+                except Exception as e:
+                    logger.warning(f"Could not plot from {pkg_def.get('pkg_id', 'unknown')}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Plot generation failed: {e}")
 
     def _run_single(self, config: Dict[str, Any], variables: Dict[str, Any], repeat_idx: int) -> Dict[str, Any]:
         """
