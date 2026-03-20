@@ -148,7 +148,41 @@ class JarvisCLI(ArgParse):
         
         self.add_cmd('ppl clean', msg="Clean current pipeline data")
         self.add_args([])
-        
+
+        self.add_cmd('ppl rerun', msg="Destroy pipeline output and re-run")
+        self.add_args([
+            {
+                'name': 'load_type',
+                'msg': 'Type of pipeline to load (yaml) or current',
+                'type': str,
+                'pos': True,
+                'default': 'current'
+            },
+            {
+                'name': 'pipeline_file',
+                'msg': 'Pipeline YAML file to run (required if load_type is yaml)',
+                'type': str,
+                'pos': True
+            }
+        ])
+
+        self.add_cmd('ppl retest', msg="Destroy test output and re-run all tests")
+        self.add_args([
+            {
+                'name': 'load_type',
+                'msg': 'Type of pipeline to load (yaml) or current',
+                'type': str,
+                'pos': True,
+                'default': 'current'
+            },
+            {
+                'name': 'pipeline_file',
+                'msg': 'Pipeline test YAML file to run (required if load_type is yaml)',
+                'type': str,
+                'pos': True
+            }
+        ])
+
         self.add_cmd('ppl status', msg="Show current pipeline status")
         self.add_args([])
         
@@ -1030,7 +1064,79 @@ class JarvisCLI(ArgParse):
                 raise ValueError("No current pipeline to clean")
         
         self.current_pipeline.clean()
-        
+
+    def ppl_rerun(self):
+        """Destroy pipeline output directory and re-run the pipeline"""
+        import shutil
+        self._ensure_initialized()
+        load_type = self.kwargs.get('load_type', 'current')
+        pipeline_file = self.kwargs.get('pipeline_file')
+
+        if load_type == 'yaml':
+            if not pipeline_file:
+                raise ValueError("Pipeline file is required when load_type is 'yaml'")
+            # Load the YAML to get the pipeline, clean it, then run
+            is_test, obj = load_yaml_auto(pipeline_file)
+            if is_test:
+                # For a test, delete its output directory
+                if obj.output and os.path.exists(obj.output):
+                    print(f"Destroying test output directory: {obj.output}")
+                    shutil.rmtree(obj.output)
+                obj.run()
+            else:
+                # For a regular pipeline, clean then run
+                obj.clean()
+                obj.build_container_if_needed()
+                obj.configure_all_packages()
+                obj.run()
+        else:
+            # Clean current pipeline, then run
+            if not self.current_pipeline:
+                current_name = self.jarvis_config.get_current_pipeline()
+                if current_name:
+                    self.current_pipeline = Pipeline(current_name)
+                else:
+                    raise ValueError("No current pipeline to rerun")
+
+            self.current_pipeline.clean()
+            self.current_pipeline.run()
+
+    def ppl_retest(self):
+        """Destroy test output directory and re-run all pipeline tests"""
+        import shutil
+        self._ensure_initialized()
+        load_type = self.kwargs.get('load_type', 'current')
+        pipeline_file = self.kwargs.get('pipeline_file')
+
+        if load_type == 'yaml':
+            if not pipeline_file:
+                raise ValueError("Pipeline file is required when load_type is 'yaml'")
+            # Load the YAML - expect a pipeline test
+            is_test, obj = load_yaml_auto(pipeline_file)
+            if not is_test:
+                raise ValueError(
+                    f"'{pipeline_file}' is a regular pipeline, not a pipeline test. "
+                    "Use 'ppl rerun' instead."
+                )
+            # Delete the output directory if it exists
+            if obj.output and os.path.exists(obj.output):
+                print(f"Destroying test output directory: {obj.output}")
+                shutil.rmtree(obj.output)
+            obj.run()
+        else:
+            # Use the currently loaded pipeline test
+            if hasattr(self, '_current_test') and self._current_test is not None:
+                if self._current_test.output and os.path.exists(self._current_test.output):
+                    print(f"Destroying test output directory: {self._current_test.output}")
+                    shutil.rmtree(self._current_test.output)
+                self._current_test.run()
+                self._current_test = None
+            else:
+                raise ValueError(
+                    "No pipeline test loaded. Load a test with 'ppl load yaml <file>' "
+                    "or specify a file with 'ppl retest yaml <file>'"
+                )
+
     def ppl_status(self):
         """Show pipeline status"""
         self._ensure_initialized()
