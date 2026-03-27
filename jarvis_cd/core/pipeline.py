@@ -274,6 +274,9 @@ class Pipeline:
 
         logger.pipeline(f"Starting pipeline: {self.name}")
 
+        # Store started instances for later access (e.g., _get_stat)
+        self._started_instances = []
+
         # Check if pipeline is configured for containerized deployment
         if self.is_containerized():
             # Container deployment mode - deploy to all nodes in hostfile
@@ -297,6 +300,9 @@ class Pipeline:
 
                     # Propagate environment changes to next packages
                     self.env.update(pkg_instance.env)
+
+                    # Keep reference so _get_stat can access exec output
+                    self._started_instances.append(pkg_instance)
 
                     # Print END message
                     logger.success(f"[{pkg_def['pkg_type']}] [START] END")
