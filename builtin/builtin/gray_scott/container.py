@@ -3,8 +3,7 @@ Container-based Gray-Scott reaction-diffusion simulation.
 Builds the standalone CUDA+MPI+HDF5 version from awesome-scienctific-applications.
 """
 from jarvis_cd.core.container_pkg import ContainerApplication
-from jarvis_cd.shell import Exec, MpiExecInfo
-from jarvis_cd.shell.process import Mkdir
+from jarvis_cd.shell import Exec, LocalExecInfo
 
 
 class GrayScottContainer(ContainerApplication):
@@ -59,31 +58,14 @@ ENV PATH=/usr/bin:${{PATH}}
 CMD ["/bin/bash"]
 """
 
-    def augment_container(self) -> str:
-        cuda_arch = self.config.get('cuda_arch', 80)
-        return f"""
-# Build Gray-Scott CUDA+HDF5 simulation
-RUN git clone --depth 1 \\
-    https://github.com/grc-iit/awesome-scienctific-applications.git /tmp/awesome-sci && \\
-    mkdir -p /opt/gray_scott && \\
-    cp /tmp/awesome-sci/grayscott/CMakeLists.txt /opt/gray_scott/ && \\
-    cp /tmp/awesome-sci/grayscott/gray_scott.cu /opt/gray_scott/ && \\
-    rm -rf /tmp/awesome-sci && \\
-    cmake -S /opt/gray_scott -B /opt/gray_scott/build \\
-        -DCMAKE_BUILD_TYPE=Release \\
-        -DCMAKE_CUDA_ARCHITECTURES={cuda_arch} \\
-        -DHDF5_ROOT=/opt/hdf5 \\
-    && cmake --build /opt/gray_scott/build -j$(nproc) && \\
-    cp /opt/gray_scott/build/gray_scott /usr/bin/gray_scott
-
-ENV PATH=/usr/bin:${{PATH}}
-"""
-
     def start(self):
-        """Run the Gray-Scott simulation."""
         outdir = self.config.get('outdir', '/tmp/gray_scott_out')
+        from jarvis_cd.shell.process import Mkdir
         Mkdir(outdir).run()
-        cmd = [
+
+        nprocs = self.config.get('nprocs', 4)
+        inner = ' '.join([
+            f'mpirun --allow-run-as-root -n {nprocs}',
             '/usr/bin/gray_scott',
             f'--width {self.config["width"]}',
             f'--height {self.config["height"]}',
@@ -94,12 +76,8 @@ ENV PATH=/usr/bin:${{PATH}}
             f'--k {self.config["k"]}',
             f'--Du {self.config["Du"]}',
             f'--Dv {self.config["Dv"]}',
-        ]
-        Exec(' '.join(cmd),
-             MpiExecInfo(nprocs=self.config['nprocs'],
-                         ppn=self.config['ppn'],
-                         hostfile=self.hostfile,
-                         env=self.mod_env)).run()
+        ])
+        Exec(self.wrap_container_cmd(inner, gpu=True), LocalExecInfo()).run()
 
     def clean(self):
         from jarvis_cd.shell.process import Rm

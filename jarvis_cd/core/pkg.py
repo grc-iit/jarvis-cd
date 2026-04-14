@@ -533,20 +533,6 @@ class Pkg:
             # Keep mod_env in sync (exact replica of env + LD_PRELOAD)
             self.mod_env[env_name] = val
 
-    def augment_container(self) -> str:
-        """
-        Generate Dockerfile commands to install this package in a container.
-        This is an instance method called after package configuration.
-        The package can access its configuration via self.config.
-
-        Override this method in package implementations to provide
-        package-specific installation commands.
-
-        :return: Dockerfile commands as a string
-        """
-        # Default: no installation needed (packages should override this)
-        return ""
-
     def find_library(self, library_name: str) -> Optional[str]:
         """
         Find a shared library by searching LD_LIBRARY_PATH and system paths.

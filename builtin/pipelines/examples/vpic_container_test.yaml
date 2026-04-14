@@ -1,0 +1,19 @@
+# Pipeline: VPIC Docker Container Test
+# Purpose: Test VPIC-Kokkos deployment using Docker
+# Requirements: NVIDIA GPU, sci-hpc-base image built locally
+
+name: vpic_container_test
+
+container_engine: docker
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.vpic
+    pkg_name: vpic_container
+    deploy_mode: container
+    nprocs: 4
+    ppn: 4
+    cuda_arch: 80
+    base_image: sci-hpc-base
+    sample_deck: harris
+    run_dir: /tmp/vpic_run

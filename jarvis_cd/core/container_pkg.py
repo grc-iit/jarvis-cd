@@ -3,10 +3,6 @@ Base classes for containerized application deployment.
 """
 from .pkg import Application
 from ..shell import Exec, LocalExecInfo
-from ..shell.container_compose_exec import ContainerComposeExec, ContainerBuildExec
-from ..shell.container_exec import ContainerExec
-import os
-import yaml
 from pathlib import Path
 
 
@@ -27,7 +23,6 @@ class ContainerApplication(Application):
     Subclasses must implement:
       - _build_phase(): Return Dockerfile content for the build container
       - _build_deploy_phase(): Return Dockerfile content for the deploy container
-      - augment_container(): Return Dockerfile RUN commands for legacy pipeline builds
     """
 
     def _init(self):
@@ -191,131 +186,29 @@ class ContainerApplication(Application):
         self.build_phase()
         self.build_deploy_phase()
 
-    def augment_container(self) -> str:
+    def wrap_container_cmd(self, cmd: str, gpu: bool = False) -> str:
         """
-        Return Dockerfile RUN commands to install this package in a container.
+        Wrap a shell command to run inside the appropriate container engine.
 
-        Used by the pipeline-level Dockerfile generation (legacy mechanism).
-        Override in subclasses to provide package-specific installation steps.
+        For apptainer: apptainer exec [--nv] <sif> <cmd>
+        For docker/podman: docker/podman run --rm [--gpus all] <image> <cmd>
 
-        :return: Dockerfile commands as a string
+        :param cmd: Command to execute inside the container
+        :param gpu: Enable GPU passthrough (--nv for apptainer, --gpus all for docker/podman)
+        :return: Wrapped command string
         """
-        return ""
-
-    def _generate_container_ppl_yaml(self):
-        """
-        Generate pipeline YAML file containing just this package.
-        Used to load the pipeline configuration inside the container.
-        """
-        pkg_config = self.config.copy()
-        pkg_entry = {'pkg_type': self.pkg_type}
-        for key, value in pkg_config.items():
-            if key != 'deploy':
-                pkg_entry[key] = value
-
-        pipeline_config = {
-            'name': f'{self.pipeline.name}_container',
-            'pkgs': [pkg_entry]
-        }
-
-        interceptors_list = pkg_config.get('interceptors', [])
-        if interceptors_list:
-            pipeline_config['interceptors'] = []
-            for interceptor_name in interceptors_list:
-                if interceptor_name in self.pipeline.interceptors:
-                    interceptor_def = self.pipeline.interceptors[interceptor_name]
-                    interceptor_entry = {'pkg_type': interceptor_def['pkg_type']}
-                    for key, value in interceptor_def.get('config', {}).items():
-                        interceptor_entry[key] = value
-                    pipeline_config['interceptors'].append(interceptor_entry)
-
-        pipeline_file = Path(self.shared_dir) / 'pkg.yaml'
-        with open(pipeline_file, 'w') as f:
-            yaml.dump(pipeline_config, f, default_flow_style=False)
-
-        print(f"Generated pipeline YAML: {pipeline_file}")
-
-    def _generate_dockerfile(self):
-        """
-        Generate Dockerfile for the container.
-        Deprecated: use _build_phase()/_build_deploy_phase() instead.
-        Subclasses may override for custom Dockerfile generation.
-
-        :return: None
-        """
-        pass
-
-    def _get_container_command(self):
-        """
-        Get the command to run in the container.
-        """
-        ssh_port = getattr(self.pipeline, 'container_ssh_port', 2222)
-        return [
-            f'cp -r /root/.ssh_host /root/.ssh && '
-            f'chmod 700 /root/.ssh && '
-            f'chmod 600 /root/.ssh/* 2>/dev/null || true && '
-            f'cat /root/.ssh/*.pub > /root/.ssh/authorized_keys 2>/dev/null && '
-            f'chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true && '
-            f'echo "Host *" > /root/.ssh/config && '
-            f'echo "    Port {ssh_port}" >> /root/.ssh/config && '
-            f'echo "    StrictHostKeyChecking no" >> /root/.ssh/config && '
-            f'chmod 600 /root/.ssh/config && '
-            f'sed -i "s/^#*Port .*/Port {ssh_port}/" /etc/ssh/sshd_config && '
-            f'/usr/sbin/sshd && '
-            f'jarvis ppl run yaml /root/.ppi-jarvis/shared/pkg.yaml && '
-            f'tail -f /dev/null'
-        ]
-
-    def _get_service_name(self):
-        """Get the service name for the compose file."""
-        if self.pkg_type and '.' in self.pkg_type:
-            return self.pkg_type.split('.')[-1]
-        return 'app'
-
-    def _generate_compose_file(self):
-        """Generate docker/podman compose file."""
-        container_name = f"{self.pipeline.name}_{self.pkg_id}"
-        service_name = self._get_service_name()
-        shm_size = self.config.get('shm_size', 0)
-        ssh_dir = os.path.expanduser('~/.ssh')
-
-        compose_config = {
-            'services': {
-                service_name: {
-                    'container_name': container_name,
-                    'entrypoint': ['/bin/bash', '-c'],
-                    'command': self._get_container_command(),
-                    'volumes': [
-                        f"{self.private_dir}:/root/.ppi-jarvis/private",
-                        f"{self.shared_dir}:/root/.ppi-jarvis/shared",
-                        f"{ssh_dir}:/root/.ssh_host:ro"
-                    ]
-                }
-            }
-        }
-
-        if hasattr(self.pipeline, 'get_container_image') and self.pipeline.get_container_image():
-            compose_config['services'][service_name]['image'] = self.pipeline.get_container_image()
+        from pathlib import Path
+        engine = self._container_engine
+        if engine == 'apptainer':
+            sif = Path(self.private_dir) / f'{self.deploy_image_name}.sif'
+            gpu_flag = '--nv ' if gpu else ''
+            return f'apptainer exec {gpu_flag}{sif} {cmd}'
+        elif engine == 'podman':
+            gpu_flag = '--gpus all ' if gpu else ''
+            return f'podman run --rm {gpu_flag}{self.deploy_image_name} {cmd}'
         else:
-            compose_config['services'][service_name]['build'] = str(self.shared_dir)
-
-        compose_config['services'][service_name]['network_mode'] = 'host'
-
-        if shm_size > 0:
-            compose_config['services'][service_name]['shm_size'] = f'{shm_size}m'
-            self.pipeline.shm_container = container_name
-        elif hasattr(self.pipeline, 'shm_container') and self.pipeline.shm_container:
-            compose_config['services'][service_name]['ipc'] = f"container:{self.pipeline.shm_container}"
-
-        compose_file = Path(self.shared_dir) / 'compose.yaml'
-        with open(compose_file, 'w') as f:
-            yaml.dump(compose_config, f, default_flow_style=False)
-
-        print(f"Generated compose file: {compose_file}")
-
-    def _build_image(self):
-        """Build the container image. Deprecated: use build_phase() instead."""
-        pass
+            gpu_flag = '--gpus all ' if gpu else ''
+            return f'docker run --rm {gpu_flag}{self.deploy_image_name} {cmd}'
 
     def start(self):
         """Start is handled at the pipeline level for containerized applications."""

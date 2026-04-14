@@ -4,7 +4,6 @@ Provides PyTorch + CUDA environment for distributed training.
 """
 from jarvis_cd.core.container_pkg import ContainerApplication
 from jarvis_cd.shell import Exec, LocalExecInfo
-from jarvis_cd.shell.process import Mkdir
 
 
 class AiTrainingContainer(ContainerApplication):
@@ -51,18 +50,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 
 CMD ["/bin/bash"]
-"""
-
-    def augment_container(self) -> str:
-        return """
-# Install PyTorch with CUDA 12.6 support
-RUN pip3 install --break-system-packages -q \\
-        torch torchvision torchaudio \\
-        --index-url https://download.pytorch.org/whl/cu126 \\
-    && pip3 install --break-system-packages -q \\
-        numpy matplotlib tensorboard
-
-COPY train_example.py /opt/train_example.py
 """
 
     def _configure(self, **kwargs):
@@ -115,12 +102,12 @@ if __name__ == '__main__':
         super()._configure(**kwargs)
 
     def start(self):
+        from jarvis_cd.shell.process import Mkdir
         Mkdir(self.config['out']).run()
 
         nnodes = self.config.get('nnodes', 1)
         nproc = self.config.get('nproc_per_node', 1)
-
-        cmd = [
+        inner = ' '.join([
             'torchrun',
             f'--nnodes={nnodes}',
             f'--nproc_per_node={nproc}',
@@ -130,9 +117,8 @@ if __name__ == '__main__':
             self.config['script'],
             f'--epochs {self.config["epochs"]}',
             f'--batch {self.config["batch"]}',
-        ]
-
-        Exec(' '.join(cmd), LocalExecInfo(env=self.mod_env)).run()
+        ])
+        Exec(self.wrap_container_cmd(inner, gpu=True), LocalExecInfo()).run()
 
     def clean(self):
         from jarvis_cd.shell.process import Rm

@@ -66,26 +66,3 @@ ENV PATH=/usr/bin:${{PATH}}
 CMD ["/bin/bash"]
 """
 
-    def augment_container(self) -> str:
-        """Legacy pipeline-level Dockerfile commands for LAMMPS."""
-        cuda_arch = self.config.get('cuda_arch', 80)
-        return f"""
-# Clone and build LAMMPS with Kokkos CUDA
-RUN git clone --branch develop --depth 1 \\
-    https://github.com/lammps/lammps.git /opt/lammps && \\
-    cd /opt/lammps && \\
-    mkdir -p build && cd build && \\
-    cmake ../cmake \\
-        -DCMAKE_BUILD_TYPE=Release \\
-        -DPKG_KOKKOS=ON \\
-        -DKokkos_ENABLE_CUDA=ON \\
-        -DKokkos_ARCH_AMPERE{cuda_arch}=ON \\
-        -DBUILD_MPI=ON \\
-        -DPKG_MOLECULE=ON \\
-        -DPKG_KSPACE=ON \\
-        -DPKG_RIGID=ON \\
-    && make -j$(nproc) && \\
-    cp /opt/lammps/build/lmp /usr/bin/lmp
-
-ENV PATH=/usr/bin:${{PATH}}
-"""

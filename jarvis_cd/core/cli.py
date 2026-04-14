@@ -202,12 +202,6 @@ class JarvisCLI(ArgParse):
                 'default': None,
             },
             {
-                'name': 'container_build',
-                'msg': 'Container build name (for building custom image)',
-                'type': str,
-                'default': None,
-            },
-            {
                 'name': 'container_image',
                 'msg': 'Pre-built container image to use',
                 'type': str,
@@ -1066,7 +1060,6 @@ class JarvisCLI(ArgParse):
                 print("Run with 'jarvis ppl run' to execute the test")
             else:
                 # Regular pipeline
-                obj.build_container_if_needed()
                 obj.configure_all_packages()
                 self.current_pipeline = obj
                 self._current_test = None
@@ -1074,7 +1067,6 @@ class JarvisCLI(ArgParse):
             # Non-YAML load type - use traditional method
             pipeline = Pipeline()
             pipeline.load(load_type, pipeline_file)
-            pipeline.build_container_if_needed()
             pipeline.configure_all_packages()
             self.current_pipeline = pipeline
             self._current_test = None
@@ -1090,10 +1082,7 @@ class JarvisCLI(ArgParse):
             else:
                 raise ValueError("No current pipeline to update")
 
-        # Use Pipeline.update() method with container rebuild flags
-        rebuild_container = self.kwargs.get('container', False)
-        no_cache = self.kwargs.get('no_cache', False)
-        self.current_pipeline.update(rebuild_container=rebuild_container, no_cache=no_cache)
+        self.current_pipeline.update()
 
     def ppl_conf(self):
         """Configure pipeline parameters"""
@@ -1116,13 +1105,6 @@ class JarvisCLI(ArgParse):
             hostfile_path = self.kwargs['hostfile']
             self.current_pipeline.hostfile = Hostfile(path=hostfile_path)
             print(f"Set pipeline hostfile: {hostfile_path}")
-            params_provided = True
-            needs_rebuild = True
-
-        # Update container_build
-        if self.kwargs.get('container_build') is not None:
-            self.current_pipeline.container_build = self.kwargs['container_build']
-            print(f"Set container_build: {self.kwargs['container_build']}")
             params_provided = True
             needs_rebuild = True
 
@@ -1159,10 +1141,9 @@ class JarvisCLI(ArgParse):
         # Save pipeline
         self.current_pipeline.save()
 
-        # Rebuild container if needed (only if container_build is set)
-        if needs_rebuild and self.current_pipeline.container_build:
-            print("\nRebuilding container with updated configuration...")
-            self.current_pipeline.update(rebuild_container=True, no_cache=False)
+        if needs_rebuild:
+            print("\nReconfiguring pipeline with updated configuration...")
+            self.current_pipeline.update()
 
     def ppl_list(self):
         """List all pipelines"""
@@ -1242,11 +1223,9 @@ class JarvisCLI(ArgParse):
         # Show container configuration if set
         if hasattr(self.current_pipeline, 'is_containerized') and self.current_pipeline.is_containerized():
             print(f"Container Configuration:")
-            if self.current_pipeline.container_build:
-                print(f"  Build Name: {self.current_pipeline.container_build}")
-                print(f"  Base: {self.current_pipeline.container_base}")
             if self.current_pipeline.container_image:
                 print(f"  Image: {self.current_pipeline.container_image}")
+                print(f"  Base: {self.current_pipeline.container_base}")
             print(f"  Engine: {self.current_pipeline.container_engine}")
             print(f"  SSH Port: {self.current_pipeline.container_ssh_port}")
 
@@ -1641,7 +1620,6 @@ class JarvisCLI(ArgParse):
                     self.current_pipeline.env = yaml.safe_load(f)
 
             # Reconfigure all packages with the new environment
-            self.current_pipeline.build_container_if_needed()
             self.current_pipeline.configure_all_packages()
             print("Pipeline reconfigured with new environment")
         

@@ -1,0 +1,22 @@
+# Pipeline: AI Training Docker Container Test
+# Purpose: Test PyTorch distributed training using Docker
+# Requirements: NVIDIA GPU, sci-hpc-base image built locally
+
+name: ai_training_container_test
+
+container_engine: docker
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.ai_training
+    pkg_name: ai_training_container
+    deploy_mode: container
+    base_image: sci-hpc-base
+    script: /opt/train_example.py
+    epochs: 3
+    batch: 128
+    nnodes: 1
+    nproc_per_node: 1
+    master_addr: localhost
+    master_port: 29500
+    out: /tmp/ai_training_out

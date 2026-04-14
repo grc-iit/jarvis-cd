@@ -3,9 +3,7 @@ Container-based VPIC-Kokkos deployment using Docker/Podman/Apptainer.
 Builds VPIC with Kokkos CUDA backend.
 """
 from jarvis_cd.core.container_pkg import ContainerApplication
-from jarvis_cd.shell import Exec, MpiExecInfo
-from jarvis_cd.shell.process import Mkdir
-import os
+from jarvis_cd.shell import Exec, LocalExecInfo
 
 
 class VpicContainer(ContainerApplication):
@@ -63,29 +61,9 @@ ENV PATH=/opt/vpic-kokkos/build/bin:${{PATH}}
 CMD ["/bin/bash"]
 """
 
-    def augment_container(self) -> str:
-        cuda_arch = self.config.get('cuda_arch', 80)
-        return f"""
-# Build VPIC-Kokkos with CUDA
-RUN git clone --recursive https://github.com/lanl/vpic-kokkos.git /opt/vpic-kokkos && \\
-    cd /opt/vpic-kokkos && \\
-    cmake -S . -B build \\
-        -DCMAKE_BUILD_TYPE=Release \\
-        -DENABLE_KOKKOS_CUDA=ON \\
-        -DBUILD_INTERNAL_KOKKOS=ON \\
-        -DKokkos_ARCH_AMPERE{cuda_arch}=ON \\
-        -DCMAKE_CXX_COMPILER="$(pwd)/kokkos/bin/nvcc_wrapper" \\
-    && cmake --build build -j$(nproc) && \\
-    sed -i \\
-        's|-lkokkossimd|-lkokkossimd -L/usr/local/cuda/lib64/stubs -lcuda|' \\
-        /opt/vpic-kokkos/build/bin/vpic
-
-ENV NVCC_WRAPPER_DEFAULT_COMPILER=g++
-ENV PATH=/opt/vpic-kokkos/build/bin:${{PATH}}
-"""
-
     def start(self):
         run_dir = self.config['run_dir']
+        from jarvis_cd.shell.process import Mkdir
         Mkdir(run_dir).run()
 
         if self.config.get('deck'):
@@ -94,23 +72,18 @@ ENV PATH=/opt/vpic-kokkos/build/bin:${{PATH}}
             sample = self.config.get('sample_deck', 'harris')
             deck_file = f'/opt/vpic-kokkos/sample/{sample}/{sample}.cxx'
 
+        import os
         deck_name = os.path.basename(deck_file).replace('.cxx', '')
 
-        # Step 1: Compile the deck inside the container
-        Exec(
-            f'cp {deck_file} {run_dir}/ && cd {run_dir} && '
-            f'/opt/vpic-kokkos/build/bin/vpic {deck_name}.cxx',
-            MpiExecInfo(nprocs=1, hostfile=self.hostfile,
-                        env=self.mod_env, cwd=run_dir)
-        ).run()
+        nprocs = self.config.get('nprocs', 4)
 
-        # Step 2: Run compiled binary
-        Exec(f'{run_dir}/{deck_name}.Linux',
-             MpiExecInfo(nprocs=self.config['nprocs'],
-                         ppn=self.config['ppn'],
-                         hostfile=self.hostfile,
-                         env=self.mod_env,
-                         cwd=run_dir)).run()
+        # Step 1: Compile deck inside container
+        compile_cmd = f'bash -c "cp {deck_file} {run_dir}/ && cd {run_dir} && /opt/vpic-kokkos/build/bin/vpic {deck_name}.cxx"'
+        Exec(self.wrap_container_cmd(compile_cmd, gpu=True), LocalExecInfo()).run()
+
+        # Step 2: Run compiled binary inside container
+        run_cmd = f'bash -c "cd {run_dir} && mpirun --allow-run-as-root -n {nprocs} {run_dir}/{deck_name}.Linux"'
+        Exec(self.wrap_container_cmd(run_cmd, gpu=True), LocalExecInfo()).run()
 
     def clean(self):
         from jarvis_cd.shell.process import Rm

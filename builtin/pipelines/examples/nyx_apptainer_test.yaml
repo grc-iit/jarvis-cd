@@ -1,0 +1,22 @@
+# Pipeline: Nyx Apptainer Test
+# Purpose: Test Nyx HydroTests deployment using Apptainer
+# Requirements: NVIDIA GPU, sci-hpc-base image built locally
+
+name: nyx_apptainer_test
+
+container_engine: apptainer
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.nyx
+    pkg_name: nyx_apptainer
+    deploy_mode: container
+    nprocs: 4
+    ppn: 4
+    cuda_arch: 80
+    base_image: sci-hpc-base
+    max_step: 100
+    n_cell: 128 128 128
+    max_level: 0
+    out: /tmp/nyx_out
+    plot_int: 10

@@ -100,23 +100,6 @@ class RouteApp(Application):
         delegate = self._get_delegate(deploy_mode)
         delegate.clean()
 
-    def augment_container(self) -> str:
-        """
-        Generate Dockerfile commands to install this package in a container.
-        Delegates to the appropriate implementation based on deploy mode.
-
-        :return: Dockerfile commands as a string
-        """
-        deploy_mode = self.config.get('deploy_mode', 'default')
-        delegate = self._get_delegate(deploy_mode)
-
-        # Check if delegate has augment_container method
-        if hasattr(delegate, 'augment_container'):
-            return delegate.augment_container()
-        else:
-            # Fall back to base implementation
-            return super().augment_container()
-
 
 class RouteService(RouteApp):
     """

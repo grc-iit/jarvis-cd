@@ -2,14 +2,14 @@
 Container-based IOR deployment using Docker/Podman/Apptainer.
 """
 from jarvis_cd.core.container_pkg import ContainerApplication
-from pathlib import Path
+from jarvis_cd.shell import Exec, LocalExecInfo
 
 
 class IorContainer(ContainerApplication):
     """
     Container-based IOR deployment.
 
-    Build phase: Builds IOR from source using autoconf + OpenMPI.
+    Build phase: Installs IOR from apt + OpenMPI (cached).
     Deploy phase: Copies the ior binary into a lean runtime image.
     """
 
@@ -17,27 +17,29 @@ class IorContainer(ContainerApplication):
         """
         Generate the BUILD container Dockerfile.
 
-        Clones IOR from GitHub and builds with autoconf against system OpenMPI.
-        Each RUN layer is ordered to maximize Docker cache reuse:
-          apt deps → clone → configure → make
+        Downloads an IOR release tarball (includes pre-generated configure script)
+        and builds against system OpenMPI. Each RUN layer maximizes cache reuse:
+          apt deps → download tarball → configure + make
         """
         base = getattr(self.pipeline, 'container_base', 'ubuntu:24.04')
         return f"""FROM {base}
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# System build dependencies (cached after first pull)
+# Build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \\
-    build-essential autoconf automake libtool git \\
+    ca-certificates curl \\
+    build-essential \\
     openmpi-bin libopenmpi-dev \\
     && rm -rf /var/lib/apt/lists/*
 
-# Clone IOR (cached until repo/branch changes)
-RUN git clone --depth 1 https://github.com/hpc/ior.git /opt/ior
+# Download IOR release tarball (includes pre-generated configure)
+RUN curl -sL https://github.com/hpc/ior/releases/download/3.3.0/ior-3.3.0.tar.gz \\
+    | tar -xz -C /opt \\
+    && mv /opt/ior-3.3.0 /opt/ior
 
-# Configure and build (cached when source is unchanged)
+# Configure and build
 RUN cd /opt/ior \\
-    && ./bootstrap \\
     && ./configure --prefix=/opt/ior/install \\
     && make -j$(nproc) \\
     && make install
@@ -71,47 +73,29 @@ COPY --from=builder /opt/ior/install/bin/ior /usr/bin/ior
 CMD ["/bin/bash"]
 """
 
-    def augment_container(self) -> str:
-        """
-        Legacy pipeline-level Dockerfile commands for IOR installation.
-        Used when the pipeline assembles a single Dockerfile for all packages.
-        """
-        return """
-# Build IOR from source
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    build-essential autoconf automake libtool git \\
-    openmpi-bin libopenmpi-dev \\
-    && rm -rf /var/lib/apt/lists/*
+    def start(self):
+        cfg = self.config
+        ior_args = [
+            '-k',
+            f'-b {cfg["block"]}',
+            f'-t {cfg["xfer"]}',
+            f'-a {cfg["api"].upper()}',
+            f'-o {cfg["out"]}',
+        ]
+        if cfg.get('write'):
+            ior_args.append('-w')
+        if cfg.get('read'):
+            ior_args.append('-r')
+        if cfg.get('fpp'):
+            ior_args.append('-F')
+        if cfg.get('reps', 1) > 1:
+            ior_args.append(f'-i {cfg["reps"]}')
+        if cfg.get('direct'):
+            ior_args.append('-O useO_DIRECT=1')
 
-RUN git clone --depth 1 https://github.com/hpc/ior.git /opt/ior \\
-    && cd /opt/ior \\
-    && ./bootstrap \\
-    && ./configure --prefix=/usr \\
-    && make -j$(nproc) \\
-    && make install
-"""
+        nprocs = cfg.get('nprocs', 1)
+        inner = f'mpirun --allow-run-as-root -n {nprocs} ior {" ".join(ior_args)}'
+        if cfg.get('log'):
+            inner += f' 2>&1 | tee {cfg["log"]}'
 
-    def _configure(self, **kwargs):
-        """Configure container deployment."""
-        super()._configure(**kwargs)
-
-    def _generate_dockerfile(self):
-        """Generate Dockerfile for IOR container (legacy method)."""
-        ssh_port = getattr(self.pipeline, 'container_ssh_port', 2222)
-        if hasattr(self.pipeline, 'container_base') and self.pipeline.container_base:
-            base_image = self.pipeline.container_base
-        else:
-            base_image = 'iowarp/iowarp-build:latest'
-
-        sshd_port = ssh_port
-        dockerfile_content = f"""FROM {base_image}
-
-ARG DEBIAN_FRONTEND=noninteractive
-
-RUN sed -i 's/^#*Port .*/Port {sshd_port}/' /etc/ssh/sshd_config
-"""
-        dockerfile_path = Path(self.shared_dir) / 'Dockerfile'
-        with open(dockerfile_path, 'w') as f:
-            f.write(dockerfile_content)
-
-        print(f"Generated Dockerfile: {dockerfile_path}")
+        Exec(self.wrap_container_cmd(inner), LocalExecInfo()).run()
