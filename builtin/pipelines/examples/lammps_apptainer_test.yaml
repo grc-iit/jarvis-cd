@@ -1,0 +1,22 @@
+# Pipeline: LAMMPS Apptainer Test
+# Purpose: Test LAMMPS deployment using Apptainer (for HPC clusters)
+# Requirements: NVIDIA GPU, Docker for building + Apptainer for running
+# The build phase uses docker to build the image, then converts to SIF.
+
+name: lammps_apptainer_test
+
+container_engine: apptainer
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.lammps
+    pkg_name: lammps_apptainer
+    deploy_mode: container
+    nprocs: 4
+    ppn: 4
+    cuda_arch: 80
+    base_image: sci-hpc-base
+    kokkos_gpu: true
+    num_gpus: 1
+    script: /opt/lammps/bench/in.lj
+    out: /tmp/lammps_out

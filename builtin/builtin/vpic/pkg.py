@@ -1,14 +1,13 @@
 """
-This module provides classes and methods to launch the LAMMPS application.
-LAMMPS (Large-scale Atomic/Molecular Massively Parallel Simulator) is a
-classical molecular-dynamics code from Sandia National Laboratories.
+VPIC-Kokkos — Vector Particle-In-Cell plasma physics simulation.
+GPU-accelerated, relativistic, kinetic PIC code from Los Alamos National Lab.
 """
 from jarvis_cd.core.route_pkg import RouteApp
 
 
-class Lammps(RouteApp):
+class Vpic(RouteApp):
     """
-    Router class for LAMMPS deployment — delegates to default or container implementation.
+    Router class for VPIC deployment.
     """
 
     def _configure_menu(self):
@@ -32,16 +31,23 @@ class Lammps(RouteApp):
                 'default': 4,
             },
             {
-                'name': 'script',
-                'msg': 'Path to LAMMPS input script (e.g., in.lj)',
+                'name': 'deck',
+                'msg': 'Path to VPIC input deck (.cxx file)',
                 'type': str,
                 'default': None,
             },
             {
-                'name': 'lmp_bin',
-                'msg': 'Path to LAMMPS binary (default: lmp in PATH)',
+                'name': 'sample_deck',
+                'msg': 'Built-in sample deck to use (harris, lpi, langmuir_wave)',
                 'type': str,
-                'default': 'lmp',
+                'choices': ['harris', 'lpi', 'langmuir_wave', 'custom'],
+                'default': 'harris',
+            },
+            {
+                'name': 'run_dir',
+                'msg': 'Working directory for VPIC run',
+                'type': str,
+                'default': '/tmp/vpic_run',
             },
             {
                 'name': 'cuda_arch',
@@ -54,23 +60,5 @@ class Lammps(RouteApp):
                 'msg': 'Base Docker image for build container',
                 'type': str,
                 'default': 'sci-hpc-base',
-            },
-            {
-                'name': 'out',
-                'msg': 'Output directory for results',
-                'type': str,
-                'default': '/tmp/lammps_out',
-            },
-            {
-                'name': 'kokkos_gpu',
-                'msg': 'Enable Kokkos GPU (CUDA) acceleration',
-                'type': bool,
-                'default': True,
-            },
-            {
-                'name': 'num_gpus',
-                'msg': 'Number of GPUs per node',
-                'type': int,
-                'default': 1,
             },
         ]

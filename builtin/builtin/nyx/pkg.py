@@ -1,14 +1,13 @@
 """
-This module provides classes and methods to launch the LAMMPS application.
-LAMMPS (Large-scale Atomic/Molecular Massively Parallel Simulator) is a
-classical molecular-dynamics code from Sandia National Laboratories.
+Nyx — AMReX-based cosmological simulation (HydroTests).
+Adaptive mesh, massively parallel simulation code from AMReX-Astro.
 """
 from jarvis_cd.core.route_pkg import RouteApp
 
 
-class Lammps(RouteApp):
+class Nyx(RouteApp):
     """
-    Router class for LAMMPS deployment — delegates to default or container implementation.
+    Router class for Nyx cosmological simulation deployment.
     """
 
     def _configure_menu(self):
@@ -32,16 +31,34 @@ class Lammps(RouteApp):
                 'default': 4,
             },
             {
-                'name': 'script',
-                'msg': 'Path to LAMMPS input script (e.g., in.lj)',
-                'type': str,
-                'default': None,
+                'name': 'max_step',
+                'msg': 'Number of coarse time steps',
+                'type': int,
+                'default': 100,
             },
             {
-                'name': 'lmp_bin',
-                'msg': 'Path to LAMMPS binary (default: lmp in PATH)',
+                'name': 'n_cell',
+                'msg': 'Base grid cells as "nx ny nz"',
                 'type': str,
-                'default': 'lmp',
+                'default': '128 128 128',
+            },
+            {
+                'name': 'max_level',
+                'msg': 'Maximum AMR refinement level',
+                'type': int,
+                'default': 0,
+            },
+            {
+                'name': 'out',
+                'msg': 'Output directory for plot files',
+                'type': str,
+                'default': '/tmp/nyx_out',
+            },
+            {
+                'name': 'plot_int',
+                'msg': 'Plot file interval (-1 to disable)',
+                'type': int,
+                'default': 10,
             },
             {
                 'name': 'cuda_arch',
@@ -54,23 +71,5 @@ class Lammps(RouteApp):
                 'msg': 'Base Docker image for build container',
                 'type': str,
                 'default': 'sci-hpc-base',
-            },
-            {
-                'name': 'out',
-                'msg': 'Output directory for results',
-                'type': str,
-                'default': '/tmp/lammps_out',
-            },
-            {
-                'name': 'kokkos_gpu',
-                'msg': 'Enable Kokkos GPU (CUDA) acceleration',
-                'type': bool,
-                'default': True,
-            },
-            {
-                'name': 'num_gpus',
-                'msg': 'Number of GPUs per node',
-                'type': int,
-                'default': 1,
             },
         ]

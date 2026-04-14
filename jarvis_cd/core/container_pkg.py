@@ -12,56 +12,223 @@ from pathlib import Path
 
 class ContainerApplication(Application):
     """
-    Base class for containerized application deployment using Docker/Podman.
+    Base class for containerized application deployment using Docker/Podman/Apptainer.
 
-    This class provides common functionality for deploying applications in containers,
-    including pipeline YAML generation, Dockerfile creation, and container lifecycle management.
+    Implements a two-phase container build strategy:
+
+    1. Build phase: A stable, cached container that compiles the application.
+       Named automatically as 'jarvis-build-{pkg_name}'.
+       Built once and reused across pipelines via Docker layer cache.
+
+    2. Deploy phase: A lightweight container that copies binaries from the build
+       container. Named after the pipeline. For apptainer, the deploy container
+       is additionally converted to a SIF file.
+
+    Subclasses must implement:
+      - _build_phase(): Return Dockerfile content for the build container
+      - _build_deploy_phase(): Return Dockerfile content for the deploy container
+      - augment_container(): Return Dockerfile RUN commands for legacy pipeline builds
     """
 
     def _init(self):
-        """
-        Initialize paths
-        """
+        """Initialize paths"""
         pass
+
+    @property
+    def build_image_name(self) -> str:
+        """
+        Stable name for the BUILD container image.
+        Independent of pipeline name so it can be reused across pipelines.
+        """
+        pkg_name = self.pkg_type.split('.')[-1].replace('_', '-')
+        return f'jarvis-build-{pkg_name}'
+
+    @property
+    def deploy_image_name(self) -> str:
+        """Name for the DEPLOY container image (pipeline-specific)."""
+        if hasattr(self, 'pipeline') and self.pipeline:
+            return self.pipeline.name
+        return 'jarvis-deploy'
+
+    @property
+    def _container_engine(self) -> str:
+        """Get the container engine from pipeline config."""
+        return getattr(self.pipeline, 'container_engine', 'docker').lower()
+
+    @property
+    def _build_engine(self) -> str:
+        """Get the engine to use for building (apptainer needs docker/podman as intermediate)."""
+        engine = self._container_engine
+        if engine == 'apptainer':
+            import shutil
+            if shutil.which('docker'):
+                return 'docker'
+            elif shutil.which('podman'):
+                return 'podman'
+            else:
+                raise RuntimeError(
+                    "Apptainer requires docker or podman for the build phase. "
+                    "Neither was found in PATH."
+                )
+        return engine
+
+    def _build_phase(self) -> str:
+        """
+        Return the Dockerfile content for the BUILD container.
+
+        The build container is a heavy container that compiles the application
+        from source. It is built once with a stable name and cached between
+        pipeline runs via Docker layer cache.
+
+        Override this method in subclasses to provide application-specific
+        build steps. Return None to skip the build phase.
+
+        :return: Dockerfile content string, or None to skip
+        """
+        return None
+
+    def build_phase(self):
+        """
+        Build the BUILD container image and save Dockerfile to private_dir.
+
+        Uses the container engine's layer cache so repeated builds are fast
+        when the Dockerfile content hasn't changed. The image is named
+        '{build_image_name}' (stable, pipeline-independent).
+
+        :return: None
+        """
+        dockerfile_content = self._build_phase()
+        if not dockerfile_content:
+            return
+
+        # Save Dockerfile to private_dir for audit/reference
+        private_path = Path(self.private_dir)
+        private_path.mkdir(parents=True, exist_ok=True)
+        dockerfile_path = private_path / 'build.Dockerfile'
+
+        with open(dockerfile_path, 'w') as f:
+            f.write(dockerfile_content)
+
+        print(f"Building build container: {self.build_image_name}")
+        engine = self._build_engine
+        build_cmd = (
+            f"{engine} build -t {self.build_image_name} "
+            f"-f {dockerfile_path} {private_path}"
+        )
+        Exec(build_cmd, LocalExecInfo()).run()
+        print(f"Build container ready: {self.build_image_name}")
+
+    def _build_deploy_phase(self) -> str:
+        """
+        Return the Dockerfile content for the DEPLOY container.
+
+        The deploy container copies compiled binaries from the build container
+        into a leaner runtime image. It is named after the pipeline.
+
+        For apptainer, this docker image is additionally converted to a SIF file.
+
+        Override this method in subclasses. Return None to skip.
+
+        :return: Dockerfile content string, or None to skip
+        """
+        return None
+
+    def build_deploy_phase(self):
+        """
+        Build the DEPLOY container image and save Dockerfile to private_dir.
+
+        For docker/podman: builds image named after the pipeline.
+        For apptainer: builds docker image then converts to SIF file stored in
+        private_dir/{deploy_image_name}.sif.
+
+        :return: None
+        """
+        dockerfile_content = self._build_deploy_phase()
+        if not dockerfile_content:
+            return
+
+        private_path = Path(self.private_dir)
+        private_path.mkdir(parents=True, exist_ok=True)
+        dockerfile_path = private_path / 'deploy.Dockerfile'
+
+        with open(dockerfile_path, 'w') as f:
+            f.write(dockerfile_content)
+
+        engine = self._container_engine
+        build_engine = self._build_engine
+
+        print(f"Building deploy container: {self.deploy_image_name}")
+        build_cmd = (
+            f"{build_engine} build -t {self.deploy_image_name} "
+            f"-f {dockerfile_path} {private_path}"
+        )
+        Exec(build_cmd, LocalExecInfo()).run()
+
+        if engine == 'apptainer':
+            sif_path = private_path / f'{self.deploy_image_name}.sif'
+            print(f"Converting to Apptainer SIF: {sif_path}")
+            from ..shell.container_compose_exec import ApptainerBuildExec
+            apptainer_exec = ApptainerBuildExec(
+                self.deploy_image_name,
+                str(sif_path),
+                LocalExecInfo(),
+                source='docker-daemon'
+            )
+            apptainer_exec.run()
+            print(f"Apptainer SIF ready: {sif_path}")
+        else:
+            print(f"Deploy container ready: {self.deploy_image_name}")
+
+    def _configure(self, **kwargs):
+        """
+        Configure container deployment.
+        Triggers build and deploy phase container builds.
+
+        :param kwargs: Configuration parameters for this pkg.
+        :return: None
+        """
+        super()._configure(**kwargs)
+        self.build_phase()
+        self.build_deploy_phase()
+
+    def augment_container(self) -> str:
+        """
+        Return Dockerfile RUN commands to install this package in a container.
+
+        Used by the pipeline-level Dockerfile generation (legacy mechanism).
+        Override in subclasses to provide package-specific installation steps.
+
+        :return: Dockerfile commands as a string
+        """
+        return ""
 
     def _generate_container_ppl_yaml(self):
         """
         Generate pipeline YAML file containing just this package.
-        This is used to load the pipeline configuration inside the container.
+        Used to load the pipeline configuration inside the container.
         """
-        # Get this package's configuration and interceptors
         pkg_config = self.config.copy()
-
-        # Build package entry - use the actual package type
         pkg_entry = {'pkg_type': self.pkg_type}
-
-        # Add all config parameters except 'deploy'
         for key, value in pkg_config.items():
             if key != 'deploy':
                 pkg_entry[key] = value
 
-        # Create pipeline structure
         pipeline_config = {
             'name': f'{self.pipeline.name}_container',
             'pkgs': [pkg_entry]
         }
 
-        # Add interceptors if any
         interceptors_list = pkg_config.get('interceptors', [])
         if interceptors_list:
             pipeline_config['interceptors'] = []
             for interceptor_name in interceptors_list:
                 if interceptor_name in self.pipeline.interceptors:
                     interceptor_def = self.pipeline.interceptors[interceptor_name]
-                    interceptor_entry = {
-                        'pkg_type': interceptor_def['pkg_type']
-                    }
-                    # Add config parameters
+                    interceptor_entry = {'pkg_type': interceptor_def['pkg_type']}
                     for key, value in interceptor_def.get('config', {}).items():
                         interceptor_entry[key] = value
                     pipeline_config['interceptors'].append(interceptor_entry)
 
-        # Write pipeline file to shared directory
         pipeline_file = Path(self.shared_dir) / 'pkg.yaml'
         with open(pipeline_file, 'w') as f:
             yaml.dump(pipeline_config, f, default_flow_style=False)
@@ -71,26 +238,18 @@ class ContainerApplication(Application):
     def _generate_dockerfile(self):
         """
         Generate Dockerfile for the container.
-        Subclasses should override this method to provide application-specific Dockerfile content.
+        Deprecated: use _build_phase()/_build_deploy_phase() instead.
+        Subclasses may override for custom Dockerfile generation.
 
         :return: None
         """
-        raise NotImplementedError("Subclasses must implement _generate_dockerfile()")
+        pass
 
     def _get_container_command(self):
         """
         Get the command to run in the container.
-        Subclasses can override this to provide application-specific startup commands.
-
-        Note: This method is deprecated for pipeline-level containers.
-        Use pipeline.container_ssh_port instead.
-
-        :return: List representing the container command
         """
-        # Use pipeline-level SSH port if available, otherwise fallback to default
         ssh_port = getattr(self.pipeline, 'container_ssh_port', 2222)
-
-        # Default command: setup SSH, start sshd, run pipeline, and keep container running
         return [
             f'cp -r /root/.ssh_host /root/.ssh && '
             f'chmod 700 /root/.ssh && '
@@ -108,29 +267,16 @@ class ContainerApplication(Application):
         ]
 
     def _get_service_name(self):
-        """
-        Get the service name for the compose file.
-        Subclasses can override this to provide a custom service name.
-
-        :return: Service name string
-        """
-        # Use package name from pkg_type (e.g., 'builtin.ior' -> 'ior')
+        """Get the service name for the compose file."""
         if self.pkg_type and '.' in self.pkg_type:
             return self.pkg_type.split('.')[-1]
         return 'app'
 
     def _generate_compose_file(self):
-        """
-        Generate docker/podman compose file.
-        Generates a standard compose configuration that works for most containerized applications.
-
-        :return: None
-        """
+        """Generate docker/podman compose file."""
         container_name = f"{self.pipeline.name}_{self.pkg_id}"
         service_name = self._get_service_name()
         shm_size = self.config.get('shm_size', 0)
-
-        # Mount host directories to Jarvis default paths in container
         ssh_dir = os.path.expanduser('~/.ssh')
 
         compose_config = {
@@ -142,34 +288,25 @@ class ContainerApplication(Application):
                     'volumes': [
                         f"{self.private_dir}:/root/.ppi-jarvis/private",
                         f"{self.shared_dir}:/root/.ppi-jarvis/shared",
-                        f"{ssh_dir}:/root/.ssh_host:ro"  # Mount SSH keys
+                        f"{ssh_dir}:/root/.ssh_host:ro"
                     ]
                 }
             }
         }
 
-        # Use global container image if pipeline has container_build or container_image, otherwise build from local Dockerfile
         if hasattr(self.pipeline, 'get_container_image') and self.pipeline.get_container_image():
             compose_config['services'][service_name]['image'] = self.pipeline.get_container_image()
         else:
             compose_config['services'][service_name]['build'] = str(self.shared_dir)
 
-        # Always use host network mode for multi-node MPI support
         compose_config['services'][service_name]['network_mode'] = 'host'
 
-        # Handle shared memory configuration
         if shm_size > 0:
-            # This container creates a new shared memory segment
             compose_config['services'][service_name]['shm_size'] = f'{shm_size}m'
-            # Set this container as the shm provider for the pipeline
             self.pipeline.shm_container = container_name
-            print(f"Created shared memory segment: {shm_size}MB in container {container_name}")
         elif hasattr(self.pipeline, 'shm_container') and self.pipeline.shm_container:
-            # This container connects to an existing shared memory segment
             compose_config['services'][service_name]['ipc'] = f"container:{self.pipeline.shm_container}"
-            print(f"Connecting to shared memory container: {self.pipeline.shm_container}")
 
-        # Write compose file to shared directory
         compose_file = Path(self.shared_dir) / 'compose.yaml'
         with open(compose_file, 'w') as f:
             yaml.dump(compose_config, f, default_flow_style=False)
@@ -177,56 +314,28 @@ class ContainerApplication(Application):
         print(f"Generated compose file: {compose_file}")
 
     def _build_image(self):
-        """
-        Build the container image using compose build.
-        Note: This is no longer used for per-package builds. Container building happens at pipeline level.
-
-        :return: None
-        """
+        """Build the container image. Deprecated: use build_phase() instead."""
         pass
 
     def start(self):
-        """
-        Start is handled at the pipeline level for containerized applications.
-        Individual packages do not start containers themselves.
-
-        :return: None
-        """
+        """Start is handled at the pipeline level for containerized applications."""
         pass
 
     def stop(self):
-        """
-        Stop is handled at the pipeline level for containerized applications.
-        Individual packages do not stop containers themselves.
-
-        :return: None
-        """
+        """Stop is handled at the pipeline level for containerized applications."""
         pass
 
     def clean(self):
-        """
-        Clean is handled at the pipeline level for containerized applications.
-        Individual packages do not clean containers themselves.
-
-        :return: None
-        """
+        """Clean is handled at the pipeline level for containerized applications."""
         pass
 
     def kill(self):
-        """
-        Kill is handled at the pipeline level for containerized applications.
-        Individual packages do not kill containers themselves.
-
-        :return: None
-        """
+        """Kill is handled at the pipeline level for containerized applications."""
         pass
 
 
 class ContainerService(ContainerApplication):
     """
     Alias for ContainerApplication following service naming conventions.
-
-    This class is identical to ContainerApplication but follows the naming convention
-    where long-running containerized applications are called "services".
     """
     pass

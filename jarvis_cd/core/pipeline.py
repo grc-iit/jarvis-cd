@@ -1672,14 +1672,37 @@ services:
 
         print(f"Building global container image: {self.get_container_image()}")
 
-        # Determine build command based on container engine
-        if self.container_engine.lower() == 'podman':
+        engine = self.container_engine.lower()
+
+        # For apptainer: build with docker/podman first, then convert to SIF
+        if engine == 'apptainer':
+            import shutil
+            build_engine = 'docker' if shutil.which('docker') else 'podman'
+            build_cmd = (
+                f"{build_engine} build -t {self.get_container_image()} "
+                f"-f {dockerfile_path} {containers_dir}"
+            )
+            Exec(build_cmd, LocalExecInfo()).run()
+
+            # Convert to Apptainer SIF
+            from jarvis_cd.shell.container_compose_exec import ApptainerBuildExec
+            sif_path = containers_dir / f'{self.get_container_image()}.sif'
+            print(f"Converting to Apptainer SIF: {sif_path}")
+            apptainer_exec = ApptainerBuildExec(
+                self.get_container_image(),
+                str(sif_path),
+                LocalExecInfo(),
+                source='docker-daemon'
+            )
+            apptainer_exec.run()
+            print(f"Apptainer SIF ready: {sif_path}")
+        elif engine == 'podman':
             build_cmd = f"podman build -t {self.get_container_image()} -f {dockerfile_path} {containers_dir}"
+            Exec(build_cmd, LocalExecInfo()).run()
         else:
             build_cmd = f"docker build -t {self.get_container_image()} -f {dockerfile_path} {containers_dir}"
+            Exec(build_cmd, LocalExecInfo()).run()
 
-        # Build the image
-        Exec(build_cmd, LocalExecInfo()).run()
         print(f"Container image built: {self.get_container_image()}")
 
     def _generate_pipeline_compose_file(self):

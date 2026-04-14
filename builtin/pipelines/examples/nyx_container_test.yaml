@@ -1,0 +1,22 @@
+# Pipeline: Nyx Container Test
+# Purpose: Test Nyx HydroTests deployment using Docker/Podman/Apptainer
+# Requirements: NVIDIA GPU, sci-hpc-base image
+
+name: nyx_container_test
+
+container_engine: docker
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.nyx
+    pkg_name: nyx_container
+    deploy_mode: container
+    nprocs: 4
+    ppn: 4
+    cuda_arch: 80
+    base_image: sci-hpc-base
+    max_step: 100
+    n_cell: 128 128 128
+    max_level: 0
+    out: /tmp/nyx_out
+    plot_int: 10
