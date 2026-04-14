@@ -9,65 +9,64 @@ class IorContainer(ContainerApplication):
     """
     Container-based IOR deployment.
 
-    Build phase: Installs IOR via Spack on top of the iowarp base image.
-    Deploy phase: Copies the IOR binary from the build container.
+    Build phase: Builds IOR from source using autoconf + OpenMPI.
+    Deploy phase: Copies the ior binary into a lean runtime image.
     """
 
     def _build_phase(self) -> str:
         """
         Generate the BUILD container Dockerfile.
 
-        Installs IOR via Spack and copies binaries to /usr for easy access.
-        The layer cache means this only rebuilds when the Dockerfile changes.
+        Clones IOR from GitHub and builds with autoconf against system OpenMPI.
+        Each RUN layer is ordered to maximize Docker cache reuse:
+          apt deps → clone → configure → make
         """
-        base = getattr(self.pipeline, 'container_base', 'iowarp/iowarp-build:latest')
+        base = getattr(self.pipeline, 'container_base', 'ubuntu:24.04')
         return f"""FROM {base}
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Install IOR via Spack (cached after first build)
-RUN . "${{SPACK_DIR}}/share/spack/setup-env.sh" && \\
-    spack install -y ior
+# System build dependencies (cached after first pull)
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    build-essential autoconf automake libtool git \\
+    openmpi-bin libopenmpi-dev \\
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy IOR and Jarvis dependencies to /usr for runtime access
-RUN . "${{SPACK_DIR}}/share/spack/setup-env.sh" && \\
-    spack load iowarp && \\
-    cp -r $(spack location -i python)/bin/* /usr/bin || true && \\
-    cp -r $(spack location -i py-pip)/bin/* /usr/bin || true && \\
-    cp -r $(spack location -i python-venv)/bin/* /usr/bin || true && \\
-    PYTHON_PATH=$(readlink -f /usr/bin/python3) && \\
-    PYTHON_PREFIX=$(dirname $(dirname $PYTHON_PATH)) && \\
-    cp -r $(spack location -i mpi)/bin/* /usr/bin || true && \\
-    cp -r $(spack location -i ior)/bin/* /usr/bin || true && \\
-    cp -r $(spack location -i iowarp-runtime)/bin/* /usr/bin || true && \\
-    cp -r $(spack location -i iowarp-cte)/bin/* /usr/bin || true && \\
-    cp -r $(spack location -i cte-hermes-shm)/bin/* /usr/bin || true && \\
-    for pkg in $(spack find --format '{{name}}' | grep '^py-'); do \\
-        cp -r $(spack location -i $pkg)/lib/* $PYTHON_PREFIX/lib/ 2>/dev/null || true; \\
-        cp -r $(spack location -i $pkg)/bin/* /usr/bin 2>/dev/null || true; \\
-    done && \\
-    sed -i '1s|.*|#!/usr/bin/python3|' /usr/bin/jarvis && \\
-    echo "IOR and dependencies installed"
+# Clone IOR (cached until repo/branch changes)
+RUN git clone --depth 1 https://github.com/hpc/ior.git /opt/ior
+
+# Configure and build (cached when source is unchanged)
+RUN cd /opt/ior \\
+    && ./bootstrap \\
+    && ./configure --prefix=/opt/ior/install \\
+    && make -j$(nproc) \\
+    && make install
 """
 
     def _build_deploy_phase(self) -> str:
         """
         Generate the DEPLOY container Dockerfile.
 
-        Copies the pre-built IOR binary and Jarvis from the build container.
-        The deploy container reuses the build image as its base since IOR
-        depends on spack-managed MPI libraries.
+        Copies the ior binary and required MPI runtime from the build container.
+        Much smaller than the full build image.
         """
-        return f"""FROM {self.build_image_name}
+        base = getattr(self.pipeline, 'container_base', 'ubuntu:24.04')
+        return f"""FROM {self.build_image_name} AS builder
+FROM {base}
 
-# Deploy container: IOR binary already available in /usr/bin from build phase
-# SSH configuration for multi-node MPI runs
+ARG DEBIAN_FRONTEND=noninteractive
+
+# MPI runtime only (no build tools)
 RUN apt-get update && apt-get install -y --no-install-recommends \\
+    openmpi-bin libopenmpi-dev \\
     openssh-server openssh-client \\
     && rm -rf /var/lib/apt/lists/* \\
     && mkdir -p /var/run/sshd \\
     && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \\
     && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+
+# Copy ior binary from build container
+COPY --from=builder /opt/ior/install/bin/ior /usr/bin/ior
 
 CMD ["/bin/bash"]
 """
@@ -78,29 +77,18 @@ CMD ["/bin/bash"]
         Used when the pipeline assembles a single Dockerfile for all packages.
         """
         return """
-# Install IOR
-RUN . "${SPACK_DIR}/share/spack/setup-env.sh" && \\
-    spack install -y ior
+# Build IOR from source
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    build-essential autoconf automake libtool git \\
+    openmpi-bin libopenmpi-dev \\
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy required spack executables and libraries to /usr
-RUN . "${SPACK_DIR}/share/spack/setup-env.sh" && \\
-    spack load iowarp && \\
-    cp -r $(spack location -i python)/bin/* /usr/bin || true && \\
-    cp -r $(spack location -i py-pip)/bin/* /usr/bin || true && \\
-    cp -r $(spack location -i python-venv)/bin/* /usr/bin || true && \\
-    PYTHON_PATH=$(readlink -f /usr/bin/python3) && \\
-    PYTHON_PREFIX=$(dirname $(dirname $PYTHON_PATH)) && \\
-    cp -r $(spack location -i mpi)/bin/* /usr/bin || true && \\
-    cp -r $(spack location -i ior)/bin/* /usr/bin || true && \\
-    cp -r $(spack location -i iowarp-runtime)/bin/* /usr/bin || true && \\
-    cp -r $(spack location -i iowarp-cte)/bin/* /usr/bin || true && \\
-    cp -r $(spack location -i cte-hermes-shm)/bin/* /usr/bin || true && \\
-    for pkg in $(spack find --format '{name}' | grep '^py-'); do \\
-        cp -r $(spack location -i $pkg)/lib/* $PYTHON_PREFIX/lib/ 2>/dev/null || true; \\
-        cp -r $(spack location -i $pkg)/bin/* /usr/bin 2>/dev/null || true; \\
-    done && \\
-    sed -i '1s|.*|#!/usr/bin/python3|' /usr/bin/jarvis && \\
-    echo "Spack packages copied to /usr directory"
+RUN git clone --depth 1 https://github.com/hpc/ior.git /opt/ior \\
+    && cd /opt/ior \\
+    && ./bootstrap \\
+    && ./configure --prefix=/usr \\
+    && make -j$(nproc) \\
+    && make install
 """
 
     def _configure(self, **kwargs):

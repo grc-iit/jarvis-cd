@@ -2,13 +2,13 @@
 # Purpose: Test IOR deployment using Apptainer (for HPC clusters without root)
 # Requirements: Docker or Podman (for building), Apptainer (for running)
 #
-# Build phase:  jarvis-build-ior image — installs IOR via Spack (cached)
-# Deploy phase: ior_apptainer_test.sif — copies binaries, converted from Docker image
+# Build phase:  jarvis-build-ior image — builds IOR from source with OpenMPI (cached)
+# Deploy phase: ior_apptainer_test.sif — copies ior binary, converted from Docker image
 
 name: ior_apptainer_test
 
 container_engine: apptainer
-container_base: iowarp/iowarp-build:latest
+container_base: ubuntu:24.04
 
 pkgs:
   - pkg_type: builtin.ior
