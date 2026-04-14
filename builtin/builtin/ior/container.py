@@ -2,7 +2,7 @@
 Container-based IOR deployment using Docker/Podman/Apptainer.
 """
 from jarvis_cd.core.container_pkg import ContainerApplication
-from jarvis_cd.shell import Exec, LocalExecInfo
+from jarvis_cd.shell import Exec
 
 
 class IorContainer(ContainerApplication):
@@ -98,4 +98,4 @@ CMD ["/bin/bash"]
         if cfg.get('log'):
             inner += f' 2>&1 | tee {cfg["log"]}'
 
-        Exec(self.wrap_container_cmd(inner), LocalExecInfo()).run()
+        Exec(inner, self.container_exec_info()).run()

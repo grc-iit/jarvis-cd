@@ -3,7 +3,7 @@ Container-based VPIC-Kokkos deployment using Docker/Podman/Apptainer.
 Builds VPIC with Kokkos CUDA backend.
 """
 from jarvis_cd.core.container_pkg import ContainerApplication
-from jarvis_cd.shell import Exec, LocalExecInfo
+from jarvis_cd.shell import Exec
 
 
 class VpicContainer(ContainerApplication):
@@ -79,11 +79,11 @@ CMD ["/bin/bash"]
 
         # Step 1: Compile deck inside container
         compile_cmd = f'bash -c "cp {deck_file} {run_dir}/ && cd {run_dir} && /opt/vpic-kokkos/build/bin/vpic {deck_name}.cxx"'
-        Exec(self.wrap_container_cmd(compile_cmd, gpu=True), LocalExecInfo()).run()
+        Exec(compile_cmd, self.container_exec_info(gpu=True)).run()
 
         # Step 2: Run compiled binary inside container
         run_cmd = f'bash -c "cd {run_dir} && mpirun --allow-run-as-root -n {nprocs} {run_dir}/{deck_name}.Linux"'
-        Exec(self.wrap_container_cmd(run_cmd, gpu=True), LocalExecInfo()).run()
+        Exec(run_cmd, self.container_exec_info(gpu=True)).run()
 
     def clean(self):
         from jarvis_cd.shell.process import Rm

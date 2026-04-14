@@ -1087,6 +1087,38 @@ def status(self) -> str:
     return "running" | "stopped" | "error" | "unknown"
 ```
 
+#### `_get_stat(self, stat_dict)`
+**Purpose**: Collect statistics after the package has run
+**Called**: By `PipelineTest` after each pipeline run to aggregate results
+**Notes**: Only implement this if your package is used in pipeline tests. Prefix all keys with `self.pkg_id` to avoid conflicts between packages.
+
+```python
+def _get_stat(self, stat_dict):
+    """
+    Populate stat_dict with metrics from this run.
+
+    :param stat_dict: Dictionary to populate with statistics.
+    :return: None
+    """
+    # Example: parse stdout for a throughput value
+    output = self.exec.stdout.get('localhost', '')
+    match = re.search(r'Bandwidth:\s+([0-9.]+)\s+MB/s', output)
+    if match:
+        stat_dict[f'{self.pkg_id}.bandwidth_mb_s'] = float(match.group(1))
+
+    # Always record runtime
+    stat_dict[f'{self.pkg_id}.runtime'] = self.start_time
+```
+
+**Key naming conventions**:
+- `f'{self.pkg_id}.bandwidth_mb_s'` — I/O bandwidth in MB/s
+- `f'{self.pkg_id}.iops'` — I/O operations per second
+- `f'{self.pkg_id}.throughput'` — operations per second
+- `f'{self.pkg_id}.latency_avg'` — average latency in ms
+- `f'{self.pkg_id}.runtime'` — total execution time in seconds
+
+See [pipeline_tests.md](pipeline_tests.md#custom-statistics) for full details and more examples.
+
 ## Environment Variables
 
 Jarvis-CD manages environment variables through a pipeline-wide system where environment modifications are propagated between packages.

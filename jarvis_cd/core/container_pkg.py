@@ -186,29 +186,27 @@ class ContainerApplication(Application):
         self.build_phase()
         self.build_deploy_phase()
 
-    def wrap_container_cmd(self, cmd: str, gpu: bool = False) -> str:
+    def container_exec_info(self, gpu: bool = False) -> 'LocalExecInfo':
         """
-        Wrap a shell command to run inside the appropriate container engine.
+        Return a LocalExecInfo pre-configured with container engine settings.
 
-        For apptainer: apptainer exec [--nv] <sif> <cmd>
-        For docker/podman: docker/podman run --rm [--gpus all] <image> <cmd>
+        The returned ExecInfo, when passed to Exec, will cause the command to
+        be automatically wrapped for the appropriate container engine via
+        Exec._wrap_container_cmd().
 
-        :param cmd: Command to execute inside the container
-        :param gpu: Enable GPU passthrough (--nv for apptainer, --gpus all for docker/podman)
-        :return: Wrapped command string
+        For apptainer, container_image is set to the SIF file path under
+        private_dir. For docker/podman, it is set to the deploy image name.
+
+        :param gpu: Enable GPU passthrough into the container.
+        :return: LocalExecInfo with container, gpu, and container_image set.
         """
         from pathlib import Path
         engine = self._container_engine
         if engine == 'apptainer':
-            sif = Path(self.private_dir) / f'{self.deploy_image_name}.sif'
-            gpu_flag = '--nv ' if gpu else ''
-            return f'apptainer exec {gpu_flag}{sif} {cmd}'
-        elif engine == 'podman':
-            gpu_flag = '--gpus all ' if gpu else ''
-            return f'podman run --rm {gpu_flag}{self.deploy_image_name} {cmd}'
+            image = str(Path(self.private_dir) / f'{self.deploy_image_name}.sif')
         else:
-            gpu_flag = '--gpus all ' if gpu else ''
-            return f'docker run --rm {gpu_flag}{self.deploy_image_name} {cmd}'
+            image = self.deploy_image_name
+        return LocalExecInfo(container=engine, gpu=gpu, container_image=image)
 
     def start(self):
         """Start is handled at the pipeline level for containerized applications."""

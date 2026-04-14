@@ -34,7 +34,9 @@ class ExecInfo:
                  sleep_ms=0, sudo=False, sudoenv=True, cwd=None,
                  collect_output=None, pipe_stdout=None, pipe_stderr=None,
                  hide_output=None, exec_async=False, stdin=None,
-                 strict_ssh=False, timeout=None, **kwargs):
+                 strict_ssh=False, timeout=None,
+                 container='none', gpu=False, container_image=None,
+                 **kwargs):
         """
         Initialize execution information.
 
@@ -58,6 +60,12 @@ class ExecInfo:
         :param stdin: Any input needed by the program. Only local
         :param strict_ssh: Strict ssh host key verification
         :param timeout: Timeout subprocess within timeframe
+        :param container: Container engine to wrap command with. One of
+            'none', 'docker', 'podman', 'apptainer'. Defaults to 'none'.
+        :param gpu: Enable GPU passthrough into the container. Uses --nv for
+            apptainer and --gpus all for docker/podman. Defaults to False.
+        :param container_image: Image name for docker/podman, or path to SIF
+            file for apptainer. Defaults to None.
         :param kwargs: Additional unknown parameters (silently ignored)
         """
         self.exec_type = exec_type
@@ -80,6 +88,9 @@ class ExecInfo:
         self.stdin = stdin
         self.strict_ssh = strict_ssh
         self.timeout = timeout
+        self.container = container
+        self.gpu = gpu
+        self.container_image = container_image
 
         # Basic environment for process execution (without LD_PRELOAD)
         # This is used for launching MPI itself, not the MPI processes
@@ -99,7 +110,8 @@ class ExecInfo:
         for attr in ['exec_type', 'nprocs', 'ppn', 'user', 'pkey', 'port',
                      'hostfile', 'env', 'sleep_ms', 'sudo', 'sudoenv', 'cwd',
                      'collect_output', 'pipe_stdout', 'pipe_stderr', 'hide_output',
-                     'exec_async', 'stdin', 'strict_ssh', 'timeout']:
+                     'exec_async', 'stdin', 'strict_ssh', 'timeout',
+                     'container', 'gpu', 'container_image']:
             current_attrs[attr] = getattr(self, attr)
 
         # Update with new values

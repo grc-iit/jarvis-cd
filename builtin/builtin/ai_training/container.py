@@ -3,7 +3,7 @@ Container-based AI Training deployment using Docker/Podman/Apptainer.
 Provides PyTorch + CUDA environment for distributed training.
 """
 from jarvis_cd.core.container_pkg import ContainerApplication
-from jarvis_cd.shell import Exec, LocalExecInfo
+from jarvis_cd.shell import Exec
 
 
 class AiTrainingContainer(ContainerApplication):
@@ -118,7 +118,7 @@ if __name__ == '__main__':
             f'--epochs {self.config["epochs"]}',
             f'--batch {self.config["batch"]}',
         ])
-        Exec(self.wrap_container_cmd(inner, gpu=True), LocalExecInfo()).run()
+        Exec(inner, self.container_exec_info(gpu=True)).run()
 
     def clean(self):
         from jarvis_cd.shell.process import Rm

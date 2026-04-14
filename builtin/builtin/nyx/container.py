@@ -3,7 +3,7 @@ Container-based Nyx cosmological simulation using Docker/Podman/Apptainer.
 Builds Nyx HydroTests target with CUDA, MPI, and HDF5.
 """
 from jarvis_cd.core.container_pkg import ContainerApplication
-from jarvis_cd.shell import Exec, LocalExecInfo
+from jarvis_cd.shell import Exec
 
 
 class NyxContainer(ContainerApplication):
@@ -78,7 +78,7 @@ CMD ["/bin/bash"]
             f'amr.plot_file={outdir}/plt',
             f'amr.plot_int={self.config["plot_int"]}',
         ])
-        Exec(self.wrap_container_cmd(inner, gpu=True), LocalExecInfo()).run()
+        Exec(inner, self.container_exec_info(gpu=True)).run()
 
     def clean(self):
         from jarvis_cd.shell.process import Rm

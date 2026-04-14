@@ -3,7 +3,7 @@ Container-based Gray-Scott reaction-diffusion simulation.
 Builds the standalone CUDA+MPI+HDF5 version from awesome-scienctific-applications.
 """
 from jarvis_cd.core.container_pkg import ContainerApplication
-from jarvis_cd.shell import Exec, LocalExecInfo
+from jarvis_cd.shell import Exec
 
 
 class GrayScottContainer(ContainerApplication):
@@ -77,7 +77,7 @@ CMD ["/bin/bash"]
             f'--Du {self.config["Du"]}',
             f'--Dv {self.config["Dv"]}',
         ])
-        Exec(self.wrap_container_cmd(inner, gpu=True), LocalExecInfo()).run()
+        Exec(inner, self.container_exec_info(gpu=True)).run()
 
     def clean(self):
         from jarvis_cd.shell.process import Rm

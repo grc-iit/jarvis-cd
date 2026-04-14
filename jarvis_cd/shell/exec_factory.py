@@ -26,20 +26,50 @@ class Exec(CoreExec):
         self.exec_info = exec_info
         self._delegate = None
         
+    def _wrap_container_cmd(self, cmd: str) -> str:
+        """
+        Wrap a shell command to run inside the configured container engine.
+
+        Reads container settings from self.exec_info:
+          - container: engine name ('none', 'docker', 'podman', 'apptainer')
+          - gpu: whether to enable GPU passthrough
+          - container_image: image name (docker/podman) or SIF path (apptainer)
+
+        Returns the original command unchanged when container is 'none' or unset.
+
+        :param cmd: Command to execute
+        :return: Wrapped command string, or the original command if no container
+        """
+        c = self.exec_info.container
+        if not c or c == 'none':
+            return cmd
+        gpu = self.exec_info.gpu
+        img = self.exec_info.container_image or ''
+        if c == 'apptainer':
+            gpu_flag = '--nv ' if gpu else ''
+            return f'apptainer exec {gpu_flag}{img} {cmd}'
+        elif c == 'podman':
+            gpu_flag = '--gpus all ' if gpu else ''
+            return f'podman run --rm {gpu_flag}{img} {cmd}'
+        else:  # docker
+            gpu_flag = '--gpus all ' if gpu else ''
+            return f'docker run --rm {gpu_flag}{img} {cmd}'
+
     def run(self):
         """Execute the command using appropriate executor"""
+        cmd = self._wrap_container_cmd(self.cmd)
+
         # Create the appropriate executor based on exec_info type
-         
         if self.exec_info.exec_type == ExecType.LOCAL:
-            self._delegate = LocalExec(self.cmd, self.exec_info)
+            self._delegate = LocalExec(cmd, self.exec_info)
         elif self.exec_info.exec_type == ExecType.SSH:
-            self._delegate = SshExec(self.cmd, self.exec_info)
+            self._delegate = SshExec(cmd, self.exec_info)
         elif self.exec_info.exec_type == ExecType.PSSH:
-            self._delegate = PsshExec(self.cmd, self.exec_info)
-        elif self.exec_info.exec_type in [ExecType.MPI, ExecType.OPENMPI, 
-                                         ExecType.MPICH, ExecType.INTEL_MPI, 
+            self._delegate = PsshExec(cmd, self.exec_info)
+        elif self.exec_info.exec_type in [ExecType.MPI, ExecType.OPENMPI,
+                                         ExecType.MPICH, ExecType.INTEL_MPI,
                                          ExecType.CRAY_MPICH]:
-            self._delegate = MpiExec(self.cmd, self.exec_info)
+            self._delegate = MpiExec(cmd, self.exec_info)
         else:
             raise ValueError(f"Unsupported execution type: {self.exec_info.exec_type}")
             
