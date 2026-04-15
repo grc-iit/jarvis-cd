@@ -66,6 +66,17 @@ class Pipeline:
         """
         return bool(self.container_image)
 
+    def _has_containerized_packages(self) -> bool:
+        """
+        Check if any package in the pipeline has deploy_mode: container.
+
+        :return: True if at least one package uses container deployment
+        """
+        for pkg_def in self.packages:
+            if pkg_def.get('config', {}).get('deploy_mode') == 'container':
+                return True
+        return False
+
     def create(self, pipeline_name: str):
         """
         Create a new pipeline.
@@ -403,7 +414,9 @@ class Pipeline:
             # Configure all packages before starting
             # This runs _configure() on each package, which sets up
             # environment variables (e.g., CHI_SERVER_CONF) needed by start()
-            self.configure_all_packages()
+            # Skip when containerized — configure happens inside the container
+            if not self.is_containerized():
+                self.configure_all_packages()
 
             self.start()
             logger.pipeline("Pipeline started successfully. Stopping packages...")
@@ -888,6 +901,11 @@ class Pipeline:
         # Validate that interceptor and package IDs are unique
         self._validate_unique_ids()
 
+        # Auto-build containers if any package has deploy_mode: container
+        if not self.container_image and self._has_containerized_packages():
+            self._build_pipeline_container()
+            self.container_image = self.name
+
         # Save pipeline configuration and environment
         self.save()
 
@@ -1187,6 +1205,87 @@ class Pipeline:
 
             except Exception as e:
                 logger.error(f"Error applying interceptor '{interceptor_name}': {e}")
+
+    def _build_pipeline_container(self):
+        """
+        Build pipeline container images by collecting Dockerfiles from all packages.
+
+        1. Instantiates each package (without configuring) to call _build_phase()/_build_deploy_phase()
+        2. Builds per-package build images as jarvis-build-{pkg_name}
+        3. Concatenates all deploy-phase Dockerfiles, builds as {pipeline_name}
+        """
+        from jarvis_cd.shell import Exec, LocalExecInfo
+
+        deploy_image_name = self.name
+        print(f"Building pipeline container: {deploy_image_name}")
+
+        deploy_dockerfile_parts = []
+
+        # Determine build engine
+        pipeline_shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
+        pipeline_shared_dir.mkdir(parents=True, exist_ok=True)
+        build_engine = self.container_engine
+        if build_engine == 'apptainer':
+            import shutil
+            build_engine = 'docker' if shutil.which('docker') else 'podman'
+
+        # Collect Dockerfile content from all packages
+        for pkg_def in self.packages:
+            pkg_instance = self._load_package_instance(pkg_def, self.env)
+            # Set deploy_mode in config so _build_phase/_build_deploy_phase return content
+            pkg_instance.config['deploy_mode'] = pkg_def.get('config', {}).get('deploy_mode', 'default')
+
+            # Build per-package build image
+            build_content = pkg_instance._build_phase()
+            if build_content:
+                pkg_name = pkg_def['pkg_name']
+                build_image_name = f"jarvis-build-{pkg_name}"
+                build_dockerfile_path = pipeline_shared_dir / f'build-{pkg_name}.Dockerfile'
+                with open(build_dockerfile_path, 'w') as f:
+                    f.write(f"# --- {pkg_def['pkg_id']} build phase ---\n")
+                    f.write(build_content)
+
+                print(f"Building build image: {build_image_name}")
+                build_cmd = (
+                    f"{build_engine} build --network=host -t {build_image_name} "
+                    f"-f {build_dockerfile_path} {pipeline_shared_dir}"
+                )
+                result = Exec(build_cmd, LocalExecInfo()).run()
+                exit_code = result.exit_code.get('localhost', 1)
+                if exit_code != 0:
+                    raise RuntimeError(
+                        f"Failed to build image '{build_image_name}' (exit code {exit_code}). "
+                        f"Dockerfile: {build_dockerfile_path}"
+                    )
+                print(f"Build image ready: {build_image_name}")
+
+            deploy_content = pkg_instance._build_deploy_phase()
+            if deploy_content:
+                deploy_dockerfile_parts.append(f"# --- {pkg_def['pkg_id']} deploy phase ---")
+                deploy_dockerfile_parts.append(deploy_content)
+
+        # Build the DEPLOY image (named after the pipeline)
+        if deploy_dockerfile_parts:
+            deploy_dockerfile = "\n".join(deploy_dockerfile_parts)
+            deploy_dockerfile_path = pipeline_shared_dir / 'deploy.Dockerfile'
+            with open(deploy_dockerfile_path, 'w') as f:
+                f.write(deploy_dockerfile)
+
+            print(f"Building deploy image: {deploy_image_name}")
+            deploy_cmd = (
+                f"{build_engine} build --network=host -t {deploy_image_name} "
+                f"-f {deploy_dockerfile_path} {pipeline_shared_dir}"
+            )
+            result = Exec(deploy_cmd, LocalExecInfo()).run()
+            exit_code = result.exit_code.get('localhost', 1)
+            if exit_code != 0:
+                raise RuntimeError(
+                    f"Failed to build image '{deploy_image_name}' (exit code {exit_code}). "
+                    f"Dockerfile: {deploy_dockerfile_path}"
+                )
+            print(f"Deploy image ready: {deploy_image_name}")
+        else:
+            print("Warning: No deploy Dockerfile content from any package")
 
     def _generate_pipeline_container_yaml(self):
         """

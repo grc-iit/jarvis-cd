@@ -83,7 +83,7 @@ class Exec(CoreExec):
             # Build the full mpirun command first (without running), then wrap
             # with the container so the container executes the entire mpirun
             # invocation rather than just the application binary.
-            mpi_executor = MpiExec(self.cmd, self.exec_info.mod(container='none'))
+            mpi_executor = MpiExec(self.cmd, self.exec_info.mod(container='none', dry_run=True))
             mpi_cmd = mpi_executor.cmd
             wrapped_cmd, local_info = self._prepare_container(mpi_cmd)
             self._delegate = LocalExec(wrapped_cmd, local_info.mod(exec_type=ExecType.LOCAL))

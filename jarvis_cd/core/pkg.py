@@ -173,9 +173,6 @@ class Pkg:
         :param kwargs: Configuration parameters
         """
         self.update_config(kwargs, rebuild=False)
-        if self.config.get('deploy_mode') == 'container':
-            self.build_phase()
-            self.build_deploy_phase()
         
     def configure_menu(self):
         """
@@ -717,10 +714,9 @@ class Pkg:
 
     @property
     def _container_engine(self) -> str:
-        """Get the container engine from pipeline config, or 'none' if not in container mode."""
-        if self.config.get('deploy_mode') != 'container':
-            return 'none'
-        return getattr(self.pipeline, 'container_engine', 'docker').lower()
+        """Always return 'none' — per-package docker run wrapping is no longer used.
+        Container building is handled at the pipeline level automatically."""
+        return 'none'
 
     @property
     def _build_engine(self) -> str:
@@ -787,10 +783,16 @@ class Pkg:
         print(f"Building build container: {self.build_image_name}")
         engine = self._build_engine
         build_cmd = (
-            f"{engine} build -t {self.build_image_name} "
+            f"{engine} build --network=host -t {self.build_image_name} "
             f"-f {dockerfile_path} {private_path}"
         )
-        Exec(build_cmd, LocalExecInfo()).run()
+        result = Exec(build_cmd, LocalExecInfo()).run()
+        exit_code = result.exit_code.get('localhost', 1)
+        if exit_code != 0:
+            raise RuntimeError(
+                f"Failed to build container '{self.build_image_name}' (exit code {exit_code}). "
+                f"Dockerfile: {dockerfile_path}"
+            )
         print(f"Build container ready: {self.build_image_name}")
 
     def build_deploy_phase(self):
@@ -815,10 +817,16 @@ class Pkg:
         build_engine = self._build_engine
         print(f"Building deploy container: {self.deploy_image_name}")
         build_cmd = (
-            f"{build_engine} build -t {self.deploy_image_name} "
+            f"{build_engine} build --network=host -t {self.deploy_image_name} "
             f"-f {dockerfile_path} {private_path}"
         )
-        Exec(build_cmd, LocalExecInfo()).run()
+        result = Exec(build_cmd, LocalExecInfo()).run()
+        exit_code = result.exit_code.get('localhost', 1)
+        if exit_code != 0:
+            raise RuntimeError(
+                f"Failed to build deploy container '{self.deploy_image_name}' (exit code {exit_code}). "
+                f"Dockerfile: {dockerfile_path}"
+            )
         if engine == 'apptainer':
             shared_path = Path(self.shared_dir)
             shared_path.mkdir(parents=True, exist_ok=True)

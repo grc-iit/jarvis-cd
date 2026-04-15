@@ -37,6 +37,7 @@ class ExecInfo:
                  strict_ssh=False, timeout=None,
                  container='none', gpu=False, container_image=None,
                  shared_dir=None, private_dir=None, bind_mounts=None,
+                 dry_run=False,
                  **kwargs):
         """
         Initialize execution information.
@@ -74,6 +75,8 @@ class ExecInfo:
             the SIF path is composed as {shared_dir}/{container_image}.sif.
         :param bind_mounts: List of "host_path:container_path" strings to
             bind-mount into the container (docker/podman: -v, apptainer: --bind).
+        :param dry_run: If True, build the command string but do not execute it.
+            Used by Exec to obtain the MPI command string for container wrapping.
         :param kwargs: Additional unknown parameters (silently ignored)
         """
         self.exec_type = exec_type
@@ -102,6 +105,7 @@ class ExecInfo:
         self.shared_dir = shared_dir
         self.private_dir = private_dir
         self.bind_mounts = bind_mounts or []
+        self.dry_run = dry_run
 
         # Basic environment for process execution (without LD_PRELOAD)
         # This is used for launching MPI itself, not the MPI processes
@@ -123,7 +127,8 @@ class ExecInfo:
                      'collect_output', 'pipe_stdout', 'pipe_stderr', 'hide_output',
                      'exec_async', 'stdin', 'strict_ssh', 'timeout',
                      'container', 'gpu', 'container_image',
-                     'shared_dir', 'private_dir', 'bind_mounts']:
+                     'shared_dir', 'private_dir', 'bind_mounts',
+                     'dry_run']:
             current_attrs[attr] = getattr(self, attr)
 
         # Update with new values

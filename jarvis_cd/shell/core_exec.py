@@ -117,9 +117,13 @@ class LocalExec(CoreExec):
         self.stderr[self.hostname] = ""
         self.exit_code[self.hostname] = 0
         
+        # Skip execution in dry_run mode (used to build command strings)
+        if exec_info.dry_run:
+            return
+
         # Run the command
         self.run()
-        
+
         # If not async, wait for completion
         if not exec_info.exec_async:
             self.wait(self.hostname)
@@ -260,11 +264,13 @@ class MpiVersion(LocalExec):
 
         # Create modified exec_info for introspection
         # CRITICAL: Must set exec_async=False to ensure we wait for output
+        # CRITICAL: Must set dry_run=False to actually run mpiexec --version
         introspect_info = exec_info.mod(
             env=exec_info.basic_env,
             collect_output=True,
             hide_output=True,
-            exec_async=False
+            exec_async=False,
+            dry_run=False
         )
         
         super().__init__(self.cmd, introspect_info)

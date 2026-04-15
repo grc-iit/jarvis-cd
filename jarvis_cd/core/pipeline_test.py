@@ -590,5 +590,4 @@ def run_yaml_auto(pipeline_file: str):
     if is_test:
         obj.run()
     else:
-        obj.configure_all_packages()
         obj.run()
