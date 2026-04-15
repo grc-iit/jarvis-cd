@@ -93,32 +93,43 @@ class Lammps(Application):
         """
         Return the BUILD container Dockerfile, or None when not in container mode.
 
-        Build container: full LAMMPS build with Kokkos CUDA.
-        Uses Git layer cache — clone is cached until URL/branch changes.
+        Build container: full LAMMPS build.  Uses Kokkos CUDA when
+        kokkos_gpu is True, otherwise builds CPU-only.
         """
         if self.config.get('deploy_mode') != 'container':
             return None
-        cuda_arch = self.config.get('cuda_arch', 80)
         base = self.config.get('base_image', 'sci-hpc-base')
+        use_gpu = self.config.get('kokkos_gpu', True)
+
+        if use_gpu:
+            cuda_arch = self.config.get('cuda_arch', 80)
+            cmake_extra = (
+                f'-DPKG_KOKKOS=ON '
+                f'-DKokkos_ENABLE_CUDA=ON '
+                f'"-DKokkos_ARCH_AMPERE{cuda_arch}=ON" '
+            )
+        else:
+            cmake_extra = ''
+
         return f"""FROM {base}
 
-ARG CUDA_ARCH={cuda_arch}
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    ca-certificates git cmake build-essential python3 \\
+    openmpi-bin libopenmpi-dev \\
+    && rm -rf /var/lib/apt/lists/*
 
 # Clone LAMMPS develop branch (cached unless branch changes)
 RUN git clone --branch develop --depth 1 \\
     https://github.com/lammps/lammps.git /opt/lammps
 
-# Build LAMMPS with Kokkos CUDA
-# Ordered to maximize Docker layer cache reuse:
-# cmake configure → make (expensive, cached when source unchanged)
+# Build LAMMPS
 RUN cd /opt/lammps \\
     && mkdir -p build && cd build \\
     && cmake ../cmake \\
         -DCMAKE_BUILD_TYPE=Release \\
-        -DPKG_KOKKOS=ON \\
-        -DKokkos_ENABLE_CUDA=ON \\
-        "-DKokkos_ARCH_AMPERE${{CUDA_ARCH}}=ON" \\
-        -DBUILD_MPI=ON \\
+        {cmake_extra}-DBUILD_MPI=ON \\
         -DPKG_MOLECULE=ON \\
         -DPKG_KSPACE=ON \\
         -DPKG_RIGID=ON \\
@@ -132,7 +143,6 @@ ENV PATH=/opt/lammps/build:${{PATH}}
         Return the DEPLOY container Dockerfile, or None when not in container mode.
 
         Deploy container: copies lmp binary from build container.
-        Much faster to build than the full compile.
         """
         if self.config.get('deploy_mode') != 'container':
             return None
@@ -143,13 +153,17 @@ FROM {base}
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \\
+    openmpi-bin libopenmpi-dev \\
+    openssh-server openssh-client \\
     gdb gdbserver \\
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \\
+    && mkdir -p /var/run/sshd \\
+    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \\
+    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 
-# Copy compiled LAMMPS binary from build container
+# Copy compiled LAMMPS binary and benchmarks from build container
 COPY --from=builder /opt/lammps/build/lmp /usr/bin/lmp
-
-ENV PATH=/usr/bin:${{PATH}}
+COPY --from=builder /opt/lammps/bench /opt/lammps/bench
 
 CMD ["/bin/bash"]
 """
@@ -197,11 +211,13 @@ CMD ["/bin/bash"]
             Exec(' '.join(cmd), MpiExecInfo(
                 nprocs=self.config['nprocs'],
                 ppn=self.config['ppn'],
+                hostfile=self.hostfile,
+                port=self.ssh_port,
                 container=self._container_engine,
                 container_image=self.deploy_image_name,
                 shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
-                gpu=True,
+                gpu=self.config.get('kokkos_gpu', False),
                 env=self.mod_env,
             )).run()
         else:

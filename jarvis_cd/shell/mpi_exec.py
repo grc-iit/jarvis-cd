@@ -26,7 +26,7 @@ class LocalMpiExec(LocalExec):
         """
         self.nprocs = exec_info.nprocs
         self.ppn = exec_info.ppn
-        self.hostfile = exec_info.hostfile or Hostfile(['localhost'])
+        self.hostfile = exec_info.hostfile or Hostfile(hosts=['localhost'])
         self.mpi_env = exec_info.env
         self.ssh_port = exec_info.port if exec_info.port else None
 

@@ -91,21 +91,39 @@ class Nyx(Application):
     def _build_phase(self) -> str:
         """
         Return the BUILD container Dockerfile, or None when not in container mode.
+        Uses CUDA when base_image is sci-hpc-base, otherwise CPU-only.
         """
         if self.config.get('deploy_mode') != 'container':
             return None
-        cuda_arch = self.config.get('cuda_arch', 80)
         base = self.config.get('base_image', 'sci-hpc-base')
+        use_gpu = 'sci-hpc' in base
+
+        if use_gpu:
+            cuda_arch = self.config.get('cuda_arch', 80)
+            gpu_flags = (
+                f'-DNyx_GPU_BACKEND=CUDA '
+                f'"-DAMReX_CUDA_ARCH={cuda_arch}" '
+                f'-DCMAKE_CUDA_HOST_COMPILER="$(which g++)" '
+            )
+            hdf5_flags = '-DAMReX_HDF5=YES -DHDF5_ROOT=/opt/hdf5 '
+        else:
+            gpu_flags = '-DNyx_GPU_BACKEND=NONE '
+            hdf5_flags = ''
+
         return f"""FROM {base}
 
-ARG CUDA_ARCH={cuda_arch}
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    ca-certificates git cmake build-essential gfortran \\
+    openmpi-bin libopenmpi-dev \\
+    && rm -rf /var/lib/apt/lists/*
 
 # Clone Nyx with AMReX submodule (cached until repo changes)
 RUN git clone --recursive https://github.com/AMReX-Astro/Nyx.git /opt/Nyx \\
     && cd /opt/Nyx/subprojects/amrex && git checkout development
 
-# Build Nyx HydroTests — single precision, CUDA, MPI, HDF5
-# Ordered for maximum cache reuse: configure then build
+# Build Nyx HydroTests
 RUN cd /opt/Nyx \\
     && cmake -S . -B build \\
         -DCMAKE_BUILD_TYPE=Release \\
@@ -113,15 +131,10 @@ RUN cd /opt/Nyx \\
         -DNyx_OMP=NO \\
         -DNyx_HYDRO=YES \\
         -DNyx_HEATCOOL=NO \\
-        -DAMReX_HDF5=YES \\
-        -DHDF5_ROOT=/opt/hdf5 \\
-        -DNyx_GPU_BACKEND=CUDA \\
-        "-DAMReX_CUDA_ARCH=${{CUDA_ARCH}}" \\
-        -DAMReX_PRECISION=SINGLE \\
+        {hdf5_flags}{gpu_flags}-DAMReX_PRECISION=SINGLE \\
         -DAMReX_PARTICLES_PRECISION=SINGLE \\
         -DCMAKE_C_COMPILER="$(which gcc)" \\
         -DCMAKE_CXX_COMPILER="$(which g++)" \\
-        -DCMAKE_CUDA_HOST_COMPILER="$(which g++)" \\
     && cmake --build build --target nyx_HydroTests -j$(nproc)
 
 ENV PATH=/opt/Nyx/build/Exec/HydroTests:${{PATH}}
@@ -140,13 +153,16 @@ FROM {base}
 ARG DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \\
+    openmpi-bin libopenmpi-dev \\
+    openssh-server openssh-client \\
     gdb gdbserver \\
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \\
+    && mkdir -p /var/run/sshd \\
+    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \\
+    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 
 # Copy Nyx HydroTests binary from build container
 COPY --from=builder /opt/Nyx/build/Exec/HydroTests/nyx_HydroTests /usr/bin/nyx_HydroTests
-
-ENV PATH=/usr/bin:${{PATH}}
 
 CMD ["/bin/bash"]
 """
@@ -193,14 +209,19 @@ CMD ["/bin/bash"]
                 f'amr.max_level={self.config["max_level"]}',
                 f'amr.plot_file={outdir}/plt',
                 f'amr.plot_int={self.config["plot_int"]}',
+                'geometry.prob_lo=0 0 0',
+                'geometry.prob_extent=1 1 1',
+                'geometry.is_periodic=1 1 1',
             ])
             Exec(inner, MpiExecInfo(
                 nprocs=nprocs,
+                ppn=self.config.get('ppn'),
+                hostfile=self.hostfile,
+                port=self.ssh_port,
                 container=self._container_engine,
                 container_image=self.deploy_image_name,
                 shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
-                gpu=True,
                 env=self.mod_env,
             )).run()
         else:
@@ -211,6 +232,9 @@ CMD ["/bin/bash"]
                 f'amr.max_level={self.config["max_level"]}',
                 f'amr.plot_file={self.config["out"]}/plt',
                 f'amr.plot_int={self.config["plot_int"]}',
+                'geometry.prob_lo=0 0 0',
+                'geometry.prob_extent=1 1 1',
+                'geometry.is_periodic=1 1 1',
             ]
             Exec(' '.join(cmd),
                  MpiExecInfo(nprocs=self.config['nprocs'],
