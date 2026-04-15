@@ -60,11 +60,11 @@ class Exec(CoreExec):
         elif c == 'podman':
             gpu_flag = '--gpus all ' if gpu else ''
             env_flag = f'-e LD_PRELOAD={ld_preload} ' if ld_preload else ''
-            wrapped = f'podman run --rm {gpu_flag}{env_flag}{img} {cmd}'
+            wrapped = f'podman run --rm --network host {gpu_flag}{env_flag}{img} {cmd}'
         else:  # docker
             gpu_flag = '--gpus all ' if gpu else ''
             env_flag = f'-e LD_PRELOAD={ld_preload} ' if ld_preload else ''
-            wrapped = f'docker run --rm {gpu_flag}{env_flag}{img} {cmd}'
+            wrapped = f'docker run --rm --network host {gpu_flag}{env_flag}{img} {cmd}'
 
         return wrapped, self.exec_info.mod(env=env)
 
