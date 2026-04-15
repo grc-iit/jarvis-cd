@@ -1348,8 +1348,52 @@ class Pipeline:
         # Use pipeline-level SSH port configuration
         ssh_port = self.container_ssh_port
 
-        # Build container command - start SSH and run pipeline, then stop SSH
+        # Path remapping for Docker-in-Docker / devcontainer environments.
+        # When JARVIS_DOCKER_HOST_PREFIX is set, the current working tree
+        # is bind-mounted from a different path on the Docker host.
+        # Volume mounts in docker-compose must use host paths.
+        docker_host_prefix = self.env.get('JARVIS_DOCKER_HOST_PREFIX', '')
+        if docker_host_prefix:
+            # In devcontainer/DinD environments, /workspace is bind-mounted from
+            # the host at JARVIS_DOCKER_HOST_PREFIX. Docker sibling containers
+            # must use the host path, not the devcontainer path.
+            workspace_root = '/workspace'
+            def to_host_path(path_str):
+                """Remap a devcontainer path to the Docker host path."""
+                if path_str.startswith(workspace_root):
+                    return docker_host_prefix + path_str[len(workspace_root):]
+                return path_str
+        else:
+            def to_host_path(path_str):
+                return path_str
+
+        # Build jarvis init + repo registration commands for inside the container
+        repo_add_cmds = 'jarvis init && '
+        # Mount registered repos into the container and register them.
+        # Skip the builtin repo — it comes from the jarvis-cd installation
+        # inside the container and is auto-registered by 'jarvis init'.
+        repo_mounts = []
+        for repo_path in self.jarvis.repos.get('repos', []):
+            repo_name = Path(repo_path).name
+            if repo_name == 'builtin':
+                continue
+            container_repo_path = f'/opt/jarvis-repos/{repo_name}'
+            repo_mounts.append((repo_path, container_repo_path))
+            repo_add_cmds += f'jarvis repo add {container_repo_path} && '
+
+        # Build container command - start SSH, init jarvis, and run pipeline, then stop SSH
+        # When JARVIS_DOCKER_HOST_PREFIX is set (DinD/devcontainer), the home
+        # directory is on the overlay filesystem and invisible to sibling containers.
+        # Copy SSH keys to a Docker-accessible location under /workspace.
         ssh_dir = os.path.expanduser('~/.ssh')
+        if docker_host_prefix and not ssh_dir.startswith(workspace_root):
+            docker_ssh_dir = os.path.join(workspace_root, '.ssh-host')
+            if os.path.exists(ssh_dir):
+                import shutil
+                if os.path.exists(docker_ssh_dir):
+                    shutil.rmtree(docker_ssh_dir)
+                shutil.copytree(ssh_dir, docker_ssh_dir)
+            ssh_dir = docker_ssh_dir
         container_cmd = (
             f'set -e && '
             f'cp -r /root/.ssh_host /root/.ssh && '
@@ -1361,8 +1405,9 @@ class Pipeline:
             f'echo "    Port {ssh_port}" >> /root/.ssh/config && '
             f'echo "    StrictHostKeyChecking no" >> /root/.ssh/config && '
             f'chmod 600 /root/.ssh/config && '
-            f'sed -i "s/^#*Port .*/Port {ssh_port}/" /etc/ssh/sshd_config && '
+            f'sed -i "s/^#*Port .*/Port 2222/" /etc/ssh/sshd_config && '
             f'/usr/sbin/sshd && '
+            f'{repo_add_cmds}'
             f'jarvis ppl run yaml /root/.ppi-jarvis/shared/pipeline.yaml; '
             f'EXIT_CODE=$?; '
             f'pkill sshd; '
@@ -1372,17 +1417,21 @@ class Pipeline:
         # Create compose configuration using the global container image
         private_dir = self.jarvis.get_pipeline_private_dir(self.name)
 
-        # Prepare volume mounts
+        # Prepare volume mounts (use host paths for Docker-in-Docker)
         volumes = [
-            f"{private_dir}:/root/.ppi-jarvis/private",
-            f"{shared_dir}:/root/.ppi-jarvis/shared",
-            f"{ssh_dir}:/root/.ssh_host:ro"
+            f"{to_host_path(str(private_dir))}:/root/.ppi-jarvis/private",
+            f"{to_host_path(str(shared_dir))}:/root/.ppi-jarvis/shared",
+            f"{to_host_path(ssh_dir)}:/root/.ssh_host:ro"
         ]
+
+        # Mount registered repos into the container
+        for host_path, container_path in repo_mounts:
+            volumes.append(f"{to_host_path(host_path)}:{container_path}:ro")
 
         # Add hostfile volume mount if hostfile is set
         hostfile = self.get_hostfile()
         if hostfile and hostfile.path:
-            volumes.append(f"{hostfile.path}:/root/.ppi-jarvis/hostfile:ro")
+            volumes.append(f"{to_host_path(hostfile.path)}:/root/.ppi-jarvis/hostfile:ro")
 
         service_config = {
             'container_name': container_name,
