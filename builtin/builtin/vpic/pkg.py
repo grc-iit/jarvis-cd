@@ -3,7 +3,7 @@ VPIC-Kokkos — Vector Particle-In-Cell plasma physics simulation.
 GPU-accelerated, relativistic, kinetic PIC code from Los Alamos National Lab.
 """
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
+from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
 import os
 
@@ -182,14 +182,21 @@ CMD ["/bin/bash"]
                 f'bash -c "cp {deck_file} {run_dir}/ && cd {run_dir} && '
                 f'/opt/vpic-kokkos/build/bin/vpic {deck_name}.cxx"'
             )
-            Exec(compile_cmd, self.container_exec_info(gpu=True)).run()
+            _cinfo = LocalExecInfo(
+                container=self._container_engine,
+                container_image=self.deploy_image_name,
+                private_dir=self.private_dir,
+                gpu=True,
+                env=self.mod_env,
+            )
+            Exec(compile_cmd, _cinfo).run()
 
             # Step 2: Run compiled binary inside container
             run_cmd = (
                 f'bash -c "cd {run_dir} && mpirun --allow-run-as-root -n {nprocs} '
                 f'{run_dir}/{deck_name}.Linux"'
             )
-            Exec(run_cmd, self.container_exec_info(gpu=True)).run()
+            Exec(run_cmd, _cinfo).run()
         else:
             if self.config.get('deck'):
                 deck_file = self.config['deck']

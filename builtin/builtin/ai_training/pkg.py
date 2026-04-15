@@ -221,7 +221,13 @@ if __name__ == '__main__':
                 f'--epochs {self.config["epochs"]}',
                 f'--batch {self.config["batch"]}',
             ])
-            Exec(inner, self.container_exec_info(gpu=True)).run()
+            Exec(inner, LocalExecInfo(
+                container=self._container_engine,
+                container_image=self.deploy_image_name,
+                private_dir=self.private_dir,
+                gpu=True,
+                env=self.mod_env,
+            )).run()
         else:
             node_rank = 0  # Single-node or head node
             cmd = [

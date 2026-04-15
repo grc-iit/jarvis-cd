@@ -5,7 +5,7 @@ It is a simple tool that can be used to measure the performance of a file system
 It is mainly targeted for HPC systems and parallel I/O.
 """
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo, Rm, Mkdir
+from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo, PsshExecInfo, Rm, Mkdir
 from jarvis_cd.shell.process import GdbServer
 import os
 import pathlib
@@ -252,7 +252,12 @@ CMD ["/bin/bash"]
             if cfg.get('log'):
                 inner += f' 2>&1 | tee {cfg["log"]}'
 
-            Exec(inner, self.container_exec_info()).run()
+            Exec(inner, LocalExecInfo(
+                container=self._container_engine,
+                container_image=self.deploy_image_name,
+                private_dir=self.private_dir,
+                env=self.mod_env,
+            )).run()
         else:
             cmd = [
                 'ior',

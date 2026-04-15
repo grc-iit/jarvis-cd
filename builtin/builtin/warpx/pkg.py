@@ -3,7 +3,7 @@ WarpX — Exascale Particle-In-Cell plasma accelerator simulation.
 Highly parallel, GPU-optimized PIC code built on AMReX.
 """
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
+from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
 import os
 import shutil
@@ -214,7 +214,13 @@ CMD ["/bin/bash"]
                 f'amr.plot_file={outdir}/plt',
                 f'amr.plot_int={self.config["plot_int"]}',
             ])
-            Exec(inner, self.container_exec_info(gpu=True)).run()
+            Exec(inner, LocalExecInfo(
+                container=self._container_engine,
+                container_image=self.deploy_image_name,
+                private_dir=self.private_dir,
+                gpu=True,
+                env=self.mod_env,
+            )).run()
         else:
             if self.config['inputs']:
                 inputs_arg = self.config['inputs']

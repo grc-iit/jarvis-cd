@@ -3,7 +3,7 @@ This module provides classes and methods to launch the Gray-Scott application.
 Gray-Scott is a reaction-diffusion simulation.
 """
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
+from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
 from jarvis_cd.util.config_parser import JsonFile
 from jarvis_cd.util.logger import Color
@@ -235,7 +235,13 @@ CMD ["/bin/bash"]
                 f'--Du {self.config["Du"]}',
                 f'--Dv {self.config["Dv"]}',
             ])
-            Exec(inner, self.container_exec_info(gpu=True)).run()
+            Exec(inner, LocalExecInfo(
+                container=self._container_engine,
+                container_image=self.deploy_image_name,
+                private_dir=self.private_dir,
+                gpu=True,
+                env=self.mod_env,
+            )).run()
         else:
             start = time.time()
             Exec(f'gray-scott {self.settings_json_path}',

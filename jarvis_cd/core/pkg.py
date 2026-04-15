@@ -927,26 +927,6 @@ class Application(Pkg):
         else:
             print(f"Deploy container ready: {self.deploy_image_name}")
 
-    def container_exec_info(self, gpu: bool = False):
-        """
-        Return a LocalExecInfo pre-configured with container engine settings.
-
-        For apptainer, container_image is set to the SIF file path under
-        private_dir. For docker/podman, it is set to the deploy image name.
-
-        :param gpu: Enable GPU passthrough into the container.
-        :return: LocalExecInfo with container, gpu, and container_image set.
-        """
-        from jarvis_cd.shell import LocalExecInfo
-        from pathlib import Path
-        engine = self._container_engine
-        if engine == 'apptainer':
-            image = str(Path(self.private_dir) / f'{self.deploy_image_name}.sif')
-        else:
-            image = self.deploy_image_name
-        return LocalExecInfo(container=engine, gpu=gpu, container_image=image,
-                             env=self.mod_env)
-
     # ------------------------------------------------------------------
     # Override _configure to trigger container builds when appropriate
     # ------------------------------------------------------------------

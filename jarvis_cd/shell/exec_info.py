@@ -36,6 +36,7 @@ class ExecInfo:
                  hide_output=None, exec_async=False, stdin=None,
                  strict_ssh=False, timeout=None,
                  container='none', gpu=False, container_image=None,
+                 private_dir=None,
                  **kwargs):
         """
         Initialize execution information.
@@ -64,8 +65,11 @@ class ExecInfo:
             'none', 'docker', 'podman', 'apptainer'. Defaults to 'none'.
         :param gpu: Enable GPU passthrough into the container. Uses --nv for
             apptainer and --gpus all for docker/podman. Defaults to False.
-        :param container_image: Image name for docker/podman, or path to SIF
-            file for apptainer. Defaults to None.
+        :param container_image: Image name for docker/podman or apptainer.
+            For apptainer, the SIF path is composed as
+            {private_dir}/{container_image}.sif when private_dir is set.
+        :param private_dir: Directory where SIF files are stored (apptainer).
+            When set, _prepare_container resolves the SIF path automatically.
         :param kwargs: Additional unknown parameters (silently ignored)
         """
         self.exec_type = exec_type
@@ -91,6 +95,7 @@ class ExecInfo:
         self.container = container
         self.gpu = gpu
         self.container_image = container_image
+        self.private_dir = private_dir
 
         # Basic environment for process execution (without LD_PRELOAD)
         # This is used for launching MPI itself, not the MPI processes
@@ -111,7 +116,7 @@ class ExecInfo:
                      'hostfile', 'env', 'sleep_ms', 'sudo', 'sudoenv', 'cwd',
                      'collect_output', 'pipe_stdout', 'pipe_stderr', 'hide_output',
                      'exec_async', 'stdin', 'strict_ssh', 'timeout',
-                     'container', 'gpu', 'container_image']:
+                     'container', 'gpu', 'container_image', 'private_dir']:
             current_attrs[attr] = getattr(self, attr)
 
         # Update with new values
