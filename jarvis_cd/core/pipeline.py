@@ -1241,8 +1241,8 @@ class Pipeline:
             # Build per-package build image
             build_content = pkg_instance._build_phase()
             if build_content:
+                build_image_name = pkg_instance.build_image_name
                 pkg_name = pkg_def['pkg_name']
-                build_image_name = f"jarvis-build-{pkg_name}"
                 build_dockerfile_path = pipeline_shared_dir / f'build-{pkg_name}.Dockerfile'
                 with open(build_dockerfile_path, 'w') as f:
                     f.write(f"# --- {pkg_def['pkg_id']} build phase ---\n")
