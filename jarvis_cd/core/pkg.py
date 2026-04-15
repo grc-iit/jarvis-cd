@@ -813,7 +813,9 @@ class Application(Pkg):
 
     @property
     def _container_engine(self) -> str:
-        """Get the container engine from pipeline config."""
+        """Get the container engine from pipeline config, or 'none' if not in container mode."""
+        if self.config.get('deploy_mode') != 'container':
+            return 'none'
         return getattr(self.pipeline, 'container_engine', 'docker').lower()
 
     @property

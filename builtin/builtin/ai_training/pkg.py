@@ -126,6 +126,7 @@ CMD ["/bin/bash"]
 # SSH for multi-node torchrun
 RUN apt-get update && apt-get install -y --no-install-recommends \\
     openssh-server openssh-client \\
+    gdb gdbserver \\
     && rm -rf /var/lib/apt/lists/* \\
     && mkdir -p /var/run/sshd \\
     && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \\

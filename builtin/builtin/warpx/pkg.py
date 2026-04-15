@@ -144,6 +144,12 @@ ENV PATH=/opt/warpx/build/bin:${{PATH}}
         return f"""FROM {self.build_image_name} AS builder
 FROM {base}
 
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    gdb gdbserver \\
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy WarpX binary and example inputs from build container
 COPY --from=builder /opt/warpx/build/bin/warpx.3d.MPI.CUDA.SP.PSP.OPMD.EB.QED /usr/bin/warpx
 COPY --from=builder /opt/warpx/Examples /opt/warpx/Examples

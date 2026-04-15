@@ -137,6 +137,12 @@ ENV PATH=/opt/Nyx/build/Exec/HydroTests:${{PATH}}
         return f"""FROM {self.build_image_name} AS builder
 FROM {base}
 
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    gdb gdbserver \\
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy Nyx HydroTests binary from build container
 COPY --from=builder /opt/Nyx/build/Exec/HydroTests/nyx_HydroTests /usr/bin/nyx_HydroTests
 

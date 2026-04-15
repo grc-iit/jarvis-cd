@@ -122,6 +122,12 @@ ENV PATH=/opt/vpic-kokkos/build/bin:${{PATH}}
         return f"""FROM {self.build_image_name} AS builder
 FROM {base}
 
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    gdb gdbserver \\
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy VPIC binaries and samples from build container
 COPY --from=builder /opt/vpic-kokkos/build/bin /opt/vpic-kokkos/build/bin
 COPY --from=builder /opt/vpic-kokkos/sample /opt/vpic-kokkos/sample

@@ -140,6 +140,12 @@ ENV PATH=/opt/lammps/build:${{PATH}}
         return f"""FROM {self.build_image_name} AS builder
 FROM {base}
 
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    gdb gdbserver \\
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy compiled LAMMPS binary from build container
 COPY --from=builder /opt/lammps/build/lmp /usr/bin/lmp
 

@@ -177,6 +177,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \\
     openmpi-bin libopenmpi-dev \\
     openssh-server openssh-client \\
+    gdb gdbserver \\
     && rm -rf /var/lib/apt/lists/* \\
     && mkdir -p /var/run/sshd \\
     && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \\
@@ -220,9 +221,8 @@ CMD ["/bin/bash"]
     # ------------------------------------------------------------------
 
     def start(self):
-        """Launch IOR via MpiExecInfo; container wrapping is handled by Exec."""
+        """Launch IOR via MpiExecInfo; Exec handles container wrapping transparently."""
         cfg = self.config
-        is_container = cfg.get('deploy_mode') == 'container'
 
         cmd = [
             'ior',
@@ -244,31 +244,23 @@ CMD ["/bin/bash"]
             cmd.append('-O useO_DIRECT=1')
 
         ior_cmd = ' '.join(cmd)
-        if is_container and cfg.get('log'):
+        if cfg.get('log'):
             ior_cmd += f' 2>&1 | tee {cfg["log"]}'
 
-        if is_container:
-            Exec(ior_cmd, MpiExecInfo(
-                nprocs=cfg['nprocs'],
-                ppn=cfg['ppn'],
-                hostfile=self.hostfile,
-                container=self._container_engine,
-                container_image=self.deploy_image_name,
-                private_dir=self.private_dir,
-                env=self.mod_env,
-            )).run()
-        else:
-            gdb_server = GdbServer(ior_cmd, cfg.get('dbg_port', 4000))
-            cmd_list = [
-                {'cmd': gdb_server.get_cmd(), 'nprocs': 1 if cfg.get('do_dbg') else 0, 'disable_preload': True},
-                {'cmd': ior_cmd, 'nprocs': None},
-            ]
-            Exec(cmd_list, MpiExecInfo(
-                nprocs=cfg['nprocs'],
-                ppn=cfg['ppn'],
-                hostfile=self.hostfile,
-                env=self.mod_env,
-            )).run()
+        gdb_server = GdbServer(ior_cmd, cfg.get('dbg_port', 4000))
+        cmd_list = [
+            {'cmd': gdb_server.get_cmd(), 'nprocs': 1 if cfg.get('do_dbg') else 0, 'disable_preload': True},
+            {'cmd': ior_cmd, 'nprocs': None},
+        ]
+        Exec(cmd_list, MpiExecInfo(
+            nprocs=cfg['nprocs'],
+            ppn=cfg['ppn'],
+            hostfile=self.hostfile,
+            container=self._container_engine,
+            container_image=self.deploy_image_name,
+            private_dir=self.private_dir,
+            env=self.mod_env,
+        )).run()
 
     def stop(self):
         """Stop IOR (no-op — IOR runs to completion)."""

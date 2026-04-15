@@ -159,6 +159,12 @@ ENV PATH=/opt/gray_scott/build:${{PATH}}
         return f"""FROM {self.build_image_name} AS builder
 FROM {base}
 
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+    gdb gdbserver \\
+    && rm -rf /var/lib/apt/lists/*
+
 # Copy compiled binary from build container
 COPY --from=builder /opt/gray_scott/build/gray_scott /usr/bin/gray_scott
 
