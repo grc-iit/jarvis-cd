@@ -5,7 +5,7 @@ It is a simple tool that can be used to measure the performance of a file system
 It is mainly targeted for HPC systems and parallel I/O.
 """
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo, PsshExecInfo, Rm, Mkdir
+from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo, Rm, Mkdir
 from jarvis_cd.shell.process import GdbServer
 import os
 import pathlib
@@ -220,88 +220,55 @@ CMD ["/bin/bash"]
     # ------------------------------------------------------------------
 
     def start(self):
-        """
-        Launch IOR.
-
-        Branches on deploy_mode: uses container_exec_info() for container
-        mode, MpiExecInfo with hostfile for default mode.
-        """
+        """Launch IOR via MpiExecInfo; container wrapping is handled by Exec."""
         cfg = self.config
+        is_container = cfg.get('deploy_mode') == 'container'
 
-        if cfg.get('deploy_mode') == 'container':
-            ior_args = [
-                '-k',
-                f'-b {cfg["block"]}',
-                f'-t {cfg["xfer"]}',
-                f'-a {cfg["api"].upper()}',
-                f'-o {cfg["out"]}',
-            ]
-            if cfg.get('write'):
-                ior_args.append('-w')
-            if cfg.get('read'):
-                ior_args.append('-r')
-            if cfg.get('fpp'):
-                ior_args.append('-F')
-            if cfg.get('reps', 1) > 1:
-                ior_args.append(f'-i {cfg["reps"]}')
-            if cfg.get('direct'):
-                ior_args.append('-O useO_DIRECT=1')
+        cmd = [
+            'ior',
+            '-k',
+            f'-b {cfg["block"]}',
+            f'-t {cfg["xfer"]}',
+            f'-a {cfg["api"].upper()}',
+            f'-o {cfg["out"]}',
+        ]
+        if cfg.get('write', True):
+            cmd.append('-w')
+        if cfg.get('read'):
+            cmd.append('-r')
+        if cfg.get('fpp'):
+            cmd.append('-F')
+        if cfg.get('reps', 1) > 1:
+            cmd.append(f'-i {cfg["reps"]}')
+        if cfg.get('direct'):
+            cmd.append('-O useO_DIRECT=1')
 
-            nprocs = cfg.get('nprocs', 1)
-            inner = f'mpirun --allow-run-as-root -n {nprocs} ior {" ".join(ior_args)}'
-            if cfg.get('log'):
-                inner += f' 2>&1 | tee {cfg["log"]}'
+        ior_cmd = ' '.join(cmd)
+        if is_container and cfg.get('log'):
+            ior_cmd += f' 2>&1 | tee {cfg["log"]}'
 
-            Exec(inner, LocalExecInfo(
+        if is_container:
+            Exec(ior_cmd, MpiExecInfo(
+                nprocs=cfg['nprocs'],
+                ppn=cfg['ppn'],
+                hostfile=self.hostfile,
                 container=self._container_engine,
                 container_image=self.deploy_image_name,
                 private_dir=self.private_dir,
                 env=self.mod_env,
             )).run()
         else:
-            cmd = [
-                'ior',
-                '-k',
-                f'-b {cfg["block"]}',
-                f'-t {cfg["xfer"]}',
-                f'-a {cfg["api"]}',
-                f'-o {cfg["out"]}',
-            ]
-            if cfg['write']:
-                cmd.append('-w')
-            if cfg['read']:
-                cmd.append('-r')
-            if cfg['fpp']:
-                cmd.append('-F')
-            if cfg['reps'] > 1:
-                cmd.append(f'-i {cfg["reps"]}')
-            if cfg['direct']:
-                cmd.append('-O useO_DIRECT=1')
-
-            ior_cmd = ' '.join(cmd)
-
-            # Use GdbServer to create gdbserver command if debugging is enabled
             gdb_server = GdbServer(ior_cmd, cfg.get('dbg_port', 4000))
-            gdbserver_cmd = gdb_server.get_cmd()
-
             cmd_list = [
-                {
-                    'cmd': gdbserver_cmd,
-                    'nprocs': 1 if cfg.get('do_dbg', False) else 0,
-                    'disable_preload': True
-                },
-                {
-                    'cmd': ior_cmd,
-                    'nprocs': None  # Will be calculated from remainder
-                }
+                {'cmd': gdb_server.get_cmd(), 'nprocs': 1 if cfg.get('do_dbg') else 0, 'disable_preload': True},
+                {'cmd': ior_cmd, 'nprocs': None},
             ]
-            print(cmd_list)
-
-            Exec(cmd_list,
-                 MpiExecInfo(env=self.mod_env,
-                             hostfile=self.hostfile,
-                             nprocs=cfg['nprocs'],
-                             ppn=cfg['ppn'])).run()
+            Exec(cmd_list, MpiExecInfo(
+                nprocs=cfg['nprocs'],
+                ppn=cfg['ppn'],
+                hostfile=self.hostfile,
+                env=self.mod_env,
+            )).run()
 
     def stop(self):
         """Stop IOR (no-op — IOR runs to completion)."""

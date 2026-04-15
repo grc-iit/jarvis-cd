@@ -3,7 +3,7 @@ WarpX — Exascale Particle-In-Cell plasma accelerator simulation.
 Highly parallel, GPU-optimized PIC code built on AMReX.
 """
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo, PsshExecInfo
+from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
 import os
 import shutil
@@ -206,7 +206,6 @@ CMD ["/bin/bash"]
                 )
 
             inner = ' '.join([
-                f'mpirun --allow-run-as-root -n {nprocs}',
                 '/usr/bin/warpx',
                 inputs_arg,
                 f'max_step={self.config["max_step"]}',
@@ -214,7 +213,8 @@ CMD ["/bin/bash"]
                 f'amr.plot_file={outdir}/plt',
                 f'amr.plot_int={self.config["plot_int"]}',
             ])
-            Exec(inner, LocalExecInfo(
+            Exec(inner, MpiExecInfo(
+                nprocs=nprocs,
                 container=self._container_engine,
                 container_image=self.deploy_image_name,
                 private_dir=self.private_dir,

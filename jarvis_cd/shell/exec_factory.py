@@ -70,21 +70,31 @@ class Exec(CoreExec):
 
     def run(self):
         """Execute the command using appropriate executor"""
-        cmd, exec_info = self._prepare_container(self.cmd)
+        _MPI_TYPES = (ExecType.MPI, ExecType.OPENMPI, ExecType.MPICH,
+                      ExecType.INTEL_MPI, ExecType.CRAY_MPICH)
+        is_container = self.exec_info.container and self.exec_info.container != 'none'
+        is_mpi = self.exec_info.exec_type in _MPI_TYPES
 
-        # Create the appropriate executor based on exec_info type
-        if exec_info.exec_type == ExecType.LOCAL:
-            self._delegate = LocalExec(cmd, exec_info)
-        elif exec_info.exec_type == ExecType.SSH:
-            self._delegate = SshExec(cmd, exec_info)
-        elif exec_info.exec_type == ExecType.PSSH:
-            self._delegate = PsshExec(cmd, exec_info)
-        elif exec_info.exec_type in [ExecType.MPI, ExecType.OPENMPI,
-                                     ExecType.MPICH, ExecType.INTEL_MPI,
-                                     ExecType.CRAY_MPICH]:
-            self._delegate = MpiExec(cmd, exec_info)
+        if is_mpi and is_container:
+            # Build the full mpirun command first (without running), then wrap
+            # with the container so the container executes the entire mpirun
+            # invocation rather than just the application binary.
+            mpi_executor = MpiExec(self.cmd, self.exec_info.mod(container='none'))
+            mpi_cmd = mpi_executor.cmd
+            wrapped_cmd, local_info = self._prepare_container(mpi_cmd)
+            self._delegate = LocalExec(wrapped_cmd, local_info.mod(exec_type=ExecType.LOCAL))
+        elif is_mpi:
+            self._delegate = MpiExec(self.cmd, self.exec_info)
         else:
-            raise ValueError(f"Unsupported execution type: {exec_info.exec_type}")
+            cmd, exec_info = self._prepare_container(self.cmd)
+            if exec_info.exec_type == ExecType.LOCAL:
+                self._delegate = LocalExec(cmd, exec_info)
+            elif exec_info.exec_type == ExecType.SSH:
+                self._delegate = SshExec(cmd, exec_info)
+            elif exec_info.exec_type == ExecType.PSSH:
+                self._delegate = PsshExec(cmd, exec_info)
+            else:
+                raise ValueError(f"Unsupported execution type: {exec_info.exec_type}")
             
         # Copy delegate attributes to self
         self.exit_code = self._delegate.exit_code

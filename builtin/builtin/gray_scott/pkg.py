@@ -3,7 +3,7 @@ This module provides classes and methods to launch the Gray-Scott application.
 Gray-Scott is a reaction-diffusion simulation.
 """
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo, PsshExecInfo
+from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
 from jarvis_cd.util.config_parser import JsonFile
 from jarvis_cd.util.logger import Color
@@ -223,7 +223,6 @@ CMD ["/bin/bash"]
 
             nprocs = self.config.get('nprocs', 4)
             inner = ' '.join([
-                f'mpirun --allow-run-as-root -n {nprocs}',
                 '/usr/bin/gray_scott',
                 f'--width {self.config["width"]}',
                 f'--height {self.config["height"]}',
@@ -235,7 +234,9 @@ CMD ["/bin/bash"]
                 f'--Du {self.config["Du"]}',
                 f'--Dv {self.config["Dv"]}',
             ])
-            Exec(inner, LocalExecInfo(
+            Exec(inner, MpiExecInfo(
+                nprocs=nprocs,
+                ppn=self.config.get('ppn'),
                 container=self._container_engine,
                 container_image=self.deploy_image_name,
                 private_dir=self.private_dir,

@@ -4,7 +4,7 @@ LAMMPS (Large-scale Atomic/Molecular Massively Parallel Simulator) is a
 classical molecular-dynamics code from Sandia National Laboratories.
 """
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo, PsshExecInfo
+from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
 
 
@@ -181,15 +181,16 @@ CMD ["/bin/bash"]
         MpiExecInfo with hostfile for default mode.
         """
         if self.config.get('deploy_mode') == 'container':
-            nprocs = self.config.get('nprocs', 4)
-            cmd = [f'mpirun --allow-run-as-root -n {nprocs}', '/usr/bin/lmp']
+            cmd = ['/usr/bin/lmp']
             if self.config.get('script'):
                 cmd.append(f"-in {self.config['script']}")
             if self.config.get('kokkos_gpu'):
                 n_gpus = self.config.get('num_gpus', 1)
                 cmd += [f'-k on g {n_gpus}', '-sf kk', '-pk kokkos cuda/aware on']
 
-            Exec(' '.join(cmd), LocalExecInfo(
+            Exec(' '.join(cmd), MpiExecInfo(
+                nprocs=self.config['nprocs'],
+                ppn=self.config['ppn'],
                 container=self._container_engine,
                 container_image=self.deploy_image_name,
                 private_dir=self.private_dir,

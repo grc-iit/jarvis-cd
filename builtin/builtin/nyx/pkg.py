@@ -3,7 +3,7 @@ Nyx — AMReX-based cosmological simulation (HydroTests).
 Adaptive mesh, massively parallel simulation code from AMReX-Astro.
 """
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo, PsshExecInfo
+from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
 
 
@@ -181,7 +181,6 @@ CMD ["/bin/bash"]
 
             nprocs = self.config.get('nprocs', 4)
             inner = ' '.join([
-                f'mpirun --allow-run-as-root -n {nprocs}',
                 '/usr/bin/nyx_HydroTests',
                 f'max_step={self.config["max_step"]}',
                 f'amr.n_cell={self.config["n_cell"]}',
@@ -189,7 +188,8 @@ CMD ["/bin/bash"]
                 f'amr.plot_file={outdir}/plt',
                 f'amr.plot_int={self.config["plot_int"]}',
             ])
-            Exec(inner, LocalExecInfo(
+            Exec(inner, MpiExecInfo(
+                nprocs=nprocs,
                 container=self._container_engine,
                 container_image=self.deploy_image_name,
                 private_dir=self.private_dir,
