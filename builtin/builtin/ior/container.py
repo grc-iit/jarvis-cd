@@ -26,10 +26,11 @@ class IorContainer(ContainerApplication):
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Build dependencies
+# Build dependencies (IOR + Darshan)
 RUN apt-get update && apt-get install -y --no-install-recommends \\
     ca-certificates curl \\
-    build-essential \\
+    build-essential autoconf automake libtool \\
+    zlib1g-dev \\
     openmpi-bin libopenmpi-dev \\
     && rm -rf /var/lib/apt/lists/*
 
@@ -38,11 +39,24 @@ RUN curl -sL https://github.com/hpc/ior/releases/download/3.3.0/ior-3.3.0.tar.gz
     | tar -xz -C /opt \\
     && mv /opt/ior-3.3.0 /opt/ior
 
-# Configure and build
+# Configure and build IOR
 RUN cd /opt/ior \\
     && ./configure --prefix=/opt/ior/install \\
     && make -j$(nproc) \\
     && make install
+
+# Download and build Darshan runtime with MPI support
+RUN curl -sL https://github.com/darshan-hpc/darshan/archive/refs/tags/darshan-3.4.4.tar.gz \\
+    | tar -xz -C /opt \\
+    && mv /opt/darshan-darshan-3.4.4 /opt/darshan
+
+RUN cd /opt/darshan/darshan-runtime \\
+    && autoreconf -ivf \\
+    && ./configure --prefix=/opt/darshan/install \\
+        --with-log-path-by-env=DARSHAN_LOG_DIR \\
+        --with-jobid-env=PBS_JOBID \\
+        CC=mpicc \\
+    && make -j$(nproc) install
 """
 
     def _build_deploy_phase(self) -> str:
@@ -67,8 +81,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \\
     && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 
-# Copy ior binary from build container
+# Copy ior binary and darshan library from build container
 COPY --from=builder /opt/ior/install/bin/ior /usr/bin/ior
+COPY --from=builder /opt/darshan/install/lib/libdarshan.so /opt/darshan/lib/libdarshan.so
 
 CMD ["/bin/bash"]
 """

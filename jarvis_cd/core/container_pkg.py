@@ -206,7 +206,8 @@ class ContainerApplication(Application):
             image = str(Path(self.private_dir) / f'{self.deploy_image_name}.sif')
         else:
             image = self.deploy_image_name
-        return LocalExecInfo(container=engine, gpu=gpu, container_image=image)
+        return LocalExecInfo(container=engine, gpu=gpu, container_image=image,
+                             env=self.mod_env)
 
     def start(self):
         """Start is handled at the pipeline level for containerized applications."""
