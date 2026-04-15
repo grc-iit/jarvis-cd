@@ -48,7 +48,8 @@ class Pkg:
             pkg_name = import_parts[1]
 
         # Determine class name (convert snake_case to PascalCase)
-        class_name = ''.join(word.capitalize() for word in pkg_name.split('_'))
+        import re
+        class_name = ''.join(word.capitalize() for word in re.split(r'[_-]', pkg_name))
 
         # Load class
         if repo_name == 'builtin':
@@ -810,6 +811,19 @@ class Application(Pkg):
         if hasattr(self, 'pipeline') and self.pipeline:
             return self.pipeline.name
         return 'jarvis-deploy'
+
+    @property
+    def container_mounts(self) -> list:
+        """
+        Bind-mount list for container runs: shared_dir and private_dir mapped
+        at the same path inside the container so config files are accessible.
+        """
+        mounts = []
+        if self.shared_dir:
+            mounts.append(f'{self.shared_dir}:{self.shared_dir}')
+        if self.private_dir:
+            mounts.append(f'{self.private_dir}:{self.private_dir}')
+        return mounts
 
     @property
     def _container_engine(self) -> str:

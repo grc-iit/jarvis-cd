@@ -36,7 +36,7 @@ class ExecInfo:
                  hide_output=None, exec_async=False, stdin=None,
                  strict_ssh=False, timeout=None,
                  container='none', gpu=False, container_image=None,
-                 private_dir=None,
+                 private_dir=None, bind_mounts=None,
                  **kwargs):
         """
         Initialize execution information.
@@ -70,6 +70,8 @@ class ExecInfo:
             {private_dir}/{container_image}.sif when private_dir is set.
         :param private_dir: Directory where SIF files are stored (apptainer).
             When set, _prepare_container resolves the SIF path automatically.
+        :param bind_mounts: List of "host_path:container_path" strings to
+            bind-mount into the container (docker/podman: -v, apptainer: --bind).
         :param kwargs: Additional unknown parameters (silently ignored)
         """
         self.exec_type = exec_type
@@ -96,6 +98,7 @@ class ExecInfo:
         self.gpu = gpu
         self.container_image = container_image
         self.private_dir = private_dir
+        self.bind_mounts = bind_mounts or []
 
         # Basic environment for process execution (without LD_PRELOAD)
         # This is used for launching MPI itself, not the MPI processes
@@ -116,7 +119,8 @@ class ExecInfo:
                      'hostfile', 'env', 'sleep_ms', 'sudo', 'sudoenv', 'cwd',
                      'collect_output', 'pipe_stdout', 'pipe_stderr', 'hide_output',
                      'exec_async', 'stdin', 'strict_ssh', 'timeout',
-                     'container', 'gpu', 'container_image', 'private_dir']:
+                     'container', 'gpu', 'container_image', 'private_dir',
+                     'bind_mounts']:
             current_attrs[attr] = getattr(self, attr)
 
         # Update with new values

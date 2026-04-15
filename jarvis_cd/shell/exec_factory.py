@@ -53,18 +53,22 @@ class Exec(CoreExec):
         else:
             img = self.exec_info.container_image or ''
 
+        mounts = self.exec_info.bind_mounts or []
         if c == 'apptainer':
             gpu_flag = '--nv ' if gpu else ''
             env_flag = f'--env LD_PRELOAD={ld_preload} ' if ld_preload else ''
-            wrapped = f'apptainer exec {gpu_flag}{env_flag}{img} {cmd}'
+            mount_flags = ''.join(f'--bind {m} ' for m in mounts)
+            wrapped = f'apptainer exec {gpu_flag}{env_flag}{mount_flags}{img} {cmd}'
         elif c == 'podman':
             gpu_flag = '--gpus all ' if gpu else ''
             env_flag = f'-e LD_PRELOAD={ld_preload} ' if ld_preload else ''
-            wrapped = f'podman run --rm --network host {gpu_flag}{env_flag}{img} {cmd}'
+            mount_flags = ''.join(f'-v {m} ' for m in mounts)
+            wrapped = f'podman run --rm --network host {gpu_flag}{env_flag}{mount_flags}{img} {cmd}'
         else:  # docker
             gpu_flag = '--gpus all ' if gpu else ''
             env_flag = f'-e LD_PRELOAD={ld_preload} ' if ld_preload else ''
-            wrapped = f'docker run --rm --network host {gpu_flag}{env_flag}{img} {cmd}'
+            mount_flags = ''.join(f'-v {m} ' for m in mounts)
+            wrapped = f'docker run --rm --network host {gpu_flag}{env_flag}{mount_flags}{img} {cmd}'
 
         return wrapped, self.exec_info.mod(env=env)
 

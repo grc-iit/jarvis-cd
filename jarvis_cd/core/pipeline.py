@@ -930,8 +930,9 @@ class Pipeline:
             repo_name = import_parts[0]
             pkg_name = import_parts[1]
             
-        # Determine class name (convert snake_case to PascalCase)
-        class_name = ''.join(word.capitalize() for word in pkg_name.split('_'))
+        # Determine class name (convert snake_case and kebab-case to PascalCase)
+        import re
+        class_name = ''.join(word.capitalize() for word in re.split(r'[_-]', pkg_name))
         
         # Load class
         if repo_name == 'builtin':

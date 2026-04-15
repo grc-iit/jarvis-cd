@@ -66,6 +66,7 @@ CMD ["/bin/bash"]
             container=self._container_engine,
             container_image=self.deploy_image_name,
             private_dir=self.private_dir,
+            bind_mounts=self.container_mounts,
         )).run()
 
         self.sleep()
