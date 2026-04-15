@@ -492,7 +492,6 @@ class PipelineTest:
 
             start_time = time.time()
             pipeline.load('yaml', temp_yaml)
-            pipeline.build_container_if_needed()
             pipeline.configure_all_packages()
 
             # Run the pipeline
@@ -591,6 +590,5 @@ def run_yaml_auto(pipeline_file: str):
     if is_test:
         obj.run()
     else:
-        obj.build_container_if_needed()
         obj.configure_all_packages()
         obj.run()

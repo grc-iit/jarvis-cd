@@ -34,10 +34,9 @@ class Pipeline:
         self.last_loaded_file = None
 
         # Container parameters
-        self.container_build = ""  # Empty string means use pre-built image (no augment_container)
-        self.container_image = ""  # Image to use when container_build is empty
+        self.container_image = ""  # Pre-built image to use
         self.container_engine = "podman"  # Default container engine
-        self.container_base = "iowarp/iowarp-build:latest"  # Base image (only used when container_build is set)
+        self.container_base = "iowarp/iowarp-build:latest"  # Base image
         self.container_ssh_port = 2222  # Default SSH port for containers
         self.container_extensions = {}  # Custom extensions to Docker compose file
 
@@ -63,17 +62,9 @@ class Pipeline:
         """
         Check if this pipeline uses containers.
 
-        :return: True if pipeline uses containers (either build or pre-built image)
+        :return: True if pipeline uses a container image
         """
-        return bool(self.container_build or self.container_image)
-
-    def get_container_image(self) -> str:
-        """
-        Get the container image name to use.
-
-        :return: Image name (container_image if set, otherwise container_build)
-        """
-        return self.container_image if self.container_image else self.container_build
+        return bool(self.container_image)
 
     def create(self, pipeline_name: str):
         """
@@ -152,7 +143,6 @@ class Pipeline:
         if self.last_loaded_file:
             pipeline_config['last_loaded_file'] = self.last_loaded_file
         # Add container parameters (always save, even if empty/default)
-        pipeline_config['container_build'] = self.container_build
         pipeline_config['container_image'] = self.container_image
         pipeline_config['container_engine'] = self.container_engine
         pipeline_config['container_base'] = self.container_base
@@ -163,7 +153,7 @@ class Pipeline:
         # Add hostfile parameter (save path if set, None means use global jarvis hostfile)
         # For containerized pipelines, use the container-mounted path
         if self.hostfile:
-            if self.container_build or self.container_image:
+            if self.container_image:
                 # In container, hostfile will be mounted at /root/.ppi-jarvis/hostfile
                 pipeline_config['hostfile'] = "/root/.ppi-jarvis/hostfile"
             else:
@@ -428,97 +418,6 @@ class Pipeline:
             # Re-raise the original error after cleanup
             raise
 
-    def build_container_if_needed(self):
-        """
-        Build container image if pipeline has container configuration.
-        This must be called BEFORE configure_all_packages() because package configuration
-        may need the container image to already exist.
-
-        Only builds if container_build is set. If container_image is set (pre-built image),
-        skips the build process entirely.
-
-        Returns True if container was modified and rebuilt, False otherwise.
-        """
-        # Skip if not using containers at all
-        if not self.is_containerized():
-            return False
-
-        # Skip if using pre-built image (container_image is set but not container_build)
-        if self.container_image and not self.container_build:
-            print(f"Using pre-built container image: {self.container_image}")
-            return False
-
-        print(f"Building container image: {self.container_build}")
-
-        # Track whether any packages were added
-        self._container_modified = False
-
-        # Build container incrementally by adding each package
-        for pkg_def in self.packages:
-            deploy_mode = pkg_def['config'].get('deploy_mode', 'default')
-            if deploy_mode == 'container':
-                self._add_package_to_container_build(pkg_def)
-
-        # Also handle interceptors
-        for interceptor_id, interceptor_def in self.interceptors.items():
-            deploy_mode = interceptor_def.get('config', {}).get('deploy_mode', 'default')
-            if deploy_mode == 'container':
-                self._add_package_to_container_build(interceptor_def)
-
-        # Build the final container image only if modified
-        container_was_modified = self._container_modified
-        if container_was_modified and self._get_container_dockerfile_path().exists():
-            self._build_container_image()
-            print(f"Container image built: {self.get_container_image()}")
-
-        return container_was_modified
-
-    def _add_package_to_container_build(self, pkg_def: Dict[str, Any]):
-        """
-        Add a package to the container build by calling augment_container().
-        This is separate from configuration - it only builds the container.
-
-        :param pkg_def: Package definition dictionary
-        """
-        pkg_type = pkg_def['pkg_type']
-        deploy_mode = pkg_def['config'].get('deploy_mode', 'default')
-
-        # Check if package is already in container
-        is_installed, has_conflict = self._check_package_in_container(pkg_type, deploy_mode)
-
-        if has_conflict:
-            manifest = self._load_container_manifest()
-            installed_mode = manifest[pkg_type]
-            raise ValueError(
-                f"Package '{pkg_type}' is already installed in container '{self.get_container_image()}' "
-                f"with deploy_mode='{installed_mode}', but pipeline requires deploy_mode='{deploy_mode}'. "
-                f"Different deploy modes for the same package in one container are not allowed."
-            )
-
-        if is_installed:
-            print(f"Package {pkg_type} already in container (deploy_mode={deploy_mode})")
-            return
-
-        # Load package instance to call augment_container
-        try:
-            pkg_instance = self._load_package_instance(pkg_def, self.env)
-
-            if hasattr(pkg_instance, 'augment_container'):
-                dockerfile_commands = pkg_instance.augment_container()
-
-                if dockerfile_commands:
-                    self._add_package_to_container(pkg_type, deploy_mode, dockerfile_commands)
-                    self._container_modified = True  # Mark that container was modified
-                    print(f"Added {pkg_type} to container")
-                else:
-                    print(f"Warning: {pkg_type}.augment_container() returned empty commands")
-            else:
-                print(f"Warning: {pkg_type} does not have augment_container() method")
-
-        except Exception as e:
-            print(f"Error adding {pkg_type} to container: {e}")
-            raise
-
     def configure_all_packages(self):
         """
         Configure all packages and interceptors in the pipeline.
@@ -539,41 +438,14 @@ class Pipeline:
         self.save()
         print("Pipeline configuration saved")
 
-    def update(self, rebuild_container: bool = False, no_cache: bool = False):
+    def update(self):
         """
         Update pipeline by reconfiguring all packages with their existing configurations.
         This is useful when parts of the pipeline get corrupted or the environment changes.
-
-        :param rebuild_container: Force rebuild of container if containerized
-        :param no_cache: Use --no-cache flag when rebuilding container
         """
         # Reconfigure all packages with their existing configurations
         print("Reconfiguring pipeline packages with existing configurations...")
-        container_was_modified = self.build_container_if_needed()
         self.configure_all_packages()
-
-        # Handle forced container rebuild if explicitly requested
-        if rebuild_container and self.is_containerized():
-            from jarvis_cd.shell.exec_factory import Exec
-            from jarvis_cd.shell.exec_info import LocalExecInfo
-
-            containers_dir = Path.home() / '.ppi-jarvis' / 'containers'
-            dockerfile_path = containers_dir / f'{self.get_container_image()}.Dockerfile'
-
-            if not dockerfile_path.exists():
-                raise FileNotFoundError(f"Dockerfile not found at {dockerfile_path}")
-
-            # Use the pipeline's container engine
-            use_engine = self.container_engine.lower()
-
-            no_cache_flag = " --no-cache" if no_cache else ""
-            build_cmd = f"{use_engine} build{no_cache_flag} -t {self.get_container_image()} -f {dockerfile_path} {containers_dir}"
-
-            print(f"Force rebuilding container '{self.get_container_image()}' using {use_engine}...")
-            Exec(build_cmd, LocalExecInfo()).run()
-            print(f"Container '{self.get_container_image()}' rebuilt successfully")
-        elif container_was_modified:
-            print(f"Container '{self.get_container_image()}' was automatically rebuilt due to manifest changes")
 
     def _configure_package_instance(self, pkg_def: Dict[str, Any], pkg_type_label: str):
         """
@@ -789,10 +661,6 @@ class Pipeline:
             else:
                 print(f"Package {pkg_id} has no configure method")
 
-            # Build container if pipeline is containerized
-            if self.is_containerized():
-                self._add_package_to_container_image(pkg_instance, pkg_def)
-
             # Save updated pipeline
             self.save()
             print(f"Saved configuration for {pkg_id}")
@@ -873,7 +741,6 @@ class Pipeline:
         self.last_loaded_file = pipeline_config.get('last_loaded_file')
 
         # Load container parameters
-        self.container_build = pipeline_config.get('container_build', pipeline_config.get('container_name', ''))  # Backwards compat
         self.container_image = pipeline_config.get('container_image', '')
         self.container_engine = pipeline_config.get('container_engine', 'podman')
         self.container_base = pipeline_config.get('container_base', 'iowarp/iowarp-build:latest')
@@ -992,7 +859,6 @@ class Pipeline:
         self.interceptors = {}  # Store pipeline-level interceptors by name
 
         # Load container parameters
-        self.container_build = pipeline_def.get('container_build', pipeline_def.get('container_name', ''))  # Backwards compat
         self.container_image = pipeline_def.get('container_image', '')
         self.container_engine = pipeline_def.get('container_engine', 'podman')
         self.container_base = pipeline_def.get('container_base', 'iowarp/iowarp-build:latest')
@@ -1006,10 +872,6 @@ class Pipeline:
         else:
             self.hostfile = None
 
-        # Debug output
-        print(f"DEBUG: Loaded container_name='{self.get_container_image()}'")
-        print(f"DEBUG: Loaded container_base='{self.container_base}'")
-        
         # Process interceptors
         interceptors_list = pipeline_def.get('interceptors', [])
         for interceptor_def in interceptors_list:
@@ -1029,21 +891,10 @@ class Pipeline:
         # Save pipeline configuration and environment
         self.save()
 
-        # Generate container files if this is a containerized pipeline
+        # Generate container compose file if this is a containerized pipeline
         if self.is_containerized():
             print(f"Generating container configuration files...")
             self._generate_pipeline_container_yaml()
-
-            # Check if container needs rebuilding
-            needs_rebuild = self._check_container_needs_rebuild()
-            self._generate_pipeline_dockerfile()  # Updates manifest
-
-            if needs_rebuild:
-                print(f"Container manifest changed, rebuilding...")
-                self._build_global_container_image()
-            else:
-                print(f"Container manifest unchanged, skipping rebuild (use 'jarvis container update {self.get_container_image()}' to force)")
-
             self._generate_pipeline_compose_file()
 
         # Set as current pipeline
@@ -1336,184 +1187,6 @@ class Pipeline:
             except Exception as e:
                 logger.error(f"Error applying interceptor '{interceptor_name}': {e}")
 
-    def _get_container_manifest_path(self) -> Path:
-        """Get the path to the container manifest file."""
-        if not self.is_containerized():
-            raise ValueError("Container name not set")
-        containers_dir = Path.home() / '.ppi-jarvis' / 'containers'
-        containers_dir.mkdir(parents=True, exist_ok=True)
-        return containers_dir / f"{self.get_container_image()}.yaml"
-
-    def _get_container_dockerfile_path(self) -> Path:
-        """Get the path to the container Dockerfile."""
-        if not self.is_containerized():
-            raise ValueError("Container name not set")
-        containers_dir = Path.home() / '.ppi-jarvis' / 'containers'
-        containers_dir.mkdir(parents=True, exist_ok=True)
-        return containers_dir / f"{self.get_container_image()}.Dockerfile"
-
-    def _load_container_manifest(self) -> Dict[str, str]:
-        """
-        Load the container manifest.
-        Returns dict mapping pkg_type -> deploy_mode.
-        """
-        manifest_path = self._get_container_manifest_path()
-        if not manifest_path.exists():
-            return {}
-
-        with open(manifest_path, 'r') as f:
-            manifest = yaml.safe_load(f) or {}
-        return manifest
-
-    def _save_container_manifest(self, manifest: Dict[str, str]):
-        """
-        Save the container manifest.
-        manifest is a dict mapping pkg_type -> deploy_mode.
-        """
-        manifest_path = self._get_container_manifest_path()
-        with open(manifest_path, 'w') as f:
-            yaml.dump(manifest, f, default_flow_style=False)
-
-    def _check_package_in_container(self, pkg_type: str, deploy_mode: str) -> tuple:
-        """
-        Check if a package is already installed in the container.
-
-        :param pkg_type: Package type (e.g., 'builtin.ior')
-        :param deploy_mode: Deploy mode for this package
-        :return: (is_installed, needs_error) tuple
-        """
-        manifest = self._load_container_manifest()
-
-        if pkg_type not in manifest:
-            return (False, False)  # Not installed
-
-        installed_mode = manifest[pkg_type]
-        if installed_mode == deploy_mode:
-            return (True, False)  # Already installed with same mode
-
-        # Installed with different mode - this is an error
-        return (True, True)
-
-    def _add_package_to_container(self, pkg_type: str, deploy_mode: str, dockerfile_commands: str):
-        """
-        Add a package to the container image.
-
-        :param pkg_type: Package type (e.g., 'builtin.ior')
-        :param deploy_mode: Deploy mode for this package
-        :param dockerfile_commands: Dockerfile commands to append
-        """
-        # Update manifest
-        manifest = self._load_container_manifest()
-        manifest[pkg_type] = deploy_mode
-        self._save_container_manifest(manifest)
-
-        # Append to Dockerfile
-        dockerfile_path = self._get_container_dockerfile_path()
-
-        # Create Dockerfile with base image if it doesn't exist
-        if not dockerfile_path.exists():
-            with open(dockerfile_path, 'w') as f:
-                f.write(f"FROM {self.container_base}\n\n")
-                f.write("# Disable prompt during packages installation\n")
-                f.write("ARG DEBIAN_FRONTEND=noninteractive\n\n")
-
-        # Append package installation commands
-        with open(dockerfile_path, 'a') as f:
-            f.write(f"# Package: {pkg_type} (deploy_mode: {deploy_mode})\n")
-            f.write(dockerfile_commands)
-            f.write("\n")
-
-        # Add CMD instruction to run pipeline using the shared pkg.yaml
-        # This will be overwritten if more packages are added, but the final package will set the correct CMD
-        with open(dockerfile_path, 'a') as f:
-            f.write("\n# Run pipeline from shared directory\n")
-            f.write('CMD ["jarvis", "ppl", "run", "yaml", "/root/.ppi-jarvis/shared/pkg.yaml"]\n')
-
-    def _add_package_to_container_image(self, pkg_instance, pkg_def: Dict[str, Any]):
-        """
-        Add a configured package to the container image.
-        Calls augment_container() on the package instance and appends to Dockerfile.
-
-        :param pkg_instance: Configured package instance
-        :param pkg_def: Package definition dictionary
-        """
-        pkg_type = pkg_def['pkg_type']
-        deploy_mode = pkg_def['config'].get('deploy_mode', 'default')
-
-        # Check if package is already in container
-        is_installed, has_conflict = self._check_package_in_container(pkg_type, deploy_mode)
-
-        if has_conflict:
-            manifest = self._load_container_manifest()
-            installed_mode = manifest[pkg_type]
-            raise ValueError(
-                f"Package '{pkg_type}' is already installed in container '{self.get_container_image()}' "
-                f"with deploy_mode='{installed_mode}', but pipeline requires deploy_mode='{deploy_mode}'. "
-                f"Different deploy modes for the same package in one container are not allowed."
-            )
-
-        if is_installed:
-            print(f"Package {pkg_type} already in container (deploy_mode={deploy_mode})")
-            return
-
-        # Call augment_container on the instance
-        print(f"Adding {pkg_type} to container (deploy_mode={deploy_mode})")
-
-        try:
-            if hasattr(pkg_instance, 'augment_container'):
-                dockerfile_commands = pkg_instance.augment_container()
-
-                if dockerfile_commands:
-                    self._add_package_to_container(pkg_type, deploy_mode, dockerfile_commands)
-                    print(f"Added {pkg_type} to container")
-
-                    # Rebuild container image
-                    self._build_container_image()
-                else:
-                    print(f"Warning: {pkg_type}.augment_container() returned empty commands")
-            else:
-                print(f"Warning: {pkg_type} does not have augment_container() method")
-
-        except Exception as e:
-            print(f"Error calling augment_container() for {pkg_type}: {e}")
-            raise
-
-    def _build_container_image(self):
-        """
-        Build the container image using ContainerBuildExec.
-        Creates a temporary compose file and uses ContainerBuildExec for the build.
-        """
-        from jarvis_cd.shell.container_compose_exec import ContainerBuildExec
-        from jarvis_cd.shell import LocalExecInfo
-
-        dockerfile_path = self._get_container_dockerfile_path()
-
-        # Create a minimal compose file for building
-        compose_content = f"""version: '3.8'
-
-services:
-  {self.get_container_image()}:
-    build:
-      context: {dockerfile_path.parent}
-      dockerfile: {dockerfile_path.name}
-    image: {self.get_container_image()}
-"""
-
-        # Write temporary compose file
-        compose_path = dockerfile_path.parent / f"{self.get_container_image()}.compose.yaml"
-        with open(compose_path, 'w') as f:
-            f.write(compose_content)
-
-        # Use ContainerBuildExec to build
-        print(f"Building container image: {self.get_container_image()}")
-        prefer_podman = self.container_engine.lower() == 'podman'
-        build_exec = ContainerBuildExec(str(compose_path), LocalExecInfo(), prefer_podman=prefer_podman)
-        build_exec.run()
-        print(f"Container image built: {self.get_container_image()}")
-
-        # Clean up temporary compose file
-        compose_path.unlink()
-
     def _generate_pipeline_container_yaml(self):
         """
         Generate pipeline-wide YAML configuration file for use inside containers.
@@ -1556,133 +1229,6 @@ services:
 
         print(f"Generated pipeline YAML: {yaml_path}")
         return yaml_path
-
-    def _check_container_needs_rebuild(self):
-        """
-        Check if the container needs to be rebuilt by comparing the current package list
-        with the saved manifest.
-
-        :return: True if rebuild is needed, False otherwise
-        """
-        from pathlib import Path
-        import json
-
-        containers_dir = Path.home() / '.ppi-jarvis' / 'containers'
-        manifest_path = containers_dir / f'{self.get_container_image()}.manifest'
-
-        # If no manifest exists, need to build
-        if not manifest_path.exists():
-            return True
-
-        # Load existing manifest
-        with open(manifest_path, 'r') as f:
-            old_manifest = json.load(f)
-
-        # Create current manifest
-        pkg_types = sorted([pkg_def['pkg_type'] for pkg_def in self.packages])
-        interceptor_types = sorted([idef['pkg_type'] for idef in self.interceptors.values()])
-        current_manifest = {
-            'packages': pkg_types,
-            'interceptors': interceptor_types,
-            'container_base': self.container_base
-        }
-
-        # Compare manifests
-        return old_manifest != current_manifest
-
-    def _generate_pipeline_dockerfile(self):
-        """
-        Generate global container Dockerfile in ~/.ppi-jarvis/containers/ by calling
-        augment_container() on all packages. This container is built once and reused
-        across pipelines with the same container_build name.
-
-        :return: Path to generated Dockerfile
-        """
-        from pathlib import Path
-
-        # Use global containers directory
-        containers_dir = Path.home() / '.ppi-jarvis' / 'containers'
-        containers_dir.mkdir(parents=True, exist_ok=True)
-        dockerfile_path = containers_dir / f'{self.get_container_image()}.Dockerfile'
-
-        # Start with base image
-        print(f"Using base image: {self.container_base}")
-        with open(dockerfile_path, 'w') as f:
-            f.write(f"FROM {self.container_base}\n\n")
-            f.write("# Disable prompt during packages installation\n")
-            f.write("ARG DEBIAN_FRONTEND=noninteractive\n\n")
-
-        # Add each package's container augmentation
-        for pkg_def in self.packages:
-            try:
-                pkg_instance = self._load_package_instance(pkg_def, self.env)
-                if hasattr(pkg_instance, 'augment_container'):
-                    dockerfile_commands = pkg_instance.augment_container()
-                    if dockerfile_commands:
-                        with open(dockerfile_path, 'a') as f:
-                            f.write(f"# Package: {pkg_def['pkg_type']}\n")
-                            f.write(dockerfile_commands)
-                            f.write("\n")
-            except Exception as e:
-                print(f"Warning: Could not augment container for {pkg_def['pkg_type']}: {e}")
-
-        # Add interceptors
-        for interceptor_name, interceptor_def in self.interceptors.items():
-            try:
-                pkg_instance = self._load_package_instance(interceptor_def, self.env)
-                if hasattr(pkg_instance, 'augment_container'):
-                    dockerfile_commands = pkg_instance.augment_container()
-                    if dockerfile_commands:
-                        with open(dockerfile_path, 'a') as f:
-                            f.write(f"# Interceptor: {interceptor_def['pkg_type']}\n")
-                            f.write(dockerfile_commands)
-                            f.write("\n")
-            except Exception as e:
-                print(f"Warning: Could not augment container for interceptor {interceptor_def['pkg_type']}: {e}")
-
-        # Note: CMD is not added to global Dockerfile - it will be specified in docker-compose
-
-        # Save container manifest (list of package types for rebuild detection)
-        manifest_path = containers_dir / f'{self.get_container_image()}.manifest'
-        pkg_types = [pkg_def['pkg_type'] for pkg_def in self.packages]
-        interceptor_types = [idef['pkg_type'] for idef in self.interceptors.values()]
-        manifest = {
-            'packages': sorted(pkg_types),
-            'interceptors': sorted(interceptor_types),
-            'container_base': self.container_base
-        }
-        import json
-        with open(manifest_path, 'w') as f:
-            json.dump(manifest, f, indent=2)
-
-        print(f"Generated global Dockerfile: {dockerfile_path}")
-        return dockerfile_path
-
-    def _build_global_container_image(self):
-        """
-        Build the global container image from the Dockerfile in ~/.ppi-jarvis/containers/.
-        This image is tagged with container_build name and can be reused across pipelines.
-        """
-        from pathlib import Path
-        from jarvis_cd.shell import LocalExecInfo, Exec
-
-        containers_dir = Path.home() / '.ppi-jarvis' / 'containers'
-        dockerfile_path = containers_dir / f'{self.get_container_image()}.Dockerfile'
-
-        if not dockerfile_path.exists():
-            raise FileNotFoundError(f"Dockerfile not found: {dockerfile_path}")
-
-        print(f"Building global container image: {self.get_container_image()}")
-
-        # Determine build command based on container engine
-        if self.container_engine.lower() == 'podman':
-            build_cmd = f"podman build -t {self.get_container_image()} -f {dockerfile_path} {containers_dir}"
-        else:
-            build_cmd = f"docker build -t {self.get_container_image()} -f {dockerfile_path} {containers_dir}"
-
-        # Build the image
-        Exec(build_cmd, LocalExecInfo()).run()
-        print(f"Container image built: {self.get_container_image()}")
 
     def _generate_pipeline_compose_file(self):
         """
@@ -1740,7 +1286,7 @@ services:
 
         service_config = {
             'container_name': container_name,
-            'image': self.get_container_image(),  # Use pre-built global image
+            'image': self.container_image,
             'entrypoint': ['/bin/bash', '-c'],
             'command': [container_cmd],
             'network_mode': 'host',

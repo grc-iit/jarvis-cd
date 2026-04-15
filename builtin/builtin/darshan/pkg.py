@@ -28,6 +28,13 @@ class Darshan(Interceptor):
         """
         return [
             {
+                'name': 'deploy_mode',
+                'msg': 'Deployment mode: default (host) or container',
+                'type': str,
+                'default': 'default',
+                'choices': ['default', 'container'],
+            },
+            {
                 'name': 'log_dir',
                 'msg': 'Where darshan should place data',
                 'type': str,
@@ -38,6 +45,12 @@ class Darshan(Interceptor):
                 'msg': 'A semantic ID for the job to identify log files',
                 'type': str,
                 'default': 'myjob',
+            },
+            {
+                'name': 'darshan_lib_container',
+                'msg': 'Path to libdarshan.so inside the container (container mode only)',
+                'type': str,
+                'default': '/opt/darshan/lib/libdarshan.so',
             },
         ]
 
@@ -51,12 +64,15 @@ class Darshan(Interceptor):
         """
         self.env['DARSHAN_LOG_DIR'] = self.config['log_dir']
         self.env['PBS_JOBID'] = self.config['job_id']
-        self.config['DARSHAN_LIB'] = self.find_library('darshan')
-        if self.config['DARSHAN_LIB'] is None:
-            raise Exception('Could not find darshan')
+        if self.config['deploy_mode'] == 'container':
+            self.config['DARSHAN_LIB'] = self.config['darshan_lib_container']
+        else:
+            self.config['DARSHAN_LIB'] = self.find_library('darshan')
+            if self.config['DARSHAN_LIB'] is None:
+                raise Exception('Could not find darshan')
+            print(f'Found libdarshan.so at {self.config["DARSHAN_LIB"]}')
         Mkdir(self.env['DARSHAN_LOG_DIR'],
               PsshExecInfo(hostfile=self.hostfile)).run()
-        print(f'Found libdarshan.so at {self.config["DARSHAN_LIB"]}')
 
     def modify_env(self):
         """
@@ -64,4 +80,4 @@ class Darshan(Interceptor):
 
         :return: None
         """
-        self.append_env('LD_PRELOAD', self.config['DARSHAN_LIB'])
+        self.prepend_env('LD_PRELOAD', self.config['DARSHAN_LIB'])

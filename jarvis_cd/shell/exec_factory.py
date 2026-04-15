@@ -26,22 +26,59 @@ class Exec(CoreExec):
         self.exec_info = exec_info
         self._delegate = None
         
+    def _prepare_container(self, cmd: str):
+        """
+        Wrap a command for the configured container engine and return a cleaned ExecInfo.
+
+        Handles LD_PRELOAD specially: the path exists only inside the container, so
+        passing it raw in the subprocess env causes the host linker to fail. Instead:
+          - apptainer: passes LD_PRELOAD via --env (host linker never sees it)
+          - docker/podman: passes LD_PRELOAD via -e flag
+
+        :param cmd: Command to execute inside the container
+        :return: (wrapped_cmd, exec_info) — exec_info has LD_PRELOAD removed from env
+        """
+        c = self.exec_info.container
+        if not c or c == 'none':
+            return cmd, self.exec_info
+
+        gpu = self.exec_info.gpu
+        img = self.exec_info.container_image or ''
+        env = dict(self.exec_info.env) if self.exec_info.env else {}
+        ld_preload = env.pop('LD_PRELOAD', None)
+
+        if c == 'apptainer':
+            gpu_flag = '--nv ' if gpu else ''
+            env_flag = f'--env LD_PRELOAD={ld_preload} ' if ld_preload else ''
+            wrapped = f'apptainer exec {gpu_flag}{env_flag}{img} {cmd}'
+        elif c == 'podman':
+            gpu_flag = '--gpus all ' if gpu else ''
+            env_flag = f'-e LD_PRELOAD={ld_preload} ' if ld_preload else ''
+            wrapped = f'podman run --rm {gpu_flag}{env_flag}{img} {cmd}'
+        else:  # docker
+            gpu_flag = '--gpus all ' if gpu else ''
+            env_flag = f'-e LD_PRELOAD={ld_preload} ' if ld_preload else ''
+            wrapped = f'docker run --rm {gpu_flag}{env_flag}{img} {cmd}'
+
+        return wrapped, self.exec_info.mod(env=env)
+
     def run(self):
         """Execute the command using appropriate executor"""
+        cmd, exec_info = self._prepare_container(self.cmd)
+
         # Create the appropriate executor based on exec_info type
-         
-        if self.exec_info.exec_type == ExecType.LOCAL:
-            self._delegate = LocalExec(self.cmd, self.exec_info)
-        elif self.exec_info.exec_type == ExecType.SSH:
-            self._delegate = SshExec(self.cmd, self.exec_info)
-        elif self.exec_info.exec_type == ExecType.PSSH:
-            self._delegate = PsshExec(self.cmd, self.exec_info)
-        elif self.exec_info.exec_type in [ExecType.MPI, ExecType.OPENMPI, 
-                                         ExecType.MPICH, ExecType.INTEL_MPI, 
-                                         ExecType.CRAY_MPICH]:
-            self._delegate = MpiExec(self.cmd, self.exec_info)
+        if exec_info.exec_type == ExecType.LOCAL:
+            self._delegate = LocalExec(cmd, exec_info)
+        elif exec_info.exec_type == ExecType.SSH:
+            self._delegate = SshExec(cmd, exec_info)
+        elif exec_info.exec_type == ExecType.PSSH:
+            self._delegate = PsshExec(cmd, exec_info)
+        elif exec_info.exec_type in [ExecType.MPI, ExecType.OPENMPI,
+                                     ExecType.MPICH, ExecType.INTEL_MPI,
+                                     ExecType.CRAY_MPICH]:
+            self._delegate = MpiExec(cmd, exec_info)
         else:
-            raise ValueError(f"Unsupported execution type: {self.exec_info.exec_type}")
+            raise ValueError(f"Unsupported execution type: {exec_info.exec_type}")
             
         # Copy delegate attributes to self
         self.exit_code = self._delegate.exit_code

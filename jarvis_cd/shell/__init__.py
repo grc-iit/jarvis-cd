@@ -54,7 +54,8 @@ from .process import Kill, KillAll, Which, Mkdir, Rm, Chmod, Sleep, Echo
 from .resource_graph_exec import ResourceGraphExec
 from .container_compose_exec import (
     PodmanComposeExec, DockerComposeExec, ContainerComposeExec,
-    PodmanBuildExec, DockerBuildExec, ContainerBuildExec
+    PodmanBuildExec, DockerBuildExec, ContainerBuildExec,
+    ApptainerBuildExec, ApptainerExec
 )
 from .container_exec import (
     PodmanContainerExec, DockerContainerExec, ContainerExec
@@ -87,6 +88,7 @@ __all__ = [
     # Container compose
     'PodmanComposeExec', 'DockerComposeExec', 'ContainerComposeExec',
     'PodmanBuildExec', 'DockerBuildExec', 'ContainerBuildExec',
+    'ApptainerBuildExec', 'ApptainerExec',
 
     # Container exec
     'PodmanContainerExec', 'DockerContainerExec', 'ContainerExec'

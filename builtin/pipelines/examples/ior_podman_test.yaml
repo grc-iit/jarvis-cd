@@ -9,9 +9,8 @@ name: ior_podman_test
 # No env field - will capture current environment automatically
 
 # Container configuration
-container_build: ior_test_container_podman
 container_engine: podman
-container_base: docker.io/iowarp/iowarp-build:latest
+container_base: docker.io/ubuntu:24.04
 
 pkgs:
   # IOR benchmark with container deployment

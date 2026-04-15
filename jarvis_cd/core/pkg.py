@@ -533,20 +533,6 @@ class Pkg:
             # Keep mod_env in sync (exact replica of env + LD_PRELOAD)
             self.mod_env[env_name] = val
 
-    def augment_container(self) -> str:
-        """
-        Generate Dockerfile commands to install this package in a container.
-        This is an instance method called after package configuration.
-        The package can access its configuration via self.config.
-
-        Override this method in package implementations to provide
-        package-specific installation commands.
-
-        :return: Dockerfile commands as a string
-        """
-        # Default: no installation needed (packages should override this)
-        return ""
-
     def find_library(self, library_name: str) -> Optional[str]:
         """
         Find a shared library by searching LD_LIBRARY_PATH and system paths.
@@ -787,17 +773,194 @@ class Application(Pkg):
     """
     Base class for applications that run and complete automatically.
     Applications typically don't need manual stopping.
+
+    Includes built-in container build support (formerly ContainerApplication).
+    When deploy_mode == 'container', _configure() automatically calls
+    build_phase() and build_deploy_phase() after updating config.
+    Subclasses override _build_phase() and _build_deploy_phase() to provide
+    Dockerfile content for the two-phase container build strategy.
     """
 
     def __init__(self, pipeline):
         super().__init__(pipeline=pipeline)
-        
+
     def _init(self):
         """
         Initialize application-specific variables.
         Override in subclasses.
         """
         pass
+
+    # ------------------------------------------------------------------
+    # Container support — properties
+    # ------------------------------------------------------------------
+
+    @property
+    def build_image_name(self) -> str:
+        """
+        Stable name for the BUILD container image.
+        Independent of pipeline name so it can be reused across pipelines.
+        """
+        pkg_name = self.pkg_type.split('.')[-1].replace('_', '-')
+        return f'jarvis-build-{pkg_name}'
+
+    @property
+    def deploy_image_name(self) -> str:
+        """Name for the DEPLOY container image (pipeline-specific)."""
+        if hasattr(self, 'pipeline') and self.pipeline:
+            return self.pipeline.name
+        return 'jarvis-deploy'
+
+    @property
+    def _container_engine(self) -> str:
+        """Get the container engine from pipeline config."""
+        return getattr(self.pipeline, 'container_engine', 'docker').lower()
+
+    @property
+    def _build_engine(self) -> str:
+        """Get the engine to use for building (apptainer needs docker/podman as intermediate)."""
+        engine = self._container_engine
+        if engine == 'apptainer':
+            import shutil
+            if shutil.which('docker'):
+                return 'docker'
+            elif shutil.which('podman'):
+                return 'podman'
+            else:
+                raise RuntimeError(
+                    "Apptainer requires docker or podman for the build phase. "
+                    "Neither was found in PATH."
+                )
+        return engine
+
+    # ------------------------------------------------------------------
+    # Container support — overrideable Dockerfile generators
+    # ------------------------------------------------------------------
+
+    def _build_phase(self) -> str:
+        """
+        Return the Dockerfile content for the BUILD container.
+
+        Override in subclasses to provide application-specific build steps.
+        Return None to skip the build phase.
+
+        :return: Dockerfile content string, or None to skip
+        """
+        return None
+
+    def _build_deploy_phase(self) -> str:
+        """
+        Return the Dockerfile content for the DEPLOY container.
+
+        Override in subclasses. Return None to skip.
+
+        :return: Dockerfile content string, or None to skip
+        """
+        return None
+
+    # ------------------------------------------------------------------
+    # Container support — build methods
+    # ------------------------------------------------------------------
+
+    def build_phase(self):
+        """
+        Build the BUILD container image and save Dockerfile to private_dir.
+
+        Skipped when _build_phase() returns None.
+        """
+        dockerfile_content = self._build_phase()
+        if not dockerfile_content:
+            return
+        from pathlib import Path
+        from jarvis_cd.shell import Exec, LocalExecInfo
+        private_path = Path(self.private_dir)
+        private_path.mkdir(parents=True, exist_ok=True)
+        dockerfile_path = private_path / 'build.Dockerfile'
+        with open(dockerfile_path, 'w') as f:
+            f.write(dockerfile_content)
+        print(f"Building build container: {self.build_image_name}")
+        engine = self._build_engine
+        build_cmd = (
+            f"{engine} build -t {self.build_image_name} "
+            f"-f {dockerfile_path} {private_path}"
+        )
+        Exec(build_cmd, LocalExecInfo()).run()
+        print(f"Build container ready: {self.build_image_name}")
+
+    def build_deploy_phase(self):
+        """
+        Build the DEPLOY container image and save Dockerfile to private_dir.
+
+        For docker/podman: builds image named after the pipeline.
+        For apptainer: builds docker image then converts to SIF file stored in
+        private_dir/{deploy_image_name}.sif.
+        """
+        dockerfile_content = self._build_deploy_phase()
+        if not dockerfile_content:
+            return
+        from pathlib import Path
+        from jarvis_cd.shell import Exec, LocalExecInfo
+        private_path = Path(self.private_dir)
+        private_path.mkdir(parents=True, exist_ok=True)
+        dockerfile_path = private_path / 'deploy.Dockerfile'
+        with open(dockerfile_path, 'w') as f:
+            f.write(dockerfile_content)
+        engine = self._container_engine
+        build_engine = self._build_engine
+        print(f"Building deploy container: {self.deploy_image_name}")
+        build_cmd = (
+            f"{build_engine} build -t {self.deploy_image_name} "
+            f"-f {dockerfile_path} {private_path}"
+        )
+        Exec(build_cmd, LocalExecInfo()).run()
+        if engine == 'apptainer':
+            sif_path = private_path / f'{self.deploy_image_name}.sif'
+            print(f"Converting to Apptainer SIF: {sif_path}")
+            from jarvis_cd.shell.container_compose_exec import ApptainerBuildExec
+            ApptainerBuildExec(
+                self.deploy_image_name,
+                str(sif_path),
+                LocalExecInfo(),
+                source='docker-daemon'
+            ).run()
+            print(f"Apptainer SIF ready: {sif_path}")
+        else:
+            print(f"Deploy container ready: {self.deploy_image_name}")
+
+    def container_exec_info(self, gpu: bool = False):
+        """
+        Return a LocalExecInfo pre-configured with container engine settings.
+
+        For apptainer, container_image is set to the SIF file path under
+        private_dir. For docker/podman, it is set to the deploy image name.
+
+        :param gpu: Enable GPU passthrough into the container.
+        :return: LocalExecInfo with container, gpu, and container_image set.
+        """
+        from jarvis_cd.shell import LocalExecInfo
+        from pathlib import Path
+        engine = self._container_engine
+        if engine == 'apptainer':
+            image = str(Path(self.private_dir) / f'{self.deploy_image_name}.sif')
+        else:
+            image = self.deploy_image_name
+        return LocalExecInfo(container=engine, gpu=gpu, container_image=image,
+                             env=self.mod_env)
+
+    # ------------------------------------------------------------------
+    # Override _configure to trigger container builds when appropriate
+    # ------------------------------------------------------------------
+
+    def _configure(self, **kwargs):
+        """
+        Configure the application.
+        Updates self.config from kwargs, then triggers container builds when
+        deploy_mode == 'container'.
+        """
+        self.update_config(kwargs, rebuild=False)
+        if self.config.get('deploy_mode') == 'container':
+            self.build_phase()
+            self.build_deploy_phase()
 
 
 class Interceptor(Pkg):
