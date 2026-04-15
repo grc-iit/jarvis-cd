@@ -21,9 +21,9 @@ exec_info = SshExecInfo(hostfile=Hostfile(["remote.host.com"]))
 result = SshExec("ls -la", exec_info)
 
 # MPI execution
-from jarvis_cd.shell import MpiExecInfo, MpiExec
+from jarvis_cd.shell import MpiExecInfo, Exec
 exec_info = MpiExecInfo(nprocs=4)
-result = MpiExec("./my_mpi_program", exec_info)
+result = Exec("./my_mpi_program", exec_info)
 
 # File transfer
 from jarvis_cd.shell import ScpExecInfo, ScpExec
@@ -46,7 +46,7 @@ from .core_exec import CoreExec, LocalExec, MpiVersion
 from .ssh_exec import SshExec, PsshExec
 from .mpi_exec import (
     LocalMpiExec, OpenMpiExec, MpichExec, IntelMpiExec,
-    CrayMpichExec, MpiExec
+    CrayMpichExec
 )
 from .scp_exec import ScpExec, PscpExec
 from .exec_factory import Exec
@@ -74,7 +74,7 @@ __all__ = [
 
     # MPI execution
     'LocalMpiExec', 'OpenMpiExec', 'MpichExec', 'IntelMpiExec',
-    'CrayMpichExec', 'MpiExec',
+    'CrayMpichExec',
 
     # File transfer
     'ScpExec', 'PscpExec',

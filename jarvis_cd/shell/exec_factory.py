@@ -3,9 +3,9 @@ Exec base class for Jarvis shell execution.
 """
 from typing import Dict
 from .exec_info import ExecInfo, ExecType
-from .core_exec import CoreExec, LocalExec
+from .core_exec import CoreExec, LocalExec, MpiVersion
 from .ssh_exec import SshExec, PsshExec
-from .mpi_exec import MpiExec
+from .mpi_exec import OpenMpiExec, MpichExec, IntelMpiExec, CrayMpichExec
 from .scp_exec import ScpExec, PscpExec
 
 
@@ -13,11 +13,11 @@ class Exec(CoreExec):
     """
     Base execution class that delegates to appropriate executor based on ExecInfo type.
     """
-    
+
     def __init__(self, cmd: str, exec_info: ExecInfo):
         """
         Initialize executor with command and execution info.
-        
+
         :param cmd: Command to execute
         :param exec_info: Execution information
         """
@@ -25,7 +25,7 @@ class Exec(CoreExec):
         self.cmd = cmd
         self.exec_info = exec_info
         self._delegate = None
-        
+
     def _prepare_container(self, cmd: str):
         """
         Wrap a command for the configured container engine and return a cleaned ExecInfo.
@@ -59,18 +59,56 @@ class Exec(CoreExec):
             env_flag = f'--env LD_PRELOAD={ld_preload} ' if ld_preload else ''
             mount_flags = ''.join(f'--bind {m} ' for m in mounts)
             wrapped = f'apptainer exec {gpu_flag}{env_flag}{mount_flags}{img} {cmd}'
-        elif c == 'podman':
-            gpu_flag = '--gpus all ' if gpu else ''
+        elif c in ('podman', 'docker'):
+            # Use 'exec' into the already-running container (started by
+            # docker/podman compose).  The container_image doubles as the
+            # container name stem; the compose file names the container
+            # "{image}_container".
+            container_name = f'{img}_container' if img else ''
             env_flag = f'-e LD_PRELOAD={ld_preload} ' if ld_preload else ''
-            mount_flags = ''.join(f'-v {m} ' for m in mounts)
-            wrapped = f'podman run --rm --network host {gpu_flag}{env_flag}{mount_flags}{img} {cmd}'
-        else:  # docker
-            gpu_flag = '--gpus all ' if gpu else ''
-            env_flag = f'-e LD_PRELOAD={ld_preload} ' if ld_preload else ''
-            mount_flags = ''.join(f'-v {m} ' for m in mounts)
-            wrapped = f'docker run --rm --network host {gpu_flag}{env_flag}{mount_flags}{img} {cmd}'
+            wrapped = f'{c} exec {env_flag}{container_name} {cmd}'
 
         return wrapped, self.exec_info.mod(env=env)
+
+    def _resolve_exec_info(self, cmd: str, exec_info: ExecInfo):
+        """
+        If exec_type is LOCAL but the hostfile points to remote hosts,
+        promote to SSH on the first host.  This keeps container commands
+        (docker exec …) running where the containers actually live.
+        """
+        if exec_info.exec_type == ExecType.LOCAL:
+            hostfile = exec_info.hostfile
+            if hostfile and not hostfile.is_local():
+                return cmd, exec_info.mod(
+                    exec_type=ExecType.SSH,
+                    hostfile=hostfile.subset(1),
+                    port=22,
+                )
+        return cmd, exec_info
+
+    def _detect_mpi(self, exec_info: ExecInfo):
+        """
+        Detect the MPI implementation.  MpiVersion runs 'mpiexec --version'
+        and may need to reach a container on a remote host — it handles
+        that internally via SshExec so there is no circular dependency.
+        """
+        detector = MpiVersion(exec_info)
+        return detector.version
+
+    def _create_mpi_executor(self, cmd, exec_info):
+        """Create the concrete MPI executor after detecting the implementation."""
+        mpi_type = self._detect_mpi(exec_info)
+        if mpi_type == ExecType.OPENMPI:
+            return OpenMpiExec(cmd, exec_info)
+        elif mpi_type == ExecType.MPICH:
+            return MpichExec(cmd, exec_info)
+        elif mpi_type == ExecType.INTEL_MPI:
+            return IntelMpiExec(cmd, exec_info)
+        elif mpi_type == ExecType.CRAY_MPICH:
+            return CrayMpichExec(cmd, exec_info)
+        else:
+            print(f"Unknown MPI type {mpi_type}, defaulting to MPICH")
+            return MpichExec(cmd, exec_info)
 
     def run(self):
         """Execute the command using appropriate executor"""
@@ -83,42 +121,47 @@ class Exec(CoreExec):
             # Build the full mpirun command first (without running), then wrap
             # with the container so the container executes the entire mpirun
             # invocation rather than just the application binary.
-            mpi_executor = MpiExec(self.cmd, self.exec_info.mod(container='none', dry_run=True))
+            mpi_executor = self._create_mpi_executor(
+                self.cmd, self.exec_info.mod(container='none', dry_run=True))
             mpi_cmd = mpi_executor.cmd
             wrapped_cmd, local_info = self._prepare_container(mpi_cmd)
-            self._delegate = LocalExec(wrapped_cmd, local_info.mod(exec_type=ExecType.LOCAL))
+            wrapped_cmd, local_info = self._resolve_exec_info(
+                wrapped_cmd, local_info.mod(exec_type=ExecType.LOCAL))
         elif is_mpi:
-            self._delegate = MpiExec(self.cmd, self.exec_info)
+            self._delegate = self._create_mpi_executor(self.cmd, self.exec_info)
         else:
             cmd, exec_info = self._prepare_container(self.cmd)
-            if exec_info.exec_type == ExecType.LOCAL:
-                self._delegate = LocalExec(cmd, exec_info)
-            elif exec_info.exec_type == ExecType.SSH:
-                self._delegate = SshExec(cmd, exec_info)
-            elif exec_info.exec_type == ExecType.PSSH:
-                self._delegate = PsshExec(cmd, exec_info)
+            wrapped_cmd, local_info = self._resolve_exec_info(cmd, exec_info)
+
+        if not self._delegate:
+            if local_info.exec_type == ExecType.LOCAL:
+                self._delegate = LocalExec(wrapped_cmd, local_info)
+            elif local_info.exec_type == ExecType.SSH:
+                self._delegate = SshExec(wrapped_cmd, local_info)
+            elif local_info.exec_type == ExecType.PSSH:
+                self._delegate = PsshExec(wrapped_cmd, local_info)
             else:
-                raise ValueError(f"Unsupported execution type: {exec_info.exec_type}")
-            
+                raise ValueError(f"Unsupported execution type: {local_info.exec_type}")
+
         # Copy delegate attributes to self
         self.exit_code = self._delegate.exit_code
         self.stdout = self._delegate.stdout
         self.stderr = self._delegate.stderr
         self.processes = self._delegate.processes
         self.output_threads = self._delegate.output_threads
-        
+
         return self._delegate
-        
+
     def get_cmd(self) -> str:
         """Get the command string"""
         return self.cmd
-        
+
     def wait(self, hostname: str = 'localhost') -> int:
         """Wait for execution to complete"""
         if self._delegate:
             return self._delegate.wait(hostname)
         return 0
-        
+
     def wait_all(self) -> Dict[str, int]:
         """Wait for all executions to complete"""
         if self._delegate:

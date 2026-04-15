@@ -271,11 +271,10 @@ class TestIorDockerCluster(unittest.TestCase):
 
         self.assertEqual(config['hostfile'], expected_hostfile)
 
-    def test_compose_command_uses_shared_dir_pipeline_yaml(self):
+    def test_compose_container_runs_ssh_and_sleeps(self):
         """
-        The container entrypoint command should reference the pipeline
-        YAML via its shared_dir path (identical on host and container),
-        not a hardcoded /root/.ppi-jarvis path.
+        The container entrypoint should start SSH and sleep forever.
+        The host-side jarvis orchestrates — no jarvis needed inside.
         """
         pipeline = Pipeline()
         pipeline.create('docker_cluster_cmd')
@@ -292,11 +291,9 @@ class TestIorDockerCluster(unittest.TestCase):
         service = compose['services']['docker_cluster_cmd']
         container_cmd = service['command'][0]
 
-        shared_dir = str(self.jarvis.get_pipeline_shared_dir('docker_cluster_cmd'))
-        expected_yaml_path = f"{shared_dir}/pipeline.yaml"
-
-        self.assertIn(expected_yaml_path, container_cmd)
-        self.assertNotIn('/root/.ppi-jarvis', container_cmd)
+        self.assertIn('/usr/sbin/sshd', container_cmd)
+        self.assertIn('sleep infinity', container_cmd)
+        self.assertNotIn('jarvis', container_cmd)
 
 
 if __name__ == '__main__':

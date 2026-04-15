@@ -39,6 +39,7 @@ class Pipeline:
         self.container_base = "iowarp/iowarp-build:latest"  # Base image
         self.container_ssh_port = 2222  # Default SSH port for containers
         self.container_extensions = {}  # Custom extensions to Docker compose file
+        self.container_env = {}  # Environment variables injected into containers
 
         # Hostfile parameter (None means use global jarvis hostfile)
         self.hostfile = None
@@ -160,6 +161,8 @@ class Pipeline:
         pipeline_config['container_ssh_port'] = self.container_ssh_port
         if self.container_extensions:
             pipeline_config['container_extensions'] = self.container_extensions
+        if self.container_env:
+            pipeline_config['container_env'] = self.container_env
 
         # Add hostfile parameter (save path if set, None means use global jarvis hostfile)
         # Hostfile is always saved into the shared directory so it is
@@ -411,12 +414,10 @@ class Pipeline:
             if load_type and pipeline_file:
                 self.load(load_type, pipeline_file)
 
-            # Configure all packages before starting
+            # Configure all packages before starting.
             # This runs _configure() on each package, which sets up
-            # environment variables (e.g., CHI_SERVER_CONF) needed by start()
-            # Skip when containerized — configure happens inside the container
-            if not self.is_containerized():
-                self.configure_all_packages()
+            # environment variables (e.g., CHI_SERVER_CONF) needed by start().
+            self.configure_all_packages()
 
             self.start()
             logger.pipeline("Pipeline started successfully. Stopping packages...")
@@ -759,6 +760,7 @@ class Pipeline:
         self.container_base = pipeline_config.get('container_base', 'iowarp/iowarp-build:latest')
         self.container_ssh_port = pipeline_config.get('container_ssh_port', 2222)
         self.container_extensions = pipeline_config.get('container_extensions', {})
+        self.container_env = pipeline_config.get('container_env', {})
 
         # Load hostfile parameter (None means use global jarvis hostfile)
         hostfile_path = pipeline_config.get('hostfile')
@@ -877,6 +879,7 @@ class Pipeline:
         self.container_base = pipeline_def.get('container_base', 'iowarp/iowarp-build:latest')
         self.container_ssh_port = pipeline_def.get('container_ssh_port', 2222)
         self.container_extensions = pipeline_def.get('container_extensions', {})
+        self.container_env = pipeline_def.get('container_env', {})
 
         # Load hostfile parameter (None means use global jarvis hostfile)
         hostfile_path = pipeline_def.get('hostfile')
@@ -1367,23 +1370,9 @@ class Pipeline:
             def to_host_path(path_str):
                 return path_str
 
-        # Build jarvis init + repo registration commands for inside the container
-        repo_add_cmds = 'jarvis init && '
-        # Mount registered repos into the container and register them.
-        # Skip the builtin repo — it comes from the jarvis-cd installation
-        # inside the container and is auto-registered by 'jarvis init'.
-        repo_mounts = []
-        for repo_path in self.jarvis.repos.get('repos', []):
-            repo_name = Path(repo_path).name
-            if repo_name == 'builtin':
-                continue
-            container_repo_path = f'/opt/jarvis-repos/{repo_name}'
-            repo_mounts.append((repo_path, container_repo_path))
-            repo_add_cmds += f'jarvis repo add {container_repo_path} && '
-
-        # Build container command - start SSH, init jarvis, and run pipeline, then stop SSH.
-        # The pipeline YAML and hostfile live in shared_dir, which is
-        # mounted at the same path inside the container.
+        # Container entrypoint: start SSH and sleep forever.
+        # The host-side jarvis orchestrates packages by SSH/MPI-ing into
+        # the containers — no jarvis installation needed inside them.
         # When JARVIS_DOCKER_HOST_PREFIX is set (DinD/devcontainer), the home
         # directory is on the overlay filesystem and invisible to sibling containers.
         # Copy SSH keys to a Docker-accessible location under /workspace.
@@ -1396,7 +1385,6 @@ class Pipeline:
                     shutil.rmtree(docker_ssh_dir)
                 shutil.copytree(ssh_dir, docker_ssh_dir)
             ssh_dir = docker_ssh_dir
-        pipeline_yaml = str(shared_dir / 'pipeline.yaml')
         container_cmd = (
             f'set -e && '
             f'cp -r /root/.ssh_host /root/.ssh && '
@@ -1408,13 +1396,9 @@ class Pipeline:
             f'echo "    Port {ssh_port}" >> /root/.ssh/config && '
             f'echo "    StrictHostKeyChecking no" >> /root/.ssh/config && '
             f'chmod 600 /root/.ssh/config && '
-            f'sed -i "s/^#*Port .*/Port 2222/" /etc/ssh/sshd_config && '
+            f'sed -i "s/^#*Port .*/Port {ssh_port}/" /etc/ssh/sshd_config && '
             f'/usr/sbin/sshd && '
-            f'{repo_add_cmds}'
-            f'jarvis ppl run yaml {pipeline_yaml}; '
-            f'EXIT_CODE=$?; '
-            f'pkill sshd; '
-            f'exit $EXIT_CODE'
+            f'sleep infinity'
         )
 
         # Create compose configuration using the global container image.
@@ -1431,10 +1415,6 @@ class Pipeline:
             f"{to_host_path(ssh_dir)}:/root/.ssh_host:ro"
         ]
 
-        # Mount registered repos into the container
-        for host_path, container_path in repo_mounts:
-            volumes.append(f"{to_host_path(host_path)}:{container_path}:ro")
-
 
         service_config = {
             'container_name': container_name,
@@ -1445,6 +1425,12 @@ class Pipeline:
             'ipc': 'host',  # Share IPC namespace with host (removes shm limits)
             'volumes': volumes
         }
+
+        # Inject container environment variables into the compose service
+        if self.container_env:
+            service_config['environment'] = {
+                str(k): str(v) for k, v in self.container_env.items()
+            }
 
         # Note: GPU configuration is not included by default
         # If GPU access is needed, users should add it to their pipeline configuration
@@ -1493,12 +1479,12 @@ class Pipeline:
 
     def _start_containerized_pipeline(self):
         """
-        Start containerized pipeline by deploying containers to all nodes in hostfile using pssh.
-        Uses the pre-built global container image.
+        Start containerized pipeline:
+        1. Launch containers in detached mode (SSH daemons only)
+        2. Run each package's start() — commands reach containers via SSH/MPI
         """
         from jarvis_cd.util.logger import logger
-        from jarvis_cd.shell import LocalExecInfo, PsshExecInfo
-        from jarvis_cd.shell.container_compose_exec import ContainerComposeExec
+        from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo
 
         logger.info("Starting containerized pipeline deployment")
 
@@ -1509,82 +1495,128 @@ class Pipeline:
         if not compose_path.exists():
             raise FileNotFoundError(f"Compose file not found: {compose_path}. Did you load the pipeline?")
 
-        # Determine container runtime preference
-        prefer_podman = self.container_engine.lower() == 'podman'
+        # Determine container runtime
+        engine = self.container_engine.lower()
+        if engine == 'podman':
+            up_cmd = f"podman-compose -f {compose_path} up -d"
+        else:
+            up_cmd = f"docker compose -f {compose_path} up -d"
 
-        # Check if we have a hostfile
+        # Launch containers on every node in the hostfile
         hostfile = self.get_hostfile()
         if not hostfile or len(hostfile) == 0:
             logger.warning("No hostfile found, deploying to localhost only")
             exec_info = LocalExecInfo()
         else:
-            logger.info(f"Deploying containers to all nodes in hostfile")
+            logger.info("Deploying containers to all nodes in hostfile")
             exec_info = PsshExecInfo(hostfile=hostfile)
 
-        # Start containers (uses pre-built image)
-        ContainerComposeExec(str(compose_path), exec_info, action='up', prefer_podman=prefer_podman).run()
+        Exec(up_cmd, exec_info).run()
+        logger.success("Containers started (SSH ready)")
 
-        logger.success(f"Containers started")
+        # Now run each package via the normal per-package flow.
+        # Packages use PsshExecInfo / MpiExecInfo with the hostfile,
+        # which reaches the containers through SSH on the configured port.
+        for pkg_def in self.packages:
+            try:
+                logger.success(f"[{pkg_def['pkg_type']}] [START] BEGIN")
+                pkg_instance = self._load_package_instance(pkg_def, self.env)
+                self._apply_interceptors_to_package(pkg_instance, pkg_def)
+
+                if hasattr(pkg_instance, 'start'):
+                    pkg_instance.start()
+                else:
+                    logger.warning(f"Package {pkg_def['pkg_id']} has no start method")
+
+                self.env.update(pkg_instance.env)
+                logger.success(f"[{pkg_def['pkg_type']}] [START] END")
+            except Exception as e:
+                logger.error(f"Error starting package {pkg_def['pkg_id']}: {e}")
+                raise RuntimeError(
+                    f"Pipeline startup failed at package '{pkg_def['pkg_id']}': {e}"
+                ) from e
 
     def _stop_containerized_pipeline(self):
         """
-        Stop containerized pipeline by stopping containers on all nodes in hostfile using pssh.
+        Stop containerized pipeline:
+        1. Stop each package via its stop() method
+        2. Bring down the containers
         """
         from jarvis_cd.util.logger import logger
-        from jarvis_cd.shell import LocalExecInfo, PsshExecInfo
-        from jarvis_cd.shell.container_compose_exec import ContainerComposeExec
+        from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo
 
         logger.info("Stopping containerized pipeline")
 
-        # Determine container runtime preference
-        prefer_podman = self.container_engine.lower() == 'podman'
+        # Stop packages in reverse order (same as non-containerized)
+        for pkg_def in reversed(self.packages):
+            try:
+                logger.success(f"[{pkg_def['pkg_type']}] [STOP] BEGIN")
+                pkg_instance = self._load_package_instance(pkg_def, self.env)
+                if hasattr(pkg_instance, 'stop'):
+                    pkg_instance.stop()
+                logger.success(f"[{pkg_def['pkg_type']}] [STOP] END")
+            except Exception as e:
+                logger.error(f"Error stopping package {pkg_def['pkg_id']}: {e}")
 
-        # Get compose file path
+        # Bring down the containers
         shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
         compose_path = shared_dir / 'docker-compose.yaml'
 
-        # Check if we have a hostfile
+        engine = self.container_engine.lower()
+        if engine == 'podman':
+            down_cmd = f"podman-compose -f {compose_path} down"
+        else:
+            down_cmd = f"docker compose -f {compose_path} down"
+
         hostfile = self.get_hostfile()
         if not hostfile or len(hostfile) == 0:
-            logger.warning("No hostfile found, stopping on localhost only")
             exec_info = LocalExecInfo()
         else:
-            logger.info(f"Stopping containers on all nodes in hostfile")
             exec_info = PsshExecInfo(hostfile=hostfile)
 
-        # Stop containers
-        ContainerComposeExec(str(compose_path), exec_info, action='down', prefer_podman=prefer_podman).run()
-
-        logger.success(f"Containers stopped")
+        Exec(down_cmd, exec_info).run()
+        logger.success("Containers stopped")
 
     def _kill_containerized_pipeline(self):
         """
-        Kill containerized pipeline by force-stopping containers on all nodes in hostfile using pssh.
+        Force-kill containerized pipeline:
+        1. Kill each package
+        2. Force-remove the containers
         """
         from jarvis_cd.util.logger import logger
-        from jarvis_cd.shell import LocalExecInfo, PsshExecInfo
-        from jarvis_cd.shell.container_compose_exec import ContainerComposeExec
+        from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo
 
         logger.info("Force-killing containerized pipeline")
 
-        # Determine container runtime preference
-        prefer_podman = self.container_engine.lower() == 'podman'
+        # Kill packages
+        for pkg_def in self.packages:
+            try:
+                logger.success(f"[{pkg_def['pkg_type']}] [KILL] BEGIN")
+                pkg_instance = self._load_package_instance(pkg_def, self.env)
+                if hasattr(pkg_instance, 'kill'):
+                    pkg_instance.kill()
+                logger.success(f"[{pkg_def['pkg_type']}] [KILL] END")
+            except Exception as e:
+                logger.error(f"Error killing package {pkg_def['pkg_id']}: {e}")
 
-        # Get compose file path
+        # Force-remove containers
         shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
         compose_path = shared_dir / 'docker-compose.yaml'
 
-        # Check if we have a hostfile
+        engine = self.container_engine.lower()
+        if engine == 'podman':
+            kill_cmd = f"podman-compose -f {compose_path} kill"
+            down_cmd = f"podman-compose -f {compose_path} down"
+        else:
+            kill_cmd = f"docker compose -f {compose_path} kill"
+            down_cmd = f"docker compose -f {compose_path} down"
+
         hostfile = self.get_hostfile()
         if not hostfile or len(hostfile) == 0:
-            logger.warning("No hostfile found, force-killing on localhost only")
             exec_info = LocalExecInfo()
         else:
-            logger.info(f"Force-killing containers on all nodes in hostfile")
             exec_info = PsshExecInfo(hostfile=hostfile)
 
-        # Kill and then remove containers
-        ContainerComposeExec(str(compose_path), exec_info, action='kill', prefer_podman=prefer_podman).run()
-        ContainerComposeExec(str(compose_path), exec_info, action='down', prefer_podman=prefer_podman).run()
-
-        logger.success(f"Containers force-killed")
+        Exec(kill_cmd, exec_info).run()
+        Exec(down_cmd, exec_info).run()
+        logger.success("Containers force-killed")

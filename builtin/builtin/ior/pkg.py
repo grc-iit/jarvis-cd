@@ -137,9 +137,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     && rm -rf /var/lib/apt/lists/*
 
 # Download IOR release tarball (includes pre-generated configure)
-RUN curl -sL https://github.com/hpc/ior/releases/download/3.3.0/ior-3.3.0.tar.gz \\
-    | tar -xz -C /opt \\
-    && mv /opt/ior-3.3.0 /opt/ior
+RUN mkdir -p /opt/ior && curl -sL https://github.com/hpc/ior/releases/download/3.3.0/ior-3.3.0.tar.gz \\
+    | tar xz --strip-components=1 -C /opt/ior
 
 # Configure and build IOR
 RUN cd /opt/ior \\
@@ -148,9 +147,8 @@ RUN cd /opt/ior \\
     && make install
 
 # Download and build Darshan runtime with MPI support
-RUN curl -sL https://github.com/darshan-hpc/darshan/archive/refs/tags/darshan-3.4.4.tar.gz \\
-    | tar -xz -C /opt \\
-    && mv /opt/darshan-darshan-3.4.4 /opt/darshan
+RUN mkdir -p /opt/darshan && curl -sL https://github.com/darshan-hpc/darshan/archive/refs/tags/darshan-3.4.4.tar.gz \\
+    | tar xz --strip-components=1 -C /opt/darshan
 
 RUN cd /opt/darshan/darshan-runtime \\
     && autoreconf -ivf \\
@@ -256,10 +254,11 @@ CMD ["/bin/bash"]
             nprocs=cfg['nprocs'],
             ppn=cfg['ppn'],
             hostfile=self.hostfile,
+            port=self.ssh_port,
             container=self._container_engine,
             container_image=self.deploy_image_name,
             shared_dir=self.shared_dir,
-                private_dir=self.private_dir,
+            private_dir=self.private_dir,
             env=self.mod_env,
         )).run()
 

@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from jarvis_cd.shell.core_exec import LocalExec
 from jarvis_cd.shell.ssh_exec import SshExec, PsshExec
-from jarvis_cd.shell.mpi_exec import MpiExec
+from jarvis_cd.shell.exec_factory import Exec as MpiExec
 from jarvis_cd.shell.exec_info import LocalExecInfo, SshExecInfo, PsshExecInfo, MpiExecInfo
 from jarvis_cd.util.hostfile import Hostfile
 

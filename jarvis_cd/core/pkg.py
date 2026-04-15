@@ -713,9 +713,22 @@ class Pkg:
         return mounts
 
     @property
+    def ssh_port(self) -> int:
+        """SSH port for reaching container nodes.
+        Returns the pipeline's container_ssh_port when the pipeline is
+        containerized, otherwise the default SSH port (22)."""
+        if hasattr(self, 'pipeline') and self.pipeline:
+            if self.pipeline._has_containerized_packages():
+                return getattr(self.pipeline, 'container_ssh_port', 22)
+        return 22
+
+    @property
     def _container_engine(self) -> str:
-        """Always return 'none' — per-package docker run wrapping is no longer used.
-        Container building is handled at the pipeline level automatically."""
+        """Return the pipeline's container engine when running in container mode,
+        so that Exec/MpiExecInfo wraps commands in docker/podman exec."""
+        if hasattr(self, 'pipeline') and self.pipeline:
+            if self.pipeline._has_containerized_packages():
+                return getattr(self.pipeline, 'container_engine', 'none')
         return 'none'
 
     @property

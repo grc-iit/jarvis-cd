@@ -6,7 +6,8 @@ import os
 # Add the project root to the path so we can import jarvis_cd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from jarvis_cd.shell.mpi_exec import MpiExec, OpenMpiExec, MpichExec, CrayMpichExec, IntelMpiExec
+from jarvis_cd.shell.exec_factory import Exec as MpiExec
+from jarvis_cd.shell.mpi_exec import OpenMpiExec, MpichExec, CrayMpichExec, IntelMpiExec
 from jarvis_cd.shell.exec_info import MpiExecInfo, ExecType
 from jarvis_cd.util.hostfile import Hostfile
 

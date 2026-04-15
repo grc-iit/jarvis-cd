@@ -3,7 +3,7 @@ MPI execution classes for Jarvis shell execution.
 """
 from abc import abstractmethod
 from typing import Union, List, Dict, Any
-from .core_exec import LocalExec, MpiVersion
+from .core_exec import LocalExec
 from .exec_info import ExecInfo, MpiExecInfo, ExecType
 from ..util.hostfile import Hostfile
 
@@ -118,6 +118,7 @@ class OpenMpiExec(LocalMpiExec):
         # Set SSH port if explicitly specified (SSH config will be used otherwise)
         if self.ssh_port and self.ssh_port != 22:
             params.append(f'--mca plm_rsh_args "-p {self.ssh_port}"')
+
 
         if self.ppn is not None:
             params.append(f'-npernode {self.ppn}')
@@ -265,35 +266,3 @@ class CrayMpichExec(LocalMpiExec):
         return ' '.join(params)
 
 
-class MpiExec:
-    """
-    Factory class for MPI execution that automatically detects MPI implementation.
-    """
-
-    def __new__(cls, cmd: Union[str, List[Dict[str, Any]]], exec_info: MpiExecInfo):
-        """
-        Create appropriate MPI executor based on detected MPI implementation.
-
-        :param cmd: Command to execute. Can be:
-                   - A string: single command
-                   - A list of dicts: multiple commands with format [{'cmd': str, 'nprocs': int}, ...]
-        :param exec_info: MPI execution information
-        :return: Appropriate MPI executor instance
-        """
-        # Detect MPI version
-        mpi_version_detector = MpiVersion(exec_info)
-        mpi_type = mpi_version_detector.version
-        
-        # Create appropriate executor
-        if mpi_type == ExecType.OPENMPI:
-            return OpenMpiExec(cmd, exec_info)
-        elif mpi_type == ExecType.MPICH:
-            return MpichExec(cmd, exec_info)
-        elif mpi_type == ExecType.INTEL_MPI:
-            return IntelMpiExec(cmd, exec_info)
-        elif mpi_type == ExecType.CRAY_MPICH:
-            return CrayMpichExec(cmd, exec_info)
-        else:
-            # Default to MPICH
-            print(f"Unknown MPI type {mpi_type}, defaulting to MPICH")
-            return MpichExec(cmd, exec_info)

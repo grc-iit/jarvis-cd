@@ -1,0 +1,32 @@
+# Pipeline: IOR Container Test on Ares
+# Purpose: Run IOR benchmark inside Docker containers on the Ares cluster
+# Hosts: ares-comp-25 through ares-comp-28 (4 nodes, 1 process per node)
+
+name: ior_ares_container_test
+
+container_engine: docker
+container_base: ubuntu:24.04
+
+hostfile: /home/llogan/hostfile.txt
+
+# Environment variables injected into containers
+container_env:
+  OMPI_MCA_btl_tcp_if_include: eno1
+  OMPI_MCA_oob_tcp_if_include: eno1
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior_ares
+    deploy_mode: container
+    nprocs: 3
+    ppn: 1
+    block: 16M
+    xfer: 1M
+    api: posix
+    out: /tmp/ior_ares_test
+    log: /tmp/ior_ares_output.log
+    write: true
+    read: true
+    fpp: false
+    reps: 1
+    direct: false

@@ -203,8 +203,8 @@ class TestRedisDockerCluster(unittest.TestCase):
         self.assertIn(f'{shared_dir}:{shared_dir}', volumes)
         self.assertIn(f'{private_dir}:{private_dir}', volumes)
 
-    def test_compose_command_references_shared_dir(self):
-        """Container entrypoint must use the real shared_dir path, not /root/..."""
+    def test_compose_container_runs_ssh_and_sleeps(self):
+        """Container entrypoint should start SSH and sleep, not run jarvis."""
         pipeline = self._create_redis_pipeline('redis_cmd')
         pipeline.container_image = 'redis-test:latest'
         pipeline.save()
@@ -214,10 +214,10 @@ class TestRedisDockerCluster(unittest.TestCase):
             compose = yaml.safe_load(f)
 
         cmd = compose['services']['redis_cmd']['command'][0]
-        shared_dir = str(self.jarvis.get_pipeline_shared_dir('redis_cmd'))
 
-        self.assertIn(f'{shared_dir}/pipeline.yaml', cmd)
-        self.assertNotIn('/root/.ppi-jarvis', cmd)
+        self.assertIn('/usr/sbin/sshd', cmd)
+        self.assertIn('sleep infinity', cmd)
+        self.assertNotIn('jarvis', cmd)
 
     def test_redis_conf_written_to_shared_dir(self):
         """
