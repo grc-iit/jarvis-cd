@@ -169,10 +169,13 @@ class Pkg:
         Override this method to handle package configuration.
         Takes as input a dictionary with keys determined from _configure_menu.
         Updates self.config and generates application-specific configuration files.
-        
+
         :param kwargs: Configuration parameters
         """
         self.update_config(kwargs, rebuild=False)
+        if self.config.get('deploy_mode') == 'container':
+            self.build_phase()
+            self.build_deploy_phase()
         
     def configure_menu(self):
         """
@@ -679,119 +682,6 @@ class Pkg:
             
         
     
-    def show_readme(self):
-        """
-        Show README.md for this package.
-        """
-        if not self.pkg_dir:
-            print("Package directory not set - cannot locate README")
-            return
-            
-        readme_path = Path(self.pkg_dir) / 'README.md'
-        
-        if readme_path.exists():
-            print(f"=== README for {self.__class__.__name__} ===")
-            print(f"Location: {readme_path}")
-            print()
-            try:
-                with open(readme_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                print(content)
-            except Exception as e:
-                print(f"Error reading README: {e}")
-        else:
-            print(f"No README found for package {self.__class__.__name__}")
-            print(f"Expected location: {readme_path}")
-    
-    def show_paths(self, path_flags: Dict[str, bool]):
-        """
-        Show directory paths based on flags.
-        
-        :param path_flags: Dictionary of path flags to show
-        """
-        try:
-            # Ensure directories are set
-            self._ensure_directories()
-            
-            paths_to_show = []
-            
-            # Check each flag and add corresponding paths
-            if path_flags.get('conf'):
-                if self.config_dir:
-                    paths_to_show.append(f"{self.config_dir}/config.yaml")
-                    
-            if path_flags.get('env'):
-                if self.config_dir:
-                    paths_to_show.append(f"{self.config_dir}/env.yaml")
-                    
-            if path_flags.get('mod_env'):
-                if self.config_dir:
-                    paths_to_show.append(f"{self.config_dir}/mod_env.yaml")
-                    
-            if path_flags.get('conf_dir'):
-                if self.config_dir:
-                    paths_to_show.append(self.config_dir)
-                    
-            if path_flags.get('shared_dir'):
-                if self.shared_dir:
-                    paths_to_show.append(self.shared_dir)
-                    
-            if path_flags.get('priv_dir'):
-                if self.private_dir:
-                    paths_to_show.append(self.private_dir)
-                    
-            if path_flags.get('pkg_dir'):
-                if self.pkg_dir:
-                    paths_to_show.append(self.pkg_dir)
-            
-            # Print only the paths, one per line (for shell usage)
-            for path in paths_to_show:
-                if path:  # Only print non-None paths
-                    print(path)
-                    
-        except Exception as e:
-            print(f"Error getting package paths: {e}", file=sys.stderr)
-
-
-class Service(Pkg):
-    """
-    Base class for long-running services.
-    Services typically need to be manually stopped.
-    """
-
-    def __init__(self, pipeline):
-        super().__init__(pipeline=pipeline)
-        
-    def _init(self):
-        """
-        Initialize service-specific variables.
-        Override in subclasses.
-        """
-        pass
-
-
-class Application(Pkg):
-    """
-    Base class for applications that run and complete automatically.
-    Applications typically don't need manual stopping.
-
-    Includes built-in container build support (formerly ContainerApplication).
-    When deploy_mode == 'container', _configure() automatically calls
-    build_phase() and build_deploy_phase() after updating config.
-    Subclasses override _build_phase() and _build_deploy_phase() to provide
-    Dockerfile content for the two-phase container build strategy.
-    """
-
-    def __init__(self, pipeline):
-        super().__init__(pipeline=pipeline)
-
-    def _init(self):
-        """
-        Initialize application-specific variables.
-        Override in subclasses.
-        """
-        pass
-
     # ------------------------------------------------------------------
     # Container support — properties
     # ------------------------------------------------------------------
@@ -943,20 +833,112 @@ class Application(Pkg):
         else:
             print(f"Deploy container ready: {self.deploy_image_name}")
 
-    # ------------------------------------------------------------------
-    # Override _configure to trigger container builds when appropriate
-    # ------------------------------------------------------------------
+    def show_readme(self):
+        """
+        Show README.md for this package.
+        """
+        if not self.pkg_dir:
+            print("Package directory not set - cannot locate README")
+            return
+            
+        readme_path = Path(self.pkg_dir) / 'README.md'
+        
+        if readme_path.exists():
+            print(f"=== README for {self.__class__.__name__} ===")
+            print(f"Location: {readme_path}")
+            print()
+            try:
+                with open(readme_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                print(content)
+            except Exception as e:
+                print(f"Error reading README: {e}")
+        else:
+            print(f"No README found for package {self.__class__.__name__}")
+            print(f"Expected location: {readme_path}")
+    
+    def show_paths(self, path_flags: Dict[str, bool]):
+        """
+        Show directory paths based on flags.
+        
+        :param path_flags: Dictionary of path flags to show
+        """
+        try:
+            # Ensure directories are set
+            self._ensure_directories()
+            
+            paths_to_show = []
+            
+            # Check each flag and add corresponding paths
+            if path_flags.get('conf'):
+                if self.config_dir:
+                    paths_to_show.append(f"{self.config_dir}/config.yaml")
+                    
+            if path_flags.get('env'):
+                if self.config_dir:
+                    paths_to_show.append(f"{self.config_dir}/env.yaml")
+                    
+            if path_flags.get('mod_env'):
+                if self.config_dir:
+                    paths_to_show.append(f"{self.config_dir}/mod_env.yaml")
+                    
+            if path_flags.get('conf_dir'):
+                if self.config_dir:
+                    paths_to_show.append(self.config_dir)
+                    
+            if path_flags.get('shared_dir'):
+                if self.shared_dir:
+                    paths_to_show.append(self.shared_dir)
+                    
+            if path_flags.get('priv_dir'):
+                if self.private_dir:
+                    paths_to_show.append(self.private_dir)
+                    
+            if path_flags.get('pkg_dir'):
+                if self.pkg_dir:
+                    paths_to_show.append(self.pkg_dir)
+            
+            # Print only the paths, one per line (for shell usage)
+            for path in paths_to_show:
+                if path:  # Only print non-None paths
+                    print(path)
+                    
+        except Exception as e:
+            print(f"Error getting package paths: {e}", file=sys.stderr)
 
-    def _configure(self, **kwargs):
+
+class Service(Pkg):
+    """
+    Base class for long-running services.
+    Services typically need to be manually stopped.
+    """
+
+    def __init__(self, pipeline):
+        super().__init__(pipeline=pipeline)
+        
+    def _init(self):
         """
-        Configure the application.
-        Updates self.config from kwargs, then triggers container builds when
-        deploy_mode == 'container'.
+        Initialize service-specific variables.
+        Override in subclasses.
         """
-        self.update_config(kwargs, rebuild=False)
-        if self.config.get('deploy_mode') == 'container':
-            self.build_phase()
-            self.build_deploy_phase()
+        pass
+
+
+class Application(Pkg):
+    """
+    Base class for applications that run and complete automatically.
+    Applications typically don't need manual stopping.
+    """
+
+    def __init__(self, pipeline):
+        super().__init__(pipeline=pipeline)
+
+    def _init(self):
+        """
+        Initialize application-specific variables.
+        Override in subclasses.
+        """
+        pass
 
 
 class Interceptor(Pkg):
