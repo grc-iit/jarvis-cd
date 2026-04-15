@@ -162,14 +162,14 @@ class Pipeline:
             pipeline_config['container_extensions'] = self.container_extensions
 
         # Add hostfile parameter (save path if set, None means use global jarvis hostfile)
-        # For containerized pipelines, use the container-mounted path
+        # Hostfile is always saved into the shared directory so it is
+        # accessible from both host and container via the same path.
         if self.hostfile:
-            if self.container_image:
-                # In container, hostfile will be mounted at /root/.ppi-jarvis/hostfile
-                pipeline_config['hostfile'] = "/root/.ppi-jarvis/hostfile"
-            else:
-                # On host, use actual path
-                pipeline_config['hostfile'] = self.hostfile.path if self.hostfile.path else ""
+            shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
+            shared_dir.mkdir(parents=True, exist_ok=True)
+            hostfile_shared_path = str(shared_dir / 'hostfile')
+            self.hostfile.save(hostfile_shared_path)
+            pipeline_config['hostfile'] = hostfile_shared_path
         else:
             pipeline_config['hostfile'] = None
 
@@ -1381,7 +1381,9 @@ class Pipeline:
             repo_mounts.append((repo_path, container_repo_path))
             repo_add_cmds += f'jarvis repo add {container_repo_path} && '
 
-        # Build container command - start SSH, init jarvis, and run pipeline, then stop SSH
+        # Build container command - start SSH, init jarvis, and run pipeline, then stop SSH.
+        # The pipeline YAML and hostfile live in shared_dir, which is
+        # mounted at the same path inside the container.
         # When JARVIS_DOCKER_HOST_PREFIX is set (DinD/devcontainer), the home
         # directory is on the overlay filesystem and invisible to sibling containers.
         # Copy SSH keys to a Docker-accessible location under /workspace.
@@ -1394,6 +1396,7 @@ class Pipeline:
                     shutil.rmtree(docker_ssh_dir)
                 shutil.copytree(ssh_dir, docker_ssh_dir)
             ssh_dir = docker_ssh_dir
+        pipeline_yaml = str(shared_dir / 'pipeline.yaml')
         container_cmd = (
             f'set -e && '
             f'cp -r /root/.ssh_host /root/.ssh && '
@@ -1408,19 +1411,23 @@ class Pipeline:
             f'sed -i "s/^#*Port .*/Port 2222/" /etc/ssh/sshd_config && '
             f'/usr/sbin/sshd && '
             f'{repo_add_cmds}'
-            f'jarvis ppl run yaml /root/.ppi-jarvis/shared/pipeline.yaml; '
+            f'jarvis ppl run yaml {pipeline_yaml}; '
             f'EXIT_CODE=$?; '
             f'pkill sshd; '
             f'exit $EXIT_CODE'
         )
 
-        # Create compose configuration using the global container image
+        # Create compose configuration using the global container image.
+        # Shared and private directories are mounted at the SAME path
+        # inside the container so that all configuration paths (hostfile,
+        # pipeline YAML, package data) are identical on host and container.
         private_dir = self.jarvis.get_pipeline_private_dir(self.name)
 
-        # Prepare volume mounts (use host paths for Docker-in-Docker)
+        # Prepare volume mounts — identical host:container paths
+        # (use to_host_path for Docker-in-Docker remapping)
         volumes = [
-            f"{to_host_path(str(private_dir))}:/root/.ppi-jarvis/private",
-            f"{to_host_path(str(shared_dir))}:/root/.ppi-jarvis/shared",
+            f"{to_host_path(str(private_dir))}:{private_dir}",
+            f"{to_host_path(str(shared_dir))}:{shared_dir}",
             f"{to_host_path(ssh_dir)}:/root/.ssh_host:ro"
         ]
 
@@ -1428,10 +1435,6 @@ class Pipeline:
         for host_path, container_path in repo_mounts:
             volumes.append(f"{to_host_path(host_path)}:{container_path}:ro")
 
-        # Add hostfile volume mount if hostfile is set
-        hostfile = self.get_hostfile()
-        if hostfile and hostfile.path:
-            volumes.append(f"{to_host_path(hostfile.path)}:/root/.ppi-jarvis/hostfile:ro")
 
         service_config = {
             'container_name': container_name,
