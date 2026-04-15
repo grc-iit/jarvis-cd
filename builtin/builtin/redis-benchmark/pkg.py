@@ -103,7 +103,8 @@ CMD ["/bin/bash"]
             env=self.mod_env,
             container=self._container_engine,
             container_image=self.deploy_image_name,
-            private_dir=self.private_dir,
+            shared_dir=self.shared_dir,
+                private_dir=self.private_dir,
         )).run()
 
     def stop(self):

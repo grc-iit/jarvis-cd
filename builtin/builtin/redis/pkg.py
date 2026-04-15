@@ -65,6 +65,7 @@ CMD ["/bin/bash"]
             exec_async=True,
             container=self._container_engine,
             container_image=self.deploy_image_name,
+            shared_dir=self.shared_dir,
             private_dir=self.private_dir,
             bind_mounts=self.container_mounts,
         )).run()
@@ -77,11 +78,13 @@ CMD ["/bin/bash"]
                      LocalExecInfo(env=self.mod_env,
                                    container=self._container_engine,
                                    container_image=self.deploy_image_name,
+                                   shared_dir=self.shared_dir,
                                    private_dir=self.private_dir)).run()
                 Exec(f'redis-cli -p {self.config["port"]} -h {host} cluster reset',
                      LocalExecInfo(env=self.mod_env,
                                    container=self._container_engine,
                                    container_image=self.deploy_image_name,
+                                   shared_dir=self.shared_dir,
                                    private_dir=self.private_dir)).run()
 
             cmd = ' '.join([
@@ -94,6 +97,7 @@ CMD ["/bin/bash"]
                 env=self.mod_env,
                 container=self._container_engine,
                 container_image=self.deploy_image_name,
+                shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
             )).run()
             self.sleep()

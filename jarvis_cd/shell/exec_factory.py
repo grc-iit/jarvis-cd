@@ -46,10 +46,10 @@ class Exec(CoreExec):
         env = dict(self.exec_info.env) if self.exec_info.env else {}
         ld_preload = env.pop('LD_PRELOAD', None)
 
-        # For apptainer, resolve the SIF path from private_dir if available
-        if c == 'apptainer' and self.exec_info.private_dir and self.exec_info.container_image:
+        # For apptainer, resolve the SIF path from shared_dir (accessible on all nodes)
+        if c == 'apptainer' and self.exec_info.shared_dir and self.exec_info.container_image:
             from pathlib import Path
-            img = str(Path(self.exec_info.private_dir) / f'{self.exec_info.container_image}.sif')
+            img = str(Path(self.exec_info.shared_dir) / f'{self.exec_info.container_image}.sif')
         else:
             img = self.exec_info.container_image or ''
 

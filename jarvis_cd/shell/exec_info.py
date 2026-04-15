@@ -36,7 +36,7 @@ class ExecInfo:
                  hide_output=None, exec_async=False, stdin=None,
                  strict_ssh=False, timeout=None,
                  container='none', gpu=False, container_image=None,
-                 private_dir=None, bind_mounts=None,
+                 shared_dir=None, private_dir=None, bind_mounts=None,
                  **kwargs):
         """
         Initialize execution information.
@@ -70,6 +70,8 @@ class ExecInfo:
             {private_dir}/{container_image}.sif when private_dir is set.
         :param private_dir: Directory where SIF files are stored (apptainer).
             When set, _prepare_container resolves the SIF path automatically.
+        :param shared_dir: Directory shared across all nodes. For apptainer,
+            the SIF path is composed as {shared_dir}/{container_image}.sif.
         :param bind_mounts: List of "host_path:container_path" strings to
             bind-mount into the container (docker/podman: -v, apptainer: --bind).
         :param kwargs: Additional unknown parameters (silently ignored)
@@ -97,6 +99,7 @@ class ExecInfo:
         self.container = container
         self.gpu = gpu
         self.container_image = container_image
+        self.shared_dir = shared_dir
         self.private_dir = private_dir
         self.bind_mounts = bind_mounts or []
 
@@ -119,8 +122,8 @@ class ExecInfo:
                      'hostfile', 'env', 'sleep_ms', 'sudo', 'sudoenv', 'cwd',
                      'collect_output', 'pipe_stdout', 'pipe_stderr', 'hide_output',
                      'exec_async', 'stdin', 'strict_ssh', 'timeout',
-                     'container', 'gpu', 'container_image', 'private_dir',
-                     'bind_mounts']:
+                     'container', 'gpu', 'container_image',
+                     'shared_dir', 'private_dir', 'bind_mounts']:
             current_attrs[attr] = getattr(self, attr)
 
         # Update with new values

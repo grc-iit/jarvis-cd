@@ -199,6 +199,7 @@ CMD ["/bin/bash"]
                 ppn=self.config['ppn'],
                 container=self._container_engine,
                 container_image=self.deploy_image_name,
+                shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
                 gpu=True,
                 env=self.mod_env,

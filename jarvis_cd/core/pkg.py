@@ -799,7 +799,7 @@ class Pkg:
 
         For docker/podman: builds image named after the pipeline.
         For apptainer: builds docker image then converts to SIF file stored in
-        private_dir/{deploy_image_name}.sif.
+        shared_dir/{deploy_image_name}.sif so all nodes can access it.
         """
         dockerfile_content = self._build_deploy_phase()
         if not dockerfile_content:
@@ -820,7 +820,9 @@ class Pkg:
         )
         Exec(build_cmd, LocalExecInfo()).run()
         if engine == 'apptainer':
-            sif_path = private_path / f'{self.deploy_image_name}.sif'
+            shared_path = Path(self.shared_dir)
+            shared_path.mkdir(parents=True, exist_ok=True)
+            sif_path = shared_path / f'{self.deploy_image_name}.sif'
             print(f"Converting to Apptainer SIF: {sif_path}")
             from jarvis_cd.shell.container_compose_exec import ApptainerBuildExec
             ApptainerBuildExec(
