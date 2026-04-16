@@ -795,7 +795,11 @@ class Pkg:
         different configurations (e.g., GPU vs CPU) produce distinct images.
         The final build image name is ``jarvis-build-{pkg}-{suffix}``.
 
-        :return: (dockerfile_content, image_suffix) tuple, or None to skip
+        :return: (dockerfile_content, image_suffix) tuple, or None to skip.
+                 Returning ('', suffix) also skips the build — this is normal
+                 for packages that are wrappers around software installed by
+                 another package (e.g., an interceptor that doesn't need its
+                 own container image).
         """
         return None
 
@@ -808,7 +812,8 @@ class Pkg:
         The image suffix identifies a specific deploy configuration.
         The final deploy image name is ``{pipeline}-{suffix}``.
 
-        :return: (dockerfile_content, image_suffix) tuple, or None to skip
+        :return: (dockerfile_content, image_suffix) tuple, or None to skip.
+                 Returning ('', suffix) also skips the build.
         """
         return None
 
@@ -820,12 +825,16 @@ class Pkg:
         """
         Build the BUILD container image and save Dockerfile to private_dir.
 
-        Skipped when _build_phase() returns None.
+        Skipped when _build_phase() returns None or empty content.
+        Packages that wrap software installed by another package may
+        return ('', suffix) to indicate no build is needed.
         """
         result_tuple = self._build_phase()
         if not result_tuple:
             return
         dockerfile_content, suffix = result_tuple
+        if not dockerfile_content:
+            return
         self._build_suffix = suffix
         from pathlib import Path
         from jarvis_cd.shell import Exec, LocalExecInfo
@@ -857,11 +866,15 @@ class Pkg:
         For docker/podman: builds image named after the pipeline.
         For apptainer: builds docker image then converts to SIF file stored in
         shared_dir/{deploy_image_name}.sif so all nodes can access it.
+
+        Skipped when _build_deploy_phase() returns None or empty content.
         """
         result_tuple = self._build_deploy_phase()
         if not result_tuple:
             return
         dockerfile_content, suffix = result_tuple
+        if not dockerfile_content:
+            return
         self._deploy_suffix = suffix
         from pathlib import Path
         from jarvis_cd.shell import Exec, LocalExecInfo

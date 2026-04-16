@@ -552,6 +552,54 @@ For this to work, `libdarshan.so` must exist inside the deploy container. Build 
 | `build_deploy_phase()` | Builds the deploy container + SIF from `_build_deploy_phase()`, stores `_deploy_suffix` |
 | `_read_dockerfile(filename, replacements)` | Reads a Dockerfile template from `self.pkg_dir` with `##VAR##` substitution |
 
+## Wrapper Packages (No Build Required)
+
+Some packages are wrappers around software that is installed by another package in the pipeline. These packages don't need their own container image or spack spec — they rely on binaries and libraries provided by a companion package.
+
+**Examples:**
+- A runtime package (`wrp_runtime`) installs the full application + benchmarks
+- An interceptor/adapter package (`wrp_adapter`) provides LD_PRELOAD libraries but doesn't require any additional installation — the libraries are already in the runtime's container image
+
+**How to implement:**
+
+Return `None` from `_build_phase()` and `_build_deploy_phase()` (the default). The package is silently skipped during container and spack builds. Omit the `install` key (or leave it empty) in the pipeline YAML.
+
+```python
+class WrpAdapter(Interceptor):
+    """Interceptor that wraps a library installed by wrp_runtime."""
+
+    def _configure_menu(self):
+        return [
+            {'name': 'library_path', 'msg': 'Path to interceptor library',
+             'type': str, 'default': '/usr/lib/libwrp_adapter.so'},
+        ]
+
+    # No _build_phase or _build_deploy_phase override needed.
+    # The base class returns None — the package is skipped during builds.
+
+    def modify_env(self):
+        self.prepend_env('LD_PRELOAD', self.config['library_path'])
+```
+
+```yaml
+name: iowarp_pipeline
+install_manager: container
+container_engine: docker
+container_base: ubuntu:24.04
+
+pkgs:
+  - pkg_type: iowarp.wrp_runtime      # Builds the container image
+    pkg_name: runtime
+    install: iowarp                    # Spack spec (when using spack)
+
+interceptors:
+  - pkg_type: iowarp.wrp_adapter      # No build — uses runtime's image
+    pkg_name: adapter
+    # No install key needed
+```
+
+Both `None` and `('', suffix)` return values from build methods are treated as "no build needed" and silently skipped — this is not an error.
+
 ## Spack Support
 
 When the pipeline uses `install_manager: spack`, Jarvis installs packages via Spack instead of building containers. Packages support this by including an `install` key in their pipeline YAML config.

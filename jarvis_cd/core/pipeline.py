@@ -1338,40 +1338,45 @@ class Pipeline:
             # Set deploy_mode in config so _build_phase/_build_deploy_phase return content
             pkg_instance.config['deploy_mode'] = pkg_def.get('config', {}).get('deploy_mode', 'default')
 
-            # Build per-package build image
+            # Build per-package build image.
+            # Packages that wrap software installed by another package may
+            # return None or ('', suffix) — both are skipped silently.
             build_result = pkg_instance._build_phase()
+            build_image_name = None
             if build_result:
                 build_content, build_suffix = build_result
-                pkg_instance._build_suffix = build_suffix
-                build_image_name = pkg_instance.build_image_name()
-                pkg_name = pkg_def['pkg_name']
-                build_dockerfile_path = pipeline_shared_dir / f'build-{pkg_name}.Dockerfile'
-                with open(build_dockerfile_path, 'w') as f:
-                    f.write(f"# --- {pkg_def['pkg_id']} build phase ---\n")
-                    f.write(build_content)
+                if build_content:
+                    pkg_instance._build_suffix = build_suffix
+                    build_image_name = pkg_instance.build_image_name()
+                    pkg_name = pkg_def['pkg_name']
+                    build_dockerfile_path = pipeline_shared_dir / f'build-{pkg_name}.Dockerfile'
+                    with open(build_dockerfile_path, 'w') as f:
+                        f.write(f"# --- {pkg_def['pkg_id']} build phase ---\n")
+                        f.write(build_content)
 
-                print(f"Building build image: {build_image_name}")
-                build_cmd = (
-                    f"{build_engine} build --network=host -t {build_image_name} "
-                    f"-f {build_dockerfile_path} {pipeline_shared_dir}"
-                )
-                result = Exec(build_cmd, LocalExecInfo()).run()
-                exit_code = result.exit_code.get('localhost', 1)
-                if exit_code != 0:
-                    raise RuntimeError(
-                        f"Failed to build image '{build_image_name}' (exit code {exit_code}). "
-                        f"Dockerfile: {build_dockerfile_path}"
+                    print(f"Building build image: {build_image_name}")
+                    build_cmd = (
+                        f"{build_engine} build --network=host -t {build_image_name} "
+                        f"-f {build_dockerfile_path} {pipeline_shared_dir}"
                     )
-                print(f"Build image ready: {build_image_name}")
+                    result = Exec(build_cmd, LocalExecInfo()).run()
+                    exit_code = result.exit_code.get('localhost', 1)
+                    if exit_code != 0:
+                        raise RuntimeError(
+                            f"Failed to build image '{build_image_name}' (exit code {exit_code}). "
+                            f"Dockerfile: {build_dockerfile_path}"
+                        )
+                    print(f"Build image ready: {build_image_name}")
 
             deploy_result = pkg_instance._build_deploy_phase()
             if deploy_result:
                 deploy_content, deploy_suffix = deploy_result
-                deploy_dockerfile_parts.append({
-                    'pkg_id': pkg_def['pkg_id'],
-                    'content': deploy_content,
-                    'build_image': build_image_name if build_result else None,
-                })
+                if deploy_content:
+                    deploy_dockerfile_parts.append({
+                        'pkg_id': pkg_def['pkg_id'],
+                        'content': deploy_content,
+                        'build_image': build_image_name,
+                    })
 
         # Build the DEPLOY image (named after the pipeline).
         # When there are multiple packages, each produces a deploy phase
