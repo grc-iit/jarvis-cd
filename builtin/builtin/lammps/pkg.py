@@ -175,7 +175,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
     && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 
 # Copy compiled LAMMPS binary, benchmarks, and HDF5 libs from build container
-COPY --from=builder /opt/lammps/build/lmp /usr/bin/lmp
+COPY --from=builder /opt/lammps/build/lmp /usr/local/bin/lmp
 COPY --from=builder /opt/lammps/bench /opt/lammps/bench
 COPY --from=builder /usr/local/lib/libhdf5* /usr/local/lib/
 RUN ldconfig
@@ -212,11 +212,11 @@ CMD ["/bin/bash"]
         Launch LAMMPS.
 
         Branches on deploy_mode: uses container_exec_info() for container
-        mode (running /usr/bin/lmp via mpirun inside the container),
+        mode (running /usr/local/bin/lmp via mpirun inside the container),
         MpiExecInfo with hostfile for default mode.
         """
         if self.config.get('deploy_mode') == 'container':
-            cmd = ['/usr/bin/lmp']
+            cmd = ['/usr/local/bin/lmp']
             if self.config.get('script'):
                 cmd.append(f"-in {self.config['script']}")
             if self.config.get('kokkos_gpu'):

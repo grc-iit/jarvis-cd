@@ -1312,10 +1312,13 @@ class Pipeline:
                     temp_images.append(temp_name)
 
                 # Final Dockerfile: start from the first stage, then
-                # overlay files from subsequent stages
+                # overlay files from subsequent stages.
+                # Copy both /usr/local (libraries/binaries) and /opt
+                # (application source trees like VPIC).
                 lines = [f"FROM {temp_images[0]}"]
                 for temp_img in temp_images[1:]:
                     lines.append(f"COPY --from={temp_img} /usr/local /usr/local")
+                    lines.append(f"COPY --from={temp_img} /opt /opt")
                 lines.append("RUN ldconfig")
                 lines.append('CMD ["/bin/bash"]')
                 deploy_dockerfile = "\n".join(lines)
