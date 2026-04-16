@@ -1,14 +1,19 @@
 """
-This module provides classes and methods to launch the Gray Scott application.
-Pyflextrkr is ....
+This module provides classes and methods to launch the PyFLEXTRKR application.
+PyFLEXTRKR is an atmospheric feature tracking framework.
 """
-from jarvis_cd.core.pkg import Application, Color
-from jarvis_cd.shell import Exec, LocalExecInfo
+from jarvis_cd.core.pkg import Application
+from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo
+from jarvis_cd.shell.process import Mkdir, Rm
+import os
 import time
 import pathlib
-
 import yaml
-from scspkg.pkg import Package
+
+try:
+    from scspkg.pkg import Package
+except ImportError:
+    Package = None
 
 class Pyflextrkr(Application):
     """
@@ -32,6 +37,31 @@ class Pyflextrkr(Application):
         """
         
         return [
+            {
+                'name': 'base_image',
+                'msg': 'Base Docker image for container build',
+                'type': str,
+                'default': 'sci-hpc-base',
+            },
+            {
+                'name': 'demo',
+                'msg': 'Demo to run in container mode',
+                'type': str,
+                'choices': ['mcs_tbpf', 'mcs_tbpf_multinode'],
+                'default': 'mcs_tbpf',
+            },
+            {
+                'name': 'nprocs',
+                'msg': 'Number of MPI processes (container multinode mode)',
+                'type': int,
+                'default': 1,
+            },
+            {
+                'name': 'ppn',
+                'msg': 'Processes per node',
+                'type': int,
+                'default': 1,
+            },
             {
                 'name': 'conda_env',
                 'msg': 'Name of the conda environment for running Pyflextrkr',
@@ -67,7 +97,7 @@ class Pyflextrkr(Application):
                 'name': 'pyflextrkr_path',
                 'msg': 'Absolute path to the Pyflextrkr source code',
                 'type': str,
-                'default': f"{Package(self.pkg_type).pkg_root}/src/PyFLEXTRKR",
+                'default': f"{Package(self.pkg_type).pkg_root}/src/PyFLEXTRKR" if Package else '',
             },
             {
                 'name': 'experiment_input_path',
@@ -107,6 +137,32 @@ class Pyflextrkr(Application):
                 'default': False,
             },
         ]
+
+    # ------------------------------------------------------------------
+    # Container Dockerfile generators
+    # ------------------------------------------------------------------
+
+    def _build_phase(self):
+        if self.config.get('deploy_mode') != 'container':
+            return None
+        content = self._read_dockerfile('Dockerfile.build', {
+            'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
+        })
+        return content, 'default'
+
+    def _build_deploy_phase(self):
+        if self.config.get('deploy_mode') != 'container':
+            return None
+        suffix = getattr(self, '_build_suffix', '')
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'BUILD_IMAGE': self.build_image_name(),
+            'DEPLOY_BASE': 'ubuntu:24.04',
+        })
+        return content, suffix
+
+    # ------------------------------------------------------------------
+    # Configuration
+    # ------------------------------------------------------------------
 
     def _configure(self, **kwargs):
         """
@@ -328,12 +384,37 @@ class Pyflextrkr(Application):
 
     def start(self):
         """
-        Launch an application. E.g., Pyflextrkr will launch the servers, clients,
-        and metadata services on all necessary pkgs.
+        Launch PyFLEXTRKR.
 
-        :return: None
+        Container mode runs the demo script inside the container.
+        Default mode uses conda and the existing bare-metal workflow.
         """
-        
+        if self.config.get('deploy_mode') == 'container':
+            demo = self.config.get('demo', 'mcs_tbpf')
+            if demo == 'mcs_tbpf_multinode':
+                cmd = '/opt/pyflextrkr/run_demo_multinode.sh'
+                Exec(cmd, MpiExecInfo(
+                    nprocs=self.config.get('nprocs', 1),
+                    ppn=self.config.get('ppn', 1),
+                    hostfile=self.hostfile,
+                    port=self.ssh_port,
+                    container=self._container_engine,
+                    container_image=self.deploy_image_name(),
+                    shared_dir=self.shared_dir,
+                    private_dir=self.private_dir,
+                    env=self.mod_env,
+                )).run()
+            else:
+                cmd = '/opt/pyflextrkr/run_demo.sh'
+                Exec(cmd, LocalExecInfo(
+                    container=self._container_engine,
+                    container_image=self.deploy_image_name(),
+                    shared_dir=self.shared_dir,
+                    private_dir=self.private_dir,
+                    env=self.mod_env,
+                )).run()
+            return
+
         if self.config['with_hermes'] == True:
             self._set_env_vars(self.hermes_env_vars)
         else:
