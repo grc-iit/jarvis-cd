@@ -125,7 +125,7 @@ class GrayScott(Application):
         suffix = getattr(self, '_build_suffix', '')
         content = self._read_dockerfile('Dockerfile.deploy', {
             'BUILD_IMAGE': self.build_image_name(),
-            'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
+            'DEPLOY_BASE': 'nvidia/cuda:12.6.0-runtime-ubuntu24.04',
         })
         return content, suffix
 

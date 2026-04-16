@@ -1,0 +1,17 @@
+# Pipeline: PyFLEXTRKR Container Test
+# Purpose: Test PyFLEXTRKR cloud/storm tracking using Docker
+# Requirements: Docker installed, sci-hpc-base image built locally
+
+name: pyflextrkr_container_test
+install_manager: container
+
+container_engine: docker
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.pyflextrkr
+    pkg_name: pyflextrkr_container
+    nprocs: 1
+    ppn: 1
+    demo: mcs_tbpf
+    out: /tmp/pyflextrkr_out

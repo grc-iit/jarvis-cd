@@ -113,15 +113,12 @@ class Vpic(Application):
         base = self.config.get('base_image', 'sci-hpc-base')
         use_gpu = 'sci-hpc' in base
         nvcc_env = 'ENV NVCC_WRAPPER_DEFAULT_COMPILER=g++\n' if use_gpu else ''
-        nvcc_copy = (
-            'COPY --from=builder /opt/vpic-kokkos/kokkos/bin/nvcc_wrapper '
-            '/opt/vpic-kokkos/kokkos/bin/nvcc_wrapper\n'
-        ) if use_gpu else ''
+        # VPIC needs nvcc at runtime for deck compilation
+        deploy_base = 'nvidia/cuda:12.6.0-devel-ubuntu24.04' if use_gpu else 'ubuntu:24.04'
         suffix = getattr(self, '_build_suffix', '')
         content = self._read_dockerfile('Dockerfile.deploy', {
             'BUILD_IMAGE': self.build_image_name(),
-            'BASE_IMAGE': base,
-            'NVCC_COPY': nvcc_copy,
+            'DEPLOY_BASE': deploy_base,
             'NVCC_ENV': nvcc_env,
         })
         return content, suffix

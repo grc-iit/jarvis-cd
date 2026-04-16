@@ -1,0 +1,16 @@
+# Pipeline: RNA-Seq STAR DESeq2 Container Test
+# Purpose: Test RNA-Seq STAR alignment and DESeq2 analysis using Docker
+# Requirements: Docker installed, sci-hpc-base image built locally
+
+name: rna_seq_star_deseq2_container_test
+install_manager: container
+
+container_engine: docker
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.rna_seq_star_deseq2
+    pkg_name: rna_seq_star_deseq2_container
+    nprocs: 1
+    cores: 4
+    out: /tmp/rna_seq_star_deseq2_out

@@ -1,0 +1,25 @@
+FROM ##BUILD_IMAGE## AS builder
+
+FROM ##DEPLOY_BASE##
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates openssh-server openssh-client \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/conda                /opt/conda
+COPY --from=builder /opt/rnaseq-env           /opt/rnaseq-env
+COPY --from=builder /opt/rna-seq-star-deseq2  /opt/rna-seq-star-deseq2
+COPY --from=builder /opt/rnaseq-bench         /opt/rnaseq-bench
+COPY --from=builder /opt/run_rnaseq.sh        /opt/run_rnaseq.sh
+
+# SSH host keys (shared with builder so cluster nodes trust each other)
+COPY --from=builder /etc/ssh   /etc/ssh
+COPY --from=builder /root/.ssh /root/.ssh
+RUN mkdir -p /var/run/sshd
+
+ENV PATH=/opt/rnaseq-env/bin:/opt/conda/bin:${PATH}
+ENV PYTHONNOUSERSITE=1
+
+EXPOSE 22
+CMD ["/bin/bash"]

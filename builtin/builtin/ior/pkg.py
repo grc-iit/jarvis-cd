@@ -122,11 +122,10 @@ class Ior(Application):
     def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
-        base = getattr(self.pipeline, 'container_base', 'ubuntu:24.04')
         suffix = getattr(self, '_build_suffix', '')
         content = self._read_dockerfile('Dockerfile.deploy', {
             'BUILD_IMAGE': self.build_image_name(),
-            'BASE_IMAGE': base,
+            'DEPLOY_BASE': 'ubuntu:24.04',
         })
         return content, suffix
 

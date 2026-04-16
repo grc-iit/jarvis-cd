@@ -1,21 +1,27 @@
 FROM ##BUILD_IMAGE## AS builder
-FROM ##BASE_IMAGE##
-
-ARG DEBIAN_FRONTEND=noninteractive
+FROM ##DEPLOY_BASE##
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openmpi-bin libopenmpi-dev \
-    openssh-server openssh-client \
-    gdb gdbserver \
-    && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /var/run/sshd \
-    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \
-    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+        libgomp1 \
+        openmpi-bin libopenmpi3 \
+        openssh-server openssh-client \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy compiled LAMMPS binary, benchmarks, and HDF5 libs from build container
-COPY --from=builder /opt/lammps/build/lmp /usr/local/bin/lmp
-COPY --from=builder /opt/lammps/bench /opt/lammps/bench
-COPY --from=builder /usr/local/lib/libhdf5* /usr/local/lib/
-RUN ldconfig
+# Parallel HDF5 runtime libraries
+COPY --from=builder /opt/hdf5/lib /opt/hdf5/lib
 
+# LAMMPS binary and benchmark inputs
+COPY --from=builder /opt/lammps/build/lmp /opt/lammps/build/lmp
+COPY --from=builder /opt/lammps/bench     /opt/lammps/bench
+
+# SSH host keys from builder so cluster nodes trust each other
+COPY --from=builder /etc/ssh   /etc/ssh
+COPY --from=builder /root/.ssh /root/.ssh
+RUN mkdir -p /var/run/sshd
+
+ENV HDF5_ROOT=/opt/hdf5
+ENV LD_LIBRARY_PATH=/opt/hdf5/lib:${LD_LIBRARY_PATH}
+ENV PATH=/opt/lammps/build:${PATH}
+
+EXPOSE 22
 CMD ["/bin/bash"]

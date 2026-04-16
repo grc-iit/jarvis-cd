@@ -1,16 +1,28 @@
 FROM ##BUILD_IMAGE## AS builder
-FROM ##BASE_IMAGE##
-
-ARG DEBIAN_FRONTEND=noninteractive
+FROM ##DEPLOY_BASE##
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gdb gdbserver \
+        openmpi-bin libopenmpi3 \
+        openssh-server openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy WarpX binary and example inputs from build container
-COPY --from=builder /opt/warpx/build/bin/warpx.3d.MPI.CUDA.SP.PSP.OPMD.EB.QED /usr/bin/warpx
+# Parallel HDF5 runtime libraries
+COPY --from=builder /opt/hdf5/lib /opt/hdf5/lib
+
+# WarpX binaries
+COPY --from=builder /opt/warpx/build/bin /opt/warpx/build/bin
+
+# Example input files
 COPY --from=builder /opt/warpx/Examples /opt/warpx/Examples
 
-ENV PATH=/usr/bin:${PATH}
+# SSH host keys from builder so cluster nodes trust each other
+COPY --from=builder /etc/ssh   /etc/ssh
+COPY --from=builder /root/.ssh /root/.ssh
+RUN mkdir -p /var/run/sshd
 
+ENV HDF5_ROOT=/opt/hdf5
+ENV LD_LIBRARY_PATH=/opt/hdf5/lib:${LD_LIBRARY_PATH}
+ENV PATH=/opt/warpx/build/bin:${PATH}
+
+EXPOSE 22
 CMD ["/bin/bash"]

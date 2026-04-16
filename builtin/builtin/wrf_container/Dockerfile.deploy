@@ -1,0 +1,47 @@
+# WRF deployment image — copies pre-built WRF/WPS binaries and libraries,
+# avoids recompiling anything.
+# Requires sci-wrf:latest to exist before building this image.
+#
+# Build:
+#   docker build -t sci-wrf          -f Dockerfile       .
+#   docker build -t sci-wrf-deploy   -f Dockerfile.deploy .
+
+FROM ##BUILD_IMAGE## AS builder
+
+FROM ##DEPLOY_BASE##
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gfortran openmpi-bin libopenmpi3 \
+        libpng16-16t64 zlib1g libaec0 \
+        openssh-server openssh-client \
+        csh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pre-built libraries
+COPY --from=builder /opt/hdf5    /opt/hdf5
+COPY --from=builder /opt/netcdf  /opt/netcdf
+COPY --from=builder /opt/adios2  /opt/adios2
+COPY --from=builder /opt/jasper  /opt/jasper
+
+# WRF: executables, runtime lookup tables, and test cases
+COPY --from=builder /opt/WRF/main  /opt/WRF/main
+COPY --from=builder /opt/WRF/run   /opt/WRF/run
+COPY --from=builder /opt/WRF/test  /opt/WRF/test
+
+# WPS: executables, geogrid tables, Vtables
+COPY --from=builder /opt/WPS /opt/WPS
+
+# SSH host keys (shared with builder so cluster nodes trust each other)
+COPY --from=builder /etc/ssh   /etc/ssh
+COPY --from=builder /root/.ssh /root/.ssh
+RUN mkdir -p /var/run/sshd
+
+ENV NETCDF=/opt/netcdf
+ENV HDF5=/opt/hdf5
+ENV ADIOS2=/opt/adios2
+ENV WRF_DIR=/opt/WRF
+ENV LD_LIBRARY_PATH=/opt/netcdf/lib:/opt/hdf5/lib:/opt/adios2/lib:/opt/jasper/lib:${LD_LIBRARY_PATH}
+ENV PATH=/opt/WRF/main:/opt/WPS:/opt/netcdf/bin:/opt/adios2/bin:${PATH}
+
+EXPOSE 22
+CMD ["/bin/bash"]

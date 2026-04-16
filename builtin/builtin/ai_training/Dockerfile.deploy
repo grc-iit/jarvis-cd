@@ -1,13 +1,23 @@
-FROM ##BUILD_IMAGE##
+FROM ##BUILD_IMAGE## AS builder
+FROM ##DEPLOY_BASE##
 
-# Deploy container: full PyTorch environment ready
-# SSH for multi-node torchrun
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    openssh-server openssh-client \
-    gdb gdbserver \
-    && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /var/run/sshd \
-    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \
-    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+        python3 \
+        openmpi-bin libopenmpi3 \
+        openssh-server openssh-client \
+    && rm -rf /var/lib/apt/lists/*
 
+# PyTorch and dependencies installed via pip by the builder
+COPY --from=builder /usr/local/lib /usr/local/lib
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Training script
+COPY --from=builder /opt/train_example.py /opt/train_example.py
+
+# SSH host keys from builder so cluster nodes trust each other
+COPY --from=builder /etc/ssh   /etc/ssh
+COPY --from=builder /root/.ssh /root/.ssh
+RUN mkdir -p /var/run/sshd
+
+EXPOSE 22
 CMD ["/bin/bash"]

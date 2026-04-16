@@ -1,0 +1,17 @@
+# Pipeline: WRF Container Test
+# Purpose: Test WRF deployment using Docker
+# Requirements: Docker installed, sci-hpc-base image built locally
+
+name: wrf_container_test
+install_manager: container
+
+container_engine: docker
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.wrf
+    pkg_name: wrf_container
+    nprocs: 2
+    ppn: 2
+    case: em_quarter_ss
+    out: /tmp/wrf_out

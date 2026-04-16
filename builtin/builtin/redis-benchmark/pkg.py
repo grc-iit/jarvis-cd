@@ -67,7 +67,7 @@ class RedisBenchmark(Application):
             return None
         base = getattr(self.pipeline, 'container_base', 'ubuntu:24.04')
         content = self._read_dockerfile('Dockerfile.deploy', {
-            'BASE_IMAGE': base,
+            'DEPLOY_BASE': base,
         })
         return content, 'default'
 

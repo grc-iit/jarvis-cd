@@ -1,0 +1,39 @@
+# Xcompact3d deployment image — copies pre-built solver, libraries, and examples,
+# avoids recompiling ADIOS2/2DECOMP&FFT/Incompact3d.
+# Requires sci-xcompact3d:latest to exist before building this image.
+#
+# Build:
+#   docker build -t sci-xcompact3d        -f Dockerfile       .
+#   docker build -t sci-xcompact3d-deploy -f Dockerfile.deploy .
+
+FROM ##BUILD_IMAGE## AS builder
+
+FROM ##DEPLOY_BASE##
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gfortran openmpi-bin libopenmpi3 \
+        python3 python3-numpy \
+        openssh-server openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pre-built libraries
+COPY --from=builder /opt/adios2        /opt/adios2
+COPY --from=builder /opt/2decomp-fft/build/opt /opt/2decomp-fft
+
+# Xcompact3d: binary and installed examples
+COPY --from=builder /opt/Incompact3d/build/opt /opt/Incompact3d
+
+# Full example and test input files (i3d, adios2_config.xml, reference data)
+COPY --from=builder /opt/Incompact3d/examples  /opt/Incompact3d/examples
+COPY --from=builder /opt/Incompact3d/tests     /opt/Incompact3d/tests
+
+# SSH host keys (shared with builder so cluster nodes trust each other)
+COPY --from=builder /etc/ssh   /etc/ssh
+COPY --from=builder /root/.ssh /root/.ssh
+RUN mkdir -p /var/run/sshd
+
+ENV LD_LIBRARY_PATH=/opt/adios2/lib:/opt/2decomp-fft/lib:${LD_LIBRARY_PATH}
+ENV PATH=/opt/Incompact3d/bin:/opt/adios2/bin:${PATH}
+
+EXPOSE 22
+CMD ["/bin/bash"]

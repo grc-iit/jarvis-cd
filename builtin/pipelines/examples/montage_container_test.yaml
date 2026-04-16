@@ -1,0 +1,18 @@
+# Pipeline: Montage Container Test
+# Purpose: Test Montage astronomical image mosaic using Docker
+# Requirements: Docker installed, sci-hpc-base image built locally
+
+name: montage_container_test
+install_manager: container
+
+container_engine: docker
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.montage
+    pkg_name: montage_container
+    nprocs: 1
+    ppn: 1
+    region: M17
+    band: j
+    out: /tmp/montage_out

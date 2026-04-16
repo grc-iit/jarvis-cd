@@ -1,16 +1,25 @@
 FROM ##BUILD_IMAGE## AS builder
-FROM ##BASE_IMAGE##
-
-ARG DEBIAN_FRONTEND=noninteractive
+FROM ##DEPLOY_BASE##
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gdb gdbserver \
+        openmpi-bin libopenmpi3 \
+        openssh-server openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy compiled binary from build container
+# Parallel HDF5 runtime libraries
+COPY --from=builder /opt/hdf5/lib /opt/hdf5/lib
+
+# Gray-Scott binary
 COPY --from=builder /opt/gray_scott/build/gray_scott /usr/bin/gray_scott
 
-# HDF5 runtime libraries are already in sci-hpc-base
+# SSH host keys from builder so cluster nodes trust each other
+COPY --from=builder /etc/ssh   /etc/ssh
+COPY --from=builder /root/.ssh /root/.ssh
+RUN mkdir -p /var/run/sshd
+
+ENV HDF5_ROOT=/opt/hdf5
+ENV LD_LIBRARY_PATH=/opt/hdf5/lib:${LD_LIBRARY_PATH}
 ENV PATH=/usr/bin:${PATH}
 
+EXPOSE 22
 CMD ["/bin/bash"]

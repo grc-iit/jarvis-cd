@@ -1,20 +1,28 @@
 FROM ##BUILD_IMAGE## AS builder
-FROM ##BASE_IMAGE##
-
-ARG DEBIAN_FRONTEND=noninteractive
+FROM ##DEPLOY_BASE##
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    openmpi-bin libopenmpi-dev \
-    openssh-server openssh-client \
-    gdb gdbserver \
-    && rm -rf /var/lib/apt/lists/* \
-    && mkdir -p /var/run/sshd \
-    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \
-    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+        g++ openmpi-bin libopenmpi3 libopenmpi-dev \
+        openssh-server openssh-client \
+    && rm -rf /var/lib/apt/lists/*
 
-# Copy full VPIC tree (deck compiler needs source + kokkos headers)
-COPY --from=builder /opt/vpic-kokkos /opt/vpic-kokkos
-##NVCC_COPY####NVCC_ENV##ENV PATH=/opt/vpic-kokkos/build/bin:${PATH}
+# Pre-built VPIC-Kokkos tree: libraries, deck compiler, and nvcc_wrapper
+COPY --from=builder /opt/vpic-kokkos/build  /opt/vpic-kokkos/build
+COPY --from=builder /opt/vpic-kokkos/kokkos /opt/vpic-kokkos/kokkos
 
+# deck/ and src/ compiled by vpic deck compiler at runtime
+COPY --from=builder /opt/vpic-kokkos/deck   /opt/vpic-kokkos/deck
+COPY --from=builder /opt/vpic-kokkos/src    /opt/vpic-kokkos/src
+
+# Sample decks
+COPY --from=builder /opt/vpic-kokkos/sample /opt/vpic-kokkos/sample
+
+# SSH host keys from builder so cluster nodes trust each other
+COPY --from=builder /etc/ssh   /etc/ssh
+COPY --from=builder /root/.ssh /root/.ssh
+RUN mkdir -p /var/run/sshd
+
+##NVCC_ENV##ENV PATH=/opt/vpic-kokkos/build/bin:${PATH}
+
+EXPOSE 22
 CMD ["/bin/bash"]
