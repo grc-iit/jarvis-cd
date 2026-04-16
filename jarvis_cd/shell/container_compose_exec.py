@@ -373,14 +373,16 @@ class ApptainerExec(CoreExec):
         self.local_exec = None
 
     def get_cmd(self) -> str:
-        """Get the apptainer exec command string"""
+        """Get the apptainer exec command string.
+        Wraps in bash -c so shell metacharacters run inside the container."""
         flags = []
         if self.gpu:
             flags.append('--nv')
         for bind in self.bind_paths:
             flags.append(f'--bind {bind}')
         flags_str = ' '.join(flags)
-        return f"apptainer exec {flags_str} {self.sif_path} {self.command}"
+        escaped = self.command.replace("'", "'\\''")
+        return f"apptainer exec {flags_str} {self.sif_path} bash -c '{escaped}'"
 
     def run(self):
         """Execute the command inside the apptainer container"""
