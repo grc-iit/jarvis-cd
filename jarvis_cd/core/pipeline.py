@@ -1355,8 +1355,10 @@ class Pipeline:
                         f.write(build_content)
 
                     print(f"Building build image: {build_image_name}")
+                    use_cache = pkg_def.get('config', {}).get('container_cache', True)
+                    cache_flag = '' if use_cache else ' --no-cache'
                     build_cmd = (
-                        f"{build_engine} build --network=host -t {build_image_name} "
+                        f"{build_engine} build --network=host{cache_flag} -t {build_image_name} "
                         f"-f {build_dockerfile_path} {pipeline_shared_dir}"
                     )
                     result = Exec(build_cmd, LocalExecInfo()).run()
@@ -1376,6 +1378,7 @@ class Pipeline:
                         'pkg_id': pkg_def['pkg_id'],
                         'content': deploy_content,
                         'build_image': build_image_name,
+                        'container_cache': pkg_def.get('config', {}).get('container_cache', True),
                     })
 
         # Build the DEPLOY image (named after the pipeline).
@@ -1396,8 +1399,9 @@ class Pipeline:
                     with open(temp_df_path, 'w') as f:
                         f.write(part['content'])
                     print(f"Building deploy stage {i}: {temp_name}")
+                    stage_cache = '' if part.get('container_cache', True) else ' --no-cache'
                     build_cmd = (
-                        f"{build_engine} build --network=host -t {temp_name} "
+                        f"{build_engine} build --network=host{stage_cache} -t {temp_name} "
                         f"-f {temp_df_path} {pipeline_shared_dir}"
                     )
                     result = Exec(build_cmd, LocalExecInfo()).run()
@@ -1425,9 +1429,12 @@ class Pipeline:
             with open(deploy_dockerfile_path, 'w') as f:
                 f.write(deploy_dockerfile)
 
+            # If any package disabled cache, rebuild the final deploy image without cache
+            any_no_cache = any(not p.get('container_cache', True) for p in deploy_dockerfile_parts)
+            final_cache = '' if not any_no_cache else ' --no-cache'
             print(f"Building deploy image: {deploy_image_name}")
             deploy_cmd = (
-                f"{build_engine} build --network=host -t {deploy_image_name} "
+                f"{build_engine} build --network=host{final_cache} -t {deploy_image_name} "
                 f"-f {deploy_dockerfile_path} {pipeline_shared_dir}"
             )
             result = Exec(deploy_cmd, LocalExecInfo()).run()

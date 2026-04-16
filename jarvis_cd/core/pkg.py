@@ -193,6 +193,12 @@ class Pkg:
                 'default': '',
             },
             {
+                'name': 'container_cache',
+                'msg': 'Use Docker layer cache when building containers (set false to force rebuild)',
+                'type': bool,
+                'default': True,
+            },
+            {
                 'name': 'interceptors',
                 'msg': 'List of interceptor package names to apply',
                 'type': list,
@@ -846,8 +852,9 @@ class Pkg:
         image_name = self.build_image_name()
         print(f"Building build container: {image_name}")
         engine = self._build_engine
+        cache_flag = '' if self.config.get('container_cache', True) else ' --no-cache'
         build_cmd = (
-            f"{engine} build --network=host -t {image_name} "
+            f"{engine} build --network=host{cache_flag} -t {image_name} "
             f"-f {dockerfile_path} {private_path}"
         )
         result = Exec(build_cmd, LocalExecInfo()).run()
@@ -887,8 +894,9 @@ class Pkg:
         build_engine = self._build_engine
         image_name = self.deploy_image_name()
         print(f"Building deploy container: {image_name}")
+        cache_flag = '' if self.config.get('container_cache', True) else ' --no-cache'
         build_cmd = (
-            f"{build_engine} build --network=host -t {image_name} "
+            f"{build_engine} build --network=host{cache_flag} -t {image_name} "
             f"-f {dockerfile_path} {private_path}"
         )
         result = Exec(build_cmd, LocalExecInfo()).run()
