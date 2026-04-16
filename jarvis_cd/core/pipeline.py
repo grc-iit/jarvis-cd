@@ -1264,12 +1264,52 @@ class Pipeline:
 
             deploy_content = pkg_instance._build_deploy_phase()
             if deploy_content:
-                deploy_dockerfile_parts.append(f"# --- {pkg_def['pkg_id']} deploy phase ---")
-                deploy_dockerfile_parts.append(deploy_content)
+                deploy_dockerfile_parts.append({
+                    'pkg_id': pkg_def['pkg_id'],
+                    'content': deploy_content,
+                    'build_image': build_image_name if build_content else None,
+                })
 
-        # Build the DEPLOY image (named after the pipeline)
+        # Build the DEPLOY image (named after the pipeline).
+        # When there are multiple packages, each produces a deploy phase
+        # with its own FROM builder / FROM base.  We build each one as
+        # a temporary image, then combine with a final multi-stage COPY.
         if deploy_dockerfile_parts:
-            deploy_dockerfile = "\n".join(deploy_dockerfile_parts)
+            if len(deploy_dockerfile_parts) == 1:
+                # Single package — use its Dockerfile as-is
+                deploy_dockerfile = deploy_dockerfile_parts[0]['content']
+            else:
+                # Multiple packages — build each as a temp image, then
+                # merge everything into a single final image.
+                temp_images = []
+                for i, part in enumerate(deploy_dockerfile_parts):
+                    temp_name = f"{deploy_image_name}-stage{i}"
+                    temp_df_path = pipeline_shared_dir / f'deploy-stage{i}.Dockerfile'
+                    with open(temp_df_path, 'w') as f:
+                        f.write(part['content'])
+                    print(f"Building deploy stage {i}: {temp_name}")
+                    build_cmd = (
+                        f"{build_engine} build --network=host -t {temp_name} "
+                        f"-f {temp_df_path} {pipeline_shared_dir}"
+                    )
+                    result = Exec(build_cmd, LocalExecInfo()).run()
+                    exit_code = result.exit_code.get('localhost', 1)
+                    if exit_code != 0:
+                        raise RuntimeError(
+                            f"Failed to build deploy stage '{temp_name}' (exit code {exit_code}). "
+                            f"Dockerfile: {temp_df_path}"
+                        )
+                    temp_images.append(temp_name)
+
+                # Final Dockerfile: start from the first stage, then
+                # overlay files from subsequent stages
+                lines = [f"FROM {temp_images[0]}"]
+                for temp_img in temp_images[1:]:
+                    lines.append(f"COPY --from={temp_img} /usr/local /usr/local")
+                lines.append("RUN ldconfig")
+                lines.append('CMD ["/bin/bash"]')
+                deploy_dockerfile = "\n".join(lines)
+
             deploy_dockerfile_path = pipeline_shared_dir / 'deploy.Dockerfile'
             with open(deploy_dockerfile_path, 'w') as f:
                 f.write(deploy_dockerfile)
