@@ -226,14 +226,69 @@ name: my_pipeline
 # No env field - automatically captures current environment
 ```
 
+### Install Manager
+
+The `install_manager` field determines how packages are installed and deployed. It is a **pipeline-level** setting that applies to all packages uniformly.
+
+| Value | Description |
+|-------|-------------|
+| `container` | Build and run packages inside Docker/Podman/Apptainer containers |
+| `spack` | Install packages via Spack, then run bare-metal |
+| *(absent)* | Legacy default — packages run bare-metal with no auto-installation |
+
+`deploy_mode` is derived automatically from `install_manager` and set on all packages:
+- `install_manager: container` → `deploy_mode = 'container'`
+- `install_manager: spack` → `deploy_mode = 'default'`
+- No `install_manager` → `deploy_mode = 'default'`
+
+### Spack Configuration
+
+When `install_manager: spack`, Jarvis collects the `install` key from each package and runs `spack install` followed by `spack load` to capture the environment.
+
+```yaml
+name: ior_spack_test
+install_manager: spack
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior_spack
+    install: ior              # Spack spec — passed to 'spack install' and 'spack load'
+    nprocs: 2
+    ppn: 2
+    block: 32m
+    xfer: 1m
+    api: posix
+    out: /tmp/ior_spack_test.bin
+    write: true
+    read: true
+```
+
+**How it works:**
+1. Jarvis collects all `install` specs from packages (skips empty ones)
+2. Runs `spack install <all_specs>` to install dependencies
+3. Runs `spack load <all_specs>` in a subprocess and captures the resulting environment (PATH, LD_LIBRARY_PATH, etc.)
+4. Merges the spack environment into the pipeline environment
+5. All packages run bare-metal using the spack-provided binaries
+
+**Requirements:** Spack must be installed and accessible. If `SPACK_ROOT` is set, Jarvis sources `$SPACK_ROOT/share/spack/setup-env.sh` before running spack commands.
+
+**Per-package `install` key:**
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `install` | string | `""` | Spack spec for this package (e.g., `ior`, `lammps+kokkos+cuda`) |
+
+Packages without an `install` key (or with an empty string) are skipped during spack installation.
+
 ### Container Configuration
 
-Pipelines can be configured to run packages inside Docker or Podman containers. Containers act as SSH compute nodes — the host-side jarvis orchestrates everything by exec-ing commands into the running containers via `docker exec` and MPI over SSH. No jarvis installation is needed inside the containers.
+Pipelines can be configured to run packages inside Docker or Podman containers. Set `install_manager: container` and provide container configuration. Containers act as SSH compute nodes — the host-side jarvis orchestrates everything by exec-ing commands into the running containers via `docker exec` and MPI over SSH. No jarvis installation is needed inside the containers.
 
 #### Container Pipeline Parameters
 
 ```yaml
 name: my_containerized_pipeline
+install_manager: container
 
 # Container configuration
 container_engine: docker                            # Container engine: docker or podman (default: podman)
@@ -257,7 +312,6 @@ container_extensions:
 
 pkgs:
   - pkg_type: builtin.ior
-    deploy_mode: container
     nprocs: 4
     ppn: 1
 ```
@@ -266,6 +320,7 @@ pkgs:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `install_manager` | string | *(absent)* | Set to `container` to enable containerized deployment |
 | `container_engine` | string | `"podman"` | Container engine: `docker` or `podman` |
 | `container_base` | string | `"iowarp/iowarp-build:latest"` | Base Docker image for package builds |
 | `container_ssh_port` | int | `2222` | SSH port for MPI communication between containers |
@@ -279,8 +334,8 @@ pkgs:
 **Architecture:** Containers are SSH compute nodes. The host-side jarvis orchestrates packages by running `docker exec` into the containers. MPI commands run inside the containers and SSH to other containers on port 2222 for multi-node communication.
 
 1. **Build Phase** (`jarvis ppl run yaml ...`):
-   - Each package with `deploy_mode=container` provides `_build_phase()` and `_build_deploy_phase()` Dockerfiles
-   - Per-package build images are created as `jarvis-build-{pkg_name}`
+   - When `install_manager: container`, each package provides `_build_phase()` and `_build_deploy_phase()` Dockerfiles
+   - Per-package build images are created as `jarvis-build-{pkg_name}-{suffix}`
    - Deploy images are built with runtime dependencies, SSH server, and binaries copied from build images
    - For multi-package pipelines, deploy images are built separately then merged via `COPY --from` overlays
 
@@ -333,6 +388,7 @@ This is necessary because containers using `network_mode: host` see all host net
 
 ```yaml
 name: ior_ares_container_test
+install_manager: container
 
 container_engine: docker
 container_base: ubuntu:24.04
@@ -345,7 +401,6 @@ container_env:
 pkgs:
   - pkg_type: builtin.ior
     pkg_name: ior_test
-    deploy_mode: container
     nprocs: 3
     ppn: 1
     block: 16M
@@ -360,6 +415,7 @@ pkgs:
 
 ```yaml
 name: redis_container_test
+install_manager: container
 
 container_engine: docker
 container_base: ubuntu:24.04
@@ -371,11 +427,9 @@ container_env:
 
 pkgs:
   - pkg_type: builtin.redis
-    deploy_mode: container
     port: 6379
     sleep: 2
   - pkg_type: builtin.redis-benchmark
-    deploy_mode: container
     port: 6379
     count: 100000
     nthreads: 4
@@ -387,6 +441,7 @@ pkgs:
 
 ```yaml
 name: lammps_container_test
+install_manager: container
 
 container_engine: docker
 container_base: ubuntu:24.04
@@ -398,7 +453,6 @@ container_env:
 
 pkgs:
   - pkg_type: builtin.lammps
-    deploy_mode: container
     nprocs: 3
     ppn: 1
     kokkos_gpu: false
@@ -508,7 +562,7 @@ The `container_extensions` parameter allows you to extend the generated Docker C
 6. **Complete GPU Configuration Example**:
    ```yaml
    name: gpu_pipeline
-   container_name: gpu_app_container
+   install_manager: container
    container_engine: docker
    container_base: docker.io/nvidia/cuda:12.0-base
 
@@ -528,7 +582,6 @@ The `container_extensions` parameter allows you to extend the generated Docker C
 
    pkgs:
      - pkg_type: builtin.gpu_benchmark
-       deploy_mode: container
    ```
 
 **Extension Merging Behavior:**

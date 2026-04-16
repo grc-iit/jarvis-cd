@@ -303,12 +303,13 @@ The class name must be the PascalCase of the package directory name (e.g., direc
 
 ## Container Support
 
-Container support is built into `Application`. Any package can opt into container deployment by:
+Container support is built into `Application`. The pipeline's `install_manager: container` setting enables containerized deployment for all packages. Any package can support container deployment by:
 
-1. Including `deploy_mode` in `_configure_menu()` with `'container'` as a choice
-2. Storing Dockerfiles as template files (`Dockerfile.build`, `Dockerfile.deploy`) in the package directory
-3. Overriding `_build_phase()` and `_build_deploy_phase()` to return `(dockerfile_content, image_suffix)` tuples
-4. Branching on `deploy_mode` in `start()`
+1. Storing Dockerfiles as template files (`Dockerfile.build`, `Dockerfile.deploy`) in the package directory
+2. Overriding `_build_phase()` and `_build_deploy_phase()` to return `(dockerfile_content, image_suffix)` tuples
+3. Branching on `self.config.get('deploy_mode') == 'container'` in `start()`
+
+Note: `deploy_mode` is set automatically by the pipeline based on `install_manager`. Packages do **not** include `deploy_mode` in their `_configure_menu()`.
 
 ### Two-Phase Container Build
 
@@ -327,7 +328,7 @@ Jarvis uses a two-phase build to maximize Docker layer caching:
 - For `apptainer`: additionally converted to a `.sif` file stored in `private_dir/`
 - Much smaller than the build container
 
-Both phases are triggered automatically by `Application._configure()` when `deploy_mode == 'container'`.
+Both phases are triggered automatically when the pipeline has `install_manager: container` (which sets `deploy_mode = 'container'` on all packages).
 
 ### Supported Container Engines
 
@@ -360,18 +361,11 @@ import os, pathlib
 class Ior(Application):
     """
     IOR benchmark. Supports bare-metal (default) and container deployment.
-    Set deploy_mode='container' in the pipeline YAML to use containerized IOR.
+    Set install_manager: container in the pipeline YAML to use containerized IOR.
     """
 
     def _configure_menu(self):
         return [
-            {
-                'name': 'deploy_mode',
-                'msg': 'Deployment mode',
-                'type': str,
-                'choices': ['default', 'container'],
-                'default': 'default',
-            },
             {
                 'name': 'nprocs',
                 'msg': 'Number of processes',
@@ -510,6 +504,7 @@ This keeps Dockerfiles as readable, standalone files rather than embedded Python
 
 ```yaml
 name: ior_apptainer_test
+install_manager: container           # enables containerized deployment for all packages
 
 container_engine: apptainer          # docker | podman | apptainer
 container_base: ubuntu:24.04         # base image for build + deploy containers
@@ -517,7 +512,6 @@ container_base: ubuntu:24.04         # base image for build + deploy containers
 pkgs:
   - pkg_type: builtin.ior
     pkg_name: ior_benchmark
-    deploy_mode: container           # triggers _build_phase / _build_deploy_phase
     nprocs: 4
     block: 1G
     out: /tmp/ior_test_file
@@ -531,14 +525,12 @@ Interceptors (e.g., Darshan) work transparently with container mode. Declare the
 interceptors:
   - pkg_type: builtin.darshan
     pkg_name: darshan_interceptor
-    deploy_mode: container           # skips find_library; uses in-container path
     log_dir: /tmp/darshan_logs
     job_id: my_job
 
 pkgs:
   - pkg_type: builtin.ior
     pkg_name: ior_benchmark
-    deploy_mode: container
     interceptors:
       - darshan_interceptor          # apply darshan before IOR starts
     nprocs: 4
@@ -559,6 +551,50 @@ For this to work, `libdarshan.so` must exist inside the deploy container. Build 
 | `build_phase()` | Builds the build container from `_build_phase()`, stores `_build_suffix` |
 | `build_deploy_phase()` | Builds the deploy container + SIF from `_build_deploy_phase()`, stores `_deploy_suffix` |
 | `_read_dockerfile(filename, replacements)` | Reads a Dockerfile template from `self.pkg_dir` with `##VAR##` substitution |
+
+## Spack Support
+
+When the pipeline uses `install_manager: spack`, Jarvis installs packages via Spack instead of building containers. Packages support this by including an `install` key in their pipeline YAML config.
+
+### How Spack Mode Works
+
+1. The pipeline collects `install` specs from all packages
+2. Runs `spack install <all_specs>` to build dependencies
+3. Runs `spack load <all_specs>` and captures the resulting environment
+4. Merges spack env (PATH, LD_LIBRARY_PATH, etc.) into the pipeline environment
+5. All packages run bare-metal (`deploy_mode = 'default'`)
+
+### The `install` Key
+
+The `install` key is automatically available on all packages via the common config menu. It specifies the Spack spec string:
+
+```yaml
+name: my_spack_pipeline
+install_manager: spack
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior_benchmark
+    install: ior              # Spack spec
+    nprocs: 4
+    block: 1G
+    out: /tmp/ior_test.bin
+
+  - pkg_type: builtin.lammps
+    pkg_name: lammps_sim
+    install: lammps+kokkos    # Spack spec with variant
+    nprocs: 8
+    script: /path/to/in.lj
+```
+
+Packages without an `install` key are skipped during spack installation but still participate in the pipeline.
+
+### Package Developer Notes
+
+- No code changes are needed to support spack — the `install` key is in the common menu
+- When `install_manager: spack`, your package's `_build_phase()` returns `None` (since `deploy_mode = 'default'`)
+- Your package's `start()` method runs the bare-metal path, using binaries that spack placed in PATH
+- Document the recommended spack spec in your package's README
 
 ## Traditional Package Types (Legacy)
 
