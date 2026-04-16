@@ -40,6 +40,8 @@ class Pipeline:
         self.container_ssh_port = 2222  # Default SSH port for containers
         self.container_extensions = {}  # Custom extensions to Docker compose file
         self.container_env = {}  # Environment variables injected into containers
+        self.container_host_path = ""  # Docker host path prefix for DinD remapping
+        self.container_workspace = ""  # Container workspace root for DinD remapping
 
         # Hostfile parameter (None means use global jarvis hostfile)
         self.hostfile = None
@@ -163,6 +165,10 @@ class Pipeline:
             pipeline_config['container_extensions'] = self.container_extensions
         if self.container_env:
             pipeline_config['container_env'] = self.container_env
+        if self.container_host_path:
+            pipeline_config['container_host_path'] = self.container_host_path
+        if self.container_workspace:
+            pipeline_config['container_workspace'] = self.container_workspace
 
         # Add hostfile parameter (save path if set, None means use global jarvis hostfile)
         # Hostfile is always saved into the shared directory so it is
@@ -761,6 +767,8 @@ class Pipeline:
         self.container_ssh_port = pipeline_config.get('container_ssh_port', 2222)
         self.container_extensions = pipeline_config.get('container_extensions', {})
         self.container_env = pipeline_config.get('container_env', {})
+        self.container_host_path = pipeline_config.get('container_host_path', '')
+        self.container_workspace = pipeline_config.get('container_workspace', '')
 
         # Load hostfile parameter (None means use global jarvis hostfile)
         hostfile_path = pipeline_config.get('hostfile')
@@ -880,6 +888,8 @@ class Pipeline:
         self.container_ssh_port = pipeline_def.get('container_ssh_port', 2222)
         self.container_extensions = pipeline_def.get('container_extensions', {})
         self.container_env = pipeline_def.get('container_env', {})
+        self.container_host_path = pipeline_def.get('container_host_path', '')
+        self.container_workspace = pipeline_def.get('container_workspace', '')
 
         # Load hostfile parameter (None means use global jarvis hostfile)
         hostfile_path = pipeline_def.get('hostfile')
@@ -1392,17 +1402,14 @@ class Pipeline:
         ssh_port = self.container_ssh_port
 
         # Path remapping for Docker-in-Docker / devcontainer environments.
-        # When JARVIS_DOCKER_HOST_PREFIX is set, the current working tree
-        # is bind-mounted from a different path on the Docker host.
+        # When container_host_path and container_workspace are set, the
+        # workspace is bind-mounted from a different path on the Docker host.
         # Volume mounts in docker-compose must use host paths.
-        docker_host_prefix = self.env.get('JARVIS_DOCKER_HOST_PREFIX', '')
-        if docker_host_prefix:
-            # In devcontainer/DinD environments, /workspace is bind-mounted from
-            # the host at JARVIS_DOCKER_HOST_PREFIX. Docker sibling containers
-            # must use the host path, not the devcontainer path.
-            workspace_root = '/workspace'
+        docker_host_prefix = self.container_host_path
+        workspace_root = self.container_workspace
+        if docker_host_prefix and workspace_root and os.path.isdir(workspace_root):
             def to_host_path(path_str):
-                """Remap a devcontainer path to the Docker host path."""
+                """Remap a workspace path to the Docker host path."""
                 if path_str.startswith(workspace_root):
                     return docker_host_prefix + path_str[len(workspace_root):]
                 return path_str
@@ -1413,11 +1420,12 @@ class Pipeline:
         # Container entrypoint: start SSH and sleep forever.
         # The host-side jarvis orchestrates packages by SSH/MPI-ing into
         # the containers — no jarvis installation needed inside them.
-        # When JARVIS_DOCKER_HOST_PREFIX is set (DinD/devcontainer), the home
-        # directory is on the overlay filesystem and invisible to sibling containers.
-        # Copy SSH keys to a Docker-accessible location under /workspace.
+        # In DinD environments, the home directory is on the overlay
+        # filesystem — copy SSH keys to the workspace so sibling
+        # containers can access them.
         ssh_dir = os.path.expanduser('~/.ssh')
-        if docker_host_prefix and not ssh_dir.startswith(workspace_root):
+        if docker_host_prefix and workspace_root and os.path.isdir(workspace_root) \
+                and not ssh_dir.startswith(workspace_root):
             docker_ssh_dir = os.path.join(workspace_root, '.ssh-host')
             if os.path.exists(ssh_dir):
                 import shutil
