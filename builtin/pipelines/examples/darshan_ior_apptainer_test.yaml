@@ -5,6 +5,7 @@
 # Darshan logs will be written to /tmp/darshan_logs on the host (via apptainer bind mount).
 
 name: darshan_ior_apptainer_test
+install_manager: container
 
 container_engine: apptainer
 container_base: ubuntu:24.04
@@ -12,14 +13,12 @@ container_base: ubuntu:24.04
 interceptors:
   - pkg_type: builtin.darshan
     pkg_name: darshan_interceptor
-    deploy_mode: container
     log_dir: /tmp/darshan_logs
     job_id: ior_apptainer_test
 
 pkgs:
   - pkg_type: builtin.ior
     pkg_name: ior_container
-    deploy_mode: container
     interceptors:
       - darshan_interceptor
     nprocs: 4

@@ -187,11 +187,10 @@ class Pkg:
         # Add common parameters that all packages should have
         common_menu = [
             {
-                'name': 'deploy_mode',
-                'msg': 'Deployment mode',
+                'name': 'install',
+                'msg': 'Spack spec for this package (used with install_manager: spack)',
                 'type': str,
-                'choices': ['default', 'container'],
-                'default': 'default',
+                'default': '',
             },
             {
                 'name': 'interceptors',

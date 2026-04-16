@@ -23,13 +23,6 @@ class Vpic(Application):
     def _configure_menu(self):
         return [
             {
-                'name': 'deploy_mode',
-                'msg': 'Deployment mode',
-                'type': str,
-                'choices': ['default', 'container'],
-                'default': 'default',
-            },
-            {
                 'name': 'nprocs',
                 'msg': 'Number of MPI processes',
                 'type': int,

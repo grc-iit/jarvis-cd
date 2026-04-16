@@ -43,6 +43,9 @@ class Pipeline:
         self.container_host_path = ""  # Docker host path prefix for DinD remapping
         self.container_workspace = ""  # Container workspace root for DinD remapping
 
+        # Install manager: None (legacy default), 'container', or 'spack'
+        self.install_manager = None
+
         # Hostfile parameter (None means use global jarvis hostfile)
         self.hostfile = None
 
@@ -79,6 +82,77 @@ class Pipeline:
             if pkg_def.get('config', {}).get('deploy_mode') == 'container':
                 return True
         return False
+
+    def _propagate_deploy_mode(self):
+        """
+        Derive deploy_mode from install_manager and set it on all packages
+        and interceptors.  deploy_mode is pipeline-level, not per-package.
+        """
+        if self.install_manager == 'container':
+            deploy_mode = 'container'
+        elif self.install_manager == 'spack':
+            deploy_mode = 'default'
+        else:
+            deploy_mode = 'default'
+
+        for pkg_def in self.packages:
+            pkg_def.setdefault('config', {})['deploy_mode'] = deploy_mode
+        for idef in self.interceptors.values():
+            idef.setdefault('config', {})['deploy_mode'] = deploy_mode
+
+    def _install_spack_packages(self):
+        """
+        Install packages via spack and capture the resulting environment.
+
+        1. Collect 'install' specs from all packages
+        2. Run 'spack install <specs>'
+        3. Run 'spack load <specs>' in a subprocess and capture env
+        4. Merge spack environment into pipeline environment
+        """
+        from jarvis_cd.shell import Exec, LocalExecInfo
+        from jarvis_cd.core.environment import EnvironmentManager
+
+        # Collect spack specs from all packages
+        spack_specs = []
+        for pkg_def in self.packages:
+            install_spec = pkg_def.get('config', {}).get('install', '')
+            if install_spec:
+                spack_specs.append(install_spec)
+
+        if not spack_specs:
+            print("No spack install specs found in packages, skipping spack install")
+            return
+
+        specs_str = ' '.join(spack_specs)
+
+        # Build spack command prefix (source setup-env.sh if SPACK_ROOT is set)
+        import os
+        spack_root = os.environ.get('SPACK_ROOT', '')
+        if spack_root:
+            spack_prefix = f'. {spack_root}/share/spack/setup-env.sh && '
+        else:
+            spack_prefix = ''
+
+        # Step 1: spack install
+        print(f"Installing spack packages: {specs_str}")
+        install_cmd = f'bash -c "{spack_prefix}spack install {specs_str}"'
+        result = Exec(install_cmd, LocalExecInfo()).run()
+        exit_code = result.exit_code.get('localhost', 1)
+        if exit_code != 0:
+            raise RuntimeError(
+                f"spack install failed (exit code {exit_code}). "
+                f"Specs: {specs_str}"
+            )
+        print("Spack install complete")
+
+        # Step 2: spack load + capture environment
+        print(f"Loading spack packages and capturing environment...")
+        env_manager = EnvironmentManager(self.jarvis)
+        spack_env = env_manager.capture_spack_environment(spack_specs)
+
+        # Step 3: Merge spack environment into pipeline environment
+        self.env.update(spack_env)
+        print(f"Spack environment merged ({len(spack_env)} variables updated)")
 
     def create(self, pipeline_name: str):
         """
@@ -169,6 +243,10 @@ class Pipeline:
             pipeline_config['container_host_path'] = self.container_host_path
         if self.container_workspace:
             pipeline_config['container_workspace'] = self.container_workspace
+
+        # Add install manager
+        if self.install_manager:
+            pipeline_config['install_manager'] = self.install_manager
 
         # Add hostfile parameter (save path if set, None means use global jarvis hostfile)
         # Hostfile is always saved into the shared directory so it is
@@ -770,6 +848,9 @@ class Pipeline:
         self.container_host_path = pipeline_config.get('container_host_path', '')
         self.container_workspace = pipeline_config.get('container_workspace', '')
 
+        # Load install manager
+        self.install_manager = pipeline_config.get('install_manager', None)
+
         # Load hostfile parameter (None means use global jarvis hostfile)
         hostfile_path = pipeline_config.get('hostfile')
         if hostfile_path:
@@ -891,6 +972,9 @@ class Pipeline:
         self.container_host_path = pipeline_def.get('container_host_path', '')
         self.container_workspace = pipeline_def.get('container_workspace', '')
 
+        # Load install manager
+        self.install_manager = pipeline_def.get('install_manager', None)
+
         # Load hostfile parameter (None means use global jarvis hostfile)
         hostfile_path = pipeline_def.get('hostfile')
         if hostfile_path:
@@ -914,16 +998,22 @@ class Pipeline:
         # Validate that interceptor and package IDs are unique
         self._validate_unique_ids()
 
-        # Auto-build containers if any package has deploy_mode: container
-        if not self.container_image and self._has_containerized_packages():
-            self._build_pipeline_container()
-            self.container_image = self.name
+        # Derive deploy_mode from install_manager and propagate to all packages
+        self._propagate_deploy_mode()
+
+        # Install phase: spack or container based on install_manager
+        if self.install_manager == 'spack':
+            self._install_spack_packages()
+        elif self.install_manager == 'container':
+            if not self.container_image:
+                self._build_pipeline_container()
+                self.container_image = self.name
 
         # Save pipeline configuration and environment
         self.save()
 
         # Generate container compose file if this is a containerized pipeline
-        if self.is_containerized():
+        if self.install_manager == 'container' and self.is_containerized():
             print(f"Generating container configuration files...")
             self._generate_pipeline_container_yaml()
             self._generate_pipeline_compose_file()

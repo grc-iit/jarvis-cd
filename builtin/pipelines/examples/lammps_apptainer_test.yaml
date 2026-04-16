@@ -4,6 +4,7 @@
 # The build phase uses docker to build the image, then converts to SIF.
 
 name: lammps_apptainer_test
+install_manager: container
 
 container_engine: apptainer
 container_base: sci-hpc-base
@@ -11,7 +12,6 @@ container_base: sci-hpc-base
 pkgs:
   - pkg_type: builtin.lammps
     pkg_name: lammps_apptainer
-    deploy_mode: container
     nprocs: 4
     ppn: 4
     cuda_arch: 80

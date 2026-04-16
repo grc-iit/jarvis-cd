@@ -4,6 +4,7 @@
 # Expected Runtime: 2-5 minutes
 
 name: ior_ubuntu_container_test
+install_manager: container
 
 # Auto-build environment from current shell
 # No env field - will capture current environment automatically
@@ -16,8 +17,6 @@ pkgs:
   # IOR benchmark with container deployment
   - pkg_type: builtin.ior
     pkg_name: ior_container
-    # Deployment mode: 'default' for bare metal, 'container' for containerized
-    deploy_mode: container
     # IOR benchmark parameters
     nprocs: 2
     ppn: 2

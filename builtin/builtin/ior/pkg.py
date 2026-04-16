@@ -28,13 +28,6 @@ class Ior(Application):
         """
         return [
             {
-                'name': 'deploy_mode',
-                'msg': 'Deployment mode',
-                'type': str,
-                'choices': ['default', 'container'],
-                'default': 'default',
-            },
-            {
                 'name': 'write',
                 'msg': 'Perform a write workload',
                 'type': bool,

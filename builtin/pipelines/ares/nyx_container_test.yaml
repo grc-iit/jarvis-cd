@@ -3,6 +3,7 @@
 # Hosts: ares-comp-25, ares-comp-27, ares-comp-28
 
 name: nyx_ares_container_test
+install_manager: container
 
 container_engine: docker
 container_base: ubuntu:24.04
@@ -16,7 +17,6 @@ container_env:
 pkgs:
   - pkg_type: builtin.nyx
     pkg_name: nyx_ares
-    deploy_mode: container
     nprocs: 3
     ppn: 1
     max_step: 10

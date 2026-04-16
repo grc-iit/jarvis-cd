@@ -66,30 +66,26 @@ class TestRedisDockerCluster(unittest.TestCase):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _make_redis_pkg_def(self, pipeline_name, port=6379,
-                            deploy_mode='container'):
+    def _make_redis_pkg_def(self, pipeline_name, port=6379):
         return {
             'pkg_type': 'builtin.redis',
             'pkg_id': 'redis',
             'pkg_name': 'redis',
             'global_id': f'{pipeline_name}.redis',
             'config': {
-                'deploy_mode': deploy_mode,
                 'port': port,
                 'sleep': 2,
                 'interceptors': [],
             },
         }
 
-    def _make_bench_pkg_def(self, pipeline_name, port=6379,
-                            deploy_mode='container'):
+    def _make_bench_pkg_def(self, pipeline_name, port=6379):
         return {
             'pkg_type': 'builtin.redis-benchmark',
             'pkg_id': 'redis_bench',
             'pkg_name': 'redis-benchmark',
             'global_id': f'{pipeline_name}.redis_bench',
             'config': {
-                'deploy_mode': deploy_mode,
                 'port': port,
                 'count': 100000,
                 'write': True,
@@ -102,20 +98,22 @@ class TestRedisDockerCluster(unittest.TestCase):
             },
         }
 
-    def _create_redis_pipeline(self, name, deploy_mode='container'):
+    def _create_redis_pipeline(self, name):
         """Create a pipeline with Redis + redis-benchmark and the Docker hostfile."""
         pipeline = Pipeline()
         pipeline.create(name)
+        pipeline.install_manager = 'container'
         pipeline.container_engine = 'docker'
         pipeline.container_base = 'ubuntu:24.04'
 
         hf = Hostfile(path=self.hostfile_path, find_ips=False)
         pipeline.hostfile = hf
 
-        redis_def = self._make_redis_pkg_def(name, deploy_mode=deploy_mode)
-        bench_def = self._make_bench_pkg_def(name, deploy_mode=deploy_mode)
+        redis_def = self._make_redis_pkg_def(name)
+        bench_def = self._make_bench_pkg_def(name)
         pipeline.packages.append(redis_def)
         pipeline.packages.append(bench_def)
+        pipeline._propagate_deploy_mode()
         pipeline.save()
         return pipeline
 
@@ -261,17 +259,14 @@ class TestRedisDockerCluster(unittest.TestCase):
         target_host = hf.hosts[pkg.config['node']]
         self.assertEqual(target_host, 'redis-node-01')
 
-    def test_deploy_mode_container(self):
-        """Both packages should carry deploy_mode=container."""
+    def test_install_manager_container(self):
+        """Pipeline should have install_manager=container."""
         pipeline = self._create_redis_pipeline('redis_deploy')
-
-        for pkg_def in pipeline.packages:
-            self.assertEqual(pkg_def['config']['deploy_mode'], 'container')
+        self.assertEqual(pipeline.install_manager, 'container')
 
         # Reload and verify persistence
         pipeline2 = Pipeline('redis_deploy')
-        for pkg_def in pipeline2.packages:
-            self.assertEqual(pkg_def['config']['deploy_mode'], 'container')
+        self.assertEqual(pipeline2.install_manager, 'container')
 
 
 if __name__ == '__main__':

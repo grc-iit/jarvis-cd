@@ -28,13 +28,6 @@ class Darshan(Interceptor):
         """
         return [
             {
-                'name': 'deploy_mode',
-                'msg': 'Deployment mode: default (host) or container',
-                'type': str,
-                'default': 'default',
-                'choices': ['default', 'container'],
-            },
-            {
                 'name': 'log_dir',
                 'msg': 'Where darshan should place data',
                 'type': str,

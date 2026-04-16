@@ -48,10 +48,12 @@ class ContainerBaremetalTestBase(unittest.TestCase):
         if os.path.exists(self.test_dir):
             shutil.rmtree(self.test_dir)
 
-    def _create_pipeline(self, name, container_engine='docker',
+    def _create_pipeline(self, name, install_manager='container',
+                         container_engine='docker',
                          container_base='ubuntu:24.04'):
         pipeline = Pipeline()
         pipeline.create(name)
+        pipeline.install_manager = install_manager
         pipeline.container_engine = container_engine
         pipeline.container_base = container_base
         pipeline.save()
@@ -69,6 +71,7 @@ class ContainerBaremetalTestBase(unittest.TestCase):
 
     def _load_pkg(self, pipeline, pkg_def):
         pipeline.packages.append(pkg_def)
+        pipeline._propagate_deploy_mode()
         pipeline.save()
         return pipeline._load_package_instance(pkg_def, {})
 
@@ -80,9 +83,8 @@ class ContainerBaremetalTestBase(unittest.TestCase):
 class TestIorBaremetal(ContainerBaremetalTestBase):
 
     def test_default_mode_returns_none(self):
-        pipeline = self._create_pipeline('ior_default')
+        pipeline = self._create_pipeline('ior_default', install_manager=None)
         pkg_def = self._make_pkg_def('ior_default', 'builtin.ior', 'ior', {
-            'deploy_mode': 'default',
             'nprocs': 1, 'ppn': 1, 'block': '32m', 'xfer': '1m',
             'api': 'posix', 'out': '/tmp/ior.bin', 'write': True,
             'read': False, 'fpp': False, 'reps': 1, 'direct': False,
@@ -94,7 +96,7 @@ class TestIorBaremetal(ContainerBaremetalTestBase):
     def test_container_mode_returns_tuple(self):
         pipeline = self._create_pipeline('ior_container')
         pkg_def = self._make_pkg_def('ior_container', 'builtin.ior', 'ior', {
-            'deploy_mode': 'container',
+
             'nprocs': 2, 'ppn': 2, 'block': '64m', 'xfer': '1m',
             'api': 'posix', 'out': '/tmp/ior.bin', 'write': True,
             'read': True, 'fpp': False, 'reps': 1, 'direct': False,
@@ -112,7 +114,7 @@ class TestIorBaremetal(ContainerBaremetalTestBase):
     def test_build_image_name_includes_suffix(self):
         pipeline = self._create_pipeline('ior_name')
         pkg_def = self._make_pkg_def('ior_name', 'builtin.ior', 'ior', {
-            'deploy_mode': 'container',
+
             'nprocs': 1, 'ppn': 1, 'block': '32m', 'xfer': '1m',
             'api': 'posix', 'out': '/tmp/ior.bin', 'write': True,
             'read': False, 'fpp': False, 'reps': 1, 'direct': False,
@@ -125,7 +127,7 @@ class TestIorBaremetal(ContainerBaremetalTestBase):
     def test_dockerfile_template_substitution(self):
         pipeline = self._create_pipeline('ior_tpl')
         pkg_def = self._make_pkg_def('ior_tpl', 'builtin.ior', 'ior', {
-            'deploy_mode': 'container',
+
             'nprocs': 1, 'ppn': 1, 'block': '32m', 'xfer': '1m',
             'api': 'posix', 'out': '/tmp/ior.bin', 'write': True,
             'read': False, 'fpp': False, 'reps': 1, 'direct': False,
@@ -139,7 +141,7 @@ class TestIorBaremetal(ContainerBaremetalTestBase):
     def test_deploy_phase_references_build_image(self):
         pipeline = self._create_pipeline('ior_deploy')
         pkg_def = self._make_pkg_def('ior_deploy', 'builtin.ior', 'ior', {
-            'deploy_mode': 'container',
+
             'nprocs': 1, 'ppn': 1, 'block': '32m', 'xfer': '1m',
             'api': 'posix', 'out': '/tmp/ior.bin', 'write': True,
             'read': False, 'fpp': False, 'reps': 1, 'direct': False,
@@ -158,10 +160,8 @@ class TestIorBaremetal(ContainerBaremetalTestBase):
 
 class TestLammpsBaremetal(ContainerBaremetalTestBase):
 
-    def _lammps_config(self, deploy_mode='container', kokkos_gpu=True,
-                       cuda_arch=80):
+    def _lammps_config(self, kokkos_gpu=True, cuda_arch=80):
         return {
-            'deploy_mode': deploy_mode,
             'nprocs': 4, 'ppn': 4, 'cuda_arch': cuda_arch,
             'base_image': 'sci-hpc-base', 'kokkos_gpu': kokkos_gpu,
             'num_gpus': 1, 'script': '/opt/lammps/bench/in.lj',
@@ -169,9 +169,9 @@ class TestLammpsBaremetal(ContainerBaremetalTestBase):
         }
 
     def test_default_mode_returns_none(self):
-        pipeline = self._create_pipeline('lammps_def')
+        pipeline = self._create_pipeline('lammps_def', install_manager=None)
         pkg_def = self._make_pkg_def('lammps_def', 'builtin.lammps', 'lammps',
-                                     self._lammps_config(deploy_mode='default'))
+                                     self._lammps_config())
         pkg = self._load_pkg(pipeline, pkg_def)
         self.assertIsNone(pkg._build_phase())
 
@@ -220,9 +220,8 @@ class TestLammpsBaremetal(ContainerBaremetalTestBase):
 
 class TestGrayScottBaremetal(ContainerBaremetalTestBase):
 
-    def _gs_config(self, deploy_mode='container', cuda_arch=80):
+    def _gs_config(self, cuda_arch=80):
         return {
-            'deploy_mode': deploy_mode,
             'nprocs': 4, 'ppn': 4, 'cuda_arch': cuda_arch,
             'base_image': 'sci-hpc-base',
             'width': 256, 'height': 256, 'steps': 100, 'out_every': 50,
@@ -231,9 +230,9 @@ class TestGrayScottBaremetal(ContainerBaremetalTestBase):
         }
 
     def test_default_mode_returns_none(self):
-        pipeline = self._create_pipeline('gs_def')
+        pipeline = self._create_pipeline('gs_def', install_manager=None)
         pkg_def = self._make_pkg_def('gs_def', 'builtin.gray_scott', 'gray_scott',
-                                     self._gs_config(deploy_mode='default'))
+                                     self._gs_config())
         pkg = self._load_pkg(pipeline, pkg_def)
         self.assertIsNone(pkg._build_phase())
 
@@ -262,9 +261,8 @@ class TestGrayScottBaremetal(ContainerBaremetalTestBase):
 
 class TestAiTrainingBaremetal(ContainerBaremetalTestBase):
 
-    def _ai_config(self, deploy_mode='container'):
+    def _ai_config(self):
         return {
-            'deploy_mode': deploy_mode,
             'script': '/opt/train_example.py', 'epochs': 3, 'batch': 128,
             'nnodes': 1, 'nproc_per_node': 1,
             'master_addr': 'localhost', 'master_port': 29500,
@@ -272,9 +270,9 @@ class TestAiTrainingBaremetal(ContainerBaremetalTestBase):
         }
 
     def test_default_mode_returns_none(self):
-        pipeline = self._create_pipeline('ai_def')
+        pipeline = self._create_pipeline('ai_def', install_manager=None)
         pkg_def = self._make_pkg_def('ai_def', 'builtin.ai_training', 'ai_training',
-                                     self._ai_config(deploy_mode='default'))
+                                     self._ai_config())
         pkg = self._load_pkg(pipeline, pkg_def)
         self.assertIsNone(pkg._build_phase())
 
@@ -304,9 +302,8 @@ class TestAiTrainingBaremetal(ContainerBaremetalTestBase):
 
 class TestWarpxBaremetal(ContainerBaremetalTestBase):
 
-    def _warpx_config(self, deploy_mode='container', cuda_arch=80):
+    def _warpx_config(self, cuda_arch=80):
         return {
-            'deploy_mode': deploy_mode,
             'nprocs': 2, 'ppn': 2, 'cuda_arch': cuda_arch,
             'base_image': 'sci-hpc-base',
             'example': 'laser_acceleration', 'max_step': 10,
@@ -315,9 +312,9 @@ class TestWarpxBaremetal(ContainerBaremetalTestBase):
         }
 
     def test_default_mode_returns_none(self):
-        pipeline = self._create_pipeline('warpx_def')
+        pipeline = self._create_pipeline('warpx_def', install_manager=None)
         pkg_def = self._make_pkg_def('warpx_def', 'builtin.warpx', 'warpx',
-                                     self._warpx_config(deploy_mode='default'))
+                                     self._warpx_config())
         pkg = self._load_pkg(pipeline, pkg_def)
         self.assertIsNone(pkg._build_phase())
 
@@ -347,19 +344,17 @@ class TestWarpxBaremetal(ContainerBaremetalTestBase):
 
 class TestVpicBaremetal(ContainerBaremetalTestBase):
 
-    def _vpic_config(self, deploy_mode='container', base_image='sci-hpc-base',
-                     cuda_arch=80):
+    def _vpic_config(self, base_image='sci-hpc-base', cuda_arch=80):
         return {
-            'deploy_mode': deploy_mode,
             'nprocs': 4, 'ppn': 4, 'cuda_arch': cuda_arch,
             'base_image': base_image, 'sample_deck': 'harris',
             'run_dir': '/tmp/vpic_run', 'deck': None,
         }
 
     def test_default_mode_returns_none(self):
-        pipeline = self._create_pipeline('vpic_def')
+        pipeline = self._create_pipeline('vpic_def', install_manager=None)
         pkg_def = self._make_pkg_def('vpic_def', 'builtin.vpic', 'vpic',
-                                     self._vpic_config(deploy_mode='default'))
+                                     self._vpic_config())
         pkg = self._load_pkg(pipeline, pkg_def)
         self.assertIsNone(pkg._build_phase())
 
@@ -398,10 +393,8 @@ class TestVpicBaremetal(ContainerBaremetalTestBase):
 
 class TestNyxBaremetal(ContainerBaremetalTestBase):
 
-    def _nyx_config(self, deploy_mode='container', base_image='sci-hpc-base',
-                    cuda_arch=80):
+    def _nyx_config(self, base_image='sci-hpc-base', cuda_arch=80):
         return {
-            'deploy_mode': deploy_mode,
             'nprocs': 4, 'ppn': 4, 'cuda_arch': cuda_arch,
             'base_image': base_image,
             'max_step': 10, 'n_cell': '64 64 64', 'max_level': 0,
@@ -409,9 +402,9 @@ class TestNyxBaremetal(ContainerBaremetalTestBase):
         }
 
     def test_default_mode_returns_none(self):
-        pipeline = self._create_pipeline('nyx_def')
+        pipeline = self._create_pipeline('nyx_def', install_manager=None)
         pkg_def = self._make_pkg_def('nyx_def', 'builtin.nyx', 'nyx',
-                                     self._nyx_config(deploy_mode='default'))
+                                     self._nyx_config())
         pkg = self._load_pkg(pipeline, pkg_def)
         self.assertIsNone(pkg._build_phase())
 
@@ -451,9 +444,9 @@ class TestNyxBaremetal(ContainerBaremetalTestBase):
 class TestRedisBaremetal(ContainerBaremetalTestBase):
 
     def test_default_mode_returns_none(self):
-        pipeline = self._create_pipeline('redis_def')
+        pipeline = self._create_pipeline('redis_def', install_manager=None)
         pkg_def = self._make_pkg_def('redis_def', 'builtin.redis', 'redis', {
-            'deploy_mode': 'default', 'port': 6379,
+            'port': 6379,
         })
         pkg = self._load_pkg(pipeline, pkg_def)
         self.assertIsNone(pkg._build_phase())
@@ -462,7 +455,7 @@ class TestRedisBaremetal(ContainerBaremetalTestBase):
     def test_container_has_deploy_only(self):
         pipeline = self._create_pipeline('redis_cont')
         pkg_def = self._make_pkg_def('redis_cont', 'builtin.redis', 'redis', {
-            'deploy_mode': 'container', 'port': 6379,
+            'port': 6379,
         })
         pkg = self._load_pkg(pipeline, pkg_def)
         self.assertIsNone(pkg._build_phase())
@@ -483,7 +476,7 @@ class TestRedisBenchmarkBaremetal(ContainerBaremetalTestBase):
         pipeline = self._create_pipeline('rbench_cont')
         pkg_def = self._make_pkg_def('rbench_cont', 'builtin.redis-benchmark',
                                      'redis_bench', {
-            'deploy_mode': 'container', 'port': 6379,
+            'port': 6379,
             'count': 1000, 'write': True, 'read': True,
             'nthreads': 1, 'pipeline': 1, 'req_size': 64, 'node': 0,
         })
@@ -506,14 +499,14 @@ class TestImageNameUniqueness(ContainerBaremetalTestBase):
     def test_lammps_gpu_vs_cpu_distinct(self):
         pipeline = self._create_pipeline('lammps_uniq')
         gpu_def = self._make_pkg_def('lammps_uniq', 'builtin.lammps', 'lammps_gpu', {
-            'deploy_mode': 'container', 'nprocs': 1, 'ppn': 1,
+            'nprocs': 1, 'ppn': 1,
             'cuda_arch': 80, 'base_image': 'sci-hpc-base',
             'kokkos_gpu': True, 'num_gpus': 1,
             'script': '/opt/lammps/bench/in.lj', 'out': '/tmp/out',
             'lmp_bin': 'lmp',
         })
         cpu_def = self._make_pkg_def('lammps_uniq', 'builtin.lammps', 'lammps_cpu', {
-            'deploy_mode': 'container', 'nprocs': 1, 'ppn': 1,
+            'nprocs': 1, 'ppn': 1,
             'cuda_arch': 80, 'base_image': 'sci-hpc-base',
             'kokkos_gpu': False, 'num_gpus': 0,
             'script': '/opt/lammps/bench/in.lj', 'out': '/tmp/out',
@@ -522,7 +515,7 @@ class TestImageNameUniqueness(ContainerBaremetalTestBase):
         gpu_pkg = self._load_pkg(pipeline, gpu_def)
         _, gpu_suffix = gpu_pkg._build_phase()
 
-        cpu_pkg = pipeline._load_package_instance(cpu_def, {})
+        cpu_pkg = self._load_pkg(pipeline, cpu_def)
         _, cpu_suffix = cpu_pkg._build_phase()
 
         self.assertNotEqual(gpu_suffix, cpu_suffix)
@@ -534,13 +527,13 @@ class TestImageNameUniqueness(ContainerBaremetalTestBase):
     def test_nyx_gpu_vs_cpu_distinct(self):
         pipeline = self._create_pipeline('nyx_uniq')
         gpu_def = self._make_pkg_def('nyx_uniq', 'builtin.nyx', 'nyx_gpu', {
-            'deploy_mode': 'container', 'nprocs': 1, 'ppn': 1,
+            'nprocs': 1, 'ppn': 1,
             'cuda_arch': 80, 'base_image': 'sci-hpc-base',
             'max_step': 10, 'n_cell': '64 64 64', 'max_level': 0,
             'out': '/tmp/nyx_out', 'plot_int': 5,
         })
         cpu_def = self._make_pkg_def('nyx_uniq', 'builtin.nyx', 'nyx_cpu', {
-            'deploy_mode': 'container', 'nprocs': 1, 'ppn': 1,
+            'nprocs': 1, 'ppn': 1,
             'cuda_arch': 80, 'base_image': 'ubuntu:24.04',
             'max_step': 10, 'n_cell': '64 64 64', 'max_level': 0,
             'out': '/tmp/nyx_out', 'plot_int': 5,
@@ -548,7 +541,7 @@ class TestImageNameUniqueness(ContainerBaremetalTestBase):
         gpu_pkg = self._load_pkg(pipeline, gpu_def)
         _, gpu_suffix = gpu_pkg._build_phase()
 
-        cpu_pkg = pipeline._load_package_instance(cpu_def, {})
+        cpu_pkg = self._load_pkg(pipeline, cpu_def)
         _, cpu_suffix = cpu_pkg._build_phase()
 
         self.assertNotEqual(gpu_suffix, cpu_suffix)

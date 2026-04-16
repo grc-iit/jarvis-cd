@@ -68,8 +68,7 @@ class TestIorDockerCluster(unittest.TestCase):
     # Helper to build an IOR package definition
     # ------------------------------------------------------------------
 
-    def _make_ior_pkg_def(self, pipeline_name, nprocs=4, ppn=1,
-                          deploy_mode='container'):
+    def _make_ior_pkg_def(self, pipeline_name, nprocs=4, ppn=1):
         """Return a package definition dict for the IOR package."""
         return {
             'pkg_type': 'builtin.ior',
@@ -77,7 +76,6 @@ class TestIorDockerCluster(unittest.TestCase):
             'pkg_name': 'ior',
             'global_id': f'{pipeline_name}.ior_cluster',
             'config': {
-                'deploy_mode': deploy_mode,
                 'nprocs': nprocs,
                 'ppn': ppn,
                 'block': '64m',
@@ -163,19 +161,20 @@ class TestIorDockerCluster(unittest.TestCase):
             len(self.DOCKER_HOSTS),
         )
 
-    def test_ior_container_deploy_mode(self):
-        """IOR package should be configured with deploy_mode=container."""
+    def test_ior_container_install_manager(self):
+        """Pipeline should use install_manager=container for containerized deployment."""
         pipeline = Pipeline()
         pipeline.create('docker_cluster_mode')
+        pipeline.install_manager = 'container'
         pipeline.container_engine = 'docker'
         pipeline.container_base = 'ubuntu:24.04'
 
         hf = Hostfile(path=self.hostfile_path, find_ips=False)
         pipeline.hostfile = hf
-        pipeline.save()
 
-        pkg_def = self._make_ior_pkg_def(pipeline.name, deploy_mode='container')
+        pkg_def = self._make_ior_pkg_def(pipeline.name)
         pipeline.packages.append(pkg_def)
+        pipeline._propagate_deploy_mode()
         pipeline.save()
 
         pkg_instance = pipeline._load_package_instance(pkg_def, {})
@@ -183,12 +182,9 @@ class TestIorDockerCluster(unittest.TestCase):
 
         # Verify container-related pipeline settings persisted
         pipeline2 = Pipeline('docker_cluster_mode')
+        self.assertEqual(pipeline2.install_manager, 'container')
         self.assertEqual(pipeline2.container_engine, 'docker')
         self.assertEqual(pipeline2.container_base, 'ubuntu:24.04')
-        self.assertEqual(len(pipeline2.packages), 1)
-        self.assertEqual(
-            pipeline2.packages[0]['config']['deploy_mode'], 'container'
-        )
 
     def test_pipeline_container_engine_docker(self):
         """Pipeline container_engine should be 'docker'."""

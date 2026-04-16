@@ -23,13 +23,6 @@ class AiTraining(Application):
     def _configure_menu(self):
         return [
             {
-                'name': 'deploy_mode',
-                'msg': 'Deployment mode',
-                'type': str,
-                'choices': ['default', 'container'],
-                'default': 'default',
-            },
-            {
                 'name': 'script',
                 'msg': 'Path to Python training script',
                 'type': str,

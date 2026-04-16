@@ -4,6 +4,7 @@
 # Base image: sci-hpc-base (build from awesome-scienctific-applications/base/)
 
 name: lammps_container_test
+install_manager: container
 
 container_engine: docker
 container_base: sci-hpc-base
@@ -11,7 +12,6 @@ container_base: sci-hpc-base
 pkgs:
   - pkg_type: builtin.lammps
     pkg_name: lammps_container
-    deploy_mode: container
     nprocs: 4
     ppn: 4
     cuda_arch: 80

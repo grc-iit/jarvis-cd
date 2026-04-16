@@ -57,11 +57,13 @@ class DockerClusterTestBase(unittest.TestCase):
         if os.path.exists(self.test_dir):
             shutil.rmtree(self.test_dir)
 
-    def _create_cluster_pipeline(self, name, container_engine='docker',
+    def _create_cluster_pipeline(self, name, install_manager='container',
+                                 container_engine='docker',
                                  container_base='ubuntu:24.04',
                                  container_image='test:latest'):
         pipeline = Pipeline()
         pipeline.create(name)
+        pipeline.install_manager = install_manager
         pipeline.container_engine = container_engine
         pipeline.container_base = container_base
         pipeline.container_image = container_image
@@ -82,6 +84,7 @@ class DockerClusterTestBase(unittest.TestCase):
 
     def _add_pkg(self, pipeline, pkg_def):
         pipeline.packages.append(pkg_def)
+        pipeline._propagate_deploy_mode()
         pipeline.save()
         return pipeline._load_package_instance(pkg_def, {})
 
@@ -94,7 +97,7 @@ class TestIorDockerCluster(DockerClusterTestBase):
 
     def _ior_config(self):
         return {
-            'deploy_mode': 'container',
+
             'nprocs': 4, 'ppn': 1, 'block': '64m', 'xfer': '1m',
             'api': 'posix', 'out': '/tmp/ior.bin', 'write': True,
             'read': True, 'fpp': False, 'reps': 1, 'direct': False,
@@ -160,7 +163,7 @@ class TestLammpsDockerCluster(DockerClusterTestBase):
 
     def _lammps_config(self):
         return {
-            'deploy_mode': 'container',
+
             'nprocs': 4, 'ppn': 1, 'cuda_arch': 80,
             'base_image': 'sci-hpc-base', 'kokkos_gpu': False,
             'num_gpus': 0, 'script': '/opt/lammps/bench/in.lj',
@@ -197,7 +200,7 @@ class TestGrayScottDockerCluster(DockerClusterTestBase):
 
     def _gs_config(self):
         return {
-            'deploy_mode': 'container',
+
             'nprocs': 4, 'ppn': 1, 'cuda_arch': 80,
             'base_image': 'sci-hpc-base',
             'width': 256, 'height': 256, 'steps': 100, 'out_every': 50,
@@ -229,7 +232,7 @@ class TestAiTrainingDockerCluster(DockerClusterTestBase):
 
     def _ai_config(self):
         return {
-            'deploy_mode': 'container',
+
             'script': '/opt/train_example.py', 'epochs': 3, 'batch': 128,
             'nnodes': 4, 'nproc_per_node': 1,
             'master_addr': 'node-01', 'master_port': 29500,
@@ -263,7 +266,7 @@ class TestWarpxDockerCluster(DockerClusterTestBase):
 
     def _warpx_config(self):
         return {
-            'deploy_mode': 'container',
+
             'nprocs': 4, 'ppn': 1, 'cuda_arch': 80,
             'base_image': 'sci-hpc-base',
             'example': 'laser_acceleration', 'max_step': 10,
@@ -295,7 +298,7 @@ class TestVpicDockerCluster(DockerClusterTestBase):
 
     def _vpic_config(self):
         return {
-            'deploy_mode': 'container',
+
             'nprocs': 4, 'ppn': 1, 'cuda_arch': 80,
             'base_image': 'sci-hpc-base', 'sample_deck': 'harris',
             'run_dir': '/tmp/vpic_run', 'deck': None,
@@ -326,7 +329,7 @@ class TestNyxDockerCluster(DockerClusterTestBase):
 
     def _nyx_config(self):
         return {
-            'deploy_mode': 'container',
+
             'nprocs': 4, 'ppn': 1, 'cuda_arch': 80,
             'base_image': 'sci-hpc-base',
             'max_step': 10, 'n_cell': '64 64 64', 'max_level': 0,
@@ -358,11 +361,11 @@ class TestRedisDockerCluster(DockerClusterTestBase):
     def test_two_packages_pipeline(self):
         pipeline = self._create_cluster_pipeline('redis_two')
         redis_def = self._make_pkg_def('redis_two', 'builtin.redis', 'redis', {
-            'deploy_mode': 'container', 'port': 6379, 'sleep': 2,
+            'port': 6379, 'sleep': 2,
         })
         bench_def = self._make_pkg_def('redis_two', 'builtin.redis-benchmark',
                                        'redis_bench', {
-            'deploy_mode': 'container', 'port': 6379,
+            'port': 6379,
             'count': 1000, 'write': True, 'read': True,
             'nthreads': 1, 'pipeline': 1, 'req_size': 64, 'node': 0,
         })
@@ -374,7 +377,7 @@ class TestRedisDockerCluster(DockerClusterTestBase):
     def test_redis_inherits_hostfile(self):
         pipeline = self._create_cluster_pipeline('redis_hf')
         redis_def = self._make_pkg_def('redis_hf', 'builtin.redis', 'redis', {
-            'deploy_mode': 'container', 'port': 6379, 'sleep': 2,
+            'port': 6379, 'sleep': 2,
         })
         pkg = self._add_pkg(pipeline, redis_def)
         self.assertEqual(len(pkg.get_hostfile().hosts), 4)
@@ -397,7 +400,7 @@ class TestRedisDockerCluster(DockerClusterTestBase):
     def test_pipeline_persists(self):
         pipeline = self._create_cluster_pipeline('redis_per')
         redis_def = self._make_pkg_def('redis_per', 'builtin.redis', 'redis', {
-            'deploy_mode': 'container', 'port': 6379, 'sleep': 2,
+            'port': 6379, 'sleep': 2,
         })
         pipeline.packages.append(redis_def)
         pipeline.save()
@@ -419,13 +422,13 @@ class TestMultiPackageCluster(DockerClusterTestBase):
         """Pipeline with multiple packages should produce one compose service."""
         pipeline = self._create_cluster_pipeline('multi_pkg')
         ior_def = self._make_pkg_def('multi_pkg', 'builtin.ior', 'ior', {
-            'deploy_mode': 'container',
+
             'nprocs': 4, 'ppn': 1, 'block': '32m', 'xfer': '1m',
             'api': 'posix', 'out': '/tmp/ior.bin', 'write': True,
             'read': False, 'fpp': False, 'reps': 1, 'direct': False,
         })
         redis_def = self._make_pkg_def('multi_pkg', 'builtin.redis', 'redis', {
-            'deploy_mode': 'container', 'port': 6379, 'sleep': 2,
+            'port': 6379, 'sleep': 2,
         })
         pipeline.packages.append(ior_def)
         pipeline.packages.append(redis_def)
@@ -440,13 +443,13 @@ class TestMultiPackageCluster(DockerClusterTestBase):
     def test_all_pkgs_inherit_same_hostfile(self):
         pipeline = self._create_cluster_pipeline('multi_hf')
         ior_def = self._make_pkg_def('multi_hf', 'builtin.ior', 'ior', {
-            'deploy_mode': 'container',
+
             'nprocs': 4, 'ppn': 1, 'block': '32m', 'xfer': '1m',
             'api': 'posix', 'out': '/tmp/ior.bin', 'write': True,
             'read': False, 'fpp': False, 'reps': 1, 'direct': False,
         })
         redis_def = self._make_pkg_def('multi_hf', 'builtin.redis', 'redis', {
-            'deploy_mode': 'container', 'port': 6379, 'sleep': 2,
+            'port': 6379, 'sleep': 2,
         })
         ior_pkg = self._add_pkg(pipeline, ior_def)
         redis_pkg = pipeline._load_package_instance(redis_def, {})

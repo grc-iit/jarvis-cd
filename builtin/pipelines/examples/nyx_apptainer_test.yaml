@@ -3,6 +3,7 @@
 # Requirements: NVIDIA GPU, sci-hpc-base image built locally
 
 name: nyx_apptainer_test
+install_manager: container
 
 container_engine: apptainer
 container_base: sci-hpc-base
@@ -10,7 +11,6 @@ container_base: sci-hpc-base
 pkgs:
   - pkg_type: builtin.nyx
     pkg_name: nyx_apptainer
-    deploy_mode: container
     nprocs: 4
     ppn: 4
     cuda_arch: 80
