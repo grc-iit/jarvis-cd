@@ -89,51 +89,22 @@ class AiTraining(Application):
     # Container Dockerfile generators
     # ------------------------------------------------------------------
 
-    def _build_phase(self) -> str:
-        """
-        Return the BUILD container Dockerfile, or None when not in container mode.
-        """
+    def _build_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
-        base = self.config.get('base_image', 'sci-hpc-base')
-        return f"""FROM {base}
+        content = self._read_dockerfile('Dockerfile.build', {
+            'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
+        })
+        return content, 'pytorch-cu126'
 
-# PyTorch matching CUDA 12.6 (cached after first install)
-RUN pip3 install --break-system-packages -q \\
-        torch torchvision torchaudio \\
-        --index-url https://download.pytorch.org/whl/cu126 \\
-    && pip3 install --break-system-packages -q \\
-        numpy matplotlib tensorboard
-
-# Copy bundled example training script
-COPY train_example.py /opt/train_example.py
-
-CMD ["/bin/bash"]
-"""
-
-    def _build_deploy_phase(self) -> str:
-        """
-        Return the DEPLOY container Dockerfile, or None when not in container mode.
-
-        For AI training, the deploy container is essentially the build container
-        since Python packages are the only 'binaries'. Re-tag the build image.
-        """
+    def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
-        return f"""FROM {self.build_image_name}
-
-# Deploy container: full PyTorch environment ready
-# SSH for multi-node torchrun
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    openssh-server openssh-client \\
-    gdb gdbserver \\
-    && rm -rf /var/lib/apt/lists/* \\
-    && mkdir -p /var/run/sshd \\
-    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \\
-    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-
-CMD ["/bin/bash"]
-"""
+        suffix = getattr(self, '_build_suffix', '')
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'BUILD_IMAGE': self.build_image_name(),
+        })
+        return content, suffix
 
     # ------------------------------------------------------------------
     # Configuration
@@ -203,8 +174,8 @@ if __name__ == '__main__':
         """
         Launch AI Training.
 
-        Branches on deploy_mode: uses container_exec_info() for container
-        mode, system torchrun via LocalExecInfo for default mode.
+        Branches on deploy_mode: uses LocalExecInfo with container engine for
+        container mode, system torchrun via LocalExecInfo for default mode.
         """
         if self.config.get('deploy_mode') == 'container':
             Mkdir(self.config['out']).run()
@@ -224,7 +195,7 @@ if __name__ == '__main__':
             ])
             Exec(inner, LocalExecInfo(
                 container=self._container_engine,
-                container_image=self.deploy_image_name,
+                container_image=self.deploy_image_name(),
                 shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
                 gpu=True,

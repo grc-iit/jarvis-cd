@@ -1,0 +1,16 @@
+FROM ##BUILD_IMAGE## AS builder
+FROM ##BASE_IMAGE##
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gdb gdbserver \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy compiled binary from build container
+COPY --from=builder /opt/gray_scott/build/gray_scott /usr/bin/gray_scott
+
+# HDF5 runtime libraries are already in sci-hpc-base
+ENV PATH=/usr/bin:${PATH}
+
+CMD ["/bin/bash"]

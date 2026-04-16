@@ -88,84 +88,40 @@ class Nyx(Application):
     # Container Dockerfile generators
     # ------------------------------------------------------------------
 
-    def _build_phase(self) -> str:
-        """
-        Return the BUILD container Dockerfile, or None when not in container mode.
-        Uses CUDA when base_image is sci-hpc-base, otherwise CPU-only.
-        """
+    def _build_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = self.config.get('base_image', 'sci-hpc-base')
         use_gpu = 'sci-hpc' in base
-
+        cuda_arch = self.config.get('cuda_arch', 80)
         if use_gpu:
-            cuda_arch = self.config.get('cuda_arch', 80)
             gpu_flags = (
                 f'-DNyx_GPU_BACKEND=CUDA '
                 f'"-DAMReX_CUDA_ARCH={cuda_arch}" '
                 f'-DCMAKE_CUDA_HOST_COMPILER="$(which g++)" '
             )
             hdf5_flags = '-DAMReX_HDF5=YES -DHDF5_ROOT=/opt/hdf5 '
+            suffix = f'cuda-{cuda_arch}'
         else:
             gpu_flags = '-DNyx_GPU_BACKEND=NONE '
             hdf5_flags = ''
+            suffix = 'cpu'
+        content = self._read_dockerfile('Dockerfile.build', {
+            'BASE_IMAGE': base,
+            'HDF5_FLAGS': hdf5_flags,
+            'GPU_FLAGS': gpu_flags,
+        })
+        return content, suffix
 
-        return f"""FROM {base}
-
-ARG DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    ca-certificates git cmake build-essential gfortran \\
-    openmpi-bin libopenmpi-dev \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Clone Nyx with AMReX submodule (cached until repo changes)
-RUN git clone --recursive https://github.com/AMReX-Astro/Nyx.git /opt/Nyx \\
-    && cd /opt/Nyx/subprojects/amrex && git checkout development
-
-# Build Nyx HydroTests
-RUN cd /opt/Nyx \\
-    && cmake -S . -B build \\
-        -DCMAKE_BUILD_TYPE=Release \\
-        -DNyx_MPI=YES \\
-        -DNyx_OMP=NO \\
-        -DNyx_HYDRO=YES \\
-        -DNyx_HEATCOOL=NO \\
-        {hdf5_flags}{gpu_flags}-DAMReX_PRECISION=SINGLE \\
-        -DAMReX_PARTICLES_PRECISION=SINGLE \\
-        -DCMAKE_C_COMPILER="$(which gcc)" \\
-        -DCMAKE_CXX_COMPILER="$(which g++)" \\
-    && cmake --build build --target nyx_HydroTests -j$(nproc)
-
-ENV PATH=/opt/Nyx/build/Exec/HydroTests:${{PATH}}
-"""
-
-    def _build_deploy_phase(self) -> str:
-        """
-        Return the DEPLOY container Dockerfile, or None when not in container mode.
-        """
+    def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
-        base = self.config.get('base_image', 'sci-hpc-base')
-        return f"""FROM {self.build_image_name} AS builder
-FROM {base}
-
-ARG DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    openmpi-bin libopenmpi-dev \\
-    openssh-server openssh-client \\
-    gdb gdbserver \\
-    && rm -rf /var/lib/apt/lists/* \\
-    && mkdir -p /var/run/sshd \\
-    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \\
-    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-
-# Copy Nyx HydroTests binary from build container
-COPY --from=builder /opt/Nyx/build/Exec/HydroTests/nyx_HydroTests /usr/bin/nyx_HydroTests
-
-CMD ["/bin/bash"]
-"""
+        suffix = getattr(self, '_build_suffix', '')
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'BUILD_IMAGE': self.build_image_name(),
+            'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
+        })
+        return content, suffix
 
     # ------------------------------------------------------------------
     # Configuration
@@ -194,8 +150,8 @@ CMD ["/bin/bash"]
         """
         Launch Nyx.
 
-        Branches on deploy_mode: uses container_exec_info() for container
-        mode, MpiExecInfo with hostfile for default mode.
+        Branches on deploy_mode: uses MpiExecInfo with container engine for
+        container mode, MpiExecInfo with hostfile for default mode.
         """
         if self.config.get('deploy_mode') == 'container':
             outdir = self.config.get('out', '/tmp/nyx_out')
@@ -219,7 +175,7 @@ CMD ["/bin/bash"]
                 hostfile=self.hostfile,
                 port=self.ssh_port,
                 container=self._container_engine,
-                container_image=self.deploy_image_name,
+                container_image=self.deploy_image_name(),
                 shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
                 env=self.mod_env,

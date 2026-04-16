@@ -78,19 +78,13 @@ class Vpic(Application):
     # Container Dockerfile generators
     # ------------------------------------------------------------------
 
-    def _build_phase(self) -> str:
-        """
-        Return the BUILD container Dockerfile, or None when not in container mode.
-        Builds with Kokkos CUDA when base_image contains 'sci-hpc',
-        otherwise builds CPU-only (Kokkos Serial/OpenMP).
-        """
+    def _build_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = self.config.get('base_image', 'sci-hpc-base')
         use_gpu = 'sci-hpc' in base
-
+        cuda_arch = self.config.get('cuda_arch', 80)
         if use_gpu:
-            cuda_arch = self.config.get('cuda_arch', 80)
             cmake_flags = (
                 f'-DENABLE_KOKKOS_CUDA=ON '
                 f'-DBUILD_INTERNAL_KOKKOS=ON '
@@ -105,73 +99,39 @@ class Vpic(Application):
                 '\n'
                 'ENV NVCC_WRAPPER_DEFAULT_COMPILER=g++\n'
             )
+            suffix = f'kokkos-cuda-{cuda_arch}'
         else:
             cmake_flags = (
                 '-DENABLE_KOKKOS_CUDA=OFF '
                 '-DBUILD_INTERNAL_KOKKOS=ON'
             )
             post_build = ''
+            suffix = 'cpu'
+        content = self._read_dockerfile('Dockerfile.build', {
+            'BASE_IMAGE': base,
+            'CMAKE_FLAGS': cmake_flags,
+            'POST_BUILD': post_build,
+        })
+        return content, suffix
 
-        return f"""FROM {base}
-
-ARG DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    ca-certificates git cmake build-essential \\
-    openmpi-bin libopenmpi-dev \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Clone VPIC-Kokkos with bundled Kokkos (cached until repo changes)
-RUN git clone --recursive https://github.com/lanl/vpic-kokkos.git /opt/vpic-kokkos
-
-# Build VPIC core library
-RUN cd /opt/vpic-kokkos \\
-    && cmake -S . -B build \\
-        -DCMAKE_BUILD_TYPE=Release \\
-        {cmake_flags} \\
-    && cmake --build build -j$(nproc)
-
-{post_build}ENV PATH=/opt/vpic-kokkos/build/bin:${{PATH}}
-"""
-
-    def _build_deploy_phase(self) -> str:
-        """
-        Return the DEPLOY container Dockerfile, or None when not in container mode.
-        """
+    def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = self.config.get('base_image', 'sci-hpc-base')
         use_gpu = 'sci-hpc' in base
-
         nvcc_env = 'ENV NVCC_WRAPPER_DEFAULT_COMPILER=g++\n' if use_gpu else ''
-        # Only copy nvcc_wrapper if GPU build
         nvcc_copy = (
             'COPY --from=builder /opt/vpic-kokkos/kokkos/bin/nvcc_wrapper '
             '/opt/vpic-kokkos/kokkos/bin/nvcc_wrapper\n'
         ) if use_gpu else ''
-
-        return f"""FROM {self.build_image_name} AS builder
-FROM {base}
-
-ARG DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    build-essential \\
-    openmpi-bin libopenmpi-dev \\
-    openssh-server openssh-client \\
-    gdb gdbserver \\
-    && rm -rf /var/lib/apt/lists/* \\
-    && mkdir -p /var/run/sshd \\
-    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \\
-    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-
-# Copy full VPIC tree (deck compiler needs source + kokkos headers)
-COPY --from=builder /opt/vpic-kokkos /opt/vpic-kokkos
-{nvcc_copy}
-{nvcc_env}ENV PATH=/opt/vpic-kokkos/build/bin:${{PATH}}
-
-CMD ["/bin/bash"]
-"""
+        suffix = getattr(self, '_build_suffix', '')
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'BUILD_IMAGE': self.build_image_name(),
+            'BASE_IMAGE': base,
+            'NVCC_COPY': nvcc_copy,
+            'NVCC_ENV': nvcc_env,
+        })
+        return content, suffix
 
     # ------------------------------------------------------------------
     # Configuration
@@ -228,7 +188,7 @@ CMD ["/bin/bash"]
             )
             Exec(compile_cmd, LocalExecInfo(
                 container=self._container_engine,
-                container_image=self.deploy_image_name,
+                container_image=self.deploy_image_name(),
                 hostfile=self.hostfile,
                 shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
@@ -242,7 +202,7 @@ CMD ["/bin/bash"]
                 hostfile=self.hostfile,
                 port=self.ssh_port,
                 container=self._container_engine,
-                container_image=self.deploy_image_name,
+                container_image=self.deploy_image_name(),
                 shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
                 env=self.mod_env,

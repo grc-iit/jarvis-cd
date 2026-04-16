@@ -1,0 +1,13 @@
+FROM ##BASE_IMAGE##
+
+# PyTorch matching CUDA 12.6 (cached after first install)
+RUN pip3 install --break-system-packages -q \
+        torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/cu126 \
+    && pip3 install --break-system-packages -q \
+        numpy matplotlib tensorboard
+
+# Copy bundled example training script
+COPY train_example.py /opt/train_example.py
+
+CMD ["/bin/bash"]

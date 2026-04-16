@@ -117,76 +117,25 @@ class Ior(Application):
     # Container Dockerfile generators
     # ------------------------------------------------------------------
 
-    def _build_phase(self) -> str:
-        """
-        Return the BUILD container Dockerfile, or None when not in container mode.
-        """
+    def _build_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = getattr(self.pipeline, 'container_base', 'ubuntu:24.04')
-        return f"""FROM {base}
+        content = self._read_dockerfile('Dockerfile.build', {
+            'BASE_IMAGE': base,
+        })
+        return content, 'mpi'
 
-ARG DEBIAN_FRONTEND=noninteractive
-
-# Build dependencies (IOR + Darshan)
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    ca-certificates curl \\
-    build-essential autoconf automake libtool \\
-    zlib1g-dev \\
-    openmpi-bin libopenmpi-dev \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Download IOR release tarball (includes pre-generated configure)
-RUN mkdir -p /opt/ior && curl -sL https://github.com/hpc/ior/releases/download/3.3.0/ior-3.3.0.tar.gz \\
-    | tar xz --strip-components=1 -C /opt/ior
-
-# Configure and build IOR
-RUN cd /opt/ior \\
-    && ./configure --prefix=/opt/ior/install \\
-    && make -j$(nproc) \\
-    && make install
-
-# Download and build Darshan runtime with MPI support
-RUN mkdir -p /opt/darshan && curl -sL https://github.com/darshan-hpc/darshan/archive/refs/tags/darshan-3.4.4.tar.gz \\
-    | tar xz --strip-components=1 -C /opt/darshan
-
-RUN cd /opt/darshan/darshan-runtime \\
-    && autoreconf -ivf \\
-    && ./configure --prefix=/opt/darshan/install \\
-        --with-log-path-by-env=DARSHAN_LOG_DIR \\
-        --with-jobid-env=PBS_JOBID \\
-        CC=mpicc \\
-    && make -j$(nproc) install
-"""
-
-    def _build_deploy_phase(self) -> str:
-        """
-        Return the DEPLOY container Dockerfile, or None when not in container mode.
-        """
+    def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = getattr(self.pipeline, 'container_base', 'ubuntu:24.04')
-        return f"""FROM {self.build_image_name} AS builder
-FROM {base}
-
-ARG DEBIAN_FRONTEND=noninteractive
-
-# MPI runtime only (no build tools)
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    openmpi-bin libopenmpi-dev \\
-    openssh-server openssh-client \\
-    gdb gdbserver \\
-    && rm -rf /var/lib/apt/lists/* \\
-    && mkdir -p /var/run/sshd \\
-    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \\
-    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-
-# Copy ior binary and darshan library from build container
-COPY --from=builder /opt/ior/install/bin/ior /usr/bin/ior
-COPY --from=builder /opt/darshan/install/lib/libdarshan.so /opt/darshan/lib/libdarshan.so
-
-CMD ["/bin/bash"]
-"""
+        suffix = getattr(self, '_build_suffix', '')
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'BUILD_IMAGE': self.build_image_name(),
+            'BASE_IMAGE': base,
+        })
+        return content, suffix
 
     # ------------------------------------------------------------------
     # Configuration
@@ -256,7 +205,7 @@ CMD ["/bin/bash"]
             hostfile=self.hostfile,
             port=self.ssh_port,
             container=self._container_engine,
-            container_image=self.deploy_image_name,
+            container_image=self.deploy_image_name(),
             shared_dir=self.shared_dir,
             private_dir=self.private_dir,
             env=self.mod_env,

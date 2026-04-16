@@ -306,20 +306,24 @@ The class name must be the PascalCase of the package directory name (e.g., direc
 Container support is built into `Application`. Any package can opt into container deployment by:
 
 1. Including `deploy_mode` in `_configure_menu()` with `'container'` as a choice
-2. Overriding `_build_phase()` and `_build_deploy_phase()` to return Dockerfile content
-3. Branching on `deploy_mode` in `start()`
+2. Storing Dockerfiles as template files (`Dockerfile.build`, `Dockerfile.deploy`) in the package directory
+3. Overriding `_build_phase()` and `_build_deploy_phase()` to return `(dockerfile_content, image_suffix)` tuples
+4. Branching on `deploy_mode` in `start()`
 
 ### Two-Phase Container Build
 
 Jarvis uses a two-phase build to maximize Docker layer caching:
 
-**Build container** (`jarvis-build-{pkg_name}`, stable name):
+**Build container** (`jarvis-build-{pkg_name}-{suffix}`):
 - Defined by `_build_phase()` — heavy compile steps, all build tools present
+- The **image suffix** identifies a specific build configuration (e.g., `kokkos-gpu-80`, `cpu`, `cuda-90`)
+- Different configurations produce distinct images (e.g., `jarvis-build-lammps-kokkos-gpu-80` vs `jarvis-build-lammps-cpu`)
 - Cached across pipelines — only rebuilds when the Dockerfile changes
 - Named independently of the pipeline so it can be reused
 
-**Deploy container** (`{pipeline_name}`, pipeline-specific):
+**Deploy container** (`{pipeline_name}-{suffix}`):
 - Defined by `_build_deploy_phase()` — copies binaries from build container into lean runtime image
+- Typically uses the same suffix as the build phase
 - For `apptainer`: additionally converted to a `.sif` file stored in `private_dir/`
 - Much smaller than the build container
 
@@ -340,7 +344,9 @@ Set `container_engine` in the pipeline YAML:
 ```
 ior/
 ├── __init__.py
-└── pkg.py         # Single Ior(Application) class — bare metal + container in one file
+├── pkg.py              # Single Ior(Application) class — bare metal + container in one file
+├── Dockerfile.build    # Build-phase Dockerfile template with ##VAR## placeholders
+└── Dockerfile.deploy   # Deploy-phase Dockerfile template with ##VAR## placeholders
 ```
 
 ### Package Example
@@ -390,32 +396,27 @@ class Ior(Application):
     # Container Dockerfiles (return None when not in container mode)
     # ------------------------------------------------------------------
 
-    def _build_phase(self) -> str:
+    def _build_phase(self):
         """Heavy build container — compiled once, cached."""
         if self.config.get('deploy_mode') != 'container':
             return None
         base = getattr(self.pipeline, 'container_base', 'ubuntu:24.04')
-        return f"""FROM {base}
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    build-essential curl openmpi-bin libopenmpi-dev \\
-    && rm -rf /var/lib/apt/lists/*
-RUN curl -sL https://github.com/hpc/ior/releases/download/3.3.0/ior-3.3.0.tar.gz \\
-    | tar -xz -C /opt && mv /opt/ior-3.3.0 /opt/ior
-RUN cd /opt/ior && ./configure --prefix=/opt/ior/install && make -j$(nproc) && make install
-"""
+        content = self._read_dockerfile('Dockerfile.build', {
+            'BASE_IMAGE': base,
+        })
+        return content, 'mpi'
 
-    def _build_deploy_phase(self) -> str:
+    def _build_deploy_phase(self):
         """Lean runtime container — copies binary from build container."""
         if self.config.get('deploy_mode') != 'container':
             return None
         base = getattr(self.pipeline, 'container_base', 'ubuntu:24.04')
-        return f"""FROM {self.build_image_name} AS builder
-FROM {base}
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    openmpi-bin libopenmpi-dev && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /opt/ior/install/bin/ior /usr/bin/ior
-CMD ["/bin/bash"]
-"""
+        suffix = getattr(self, '_build_suffix', '')
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'BUILD_IMAGE': self.build_image_name(),
+            'BASE_IMAGE': base,
+        })
+        return content, suffix
 
     # ------------------------------------------------------------------
     # Configuration
@@ -439,9 +440,13 @@ CMD ["/bin/bash"]
 
     def start(self):
         if self.config.get('deploy_mode') == 'container':
-            nprocs = self.config.get('nprocs', 1)
-            inner = f'mpirun --allow-run-as-root -n {nprocs} ior -b {self.config["block"]} -o {self.config["out"]}'
-            Exec(inner, self.container_exec_info()).run()
+            Exec('ior -b {0} -o {1}'.format(self.config['block'], self.config['out']),
+                 MpiExecInfo(nprocs=self.config['nprocs'],
+                             container=self._container_engine,
+                             container_image=self.deploy_image_name(),
+                             shared_dir=self.shared_dir,
+                             private_dir=self.private_dir,
+                             env=self.mod_env)).run()
         else:
             Exec(f'ior -b {self.config["block"]} -o {self.config["out"]}',
                  MpiExecInfo(env=self.mod_env, hostfile=self.hostfile,
@@ -452,24 +457,54 @@ CMD ["/bin/bash"]
            PsshExecInfo(env=self.env, hostfile=self.hostfile)).run()
 ```
 
-### `container_exec_info(gpu=False)`
+### `_build_phase()` and `_build_deploy_phase()` Return Value
 
-Returns a `LocalExecInfo` pre-configured for the active container engine. Pass it directly to `Exec`:
+Both methods return a `(dockerfile_content, image_suffix)` tuple, or `None` to skip:
 
 ```python
-Exec(inner, self.container_exec_info()).run()          # CPU
-Exec(inner, self.container_exec_info(gpu=True)).run()  # GPU passthrough
+def _build_phase(self):
+    if self.config.get('deploy_mode') != 'container':
+        return None
+    content = self._read_dockerfile('Dockerfile.build', {
+        'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
+    })
+    # The suffix identifies this configuration — e.g., GPU arch, backend
+    return content, 'kokkos-gpu-80'
 ```
 
-The returned `ExecInfo` carries `container`, `container_image`, `gpu`, and `env=self.mod_env`. `Exec` reads these and wraps the command automatically:
+The **image suffix** allows the same package to produce multiple distinct images for
+different configurations. For example, LAMMPS with `kokkos_gpu=True, cuda_arch=80`
+produces `jarvis-build-lammps-kokkos-gpu-80`, while `kokkos_gpu=False` produces
+`jarvis-build-lammps-cpu`. This means you can have multiple configurations
+cached simultaneously without one overwriting the other.
 
-| Engine | Resulting command |
-|--------|------------------|
-| `apptainer` | `apptainer exec [--nv] [--env LD_PRELOAD=...] <sif> <cmd>` |
-| `podman` | `podman run --rm [--gpus all] [-e LD_PRELOAD=...] <image> <cmd>` |
-| `docker` | `docker run --rm [--gpus all] [-e LD_PRELOAD=...] <image> <cmd>` |
+In `_build_deploy_phase()`, use `getattr(self, '_build_suffix', '')` to reuse the
+build phase suffix, and reference the build image via `self.build_image_name()`:
 
-`LD_PRELOAD` (set by interceptors like Darshan) is extracted from `mod_env` and passed via the engine's native `--env`/`-e` flag so the host linker never tries to load a container-only path.
+```python
+def _build_deploy_phase(self):
+    if self.config.get('deploy_mode') != 'container':
+        return None
+    suffix = getattr(self, '_build_suffix', '')
+    content = self._read_dockerfile('Dockerfile.deploy', {
+        'BUILD_IMAGE': self.build_image_name(),  # includes the build suffix
+        'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
+    })
+    return content, suffix
+```
+
+### `_read_dockerfile(filename, replacements)`
+
+Reads a Dockerfile template from `self.pkg_dir` and applies `##VAR##` substitutions:
+
+```python
+content = self._read_dockerfile('Dockerfile.build', {
+    'BASE_IMAGE': 'sci-hpc-base',
+    'CUDA_ARCH': 80,
+})
+```
+
+This keeps Dockerfiles as readable, standalone files rather than embedded Python strings.
 
 ### Pipeline YAML for Container Mode
 
@@ -509,21 +544,21 @@ pkgs:
     nprocs: 4
 ```
 
-The interceptor's `modify_env()` sets `LD_PRELOAD` in the package's `mod_env`. `container_exec_info()` includes `mod_env`, and `Exec._prepare_container()` moves `LD_PRELOAD` to the `--env` flag so it is set cleanly inside the container without affecting the host dynamic linker.
+The interceptor's `modify_env()` sets `LD_PRELOAD` in the package's `mod_env`. When running in container mode, `Exec` moves `LD_PRELOAD` to the container engine's `--env` flag so it is set cleanly inside the container without affecting the host dynamic linker.
 
 For this to work, `libdarshan.so` must exist inside the deploy container. Build it in `_build_phase()` and copy it in `_build_deploy_phase()`.
 
-### Available Container Properties (on `Application`)
+### Available Container Methods and Properties
 
-| Property / Method | Description |
+| Method / Property | Description |
 |---|---|
-| `build_image_name` | Stable name for the build container (`jarvis-build-{pkg}`) |
-| `deploy_image_name` | Pipeline-scoped name for the deploy container |
+| `build_image_name(suffix=None)` | Build image name: `jarvis-build-{pkg}-{suffix}` (uses stored `_build_suffix` when suffix is None) |
+| `deploy_image_name(suffix=None)` | Deploy image name: `{pipeline}-{suffix}` (uses stored `_deploy_suffix` when suffix is None) |
 | `_container_engine` | Active engine from pipeline config (`docker`/`podman`/`apptainer`) |
 | `_build_engine` | Engine used for builds (apptainer uses docker/podman as intermediate) |
-| `build_phase()` | Builds the build container from `_build_phase()` |
-| `build_deploy_phase()` | Builds the deploy container + SIF from `_build_deploy_phase()` |
-| `container_exec_info(gpu)` | Returns a `LocalExecInfo` ready for `Exec` |
+| `build_phase()` | Builds the build container from `_build_phase()`, stores `_build_suffix` |
+| `build_deploy_phase()` | Builds the deploy container + SIF from `_build_deploy_phase()`, stores `_deploy_suffix` |
+| `_read_dockerfile(filename, replacements)` | Reads a Dockerfile template from `self.pkg_dir` with `##VAR##` substitution |
 
 ## Traditional Package Types (Legacy)
 

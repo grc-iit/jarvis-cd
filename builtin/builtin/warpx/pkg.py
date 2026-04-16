@@ -97,67 +97,25 @@ class Warpx(Application):
     # Container Dockerfile generators
     # ------------------------------------------------------------------
 
-    def _build_phase(self) -> str:
-        """
-        Return the BUILD container Dockerfile, or None when not in container mode.
-        """
+    def _build_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
         cuda_arch = self.config.get('cuda_arch', 80)
-        base = self.config.get('base_image', 'sci-hpc-base')
-        return f"""FROM {base}
+        content = self._read_dockerfile('Dockerfile.build', {
+            'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
+            'CUDA_ARCH': cuda_arch,
+        })
+        return content, f'3d-cuda-{cuda_arch}'
 
-ARG CUDA_ARCH={cuda_arch}
-
-# Clone WarpX (cached at this layer until URL changes)
-RUN git clone https://github.com/BLAST-WarpX/warpx.git /opt/warpx
-
-# Build WarpX 3D CUDA+MPI+HDF5
-# Ordered for maximum layer cache reuse: cmake configure then make
-RUN cd /opt/warpx \\
-    && mkdir -p build && cd build \\
-    && CC=$(which gcc) CXX=$(which g++) CUDACXX=$(which nvcc) CUDAHOSTCXX=$(which g++) \\
-       cmake -S .. -B . \\
-        -DCMAKE_BUILD_TYPE=Release \\
-        -DWarpX_COMPUTE=CUDA \\
-        -DWarpX_MPI=ON \\
-        -DWarpX_DIMS=3 \\
-        -DWarpX_PRECISION=SINGLE \\
-        -DWarpX_PARTICLE_PRECISION=SINGLE \\
-        -DAMReX_HDF5=YES \\
-        "-DCMAKE_PREFIX_PATH=/opt/hdf5" \\
-        "-DAMReX_CUDA_ARCH=${{CUDA_ARCH}}" \\
-        "-DCMAKE_CXX_FLAGS=-mcmodel=large" \\
-        "-DCMAKE_CUDA_FLAGS=-Xcompiler -mcmodel=large --diag-suppress=222 --diag-suppress=221" \\
-    && cmake --build . -j$(nproc)
-
-ENV PATH=/opt/warpx/build/bin:${{PATH}}
-"""
-
-    def _build_deploy_phase(self) -> str:
-        """
-        Return the DEPLOY container Dockerfile, or None when not in container mode.
-        """
+    def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
-        base = self.config.get('base_image', 'sci-hpc-base')
-        return f"""FROM {self.build_image_name} AS builder
-FROM {base}
-
-ARG DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    gdb gdbserver \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy WarpX binary and example inputs from build container
-COPY --from=builder /opt/warpx/build/bin/warpx.3d.MPI.CUDA.SP.PSP.OPMD.EB.QED /usr/bin/warpx
-COPY --from=builder /opt/warpx/Examples /opt/warpx/Examples
-
-ENV PATH=/usr/bin:${{PATH}}
-
-CMD ["/bin/bash"]
-"""
+        suffix = getattr(self, '_build_suffix', '')
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'BUILD_IMAGE': self.build_image_name(),
+            'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
+        })
+        return content, suffix
 
     # ------------------------------------------------------------------
     # Configuration
@@ -194,8 +152,8 @@ CMD ["/bin/bash"]
         """
         Launch WarpX.
 
-        Branches on deploy_mode: uses container_exec_info() for container
-        mode, MpiExecInfo with hostfile for default mode.
+        Branches on deploy_mode: uses MpiExecInfo with container engine for
+        container mode, MpiExecInfo with hostfile for default mode.
         """
         if self.config.get('deploy_mode') == 'container':
             outdir = self.config.get('out', '/tmp/warpx_out')
@@ -222,7 +180,7 @@ CMD ["/bin/bash"]
             Exec(inner, MpiExecInfo(
                 nprocs=nprocs,
                 container=self._container_engine,
-                container_image=self.deploy_image_name,
+                container_image=self.deploy_image_name(),
                 shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
                 gpu=True,

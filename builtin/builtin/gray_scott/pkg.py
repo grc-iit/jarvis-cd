@@ -116,63 +116,25 @@ class GrayScott(Application):
     # Container Dockerfile generators
     # ------------------------------------------------------------------
 
-    def _build_phase(self) -> str:
-        """
-        Return the BUILD container Dockerfile, or None when not in container mode.
-        """
+    def _build_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
         cuda_arch = self.config.get('cuda_arch', 80)
-        base = self.config.get('base_image', 'sci-hpc-base')
-        return f"""FROM {base}
+        content = self._read_dockerfile('Dockerfile.build', {
+            'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
+            'CUDA_ARCH': cuda_arch,
+        })
+        return content, f'cuda-{cuda_arch}'
 
-ARG CUDA_ARCH={cuda_arch}
-
-# Download Gray-Scott source from awesome-scienctific-applications
-# Cached until repo URL changes
-RUN git clone --depth 1 \\
-    https://github.com/grc-iit/awesome-scienctific-applications.git \\
-    /tmp/awesome-sci
-
-WORKDIR /opt/gray_scott
-RUN cp /tmp/awesome-sci/grayscott/CMakeLists.txt . && \\
-    cp /tmp/awesome-sci/grayscott/gray_scott.cu . && \\
-    rm -rf /tmp/awesome-sci
-
-# Build (expensive — cached when source and CMakeLists unchanged)
-RUN cmake -S . -B build \\
-        -DCMAKE_BUILD_TYPE=Release \\
-        -DCMAKE_CUDA_ARCHITECTURES=${{CUDA_ARCH}} \\
-        -DHDF5_ROOT=/opt/hdf5 \\
-    && cmake --build build -j$(nproc)
-
-ENV PATH=/opt/gray_scott/build:${{PATH}}
-"""
-
-    def _build_deploy_phase(self) -> str:
-        """
-        Return the DEPLOY container Dockerfile, or None when not in container mode.
-        """
+    def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
-        base = self.config.get('base_image', 'sci-hpc-base')
-        return f"""FROM {self.build_image_name} AS builder
-FROM {base}
-
-ARG DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    gdb gdbserver \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy compiled binary from build container
-COPY --from=builder /opt/gray_scott/build/gray_scott /usr/bin/gray_scott
-
-# HDF5 runtime libraries are already in sci-hpc-base
-ENV PATH=/usr/bin:${{PATH}}
-
-CMD ["/bin/bash"]
-"""
+        suffix = getattr(self, '_build_suffix', '')
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'BUILD_IMAGE': self.build_image_name(),
+            'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
+        })
+        return content, suffix
 
     # ------------------------------------------------------------------
     # Configuration
@@ -220,8 +182,8 @@ CMD ["/bin/bash"]
         """
         Launch Gray-Scott.
 
-        Branches on deploy_mode: uses container_exec_info() for container
-        mode, MpiExecInfo with hostfile and ADIOS2 settings JSON for default mode.
+        Branches on deploy_mode: uses MpiExecInfo with container engine for
+        container mode, MpiExecInfo with hostfile and ADIOS2 settings JSON for default mode.
         """
         if self.config.get('deploy_mode') == 'container':
             outdir = self.config.get('outdir', '/tmp/gray_scott_out')
@@ -244,7 +206,7 @@ CMD ["/bin/bash"]
                 nprocs=nprocs,
                 ppn=self.config.get('ppn'),
                 container=self._container_engine,
-                container_image=self.deploy_image_name,
+                container_image=self.deploy_image_name(),
                 shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
                 gpu=True,

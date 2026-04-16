@@ -62,21 +62,14 @@ class RedisBenchmark(Application):
             },
         ]
 
-    def _build_deploy_phase(self) -> str:
+    def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = getattr(self.pipeline, 'container_base', 'ubuntu:24.04')
-        return f"""FROM {base}
-
-ARG DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y --no-install-recommends \\
-    redis-server redis-tools \\
-    gdb gdbserver \\
-    && rm -rf /var/lib/apt/lists/*
-
-CMD ["/bin/bash"]
-"""
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'BASE_IMAGE': base,
+        })
+        return content, 'default'
 
     def _configure(self, **kwargs):
         super()._configure(**kwargs)
@@ -102,7 +95,7 @@ CMD ["/bin/bash"]
         Exec(' '.join(cmd), LocalExecInfo(
             env=self.mod_env,
             container=self._container_engine,
-            container_image=self.deploy_image_name,
+            container_image=self.deploy_image_name(),
             shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
         )).run()

@@ -683,21 +683,32 @@ class Pkg:
     # Container support — properties
     # ------------------------------------------------------------------
 
-    @property
-    def build_image_name(self) -> str:
+    def build_image_name(self, suffix=None) -> str:
         """
         Stable name for the BUILD container image.
-        Independent of pipeline name so it can be reused across pipelines.
+
+        :param suffix: Image suffix identifying this configuration.
+                       When None, uses self._build_suffix (set by build_phase).
+        :return: e.g. 'jarvis-build-lammps-kokkos-a100'
         """
         pkg_name = self.pkg_type.split('.')[-1].replace('_', '-')
+        s = suffix if suffix is not None else getattr(self, '_build_suffix', '')
+        if s:
+            return f'jarvis-build-{pkg_name}-{s}'
         return f'jarvis-build-{pkg_name}'
 
-    @property
-    def deploy_image_name(self) -> str:
-        """Name for the DEPLOY container image (pipeline-specific)."""
-        if hasattr(self, 'pipeline') and self.pipeline:
-            return self.pipeline.name
-        return 'jarvis-deploy'
+    def deploy_image_name(self, suffix=None) -> str:
+        """
+        Name for the DEPLOY container image (pipeline-specific).
+
+        :param suffix: Image suffix identifying this configuration.
+                       When None, uses self._deploy_suffix (set by build_deploy_phase).
+        """
+        base = self.pipeline.name if hasattr(self, 'pipeline') and self.pipeline else 'jarvis-deploy'
+        s = suffix if suffix is not None else getattr(self, '_deploy_suffix', '')
+        if s:
+            return f'{base}-{s}'
+        return base
 
     @property
     def container_mounts(self) -> list:
@@ -749,27 +760,56 @@ class Pkg:
         return engine
 
     # ------------------------------------------------------------------
+    # Container support — Dockerfile template helpers
+    # ------------------------------------------------------------------
+
+    def _read_dockerfile(self, filename, replacements=None):
+        """
+        Read a Dockerfile template from self.pkg_dir and apply ##VAR##
+        substitutions.
+
+        :param filename: Dockerfile name relative to self.pkg_dir
+        :param replacements: dict of {VAR_NAME: value} replacements
+        :return: Dockerfile content string with substitutions applied
+        """
+        import os
+        path = os.path.join(self.pkg_dir, filename)
+        with open(path, 'r') as f:
+            content = f.read()
+        if replacements:
+            for key, value in replacements.items():
+                content = content.replace(f'##{key}##', str(value))
+        return content
+
+    # ------------------------------------------------------------------
     # Container support — overrideable Dockerfile generators
     # ------------------------------------------------------------------
 
-    def _build_phase(self) -> str:
+    def _build_phase(self):
         """
-        Return the Dockerfile content for the BUILD container.
+        Return the Dockerfile content and image suffix for the BUILD container.
 
         Override in subclasses to provide application-specific build steps.
         Return None to skip the build phase.
 
-        :return: Dockerfile content string, or None to skip
+        The image suffix identifies a specific build configuration so that
+        different configurations (e.g., GPU vs CPU) produce distinct images.
+        The final build image name is ``jarvis-build-{pkg}-{suffix}``.
+
+        :return: (dockerfile_content, image_suffix) tuple, or None to skip
         """
         return None
 
-    def _build_deploy_phase(self) -> str:
+    def _build_deploy_phase(self):
         """
-        Return the Dockerfile content for the DEPLOY container.
+        Return the Dockerfile content and image suffix for the DEPLOY container.
 
         Override in subclasses. Return None to skip.
 
-        :return: Dockerfile content string, or None to skip
+        The image suffix identifies a specific deploy configuration.
+        The final deploy image name is ``{pipeline}-{suffix}``.
+
+        :return: (dockerfile_content, image_suffix) tuple, or None to skip
         """
         return None
 
@@ -783,9 +823,11 @@ class Pkg:
 
         Skipped when _build_phase() returns None.
         """
-        dockerfile_content = self._build_phase()
-        if not dockerfile_content:
+        result_tuple = self._build_phase()
+        if not result_tuple:
             return
+        dockerfile_content, suffix = result_tuple
+        self._build_suffix = suffix
         from pathlib import Path
         from jarvis_cd.shell import Exec, LocalExecInfo
         private_path = Path(self.private_dir)
@@ -793,20 +835,21 @@ class Pkg:
         dockerfile_path = private_path / 'build.Dockerfile'
         with open(dockerfile_path, 'w') as f:
             f.write(dockerfile_content)
-        print(f"Building build container: {self.build_image_name}")
+        image_name = self.build_image_name()
+        print(f"Building build container: {image_name}")
         engine = self._build_engine
         build_cmd = (
-            f"{engine} build --network=host -t {self.build_image_name} "
+            f"{engine} build --network=host -t {image_name} "
             f"-f {dockerfile_path} {private_path}"
         )
         result = Exec(build_cmd, LocalExecInfo()).run()
         exit_code = result.exit_code.get('localhost', 1)
         if exit_code != 0:
             raise RuntimeError(
-                f"Failed to build container '{self.build_image_name}' (exit code {exit_code}). "
+                f"Failed to build container '{image_name}' (exit code {exit_code}). "
                 f"Dockerfile: {dockerfile_path}"
             )
-        print(f"Build container ready: {self.build_image_name}")
+        print(f"Build container ready: {image_name}")
 
     def build_deploy_phase(self):
         """
@@ -816,9 +859,11 @@ class Pkg:
         For apptainer: builds docker image then converts to SIF file stored in
         shared_dir/{deploy_image_name}.sif so all nodes can access it.
         """
-        dockerfile_content = self._build_deploy_phase()
-        if not dockerfile_content:
+        result_tuple = self._build_deploy_phase()
+        if not result_tuple:
             return
+        dockerfile_content, suffix = result_tuple
+        self._deploy_suffix = suffix
         from pathlib import Path
         from jarvis_cd.shell import Exec, LocalExecInfo
         private_path = Path(self.private_dir)
@@ -828,33 +873,34 @@ class Pkg:
             f.write(dockerfile_content)
         engine = self._container_engine
         build_engine = self._build_engine
-        print(f"Building deploy container: {self.deploy_image_name}")
+        image_name = self.deploy_image_name()
+        print(f"Building deploy container: {image_name}")
         build_cmd = (
-            f"{build_engine} build --network=host -t {self.deploy_image_name} "
+            f"{build_engine} build --network=host -t {image_name} "
             f"-f {dockerfile_path} {private_path}"
         )
         result = Exec(build_cmd, LocalExecInfo()).run()
         exit_code = result.exit_code.get('localhost', 1)
         if exit_code != 0:
             raise RuntimeError(
-                f"Failed to build deploy container '{self.deploy_image_name}' (exit code {exit_code}). "
+                f"Failed to build deploy container '{image_name}' (exit code {exit_code}). "
                 f"Dockerfile: {dockerfile_path}"
             )
         if engine == 'apptainer':
             shared_path = Path(self.shared_dir)
             shared_path.mkdir(parents=True, exist_ok=True)
-            sif_path = shared_path / f'{self.deploy_image_name}.sif'
+            sif_path = shared_path / f'{image_name}.sif'
             print(f"Converting to Apptainer SIF: {sif_path}")
             from jarvis_cd.shell.container_compose_exec import ApptainerBuildExec
             ApptainerBuildExec(
-                self.deploy_image_name,
+                image_name,
                 str(sif_path),
                 LocalExecInfo(),
                 source='docker-daemon'
             ).run()
             print(f"Apptainer SIF ready: {sif_path}")
         else:
-            print(f"Deploy container ready: {self.deploy_image_name}")
+            print(f"Deploy container ready: {image_name}")
 
     def show_readme(self):
         """

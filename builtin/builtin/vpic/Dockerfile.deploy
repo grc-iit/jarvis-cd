@@ -1,0 +1,20 @@
+FROM ##BUILD_IMAGE## AS builder
+FROM ##BASE_IMAGE##
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    openmpi-bin libopenmpi-dev \
+    openssh-server openssh-client \
+    gdb gdbserver \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/sshd \
+    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+
+# Copy full VPIC tree (deck compiler needs source + kokkos headers)
+COPY --from=builder /opt/vpic-kokkos /opt/vpic-kokkos
+##NVCC_COPY####NVCC_ENV##ENV PATH=/opt/vpic-kokkos/build/bin:${PATH}
+
+CMD ["/bin/bash"]

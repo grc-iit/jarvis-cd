@@ -1,0 +1,20 @@
+FROM ##BUILD_IMAGE## AS builder
+FROM ##BASE_IMAGE##
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# MPI runtime only (no build tools)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openmpi-bin libopenmpi-dev \
+    openssh-server openssh-client \
+    gdb gdbserver \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/sshd \
+    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+
+# Copy ior binary and darshan library from build container
+COPY --from=builder /opt/ior/install/bin/ior /usr/bin/ior
+COPY --from=builder /opt/darshan/install/lib/libdarshan.so /opt/darshan/lib/libdarshan.so
+
+CMD ["/bin/bash"]

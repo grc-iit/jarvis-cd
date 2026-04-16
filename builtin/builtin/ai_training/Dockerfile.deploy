@@ -1,0 +1,13 @@
+FROM ##BUILD_IMAGE##
+
+# Deploy container: full PyTorch environment ready
+# SSH for multi-node torchrun
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    openssh-server openssh-client \
+    gdb gdbserver \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/sshd \
+    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+
+CMD ["/bin/bash"]

@@ -1249,9 +1249,11 @@ class Pipeline:
             pkg_instance.config['deploy_mode'] = pkg_def.get('config', {}).get('deploy_mode', 'default')
 
             # Build per-package build image
-            build_content = pkg_instance._build_phase()
-            if build_content:
-                build_image_name = pkg_instance.build_image_name
+            build_result = pkg_instance._build_phase()
+            if build_result:
+                build_content, build_suffix = build_result
+                pkg_instance._build_suffix = build_suffix
+                build_image_name = pkg_instance.build_image_name()
                 pkg_name = pkg_def['pkg_name']
                 build_dockerfile_path = pipeline_shared_dir / f'build-{pkg_name}.Dockerfile'
                 with open(build_dockerfile_path, 'w') as f:
@@ -1272,12 +1274,13 @@ class Pipeline:
                     )
                 print(f"Build image ready: {build_image_name}")
 
-            deploy_content = pkg_instance._build_deploy_phase()
-            if deploy_content:
+            deploy_result = pkg_instance._build_deploy_phase()
+            if deploy_result:
+                deploy_content, deploy_suffix = deploy_result
                 deploy_dockerfile_parts.append({
                     'pkg_id': pkg_def['pkg_id'],
                     'content': deploy_content,
-                    'build_image': build_image_name if build_content else None,
+                    'build_image': build_image_name if build_result else None,
                 })
 
         # Build the DEPLOY image (named after the pipeline).
