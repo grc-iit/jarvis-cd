@@ -607,6 +607,52 @@ volumes:
   - /data:/data
 ```
 
+#### Using Jarvis Inside a Devcontainer (Docker-in-Docker)
+
+When running Jarvis inside a VS Code devcontainer or any Docker-in-Docker (DinD) environment, container pipelines spawn **sibling containers** — they share the same Docker daemon as the devcontainer rather than nesting containers inside it.
+
+This creates a **path mismatch problem**: the devcontainer sees the workspace at `/workspace` (or similar), but the Docker daemon sees volumes at the host path (e.g., `/home/user/projects`). Jarvis resolves this with two pipeline-level settings:
+
+```yaml
+name: my_devcontainer_pipeline
+install_manager: container
+
+container_engine: docker
+container_base: ubuntu:24.04
+
+# Devcontainer path remapping
+container_host_path: /home/user/projects   # Path on the Docker host where the workspace is mounted
+container_workspace: /workspace            # Path inside the devcontainer (your working directory)
+
+pkgs:
+  - pkg_type: builtin.ior
+    nprocs: 2
+    block: 32m
+    out: /tmp/ior_test.bin
+```
+
+**How it works:**
+
+1. **Volume remapping**: When generating `docker-compose.yml`, Jarvis replaces workspace paths with host paths in volume mounts. For example, `/workspace/.ppi-jarvis/shared/my_pipeline` becomes `/home/user/projects/.ppi-jarvis/shared/my_pipeline` in the compose file.
+
+2. **SSH key sharing**: In DinD environments, `~/.ssh` is typically on the overlay filesystem and not visible to sibling containers. Jarvis automatically copies SSH keys into a workspace subdirectory (`.ssh-host`) so sibling containers can access them for MPI communication.
+
+3. **Inside the containers**: Paths inside the spawned containers still use the original workspace paths (e.g., `/workspace/.ppi-jarvis/shared/...`), so all configuration files resolve identically whether accessed from the devcontainer or from inside the sibling container.
+
+**Finding your `container_host_path`:**
+
+```bash
+# Inside the devcontainer, inspect its own mount source:
+docker inspect $(hostname) --format '{{range .Mounts}}{{if eq .Destination "/workspace"}}{{.Source}}{{end}}{{end}}'
+```
+
+Or check your `.devcontainer/devcontainer.json` for the workspace mount configuration.
+
+**Requirements:**
+- The devcontainer must have access to the Docker socket (`/var/run/docker.sock` mounted)
+- Docker CLI must be installed inside the devcontainer
+- The workspace must be bind-mounted (not a Docker volume) so sibling containers can access it
+
 ### Package Configuration
 
 #### Basic Package Definition
