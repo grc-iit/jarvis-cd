@@ -98,6 +98,9 @@ class Exec(CoreExec):
     def _create_mpi_executor(self, cmd, exec_info):
         """Create the concrete MPI executor after detecting the implementation."""
         mpi_type = self._detect_mpi(exec_info)
+        return self._create_mpi_executor_with_type(cmd, exec_info, mpi_type)
+
+    def _create_mpi_executor_with_type(self, cmd, exec_info, mpi_type):
         if mpi_type == ExecType.OPENMPI:
             return OpenMpiExec(cmd, exec_info)
         elif mpi_type == ExecType.MPICH:
@@ -121,8 +124,13 @@ class Exec(CoreExec):
             # Build the full mpirun command first (without running), then wrap
             # with the container so the container executes the entire mpirun
             # invocation rather than just the application binary.
-            mpi_executor = self._create_mpi_executor(
-                self.cmd, self.exec_info.mod(container='none', dry_run=True))
+            # Detect MPI using the original exec_info (with container set)
+            # so MpiVersion can probe inside the container, then build
+            # the command with container='none' (the wrapping happens later).
+            mpi_type = self._detect_mpi(self.exec_info)
+            mpi_executor = self._create_mpi_executor_with_type(
+                self.cmd, self.exec_info.mod(container='none', dry_run=True),
+                mpi_type)
             mpi_cmd = mpi_executor.cmd
             wrapped_cmd, local_info = self._prepare_container(mpi_cmd)
             wrapped_cmd, local_info = self._resolve_exec_info(
