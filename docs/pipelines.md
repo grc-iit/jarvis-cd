@@ -228,210 +228,218 @@ name: my_pipeline
 
 ### Container Configuration
 
-Pipelines can be configured to run all packages in a shared container environment. This is useful for reproducibility, dependency management, and multi-node deployments.
+Pipelines can be configured to run packages inside Docker or Podman containers. Containers act as SSH compute nodes — the host-side jarvis orchestrates everything by exec-ing commands into the running containers via `docker exec` and MPI over SSH. No jarvis installation is needed inside the containers.
 
 #### Container Pipeline Parameters
 
 ```yaml
 name: my_containerized_pipeline
 
-# Container configuration (all fields optional)
-container_name: my_app_container                    # Container/image name (required for containerization)
-container_engine: podman                            # Container engine: docker or podman (default: podman)
-container_base: docker.io/iowarp/iowarp-build:latest    # Base image to build FROM
-container_ssh_port: 2222                            # SSH port for container communication (default: 2222)
+# Container configuration
+container_engine: docker                            # Container engine: docker or podman (default: podman)
+container_base: ubuntu:24.04                        # Base image for package builds
+container_ssh_port: 2222                            # SSH port inside containers (default: 2222)
+hostfile: /path/to/hostfile.txt                     # Hosts to deploy containers on
 
-# Optional: Custom extensions to Docker compose file (merged into service config)
+# Environment variables injected into containers via docker-compose
+container_env:
+  OMPI_MCA_btl_tcp_if_include: eno1                 # OpenMPI: use specific network interface
+  OMPI_MCA_oob_tcp_if_include: eno1                 # OpenMPI: OOB on same interface
+
+# Docker-in-Docker / devcontainer path remapping (optional)
+container_host_path: /home/user/projects            # Docker host path prefix
+container_workspace: /workspace                     # Container workspace root
+
+# Custom extensions merged into Docker Compose service config (optional)
 container_extensions:
   volumes:
-    - /data:/data:ro                                # Mount additional volumes
-  environment:
-    MY_VAR: value                                   # Add environment variables
-  devices:
-    - /dev/nvidia0:/dev/nvidia0                     # Add device access
+    - /data:/data:ro
 
 pkgs:
   - pkg_type: builtin.ior
-    deploy_mode: container  # Use containerized deployment
+    deploy_mode: container
     nprocs: 4
+    ppn: 1
 ```
 
 **Container Configuration Fields:**
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `container_name` | string | `""` (not containerized) | Name for the container image. If set, enables containerization |
-| `container_engine` | string | `"podman"` | Container engine to use (`docker` or `podman`) |
-| `container_base` | string | `"iowarp/iowarp-build:latest"` | Base Docker image to build from |
-| `container_ssh_port` | int | `2222` | SSH port for inter-container and container-host communication |
-| `container_extensions` | dict | `{}` | Custom Docker Compose configuration merged into service definition |
+| `container_engine` | string | `"podman"` | Container engine: `docker` or `podman` |
+| `container_base` | string | `"iowarp/iowarp-build:latest"` | Base Docker image for package builds |
+| `container_ssh_port` | int | `2222` | SSH port for MPI communication between containers |
+| `container_env` | dict | `{}` | Environment variables injected into containers via compose |
+| `container_host_path` | string | `""` | Docker host path prefix for DinD environments |
+| `container_workspace` | string | `""` | Workspace root path for DinD path remapping |
+| `container_extensions` | dict | `{}` | Custom Docker Compose config merged into service definition |
 
 #### How Container Pipelines Work
 
-1. **Container Build Phase** (`jarvis ppl load yaml` or `jarvis ppl configure`):
-   - Pipeline collects all packages with `deploy_mode=container`
-   - Each package's `augment_container()` method adds installation commands to Dockerfile
-   - Pipeline generates global Dockerfile in `~/.ppi-jarvis/containers/{container_name}.Dockerfile`
-   - Container image is built and tagged as `{container_name}`
-   - Manifest file tracks installed packages to avoid unnecessary rebuilds
+**Architecture:** Containers are SSH compute nodes. The host-side jarvis orchestrates packages by running `docker exec` into the containers. MPI commands run inside the containers and SSH to other containers on port 2222 for multi-node communication.
 
-2. **Container Deployment Phase** (`jarvis ppl start`):
-   - Pipeline starts containers on all nodes in hostfile using `pssh`
-   - Containers run with `network_mode: host` and `ipc: host` for performance
-   - SSH daemon starts inside container for multi-node MPI communication
-   - Pipeline YAML is mounted into container at `/root/.ppi-jarvis/shared/pipeline.yaml`
-   - Packages execute inside container with full environment and interceptor support
+1. **Build Phase** (`jarvis ppl run yaml ...`):
+   - Each package with `deploy_mode=container` provides `_build_phase()` and `_build_deploy_phase()` Dockerfiles
+   - Per-package build images are created as `jarvis-build-{pkg_name}`
+   - Deploy images are built with runtime dependencies, SSH server, and binaries copied from build images
+   - For multi-package pipelines, deploy images are built separately then merged via `COPY --from` overlays
 
-3. **Container Lifecycle**:
-   - `jarvis ppl start`: Brings up containers on all nodes, runs pipeline packages
-   - `jarvis ppl stop`: Gracefully stops containers
-   - `jarvis ppl kill`: Force terminates containers
-   - `jarvis ppl clean`: Removes container data
+2. **Container Start Phase**:
+   - Docker Compose starts containers on every node in the hostfile (`docker compose up -d`)
+   - Each container runs an SSH daemon on the configured port and sleeps
+   - Shared and private directories are mounted at **identical paths** on host and container
 
-#### Complete Container Pipeline Example
+3. **Package Execution Phase**:
+   - Host jarvis runs each package's `start()` method normally
+   - Commands are wrapped with `docker exec {container_name} ...` via `Exec`
+   - MPI commands run inside the container and SSH to other containers for multi-node
+   - MPI implementation is auto-detected by probing inside the container
+
+4. **Container Stop Phase**:
+   - Each package's `stop()` method is called
+   - `docker compose down` tears down all containers
+
+#### Volume Mounting
+
+Shared and private directories are mounted at the **same path** inside the container:
 
 ```yaml
-# Pipeline: Containerized I/O Benchmark
-# Purpose: Run IOR benchmark in reproducible container environment
-# Requirements: Podman or Docker installed on all nodes
-# Expected Runtime: 5-10 minutes (including container build)
+volumes:
+  - /path/to/shared:/path/to/shared     # Same path on host and container
+  - /path/to/private:/path/to/private   # Same path on host and container
+```
 
-name: ior_container_benchmark
+This means all configuration files (hostfile, redis.conf, pipeline YAML, package data) resolve identically on host and inside the container. The hostfile is automatically saved into the pipeline's shared directory.
 
-# Auto-build environment from current shell
-# No env field - will capture current environment automatically
+#### Container Environment Variables
 
-# Container configuration
-container_name: ior_benchmark_container
-container_engine: podman
-container_base: docker.io/iowarp/iowarp-build:latest
-container_ssh_port: 2222
+Use `container_env` to pass environment variables into containers. This is the recommended way to configure MPI network interfaces and other runtime settings:
+
+```yaml
+container_env:
+  # OpenMPI: include only the real network interface
+  OMPI_MCA_btl_tcp_if_include: eno1
+  OMPI_MCA_oob_tcp_if_include: eno1
+  # Or exclude problematic interfaces
+  OMPI_MCA_btl_tcp_if_exclude: docker0,lo
+  OMPI_MCA_oob_tcp_if_exclude: docker0,lo
+```
+
+This is necessary because containers using `network_mode: host` see all host network interfaces, including Docker bridges and link-local adapters that MPI cannot use for inter-node communication.
+
+#### Complete Container Pipeline Examples
+
+**IOR on a 3-node cluster:**
+
+```yaml
+name: ior_ares_container_test
+
+container_engine: docker
+container_base: ubuntu:24.04
+hostfile: /home/user/hostfile.txt
+
+container_env:
+  OMPI_MCA_btl_tcp_if_include: eno1
+  OMPI_MCA_oob_tcp_if_include: eno1
 
 pkgs:
-  # IOR benchmark with container deployment
   - pkg_type: builtin.ior
     pkg_name: ior_test
-    # Deployment mode: 'default' for bare metal, 'container' for containerized
     deploy_mode: container
-    # IOR benchmark parameters
-    nprocs: 4
-    ppn: 2
-    block: 1G
+    nprocs: 3
+    ppn: 1
+    block: 16M
     xfer: 1M
     api: posix
-    out: /tmp/ior_test_file
+    out: /tmp/ior_test
     write: true
     read: true
 ```
 
-#### Mixed Deployment: Bare Metal + Container
-
-You can run some packages on bare metal and others in containers within the same pipeline:
+**Redis + Redis-benchmark:**
 
 ```yaml
-name: mixed_deployment_pipeline
+name: redis_container_test
 
-# Container configuration for packages that need it
-container_name: app_container
 container_engine: docker
-container_base: docker.io/iowarp/iowarp-build:latest
+container_base: ubuntu:24.04
+hostfile: /home/user/hostfile.txt
+
+container_env:
+  OMPI_MCA_btl_tcp_if_include: eno1
+  OMPI_MCA_oob_tcp_if_include: eno1
 
 pkgs:
-  # Run database on bare metal (better performance)
   - pkg_type: builtin.redis
-    pkg_name: database
-    deploy_mode: default  # Bare metal deployment
+    deploy_mode: container
     port: 6379
-    memory_limit: 8G
-
-  # Run application in container (reproducibility)
-  - pkg_type: builtin.my_app
-    pkg_name: containerized_app
-    deploy_mode: container  # Container deployment
-    database_host: localhost
-    database_port: 6379
+    sleep: 2
+  - pkg_type: builtin.redis-benchmark
+    deploy_mode: container
+    port: 6379
+    count: 100000
+    nthreads: 4
+    pipeline: 16
+    req_size: 64
 ```
 
-#### Container Rebuild Control
+**LAMMPS molecular dynamics (CPU-only):**
 
-Containers are automatically rebuilt when:
-- Package manifest changes (packages added/removed)
-- Base image changes
-- First time loading a pipeline with containers
+```yaml
+name: lammps_container_test
 
-To force a rebuild:
+container_engine: docker
+container_base: ubuntu:24.04
+hostfile: /home/user/hostfile.txt
+
+container_env:
+  OMPI_MCA_btl_tcp_if_include: eno1
+  OMPI_MCA_oob_tcp_if_include: eno1
+
+pkgs:
+  - pkg_type: builtin.lammps
+    deploy_mode: container
+    nprocs: 3
+    ppn: 1
+    kokkos_gpu: false
+    script: /opt/lammps/bench/in.lj
+    base_image: ubuntu:24.04
+```
+
+#### Image Distribution
+
+Container images are built on the login/head node. For multi-node deployments, images must be distributed to compute nodes:
 
 ```bash
-# Rebuild specific container
-jarvis container update my_container_name
+# Save image to shared filesystem
+docker save my_pipeline_image -o /shared/fs/image.tar
 
-# Rebuild with no cache (clean rebuild)
-jarvis container update my_container_name +no_cache
-
-# Specify container engine
-jarvis container update my_container_name engine=docker
-
-# Update pipeline and rebuild container
-jarvis ppl update +container +no_cache
+# Load on each compute node (via pssh or loop)
+for host in node1 node2 node3; do
+    ssh $host "docker load -i /shared/fs/image.tar"
+done
 ```
-
-#### Container Architecture
-
-**Global Container Storage:**
-- Containers are stored globally in `~/.ppi-jarvis/containers/`
-- Multiple pipelines can share the same container image
-- Container images are tagged and reused across pipeline instances
-
-**Container File Structure:**
-```
-~/.ppi-jarvis/containers/
-├── my_container.Dockerfile     # Generated Dockerfile
-├── my_container.manifest       # Package manifest (JSON)
-└── compose_files/              # Per-pipeline compose files
-    └── pipeline_name/
-        └── docker-compose.yaml
-```
-
-**Container Features:**
-- **Host Networking**: Containers use `network_mode: host` for direct network access
-- **IPC Sharing**: `ipc: host` removes shared memory limits
-- **Memory Limits**: Unlimited memlock and 64MB stack via ulimits
-- **SSH Support**: Built-in SSH daemon for MPI multi-node communication
-- **GPU Access**: Available via host networking mode (no explicit GPU configuration needed)
 
 #### Container Best Practices
 
-1. **Use Specific Base Images**: Specify exact image tags for reproducibility
+1. **Use specific base images** for reproducibility:
    ```yaml
-   container_base: docker.io/ubuntu:22.04  # ✅ Good - specific version
-   container_base: ubuntu:latest           # ❌ Avoid - version can change
+   container_base: ubuntu:24.04     # Good - specific version
    ```
 
-2. **Share Containers Across Pipelines**: Reuse containers with identical package sets
-   ```yaml
-   # Pipeline 1
-   container_name: shared_ior_container
+2. **Set MPI network interfaces** via `container_env` to avoid hangs from Docker bridge or link-local interfaces
 
-   # Pipeline 2 (reuses same container)
-   container_name: shared_ior_container
-   ```
+3. **Use shared filesystem paths** for `shared_dir` and `private_dir` so all nodes can access configuration and output
 
-3. **Test Locally Before Deployment**: Build and test containers locally first
+4. **Monitor container resources**:
    ```bash
-   jarvis ppl load yaml my_pipeline.yaml  # Builds container
-   jarvis ppl start                       # Test locally
+   docker images | grep jarvis   # List build/deploy images
+   docker system prune           # Clean unused images
    ```
 
-4. **Monitor Container Resources**: Check container disk usage and clean old images
-   ```bash
-   podman images | grep jar  # List Jarvis containers
-   podman system prune       # Clean unused containers
-   ```
-
-5. **Use Container Extensions for Custom Configuration**: Extend compose file for specific needs
+5. **Use `container_extensions`** for custom compose settings:
    ```yaml
    container_extensions:
-     # Add GPU support
      deploy:
        resources:
          reservations:
