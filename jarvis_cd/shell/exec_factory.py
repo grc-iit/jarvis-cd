@@ -53,12 +53,18 @@ class Exec(CoreExec):
         else:
             img = self.exec_info.container_image or ''
 
+        # Wrap the command in bash -c so that shell metacharacters
+        # (&&, |, >, >>, ;, $()) are interpreted inside the container
+        # rather than by the host shell.
+        escaped = cmd.replace("'", "'\\''")
+        shell_cmd = f"bash -c '{escaped}'"
+
         mounts = self.exec_info.bind_mounts or []
         if c == 'apptainer':
             gpu_flag = '--nv ' if gpu else ''
             env_flag = f'--env LD_PRELOAD={ld_preload} ' if ld_preload else ''
             mount_flags = ''.join(f'--bind {m} ' for m in mounts)
-            wrapped = f'apptainer exec {gpu_flag}{env_flag}{mount_flags}{img} {cmd}'
+            wrapped = f'apptainer exec {gpu_flag}{env_flag}{mount_flags}{img} {shell_cmd}'
         elif c in ('podman', 'docker'):
             # Use 'exec' into the already-running container (started by
             # docker/podman compose).  The container_image doubles as the
@@ -66,7 +72,7 @@ class Exec(CoreExec):
             # "{image}_container".
             container_name = f'{img}_container' if img else ''
             env_flag = f'-e LD_PRELOAD={ld_preload} ' if ld_preload else ''
-            wrapped = f'{c} exec {env_flag}{container_name} {cmd}'
+            wrapped = f'{c} exec {env_flag}{container_name} {shell_cmd}'
 
         return wrapped, self.exec_info.mod(env=env)
 
