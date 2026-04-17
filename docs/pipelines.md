@@ -334,10 +334,13 @@ pkgs:
 **Architecture:** Containers are SSH compute nodes. The host-side jarvis orchestrates packages by running `docker exec` into the containers. MPI commands run inside the containers and SSH to other containers on port 2222 for multi-node communication.
 
 1. **Build Phase** (`jarvis ppl run yaml ...`):
-   - When `install_manager: container`, each package provides `_build_phase()` and `_build_deploy_phase()` Dockerfiles
-   - Per-package build images are created as `jarvis-build-{pkg_name}-{suffix}`
-   - Deploy images are built with runtime dependencies, SSH server, and binaries copied from build images
-   - For multi-package pipelines, deploy images are built separately then merged via `COPY --from` overlays
+   - If the deploy image already exists and `container_cache` is enabled, the build is skipped entirely
+   - Jarvis starts a single build container from `container_base` (e.g., `ubuntu:24.04`)
+   - Each package's `build.sh` script runs inside this container via `docker exec`
+   - The build container is committed as a temporary image (`jarvis-build-{pipeline}`)
+   - Each package's `Dockerfile.deploy` copies compiled binaries from the committed image into a lean runtime image
+   - The deploy image generates its own SSH keys so all containers trust each other
+   - The temporary build image and container are cleaned up
 
 2. **Container Start Phase**:
    - Docker Compose starts containers on every node in the hostfile (`docker compose up -d`)
@@ -346,7 +349,7 @@ pkgs:
 
 3. **Package Execution Phase**:
    - Host jarvis runs each package's `start()` method normally
-   - Commands are wrapped with `docker exec {container_name} ...` via `Exec`
+   - Commands are wrapped in `bash -c '...'` inside `docker exec` so shell metacharacters work correctly
    - MPI commands run inside the container and SSH to other containers for multi-node
    - MPI implementation is auto-detected by probing inside the container
 

@@ -51,13 +51,14 @@ jarvis ppl run yaml my_ior_test.yaml
 ```
 
 Jarvis will:
-1. **Build** a container image with IOR and Darshan compiled from `ubuntu:24.04`
-2. **Start** the container with SSH and MPI configured
-3. **Run** `ior` inside the container with 2 MPI processes
-4. **Print** write and read throughput results
-5. **Stop** and clean up the container
+1. **Build** — Start a build container from `ubuntu:24.04`, compile IOR and Darshan inside it
+2. **Deploy** — Create a lean runtime image with only the compiled binaries, MPI, and SSH
+3. **Start** — Launch the deploy container with SSH and MPI configured
+4. **Run** — Execute `ior` inside the container with 2 MPI processes
+5. **Print** — Report write and read throughput results
+6. **Stop** — Clean up the container
 
-The first run takes a few minutes to compile IOR inside the container. Subsequent runs reuse the cached image (`jarvis-build-ior-mpi`).
+The first run takes a few minutes to compile. Subsequent runs skip the build entirely — the deploy image is cached locally. Set `container_cache: false` on a package to force a rebuild.
 
 ## Choosing a Container Engine
 
@@ -268,10 +269,10 @@ Jarvis starts a container on each node via Docker Compose, then runs IOR across 
 When you run `jarvis ppl run yaml pipeline.yaml`, Jarvis executes these phases:
 
 1. **Load** — Parse the YAML, capture the environment
-2. **Build** — Build containers or run `spack install`
+2. **Build** — Check if deploy image exists (skip if cached); otherwise start a build container, run each package's `build.sh`, commit, build deploy image. For spack: run `spack install` instead.
 3. **Configure** — Set up each package (create config files, directories)
-4. **Start** — Launch each package in order
-5. **Stop** — Stop each package in reverse order
+4. **Start** — Launch each package in order (for containers: `docker compose up`, then `docker exec`)
+5. **Stop** — Stop each package in reverse order (for containers: `docker compose down`)
 
 You can also run phases individually:
 

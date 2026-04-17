@@ -305,30 +305,81 @@ The class name must be the PascalCase of the package directory name (e.g., direc
 
 Container support is built into `Application`. The pipeline's `install_manager: container` setting enables containerized deployment for all packages. Any package can support container deployment by:
 
-1. Storing Dockerfiles as template files (`Dockerfile.build`, `Dockerfile.deploy`) in the package directory
-2. Overriding `_build_phase()` and `_build_deploy_phase()` to return `(dockerfile_content, image_suffix)` tuples
-3. Branching on `self.config.get('deploy_mode') == 'container'` in `start()`
+1. Providing a `build.sh` script (shell commands to compile software) in the package directory
+2. Providing a `Dockerfile.deploy` template (lean runtime image) in the package directory
+3. Overriding `_build_phase()` and `_build_deploy_phase()` to return template content
+4. Branching on `self.config.get('deploy_mode') == 'container'` in `start()`
 
 Note: `deploy_mode` is set automatically by the pipeline based on `install_manager`. Packages do **not** include `deploy_mode` in their `_configure_menu()`.
 
-### Two-Phase Container Build
+### How Container Builds Work
 
-Jarvis uses a two-phase build to maximize Docker layer caching:
+Jarvis uses a **single long-running build container** to compile all packages, then creates a lean deploy image from the results.
 
-**Build container** (`jarvis-build-{pkg_name}-{suffix}`):
-- Defined by `_build_phase()` — heavy compile steps, all build tools present
-- The **image suffix** identifies a specific build configuration (e.g., `kokkos-gpu-80`, `cpu`, `cuda-90`)
-- Different configurations produce distinct images (e.g., `jarvis-build-lammps-kokkos-gpu-80` vs `jarvis-build-lammps-cpu`)
-- Cached across pipelines — only rebuilds when the Dockerfile changes
-- Named independently of the pipeline so it can be reused
+**Step 1 — Check cache:** If the deploy image already exists and all packages have `container_cache: true` (the default), the entire build is skipped.
 
-**Deploy container** (`{pipeline_name}-{suffix}`):
-- Defined by `_build_deploy_phase()` — copies binaries from build container into lean runtime image
-- Typically uses the same suffix as the build phase
-- For `apptainer`: additionally converted to a `.sif` file stored in `private_dir/`
-- Much smaller than the build container
+**Step 2 — Build phase:** Jarvis starts one container from `container_base` (e.g., `ubuntu:24.04`) and runs each package's `build.sh` script inside it via `docker exec`. All packages share the same build container, so dependencies installed by one package are available to the next.
 
-Both phases are triggered automatically when the pipeline has `install_manager: container` (which sets `deploy_mode = 'container'` on all packages).
+**Step 3 — Commit:** The build container is committed as a temporary build image (`jarvis-build-{pipeline_name}`).
+
+**Step 4 — Deploy phase:** Each package's `Dockerfile.deploy` uses `COPY --from=builder` to extract only the compiled binaries into a minimal runtime image. The deploy image generates its own SSH keys so all containers from the same image can communicate via MPI.
+
+**Step 5 — Cleanup:** The build container and temporary build image are removed. Only the deploy image remains.
+
+```
+container_base (ubuntu:24.04)
+    │
+    ▼
+┌──────────────────────────────┐
+│  Build Container             │
+│  docker run ... sleep inf    │
+│                              │
+│  docker exec build-pkg1.sh   │  ← Each package's build.sh
+│  docker exec build-pkg2.sh   │    runs in the same container
+│  ...                         │
+└──────────────────────────────┘
+    │ docker commit
+    ▼
+┌──────────────────────────────┐
+│  jarvis-build-{pipeline}     │  ← Temporary build image
+└──────────────────────────────┘
+    │ Dockerfile.deploy (COPY --from=builder)
+    ▼
+┌──────────────────────────────┐
+│  {pipeline_name}             │  ← Final deploy image
+│  - Runtime deps only         │    (small, SSH-ready)
+│  - Compiled binaries         │
+│  - Self-generated SSH keys   │
+└──────────────────────────────┘
+```
+
+### Deploy Image SSH
+
+Deploy containers generate their own SSH keypair at image build time. Since the same image runs on all cluster nodes, all containers share the same identity and can SSH to each other without any host key setup. The `Dockerfile.deploy` includes:
+
+```dockerfile
+RUN mkdir -p /var/run/sshd /root/.ssh \
+    && ssh-keygen -A \
+    && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 \
+    && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys \
+    && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys \
+    && printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /root/.ssh/config \
+    && chmod 600 /root/.ssh/config
+```
+
+### Caching and Rebuilds
+
+If the deploy image already exists locally, the build is skipped entirely. To force a rebuild (e.g., when upstream git repos have new commits but the build.sh hasn't changed):
+
+```yaml
+pkgs:
+  - pkg_type: builtin.lammps
+    container_cache: false    # forces full rebuild
+```
+
+Image existence is checked per engine:
+- **Docker/Podman:** `docker image inspect <name>` (exit code 0 = exists)
+- **Apptainer:** checks for `.sif` file in shared directory
 
 ### Supported Container Engines
 
@@ -336,18 +387,18 @@ Set `container_engine` in the pipeline YAML:
 
 | Value | Build tool | Run tool |
 |-------|-----------|----------|
-| `docker` | `docker build` | `docker run --rm` |
-| `podman` | `podman build` | `podman run --rm` |
-| `apptainer` | docker/podman for build, then `apptainer build` to convert | `apptainer exec` |
+| `docker` | `docker run` + `docker exec` + `docker commit` | `docker compose up` |
+| `podman` | `podman run` + `podman exec` + `podman commit` | `podman-compose up` |
+| `apptainer` | docker/podman (intermediate), then `apptainer build` to convert to `.sif` | `apptainer exec` |
 
 ### Directory Structure Example (IOR)
 
 ```
 ior/
 ├── __init__.py
-├── pkg.py              # Single Ior(Application) class — bare metal + container in one file
-├── Dockerfile.build    # Build-phase Dockerfile template with ##VAR## placeholders
-└── Dockerfile.deploy   # Deploy-phase Dockerfile template with ##VAR## placeholders
+├── pkg.py              # Single Ior(Application) class — bare metal + container
+├── build.sh            # Build script: shell commands to compile software
+└── Dockerfile.deploy   # Deploy Dockerfile: copies binaries into runtime image
 ```
 
 ### Package Example
@@ -360,77 +411,43 @@ import os, pathlib
 
 class Ior(Application):
     """
-    IOR benchmark. Supports bare-metal (default) and container deployment.
-    Set install_manager: container in the pipeline YAML to use containerized IOR.
+    IOR benchmark. Supports bare-metal and container deployment.
     """
 
     def _configure_menu(self):
         return [
-            {
-                'name': 'nprocs',
-                'msg': 'Number of processes',
-                'type': int,
-                'default': 1,
-            },
-            {
-                'name': 'block',
-                'msg': 'Amount of data per process',
-                'type': str,
-                'default': '32m',
-            },
-            {
-                'name': 'out',
-                'msg': 'Output file path',
-                'type': str,
-                'default': '/tmp/ior.bin',
-            },
+            {'name': 'nprocs', 'msg': 'Number of processes',
+             'type': int, 'default': 1},
+            {'name': 'block', 'msg': 'Amount of data per process',
+             'type': str, 'default': '32m'},
+            {'name': 'out', 'msg': 'Output file path',
+             'type': str, 'default': '/tmp/ior.bin'},
         ]
 
-    # ------------------------------------------------------------------
-    # Container Dockerfiles (return None when not in container mode)
-    # ------------------------------------------------------------------
-
     def _build_phase(self):
-        """Heavy build container — compiled once, cached."""
+        """Return build script content, or None when not in container mode."""
         if self.config.get('deploy_mode') != 'container':
             return None
-        base = getattr(self.pipeline, 'container_base', 'ubuntu:24.04')
-        content = self._read_dockerfile('Dockerfile.build', {
-            'BASE_IMAGE': base,
-        })
+        content = self._read_build_script('build.sh', {})
         return content, 'mpi'
 
     def _build_deploy_phase(self):
-        """Lean runtime container — copies binary from build container."""
+        """Return deploy Dockerfile content."""
         if self.config.get('deploy_mode') != 'container':
             return None
-        base = getattr(self.pipeline, 'container_base', 'ubuntu:24.04')
         suffix = getattr(self, '_build_suffix', '')
         content = self._read_dockerfile('Dockerfile.deploy', {
             'BUILD_IMAGE': self.build_image_name(),
-            'BASE_IMAGE': base,
+            'DEPLOY_BASE': 'ubuntu:24.04',
         })
         return content, suffix
 
-    # ------------------------------------------------------------------
-    # Configuration
-    # ------------------------------------------------------------------
-
     def _configure(self, **kwargs):
-        """
-        super()._configure() updates self.config and, when deploy_mode == 'container',
-        automatically calls build_phase() and build_deploy_phase().
-        """
         super()._configure(**kwargs)
-
         if self.config.get('deploy_mode') == 'default':
             out = os.path.expandvars(self.config['out'])
             Mkdir(str(pathlib.Path(out).parent),
                   PsshExecInfo(env=self.mod_env, hostfile=self.hostfile)).run()
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
 
     def start(self):
         if self.config.get('deploy_mode') == 'container':
@@ -451,63 +468,84 @@ class Ior(Application):
            PsshExecInfo(env=self.env, hostfile=self.hostfile)).run()
 ```
 
-### `_build_phase()` and `_build_deploy_phase()` Return Value
+### `build.sh` — Build Script
 
-Both methods return a `(dockerfile_content, image_suffix)` tuple, or `None` to skip:
+Each package provides a `build.sh` shell script with `##VAR##` placeholders:
+
+```bash
+#!/bin/bash
+set -e
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl openmpi-bin libopenmpi-dev
+
+curl -sL https://github.com/hpc/ior/releases/download/3.3.0/ior-3.3.0.tar.gz \
+    | tar xz --strip-components=1 -C /opt/ior
+
+cd /opt/ior && ./configure --prefix=/opt/ior/install \
+    && make -j$(nproc) && make install
+```
+
+The script runs inside the build container via `docker exec`. It should install dependencies and compile software, leaving artifacts in `/opt` or `/usr/local`.
+
+### `_build_phase()` Return Value
+
+Returns `(script_content, image_suffix)` or `None`:
 
 ```python
 def _build_phase(self):
     if self.config.get('deploy_mode') != 'container':
         return None
-    content = self._read_dockerfile('Dockerfile.build', {
-        'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
+    content = self._read_build_script('build.sh', {
+        'CUDA_ARCH': self.config.get('cuda_arch', 80),
     })
-    # The suffix identifies this configuration — e.g., GPU arch, backend
     return content, 'kokkos-gpu-80'
 ```
 
-The **image suffix** allows the same package to produce multiple distinct images for
-different configurations. For example, LAMMPS with `kokkos_gpu=True, cuda_arch=80`
-produces `jarvis-build-lammps-kokkos-gpu-80`, while `kokkos_gpu=False` produces
-`jarvis-build-lammps-cpu`. This means you can have multiple configurations
-cached simultaneously without one overwriting the other.
+### `Dockerfile.deploy` — Deploy Template
 
-In `_build_deploy_phase()`, use `getattr(self, '_build_suffix', '')` to reuse the
-build phase suffix, and reference the build image via `self.build_image_name()`:
+```dockerfile
+FROM ##BUILD_IMAGE## AS builder
+FROM ##DEPLOY_BASE##
 
-```python
-def _build_deploy_phase(self):
-    if self.config.get('deploy_mode') != 'container':
-        return None
-    suffix = getattr(self, '_build_suffix', '')
-    content = self._read_dockerfile('Dockerfile.deploy', {
-        'BUILD_IMAGE': self.build_image_name(),  # includes the build suffix
-        'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
-    })
-    return content, suffix
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openmpi-bin libopenmpi3 openssh-server openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/ior/install/bin/ior /usr/bin/ior
+
+# Self-generated SSH keys — all containers from this image share the same identity
+RUN mkdir -p /var/run/sshd /root/.ssh && ssh-keygen -A \
+    && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 \
+    && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys \
+    && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys \
+    && printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /root/.ssh/config \
+    && chmod 600 /root/.ssh/config
+
+EXPOSE 22
+CMD ["/bin/bash"]
 ```
 
-### `_read_dockerfile(filename, replacements)`
+`##BUILD_IMAGE##` is replaced with the committed build image name. `##DEPLOY_BASE##` is the minimal runtime base (e.g., `ubuntu:24.04` or `nvidia/cuda:12.6.0-runtime-ubuntu24.04`).
 
-Reads a Dockerfile template from `self.pkg_dir` and applies `##VAR##` substitutions:
+### Template Helpers
 
-```python
-content = self._read_dockerfile('Dockerfile.build', {
-    'BASE_IMAGE': 'sci-hpc-base',
-    'CUDA_ARCH': 80,
-})
-```
+| Method | Description |
+|---|---|
+| `_read_build_script(filename, replacements)` | Read a `build.sh` template from `self.pkg_dir` with `##VAR##` substitution |
+| `_read_dockerfile(filename, replacements)` | Read a `Dockerfile.deploy` template with `##VAR##` substitution |
 
-This keeps Dockerfiles as readable, standalone files rather than embedded Python strings.
+Both are aliases for `_read_template()`.
 
 ### Pipeline YAML for Container Mode
 
 ```yaml
 name: ior_apptainer_test
-install_manager: container           # enables containerized deployment for all packages
+install_manager: container
 
 container_engine: apptainer          # docker | podman | apptainer
-container_base: ubuntu:24.04         # base image for build + deploy containers
+container_base: ubuntu:24.04         # base image for the build container
 
 pkgs:
   - pkg_type: builtin.ior
@@ -519,7 +557,7 @@ pkgs:
 
 ### Using Interceptors with Containers
 
-Interceptors (e.g., Darshan) work transparently with container mode. Declare the interceptor at the pipeline level and reference it from the package:
+Interceptors (e.g., Darshan) work transparently with container mode:
 
 ```yaml
 interceptors:
@@ -532,25 +570,25 @@ pkgs:
   - pkg_type: builtin.ior
     pkg_name: ior_benchmark
     interceptors:
-      - darshan_interceptor          # apply darshan before IOR starts
+      - darshan_interceptor
     nprocs: 4
 ```
 
-The interceptor's `modify_env()` sets `LD_PRELOAD` in the package's `mod_env`. When running in container mode, `Exec` moves `LD_PRELOAD` to the container engine's `--env` flag so it is set cleanly inside the container without affecting the host dynamic linker.
+The interceptor's `modify_env()` sets `LD_PRELOAD` in `mod_env`. `Exec` wraps it with `bash -c` inside the container and passes `LD_PRELOAD` via the engine's `--env` flag.
 
-For this to work, `libdarshan.so` must exist inside the deploy container. Build it in `_build_phase()` and copy it in `_build_deploy_phase()`.
+For this to work, `libdarshan.so` must exist inside the deploy container. Build it in `build.sh` and copy it in `Dockerfile.deploy`.
 
 ### Available Container Methods and Properties
 
 | Method / Property | Description |
 |---|---|
-| `build_image_name(suffix=None)` | Build image name: `jarvis-build-{pkg}-{suffix}` (uses stored `_build_suffix` when suffix is None) |
-| `deploy_image_name(suffix=None)` | Deploy image name: `{pipeline}-{suffix}` (uses stored `_deploy_suffix` when suffix is None) |
-| `_container_engine` | Active engine from pipeline config (`docker`/`podman`/`apptainer`) |
-| `_build_engine` | Engine used for builds (apptainer uses docker/podman as intermediate) |
-| `build_phase()` | Builds the build container from `_build_phase()`, stores `_build_suffix` |
-| `build_deploy_phase()` | Builds the deploy container + SIF from `_build_deploy_phase()`, stores `_deploy_suffix` |
-| `_read_dockerfile(filename, replacements)` | Reads a Dockerfile template from `self.pkg_dir` with `##VAR##` substitution |
+| `build_image_name(suffix=None)` | Build image name: `jarvis-build-{pipeline}` |
+| `deploy_image_name(suffix=None)` | Deploy image name: `{pipeline}-{suffix}` |
+| `_container_engine` | Active engine from pipeline config |
+| `_build_engine` | Engine used for builds (apptainer uses docker/podman) |
+| `_image_exists(engine, name, shared_dir)` | Check if image exists (docker inspect / podman inspect / .sif file) |
+| `_read_build_script(filename, replacements)` | Read build.sh template with `##VAR##` substitution |
+| `_read_dockerfile(filename, replacements)` | Read Dockerfile.deploy template with `##VAR##` substitution |
 
 ## Wrapper Packages (No Build Required)
 
