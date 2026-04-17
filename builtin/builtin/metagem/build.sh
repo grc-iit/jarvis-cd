@@ -1,16 +1,19 @@
-FROM ##BASE_IMAGE##
+#!/bin/bash
+set -e
+
+export DEBIAN_FRONTEND=noninteractive
 
 # Miniforge (includes mamba)
-RUN curl -L -o /tmp/miniforge.sh \
+curl -L -o /tmp/miniforge.sh \
         https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh \
     && bash /tmp/miniforge.sh -b -p /opt/conda \
     && rm /tmp/miniforge.sh \
     && /opt/conda/bin/conda config --set channel_priority strict
 
-ENV PATH=/opt/conda/bin:${PATH}
+export PATH=/opt/conda/bin:${PATH}
 
 # Snakemake 9 (matches the bare-metal benchmark recipe) + fastp for qfilter.
-RUN conda create -p /opt/metagem-env -c conda-forge -c bioconda -y \
+conda create -p /opt/metagem-env -c conda-forge -c bioconda -y \
         python=3.10 snakemake=9.18.2 \
     && conda create -n metagem -c bioconda -c conda-forge -y \
         fastp=0.23 \
@@ -19,13 +22,10 @@ RUN conda create -p /opt/metagem-env -c conda-forge -c bioconda -y \
 # metaGEM source, with the conda-activate patch applied. Upstream still
 # uses the pre-4.4 `source activate` idiom which breaks on newer conda;
 # the patch rewrites it to `conda activate` inside `conda shell.bash hook`.
-RUN git clone --depth 1 https://github.com/franciscozorrilla/metaGEM.git /opt/metaGEM
-COPY metagem-conda-activate.patch /opt/metaGEM/metagem-conda-activate.patch
-RUN cd /opt/metaGEM && git apply metagem-conda-activate.patch
+git clone --depth 1 https://github.com/franciscozorrilla/metaGEM.git /opt/metaGEM
+# NOTE: metagem-conda-activate.patch must be copied separately (was a COPY directive)
+cd /opt/metaGEM && git apply metagem-conda-activate.patch
 
-COPY run_metagem.sh /opt/run_metagem.sh
-RUN chmod +x /opt/run_metagem.sh
+# NOTE: run_metagem.sh must be copied separately (was a COPY directive)
 
-ENV PATH=/opt/metagem-env/bin:${PATH}
-
-CMD ["/bin/bash"]
+export PATH=/opt/metagem-env/bin:${PATH}

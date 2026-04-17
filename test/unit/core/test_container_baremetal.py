@@ -108,7 +108,8 @@ class TestIorBaremetal(ContainerBaremetalTestBase):
         content, suffix = result
         self.assertIsInstance(content, str)
         self.assertIsInstance(suffix, str)
-        self.assertIn('FROM', content)
+        self.assertIn('set -e', content)
+        self.assertNotIn('FROM', content)
         self.assertEqual(suffix, 'mpi')
 
     def test_build_image_name_includes_suffix(self):
@@ -134,9 +135,9 @@ class TestIorBaremetal(ContainerBaremetalTestBase):
         })
         pkg = self._load_pkg(pipeline, pkg_def)
         content, _ = pkg._build_phase()
-        # ##BASE_IMAGE## should have been replaced
-        self.assertNotIn('##BASE_IMAGE##', content)
-        self.assertIn('ubuntu:24.04', content)
+        # build.sh should be a shell script, not a Dockerfile
+        self.assertIn('set -e', content)
+        self.assertNotIn('FROM', content)
 
     def test_deploy_phase_references_build_image(self):
         pipeline = self._create_pipeline('ior_deploy')
@@ -251,7 +252,7 @@ class TestGrayScottBaremetal(ContainerBaremetalTestBase):
                                      self._gs_config())
         pkg = self._load_pkg(pipeline, pkg_def)
         content, _ = pkg._build_phase()
-        self.assertNotIn('##BASE_IMAGE##', content)
+        self.assertIn('set -e', content)
         self.assertIn('gray_scott', content)
 
 

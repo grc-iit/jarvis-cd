@@ -765,17 +765,18 @@ class Pkg:
         return engine
 
     # ------------------------------------------------------------------
-    # Container support — Dockerfile template helpers
+    # Container support — template helpers
     # ------------------------------------------------------------------
 
-    def _read_dockerfile(self, filename, replacements=None):
+    def _read_template(self, filename, replacements=None):
         """
-        Read a Dockerfile template from self.pkg_dir and apply ##VAR##
-        substitutions.
+        Read a template file from self.pkg_dir and apply ##VAR##
+        substitutions.  Used for both build.sh scripts and
+        Dockerfile.deploy templates.
 
-        :param filename: Dockerfile name relative to self.pkg_dir
+        :param filename: File name relative to self.pkg_dir
         :param replacements: dict of {VAR_NAME: value} replacements
-        :return: Dockerfile content string with substitutions applied
+        :return: File content with substitutions applied
         """
         import os
         path = os.path.join(self.pkg_dir, filename)
@@ -786,26 +787,28 @@ class Pkg:
                 content = content.replace(f'##{key}##', str(value))
         return content
 
+    # Keep old name as alias for backwards compatibility
+    _read_dockerfile = _read_template
+    _read_build_script = _read_template
+
     # ------------------------------------------------------------------
-    # Container support — overrideable Dockerfile generators
+    # Container support — overrideable generators
     # ------------------------------------------------------------------
 
     def _build_phase(self):
         """
-        Return the Dockerfile content and image suffix for the BUILD container.
+        Return the build script content and image suffix.
 
-        Override in subclasses to provide application-specific build steps.
-        Return None to skip the build phase.
+        Override in subclasses.  The returned script is executed inside
+        a long-running build container (started from ``container_base``).
+        It should install all build dependencies and compile the software.
 
         The image suffix identifies a specific build configuration so that
         different configurations (e.g., GPU vs CPU) produce distinct images.
-        The final build image name is ``jarvis-build-{pkg}-{suffix}``.
 
-        :return: (dockerfile_content, image_suffix) tuple, or None to skip.
-                 Returning ('', suffix) also skips the build — this is normal
-                 for packages that are wrappers around software installed by
-                 another package (e.g., an interceptor that doesn't need its
-                 own container image).
+        :return: (script_content, image_suffix) tuple, or None to skip.
+                 Returning ('', suffix) also skips — normal for wrapper
+                 packages that don't need their own build.
         """
         return None
 
@@ -815,8 +818,9 @@ class Pkg:
 
         Override in subclasses. Return None to skip.
 
-        The image suffix identifies a specific deploy configuration.
-        The final deploy image name is ``{pipeline}-{suffix}``.
+        The deploy Dockerfile typically uses a multi-stage pattern:
+        ``FROM ##BUILD_IMAGE## AS builder`` then ``FROM ##DEPLOY_BASE##``
+        and copies compiled artifacts from the builder.
 
         :return: (dockerfile_content, image_suffix) tuple, or None to skip.
                  Returning ('', suffix) also skips the build.
@@ -824,103 +828,32 @@ class Pkg:
         return None
 
     # ------------------------------------------------------------------
-    # Container support — build methods
+    # Container support — image existence check
     # ------------------------------------------------------------------
 
-    def build_phase(self):
+    @staticmethod
+    def _image_exists(engine, image_name, shared_dir=None):
         """
-        Build the BUILD container image and save Dockerfile to private_dir.
+        Check whether a container image already exists locally.
 
-        Skipped when _build_phase() returns None or empty content.
-        Packages that wrap software installed by another package may
-        return ('', suffix) to indicate no build is needed.
+        :param engine: 'docker', 'podman', or 'apptainer'
+        :param image_name: Image name to check
+        :param shared_dir: Shared directory (needed for apptainer .sif check)
+        :return: True if the image exists
         """
-        result_tuple = self._build_phase()
-        if not result_tuple:
-            return
-        dockerfile_content, suffix = result_tuple
-        if not dockerfile_content:
-            return
-        self._build_suffix = suffix
-        from pathlib import Path
-        from jarvis_cd.shell import Exec, LocalExecInfo
-        private_path = Path(self.private_dir)
-        private_path.mkdir(parents=True, exist_ok=True)
-        dockerfile_path = private_path / 'build.Dockerfile'
-        with open(dockerfile_path, 'w') as f:
-            f.write(dockerfile_content)
-        image_name = self.build_image_name()
-        print(f"Building build container: {image_name}")
-        engine = self._build_engine
-        cache_flag = '' if self.config.get('container_cache', True) else ' --no-cache'
-        build_cmd = (
-            f"{engine} build --network=host{cache_flag} -t {image_name} "
-            f"-f {dockerfile_path} {private_path}"
-        )
-        result = Exec(build_cmd, LocalExecInfo()).run()
-        exit_code = result.exit_code.get('localhost', 1)
-        if exit_code != 0:
-            raise RuntimeError(
-                f"Failed to build container '{image_name}' (exit code {exit_code}). "
-                f"Dockerfile: {dockerfile_path}"
-            )
-        print(f"Build container ready: {image_name}")
-
-    def build_deploy_phase(self):
-        """
-        Build the DEPLOY container image and save Dockerfile to private_dir.
-
-        For docker/podman: builds image named after the pipeline.
-        For apptainer: builds docker image then converts to SIF file stored in
-        shared_dir/{deploy_image_name}.sif so all nodes can access it.
-
-        Skipped when _build_deploy_phase() returns None or empty content.
-        """
-        result_tuple = self._build_deploy_phase()
-        if not result_tuple:
-            return
-        dockerfile_content, suffix = result_tuple
-        if not dockerfile_content:
-            return
-        self._deploy_suffix = suffix
-        from pathlib import Path
-        from jarvis_cd.shell import Exec, LocalExecInfo
-        private_path = Path(self.private_dir)
-        private_path.mkdir(parents=True, exist_ok=True)
-        dockerfile_path = private_path / 'deploy.Dockerfile'
-        with open(dockerfile_path, 'w') as f:
-            f.write(dockerfile_content)
-        engine = self._container_engine
-        build_engine = self._build_engine
-        image_name = self.deploy_image_name()
-        print(f"Building deploy container: {image_name}")
-        cache_flag = '' if self.config.get('container_cache', True) else ' --no-cache'
-        build_cmd = (
-            f"{build_engine} build --network=host{cache_flag} -t {image_name} "
-            f"-f {dockerfile_path} {private_path}"
-        )
-        result = Exec(build_cmd, LocalExecInfo()).run()
-        exit_code = result.exit_code.get('localhost', 1)
-        if exit_code != 0:
-            raise RuntimeError(
-                f"Failed to build deploy container '{image_name}' (exit code {exit_code}). "
-                f"Dockerfile: {dockerfile_path}"
-            )
         if engine == 'apptainer':
-            shared_path = Path(self.shared_dir)
-            shared_path.mkdir(parents=True, exist_ok=True)
-            sif_path = shared_path / f'{image_name}.sif'
-            print(f"Converting to Apptainer SIF: {sif_path}")
-            from jarvis_cd.shell.container_compose_exec import ApptainerBuildExec
-            ApptainerBuildExec(
-                image_name,
-                str(sif_path),
-                LocalExecInfo(),
-                source='docker-daemon'
-            ).run()
-            print(f"Apptainer SIF ready: {sif_path}")
-        else:
-            print(f"Deploy container ready: {image_name}")
+            from pathlib import Path
+            if not shared_dir:
+                return False
+            sif = Path(shared_dir) / f'{image_name}.sif'
+            return sif.exists()
+        # docker / podman
+        from jarvis_cd.shell import Exec, LocalExecInfo
+        result = Exec(
+            f'{engine} image inspect {image_name}',
+            LocalExecInfo(hide_output=True)
+        ).run()
+        return result.exit_code.get('localhost', 1) == 0
 
     def show_readme(self):
         """

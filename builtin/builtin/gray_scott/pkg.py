@@ -113,7 +113,7 @@ class GrayScott(Application):
         if self.config.get('deploy_mode') != 'container':
             return None
         cuda_arch = self.config.get('cuda_arch', 80)
-        content = self._read_dockerfile('Dockerfile.build', {
+        content = self._read_build_script('build.sh', {
             'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
             'CUDA_ARCH': cuda_arch,
         })

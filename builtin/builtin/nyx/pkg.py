@@ -99,7 +99,7 @@ class Nyx(Application):
             gpu_flags = '-DNyx_GPU_BACKEND=NONE '
             hdf5_flags = ''
             suffix = 'cpu'
-        content = self._read_dockerfile('Dockerfile.build', {
+        content = self._read_build_script('build.sh', {
             'BASE_IMAGE': base,
             'HDF5_FLAGS': hdf5_flags,
             'GPU_FLAGS': gpu_flags,

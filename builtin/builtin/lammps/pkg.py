@@ -98,7 +98,7 @@ class Lammps(Application):
         else:
             cmake_extra = ''
             suffix = 'cpu'
-        content = self._read_dockerfile('Dockerfile.build', {
+        content = self._read_build_script('build.sh', {
             'BASE_IMAGE': base,
             'CMAKE_EXTRA': cmake_extra,
         })

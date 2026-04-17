@@ -1,20 +1,21 @@
-FROM ##BASE_IMAGE##
+#!/bin/bash
+set -e
 
-ARG DEBIAN_FRONTEND=noninteractive
+export DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git cmake build-essential \
     openmpi-bin libopenmpi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Clone VPIC-Kokkos with bundled Kokkos (cached until repo changes)
-RUN git clone --recursive https://github.com/lanl/vpic-kokkos.git /opt/vpic-kokkos
+git clone --recursive https://github.com/lanl/vpic-kokkos.git /opt/vpic-kokkos
 
 # Build VPIC core library
-RUN cd /opt/vpic-kokkos \
+cd /opt/vpic-kokkos \
     && cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         ##CMAKE_FLAGS## \
     && cmake --build build -j$(nproc)
 
-##POST_BUILD##ENV PATH=/opt/vpic-kokkos/build/bin:${PATH}
+##POST_BUILD##export PATH=/opt/vpic-kokkos/build/bin:${PATH}

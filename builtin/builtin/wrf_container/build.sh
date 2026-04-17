@@ -1,22 +1,21 @@
+#!/bin/bash
+set -e
+
+export DEBIAN_FRONTEND=noninteractive
+
 # WRF — Weather Research and Forecasting Model
 # Builds WRF v4.6.0 with parallel HDF5, ADIOS2, and NetCDF support.
 # CPU-only (MPI parallelism); CUDA layer is inherited from base but unused by WRF.
-#
-# Build:
-#   docker build -t sci-hpc-base ../base
-#   docker build -t sci-wrf .
-
-FROM ##BASE_IMAGE##
 
 # ---- Fortran compiler and WRF build dependencies --------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
+apt-get update && apt-get install -y --no-install-recommends \
         gfortran libpng-dev zlib1g-dev libaec-dev m4 csh file perl \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Rebuild HDF5 2.0.0 with zlib support ---------------------------------------
 # The base image compiled HDF5 without zlib (zlib1g-dev was not installed).
 # NetCDF-C requires HDF5 zlib support, so we rebuild HDF5 now that zlib is present.
-RUN curl -L -o /tmp/hdf5.tar.gz \
+curl -L -o /tmp/hdf5.tar.gz \
         "https://github.com/HDFGroup/hdf5/archive/refs/tags/2.0.0.tar.gz" \
     && cd /tmp && tar xzf hdf5.tar.gz \
     && cmake -S hdf5-2.0.0 -B hdf5-build \
@@ -39,7 +38,7 @@ RUN curl -L -o /tmp/hdf5.tar.gz \
     && rm -rf /tmp/hdf5.tar.gz /tmp/hdf5-2.0.0 /tmp/hdf5-build
 
 # ---- JasPer 4.2.4 (GRIB2 support for WPS) --------------------------------------
-RUN curl -L -o /tmp/jasper.tar.gz \
+curl -L -o /tmp/jasper.tar.gz \
         "https://github.com/jasper-software/jasper/releases/download/version-4.2.4/jasper-4.2.4.tar.gz" \
     && cd /tmp && tar xzf jasper.tar.gz \
     && cmake -S jasper-4.2.4 -B jasper-build \
@@ -54,7 +53,7 @@ RUN curl -L -o /tmp/jasper.tar.gz \
 
 # ---- NetCDF-C 4.9.2 -------------------------------------------------------------
 # H5_USE_114_API: base image ships HDF5 2.0.0; NetCDF 4.9.2 targets the 1.14 API.
-RUN curl -L -o /tmp/netcdf-c.tar.gz \
+curl -L -o /tmp/netcdf-c.tar.gz \
         "https://github.com/Unidata/netcdf-c/archive/refs/tags/v4.9.2.tar.gz" \
     && cd /tmp && tar xzf netcdf-c.tar.gz \
     && cmake -S netcdf-c-4.9.2 -B netcdf-c-build \
@@ -77,7 +76,7 @@ RUN curl -L -o /tmp/netcdf-c.tar.gz \
     && rm -rf /tmp/netcdf-c*
 
 # ---- NetCDF-Fortran 4.6.1 -------------------------------------------------------
-RUN curl -L -o /tmp/netcdf-fortran.tar.gz \
+curl -L -o /tmp/netcdf-fortran.tar.gz \
         "https://github.com/Unidata/netcdf-fortran/archive/refs/tags/v4.6.1.tar.gz" \
     && cd /tmp && tar xzf netcdf-fortran.tar.gz \
     && cmake -S netcdf-fortran-4.6.1 -B netcdf-f-build \
@@ -90,12 +89,12 @@ RUN curl -L -o /tmp/netcdf-fortran.tar.gz \
     && cmake --install netcdf-f-build \
     && rm -rf /tmp/netcdf-fortran*
 
-ENV NETCDF=/opt/netcdf
-ENV PATH=/opt/netcdf/bin:${PATH}
-ENV LD_LIBRARY_PATH=/opt/netcdf/lib:${LD_LIBRARY_PATH}
+export NETCDF=/opt/netcdf
+export PATH=/opt/netcdf/bin:${PATH}
+export LD_LIBRARY_PATH=/opt/netcdf/lib:${LD_LIBRARY_PATH}
 
 # ---- ADIOS2 v2.10.2 (MPI + HDF5 + Fortran) -------------------------------------
-RUN git clone --branch v2.10.2 --depth 1 \
+git clone --branch v2.10.2 --depth 1 \
         https://github.com/ornladios/ADIOS2.git /tmp/adios2-src \
     && cmake -S /tmp/adios2-src -B /tmp/adios2-build \
         -DCMAKE_INSTALL_PREFIX=/opt/adios2 \
@@ -114,53 +113,51 @@ RUN git clone --branch v2.10.2 --depth 1 \
     && cmake --install /tmp/adios2-build \
     && rm -rf /tmp/adios2-src /tmp/adios2-build
 
-ENV ADIOS2=/opt/adios2
-ENV PATH=/opt/adios2/bin:${PATH}
-ENV LD_LIBRARY_PATH=/opt/adios2/lib:${LD_LIBRARY_PATH}
+export ADIOS2=/opt/adios2
+export PATH=/opt/adios2/bin:${PATH}
+export LD_LIBRARY_PATH=/opt/adios2/lib:${LD_LIBRARY_PATH}
 
 # ---- WRF v4.6.0 -----------------------------------------------------------------
-ENV WRFIO_NCD_LARGE_FILE_SUPPORT=1
-ENV JASPERLIB=/opt/jasper/lib
-ENV JASPERINC=/opt/jasper/include
-ENV HDF5=/opt/hdf5
+export WRFIO_NCD_LARGE_FILE_SUPPORT=1
+export JASPERLIB=/opt/jasper/lib
+export JASPERINC=/opt/jasper/include
+export HDF5=/opt/hdf5
 
-RUN git clone --branch v4.6.0 --depth 1 \
+git clone --branch v4.6.0 --depth 1 \
         https://github.com/wrf-model/WRF.git /opt/WRF
 
 # Configure WRF
 #   Option 34 = GNU (gfortran/gcc) dmpar (MPI) on x86_64 Linux
 #   Nesting  1 = basic
 # If your platform differs, run ./configure interactively to find the right number.
-RUN cd /opt/WRF \
+cd /opt/WRF \
     && printf '34\n1\n' | ./configure
 
 # Compile real-data target (wrf.exe, real.exe, ndown.exe, tc.exe)
 # WRF compile may return non-zero even on success; verify via ls.
-RUN cd /opt/WRF \
+cd /opt/WRF \
     && ./compile em_real -j $(nproc) 2>&1 | tee /tmp/wrf_compile.log \
     ; ls main/wrf.exe main/real.exe
 
 # Also compile an ideal case so docker-compose can validate without external data.
-RUN cd /opt/WRF \
+cd /opt/WRF \
     && ./compile em_quarter_ss -j $(nproc) 2>&1 | tee /tmp/wrf_compile_ideal.log \
     ; ls main/ideal.exe
 
-ENV WRF_DIR=/opt/WRF
-ENV PATH=/opt/WRF/main:${PATH}
+export WRF_DIR=/opt/WRF
+export PATH=/opt/WRF/main:${PATH}
 
 # ---- WPS v4.6.0 (WRF Preprocessing System) --------------------------------------
 # NOTE: ungrib.exe requires JasPer 2.x (jpc_decode API); JasPer 4.x removed it.
 # geogrid.exe and metgrid.exe build successfully.
-RUN git clone --branch v4.6.0 --depth 1 \
+git clone --branch v4.6.0 --depth 1 \
         https://github.com/wrf-model/WPS.git /opt/WPS
 
 # WPS configure: option 3 = Linux x86_64 gfortran dmpar (with GRIB2)
-RUN cd /opt/WPS \
+cd /opt/WPS \
     && printf '3\n' | ./configure \
     && sed -i 's/-lnetcdf/-lnetcdff -lnetcdf/g' configure.wps \
     && ./compile 2>&1 | tee /tmp/wps_compile.log \
     ; ls geogrid.exe metgrid.exe
 
-ENV PATH=/opt/WPS:${PATH}
-
-CMD ["/bin/bash"]
+export PATH=/opt/WPS:${PATH}

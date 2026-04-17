@@ -100,7 +100,7 @@ class Vpic(Application):
             )
             post_build = ''
             suffix = 'cpu'
-        content = self._read_dockerfile('Dockerfile.build', {
+        content = self._read_build_script('build.sh', {
             'BASE_IMAGE': base,
             'CMAKE_FLAGS': cmake_flags,
             'POST_BUILD': post_build,

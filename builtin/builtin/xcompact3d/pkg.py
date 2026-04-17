@@ -63,7 +63,7 @@ class Xcompact3d(Application):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = self.config.get('base_image', 'ubuntu:24.04')
-        content = self._read_dockerfile('Dockerfile.build', {
+        content = self._read_build_script('build.sh', {
             'BASE_IMAGE': base,
         })
         return content, 'adios2'

@@ -70,7 +70,7 @@ class Montage(Application):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = self.config.get('base_image', 'sci-hpc-base')
-        content = self._read_dockerfile('Dockerfile.build', {
+        content = self._read_build_script('build.sh', {
             'BASE_IMAGE': base,
         })
         return content, 'default'

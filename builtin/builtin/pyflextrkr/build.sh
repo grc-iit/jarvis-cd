@@ -1,17 +1,20 @@
-FROM ##BASE_IMAGE##
+#!/bin/bash
+set -e
+
+export DEBIAN_FRONTEND=noninteractive
 
 # Extra runtime deps for netCDF4, scikit-image wheels, and mpi4py build.
 # openmpi headers come from the base image (libopenmpi-dev).
-RUN apt-get update && apt-get install -y --no-install-recommends \
+apt-get update && apt-get install -y --no-install-recommends \
         python3-venv libhdf5-dev libnetcdf-dev libgeos-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Dedicated venv (no conda) mirroring the bare-metal Ares recipe.
-RUN python3 -m venv /opt/pyflextrkr-env \
+python3 -m venv /opt/pyflextrkr-env \
     && /opt/pyflextrkr-env/bin/pip install --upgrade pip wheel
 
 # Clone PyFLEXTRKR pinned to a known-working tag and editable-install.
-RUN git clone --depth 1 https://github.com/FlexTRKR/PyFLEXTRKR.git /opt/PyFLEXTRKR \
+git clone --depth 1 https://github.com/FlexTRKR/PyFLEXTRKR.git /opt/PyFLEXTRKR \
     && /opt/pyflextrkr-env/bin/pip install --no-cache-dir -e /opt/PyFLEXTRKR
 
 # Multi-node parallelism stack:
@@ -20,15 +23,10 @@ RUN git clone --depth 1 https://github.com/FlexTRKR/PyFLEXTRKR.git /opt/PyFLEXTR
 #     shared filesystems when many Dask workers open cloudid files
 #   - healpy: required by pyflextrkr.remap_healpix_zarr (upstream added
 #     this as an unconditional import).
-RUN /opt/pyflextrkr-env/bin/pip install --no-cache-dir \
+/opt/pyflextrkr-env/bin/pip install --no-cache-dir \
         mpi4py dask-mpi h5netcdf h5py healpy
 
-ENV PATH=/opt/pyflextrkr-env/bin:${PATH}
-ENV PYTHONNOUSERSITE=1
+export PATH=/opt/pyflextrkr-env/bin:${PATH}
+export PYTHONNOUSERSITE=1
 
-COPY run_demo.sh            /opt/run_demo.sh
-COPY run_demo_multinode.sh  /opt/run_demo_multinode.sh
-COPY run_mcs_tbpf_mpi.py    /opt/run_mcs_tbpf_mpi.py
-RUN chmod +x /opt/run_demo.sh /opt/run_demo_multinode.sh
-
-CMD ["/bin/bash"]
+# NOTE: run_demo.sh, run_demo_multinode.sh, run_mcs_tbpf_mpi.py must be copied separately (were COPY directives)

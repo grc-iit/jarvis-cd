@@ -1,16 +1,19 @@
-FROM ##BASE_IMAGE##
+#!/bin/bash
+set -e
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update && apt-get install -y --no-install-recommends \
         python3-venv \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m venv /opt/ddmd-env \
+python3 -m venv /opt/ddmd-env \
     && /opt/ddmd-env/bin/pip install --upgrade pip wheel
 
 # Pinned versions mirror the bare-metal Ares recipe: pydantic v1 (DDMD's
 # schema is v1-only), relaxed h5py and PyYAML constraints (repo pins do
 # not build on Python 3.10).
-RUN /opt/ddmd-env/bin/pip install --no-cache-dir \
+/opt/ddmd-env/bin/pip install --no-cache-dir \
         'pydantic==1.10.26' \
         'PyYAML==6.0.3' \
         'h5py==3.16.0' \
@@ -20,23 +23,19 @@ RUN /opt/ddmd-env/bin/pip install --no-cache-dir \
         'git+https://github.com/braceal/MD-tools.git'
 
 # DeepDriveMD source with the self.cfg patch applied.
-RUN git clone --depth 1 \
+git clone --depth 1 \
         https://github.com/DeepDriveMD/DeepDriveMD-pipeline.git /opt/DeepDriveMD
-COPY deepdrivemd-selfcfg.patch /opt/DeepDriveMD/deepdrivemd-selfcfg.patch
-RUN cd /opt/DeepDriveMD \
+# NOTE: deepdrivemd-selfcfg.patch must be copied separately (was a COPY directive)
+cd /opt/DeepDriveMD \
     && git apply deepdrivemd-selfcfg.patch \
     && /opt/ddmd-env/bin/pip install --no-cache-dir -e .
 
 # Tiny benchmark input: 1FME (36-residue test structure) in sys1/
-RUN mkdir -p /opt/ddmd-bench/sys1 \
+mkdir -p /opt/ddmd-bench/sys1 \
     && curl -L -o /opt/ddmd-bench/sys1/comp.pdb \
         https://files.rcsb.org/download/1FME.pdb \
     && cp /opt/ddmd-bench/sys1/comp.pdb /opt/ddmd-bench/1FME-folded.pdb
 
-COPY deepdrivemd.template.yaml /opt/deepdrivemd.template.yaml
-COPY run_ddmd.sh /opt/run_ddmd.sh
-RUN chmod +x /opt/run_ddmd.sh
+# NOTE: deepdrivemd.template.yaml and run_ddmd.sh must be copied separately (were COPY directives)
 
-ENV PATH=/opt/ddmd-env/bin:${PATH}
-
-CMD ["/bin/bash"]
+export PATH=/opt/ddmd-env/bin:${PATH}

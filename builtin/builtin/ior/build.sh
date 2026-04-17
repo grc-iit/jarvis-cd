@@ -1,9 +1,10 @@
-FROM ##BASE_IMAGE##
+#!/bin/bash
+set -e
 
-ARG DEBIAN_FRONTEND=noninteractive
+export DEBIAN_FRONTEND=noninteractive
 
 # Build dependencies (IOR + Darshan)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl \
     build-essential autoconf automake libtool \
     zlib1g-dev \
@@ -11,20 +12,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Download IOR release tarball (includes pre-generated configure)
-RUN mkdir -p /opt/ior && curl -sL https://github.com/hpc/ior/releases/download/3.3.0/ior-3.3.0.tar.gz \
+mkdir -p /opt/ior && curl -sL https://github.com/hpc/ior/releases/download/3.3.0/ior-3.3.0.tar.gz \
     | tar xz --strip-components=1 -C /opt/ior
 
 # Configure and build IOR
-RUN cd /opt/ior \
+cd /opt/ior \
     && ./configure --prefix=/opt/ior/install \
     && make -j$(nproc) \
     && make install
 
 # Download and build Darshan runtime with MPI support
-RUN mkdir -p /opt/darshan && curl -sL https://github.com/darshan-hpc/darshan/archive/refs/tags/darshan-3.4.4.tar.gz \
+mkdir -p /opt/darshan && curl -sL https://github.com/darshan-hpc/darshan/archive/refs/tags/darshan-3.4.4.tar.gz \
     | tar xz --strip-components=1 -C /opt/darshan
 
-RUN cd /opt/darshan/darshan-runtime \
+cd /opt/darshan/darshan-runtime \
     && autoreconf -ivf \
     && ./configure --prefix=/opt/darshan/install \
         --with-log-path-by-env=DARSHAN_LOG_DIR \

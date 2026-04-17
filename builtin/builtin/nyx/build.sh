@@ -1,18 +1,19 @@
-FROM ##BASE_IMAGE##
+#!/bin/bash
+set -e
 
-ARG DEBIAN_FRONTEND=noninteractive
+export DEBIAN_FRONTEND=noninteractive
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates git cmake build-essential gfortran \
     openmpi-bin libopenmpi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Clone Nyx with AMReX submodule (cached until repo changes)
-RUN git clone --recursive https://github.com/AMReX-Astro/Nyx.git /opt/Nyx \
+git clone --recursive https://github.com/AMReX-Astro/Nyx.git /opt/Nyx \
     && cd /opt/Nyx/subprojects/amrex && git checkout development
 
 # Build Nyx HydroTests
-RUN cd /opt/Nyx \
+cd /opt/Nyx \
     && cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DNyx_MPI=YES \
@@ -25,4 +26,4 @@ RUN cd /opt/Nyx \
         -DCMAKE_CXX_COMPILER="$(which g++)" \
     && cmake --build build --target nyx_HydroTests -j$(nproc)
 
-ENV PATH=/opt/Nyx/build/Exec/HydroTests:${PATH}
+export PATH=/opt/Nyx/build/Exec/HydroTests:${PATH}

@@ -114,7 +114,7 @@ class Ior(Application):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = getattr(self.pipeline, 'container_base', 'ubuntu:24.04')
-        content = self._read_dockerfile('Dockerfile.build', {
+        content = self._read_build_script('build.sh', {
             'BASE_IMAGE': base,
         })
         return content, 'mpi'

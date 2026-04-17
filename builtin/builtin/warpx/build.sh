@@ -1,13 +1,14 @@
-FROM ##BASE_IMAGE##
+#!/bin/bash
+set -e
 
-ARG CUDA_ARCH=##CUDA_ARCH##
+CUDA_ARCH="${CUDA_ARCH:-##CUDA_ARCH##}"
 
 # Clone WarpX (cached at this layer until URL changes)
-RUN git clone https://github.com/BLAST-WarpX/warpx.git /opt/warpx
+git clone https://github.com/BLAST-WarpX/warpx.git /opt/warpx
 
 # Build WarpX 3D CUDA+MPI+HDF5
 # Ordered for maximum layer cache reuse: cmake configure then make
-RUN cd /opt/warpx \
+cd /opt/warpx \
     && mkdir -p build && cd build \
     && CC=$(which gcc) CXX=$(which g++) CUDACXX=$(which nvcc) CUDAHOSTCXX=$(which g++) \
        cmake -S .. -B . \
@@ -24,4 +25,4 @@ RUN cd /opt/warpx \
         "-DCMAKE_CUDA_FLAGS=-Xcompiler -mcmodel=large --diag-suppress=222 --diag-suppress=221" \
     && cmake --build . -j$(nproc)
 
-ENV PATH=/opt/warpx/build/bin:${PATH}
+export PATH=/opt/warpx/build/bin:${PATH}

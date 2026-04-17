@@ -85,7 +85,7 @@ class AiTraining(Application):
     def _build_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
-        content = self._read_dockerfile('Dockerfile.build', {
+        content = self._read_build_script('build.sh', {
             'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
         })
         return content, 'pytorch-cu126'

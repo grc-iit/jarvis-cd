@@ -1,14 +1,14 @@
+#!/bin/bash
+set -e
+
+export DEBIAN_FRONTEND=noninteractive
+
 # Xcompact3d — High-order finite-difference flow solver (DNS/LES)
 # Builds ADIOS2, 2DECOMP&FFT, and Incompact3d. CPU-only (MPI parallelism).
 # Self-contained — does not require sci-hpc-base.
-#
-# Build:
-#   docker build -t sci-xcompact3d .
-
-FROM ##BASE_IMAGE##
 
 # ---- System packages ------------------------------------------------------------
-RUN apt-get update && apt-get install -y --no-install-recommends \
+apt-get update && apt-get install -y --no-install-recommends \
         build-essential cmake curl wget git ca-certificates \
         gfortran \
         openmpi-bin libopenmpi-dev \
@@ -17,7 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- SSH setup for MPI multi-node (simulation only) -----------------------------
-RUN mkdir -p /var/run/sshd /root/.ssh \
+mkdir -p /var/run/sshd /root/.ssh \
     && ssh-keygen -A \
     && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 \
     && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys \
@@ -31,7 +31,7 @@ RUN mkdir -p /var/run/sshd /root/.ssh \
 # Xcompact3d uses ADIOS2's native BP5 engine — HDF5 is not required.
 # 2decomp-fft validates ADIOS2_HAVE_MPI and ADIOS2_HAVE_Fortran at configure time.
 # Use tarball instead of git clone for reliability in container builds.
-RUN curl -L -o /tmp/adios2.tar.gz \
+curl -L -o /tmp/adios2.tar.gz \
         "https://github.com/ornladios/ADIOS2/archive/refs/tags/v2.10.2.tar.gz" \
     && cd /tmp && tar -xzf adios2.tar.gz 2>/dev/null ; test -d /tmp/ADIOS2-2.10.2 \
     && cmake -S /tmp/ADIOS2-2.10.2 -B /tmp/adios2-build \
@@ -49,13 +49,13 @@ RUN curl -L -o /tmp/adios2.tar.gz \
     && cmake --install /tmp/adios2-build \
     && rm -rf /tmp/adios2.tar.gz /tmp/ADIOS2-2.10.2 /tmp/adios2-build
 
-ENV PATH=/opt/adios2/bin:${PATH}
-ENV LD_LIBRARY_PATH=/opt/adios2/lib:${LD_LIBRARY_PATH}
+export PATH=/opt/adios2/bin:${PATH}
+export LD_LIBRARY_PATH=/opt/adios2/lib:${LD_LIBRARY_PATH}
 
 # ---- 2DECOMP&FFT v2.0.4 (with ADIOS2 IO backend) -------------------------------
 # Must be pre-built; the Incompact3d auto-download does NOT pass IO_BACKEND through.
 # Patch: add BP5 engine support (backported from v2.1.0 commit 043759c).
-RUN curl -L -o /tmp/2decomp.tar.gz \
+curl -L -o /tmp/2decomp.tar.gz \
         "https://github.com/2decomp-fft/2decomp-fft/archive/refs/tags/v2.0.4.tar.gz" \
     && cd /tmp && tar -xzf 2decomp.tar.gz 2>/dev/null ; test -d /tmp/2decomp-fft-2.0.4 \
     && mv /tmp/2decomp-fft-2.0.4 /opt/2decomp-fft \
@@ -63,12 +63,12 @@ RUN curl -L -o /tmp/2decomp.tar.gz \
 
 # Backport BP5 engine support from v2.1.0 (commit 043759c) into v2.0.4,
 # and replace the fatal error on unknown engines with a safe fallback.
-RUN sed -i 's/ext = ".bp4"/ext = ".bp4"\n      else if (io%engine_type == "BP5") then\n         ext = ".bp5"/' \
+sed -i 's/ext = ".bp4"/ext = ".bp4"\n      else if (io%engine_type == "BP5") then\n         ext = ".bp5"/' \
         /opt/2decomp-fft/src/io.f90 \
     && sed -i '/Unkown engine type/,/stop/c\         ext = ""' \
         /opt/2decomp-fft/src/io.f90
 
-RUN cd /opt/2decomp-fft \
+cd /opt/2decomp-fft \
     && FC=mpif90 cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DIO_BACKEND=adios2 \
@@ -77,13 +77,13 @@ RUN cd /opt/2decomp-fft \
     && cmake --install build
 
 # ---- Incompact3d (Xcompact3d solver) --------------------------------------------
-RUN curl -L -o /tmp/incompact3d.tar.gz \
+curl -L -o /tmp/incompact3d.tar.gz \
         "https://github.com/xcompact3d/Incompact3d/archive/refs/tags/v5.0.tar.gz" \
     && cd /tmp && tar -xzf incompact3d.tar.gz 2>/dev/null ; test -d /tmp/Incompact3d-5.0 \
     && mv /tmp/Incompact3d-5.0 /opt/Incompact3d \
     && rm /tmp/incompact3d.tar.gz
 
-RUN cd /opt/Incompact3d \
+cd /opt/Incompact3d \
     && FC=mpif90 cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DIO_BACKEND=adios2 \
@@ -94,9 +94,6 @@ RUN cd /opt/Incompact3d \
     && cmake --install build
 
 # Custom ADIOS2 config using BP5 engine for all Xcompact3d IO
-COPY adios2_config.xml /opt/Incompact3d/adios2_config.xml
+# NOTE: adios2_config.xml must be copied separately (was a COPY directive)
 
-ENV PATH=/opt/Incompact3d/build/opt/bin:${PATH}
-
-EXPOSE 22
-CMD ["/bin/bash"]
+export PATH=/opt/Incompact3d/build/opt/bin:${PATH}
