@@ -44,7 +44,6 @@ class Exec(CoreExec):
 
         gpu = self.exec_info.gpu
         env = dict(self.exec_info.env) if self.exec_info.env else {}
-        ld_preload = env.pop('LD_PRELOAD', None)
 
         # For apptainer, resolve the SIF path from shared_dir (accessible on all nodes)
         if c == 'apptainer' and self.exec_info.shared_dir and self.exec_info.container_image:
@@ -59,10 +58,27 @@ class Exec(CoreExec):
         escaped = cmd.replace("'", "'\\''")
         shell_cmd = f"bash -c '{escaped}'"
 
+        # Forward every package-set env var into the container. Without
+        # this, values prepended on the host shell (in ssh_exec's
+        # env_prefix) apply to `docker exec` itself but never reach the
+        # inner process — so things like CHI_SERVER_CONF / CHRONOLOG_CONF
+        # are silently dropped and the binary falls back to defaults.
+        # Host-only vars (PATH, HOME, USER, MANPATH, TEST_MODE) are
+        # skipped so the container's own image env wins for them.
+        _HOST_ONLY = {'PATH', 'HOME', 'USER', 'MANPATH', 'TEST_MODE',
+                      'PWD', 'OLDPWD', 'SHELL', 'LOGNAME', 'TERM'}
+
+        def _shell_quote(value: str) -> str:
+            return "'" + str(value).replace("'", "'\\''") + "'"
+
         mounts = self.exec_info.bind_mounts or []
         if c == 'apptainer':
             gpu_flag = '--nv ' if gpu else ''
-            env_flag = f'--env LD_PRELOAD={ld_preload} ' if ld_preload else ''
+            env_flags_parts = [
+                f'--env {k}={_shell_quote(v)}'
+                for k, v in env.items() if k not in _HOST_ONLY
+            ]
+            env_flag = (' '.join(env_flags_parts) + ' ') if env_flags_parts else ''
             mount_flags = ''.join(f'--bind {m} ' for m in mounts)
             wrapped = f'apptainer exec {gpu_flag}{env_flag}{mount_flags}{img} {shell_cmd}'
         elif c in ('podman', 'docker'):
@@ -71,10 +87,16 @@ class Exec(CoreExec):
             # container name stem; the compose file names the container
             # "{image}_container".
             container_name = f'{img}_container' if img else ''
-            env_flag = f'-e LD_PRELOAD={ld_preload} ' if ld_preload else ''
+            env_flags_parts = [
+                f'-e {k}={_shell_quote(v)}'
+                for k, v in env.items() if k not in _HOST_ONLY
+            ]
+            env_flag = (' '.join(env_flags_parts) + ' ') if env_flags_parts else ''
             wrapped = f'{c} exec {env_flag}{container_name} {shell_cmd}'
 
-        return wrapped, self.exec_info.mod(env=env)
+        # Env vars are now carried via `-e` into the container; don't
+        # also emit them as a prefix on the host shell in ssh_exec.
+        return wrapped, self.exec_info.mod(env={})
 
     def _resolve_exec_info(self, cmd: str, exec_info: ExecInfo):
         """
