@@ -4,6 +4,7 @@ Provides the consolidated Pipeline class that combines pipeline creation, loadin
 """
 
 import os
+import socket
 import yaml
 import copy
 from pathlib import Path
@@ -1735,6 +1736,7 @@ class Pipeline:
             exec_info = LocalExecInfo()
         else:
             logger.info("Deploying containers to all nodes in hostfile")
+            self._distribute_image_to_hosts(hostfile)
             exec_info = PsshExecInfo(hostfile=hostfile)
 
         Exec(up_cmd, exec_info).run()
@@ -1761,6 +1763,68 @@ class Pipeline:
                 raise RuntimeError(
                     f"Pipeline startup failed at package '{pkg_def['pkg_id']}': {e}"
                 ) from e
+
+    def _distribute_image_to_hosts(self, hostfile):
+        """
+        Ship the locally-built deploy image to every remote host's docker/podman
+        daemon so `docker compose up -d` finds it without a registry pull.
+        Mirrors the apptainer flow: save the image once to the pipeline's
+        shared dir, then PSSH a `docker load -i ...` to every host that
+        doesn't already have the image. Apptainer itself is skipped — its
+        SIF is already on the shared FS.
+        """
+        from jarvis_cd.util.logger import logger
+        from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo
+        from jarvis_cd.util.hostfile import Hostfile
+
+        engine = self.container_engine.lower()
+        if engine == 'apptainer':
+            return
+
+        image = self.name
+        local_host = socket.gethostname()
+        skip = ('localhost', '127.0.0.1', local_host)
+
+        # Probe each remote host; only transfer to those missing the image
+        needs_transfer = []
+        for host in hostfile.hosts:
+            if host in skip:
+                continue
+            check_cmd = (
+                f"ssh -o BatchMode=yes -o StrictHostKeyChecking=no "
+                f"{host} '{engine} image inspect {image} >/dev/null 2>&1'"
+            )
+            if Exec(check_cmd, LocalExecInfo(hide_output=True)).run().exit_code.get('localhost', 1) == 0:
+                logger.info(f"Image '{image}' already on {host}, skipping transfer")
+            else:
+                needs_transfer.append(host)
+
+        if not needs_transfer:
+            return
+
+        # Save image once to the pipeline's shared dir (visible from every node)
+        shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
+        tar_path = shared_dir / f"{image}.tar"
+        logger.info(f"Saving image '{image}' to {tar_path}...")
+        save = Exec(f"{engine} save -o {tar_path} {image}", LocalExecInfo()).run()
+        if save.exit_code.get('localhost', 1) != 0:
+            raise RuntimeError(f"Failed to save image '{image}' to {tar_path}")
+
+        # PSSH-load on every host that needs it (parallel)
+        logger.info(f"Loading image '{image}' on {needs_transfer} in parallel...")
+        load = Exec(
+            f"{engine} load -i {tar_path}",
+            PsshExecInfo(hostfile=Hostfile(hosts=needs_transfer))
+        ).run()
+        for host, code in load.exit_code.items():
+            if code != 0:
+                raise RuntimeError(f"Failed to load image '{image}' on {host}")
+
+        # Tar served its purpose; reclaim the disk
+        try:
+            tar_path.unlink()
+        except OSError:
+            pass
 
     def _stop_containerized_pipeline(self):
         """
