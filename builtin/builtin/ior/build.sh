@@ -9,7 +9,19 @@ apt-get update && apt-get install -y --no-install-recommends \
     build-essential autoconf automake libtool \
     zlib1g-dev \
     openmpi-bin libopenmpi-dev \
+    openssh-server openssh-client \
     && rm -rf /var/lib/apt/lists/*
+
+# SSH setup for MPI multi-container (host keys + root key, picked up by Dockerfile.deploy)
+mkdir -p /var/run/sshd /root/.ssh \
+    && ssh-keygen -A \
+    && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 \
+    && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys \
+    && chmod 700 /root/.ssh \
+    && chmod 600 /root/.ssh/authorized_keys \
+    && sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config \
+    && sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config \
+    && printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /etc/ssh/ssh_config
 
 # Download IOR release tarball (includes pre-generated configure)
 mkdir -p /opt/ior && curl -sL https://github.com/hpc/ior/releases/download/3.3.0/ior-3.3.0.tar.gz \
