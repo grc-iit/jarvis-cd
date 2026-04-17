@@ -1382,8 +1382,37 @@ class Pipeline:
                 if not script_content:
                     continue
 
-                has_build_content = True
                 pkg_instance._build_suffix = build_suffix
+                pkg_name_raw = pkg_def['pkg_type'].split('.')[-1].replace('_', '-')
+                pkg_deploy_name = f'jarvis-deploy-{pkg_name_raw}'
+                if build_suffix:
+                    pkg_deploy_name = f'{pkg_deploy_name}-{build_suffix}'
+                use_cache = pkg_def.get('config', {}).get('container_cache', True)
+
+                # If a cached deploy image exists for this package, inject
+                # its artifacts into the build container instead of rebuilding.
+                # This makes Library packages (hdf5, adios2, etc.) available
+                # to later packages without re-compiling them.
+                if use_cache and Pkg._image_exists(build_engine, pkg_deploy_name):
+                    print(f"Injecting cached '{pkg_deploy_name}' into build container...")
+                    temp_name = f'jarvis-inject-{pkg_name_raw}'
+                    Exec(f"{build_engine} rm -f {temp_name}",
+                         LocalExecInfo(hide_output=True)).run()
+                    Exec(f"{build_engine} create --name {temp_name} {pkg_deploy_name}",
+                         LocalExecInfo(hide_output=True)).run()
+                    for src_path in ['/usr/local/.', '/opt/.']:
+                        dest_path = src_path.rstrip('.')
+                        Exec(f"{build_engine} cp {temp_name}:{src_path} "
+                             f"{build_container_name}:{dest_path}",
+                             LocalExecInfo(hide_output=True)).run()
+                    Exec(f"{build_engine} rm {temp_name}",
+                         LocalExecInfo(hide_output=True)).run()
+                    Exec(f"{build_engine} exec {build_container_name} ldconfig",
+                         LocalExecInfo(hide_output=True)).run()
+                    has_build_content = True
+                    continue
+
+                has_build_content = True
                 pkg_name = pkg_def['pkg_name']
 
                 # Write build script to shared dir

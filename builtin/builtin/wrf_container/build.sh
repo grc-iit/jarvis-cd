@@ -4,38 +4,13 @@ set -e
 export DEBIAN_FRONTEND=noninteractive
 
 # WRF — Weather Research and Forecasting Model
-# Builds WRF v4.6.0 with parallel HDF5, ADIOS2, and NetCDF support.
+# Builds WRF v4.6.0 with NetCDF support. HDF5 and ADIOS2 provided by Library packages.
 # CPU-only (MPI parallelism); CUDA layer is inherited from base but unused by WRF.
 
 # ---- Fortran compiler and WRF build dependencies --------------------------------
 apt-get update && apt-get install -y --no-install-recommends \
         gfortran libpng-dev zlib1g-dev libaec-dev m4 csh file perl \
     && rm -rf /var/lib/apt/lists/*
-
-# ---- Rebuild HDF5 2.0.0 with zlib support ---------------------------------------
-# The base image compiled HDF5 without zlib (zlib1g-dev was not installed).
-# NetCDF-C requires HDF5 zlib support, so we rebuild HDF5 now that zlib is present.
-curl -L -o /tmp/hdf5.tar.gz \
-        "https://github.com/HDFGroup/hdf5/archive/refs/tags/2.0.0.tar.gz" \
-    && cd /tmp && tar xzf hdf5.tar.gz \
-    && cmake -S hdf5-2.0.0 -B hdf5-build \
-        -DCMAKE_INSTALL_PREFIX=/opt/hdf5 \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DHDF5_ENABLE_PARALLEL=ON \
-        -DHDF5_ENABLE_ZLIB_SUPPORT=ON \
-        -DHDF5_BUILD_TOOLS=OFF \
-        -DHDF5_BUILD_EXAMPLES=OFF \
-        -DBUILD_TESTING=OFF \
-        -DHDF5_BUILD_CPP_LIB=OFF \
-        -DHDF5_BUILD_FORTRAN=ON \
-        -DHDF5_BUILD_JAVA=OFF \
-        -DHDF5_BUILD_HL_LIB=ON \
-        -DHDF5_INSTALL_CMAKE_DIR=lib/cmake/hdf5 \
-    && cmake --build hdf5-build -j$(nproc) \
-    && cmake --install hdf5-build \
-    && ln -sf libhdf5.so /opt/hdf5/lib/libhdf5-shared.so \
-    && ln -sf libhdf5_hl.so /opt/hdf5/lib/libhdf5_hl-shared.so \
-    && rm -rf /tmp/hdf5.tar.gz /tmp/hdf5-2.0.0 /tmp/hdf5-build
 
 # ---- JasPer 4.2.4 (GRIB2 support for WPS) --------------------------------------
 curl -L -o /tmp/jasper.tar.gz \
@@ -61,8 +36,8 @@ curl -L -o /tmp/netcdf-c.tar.gz \
         -DCMAKE_INSTALL_LIBDIR=lib \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_C_FLAGS="-DH5_USE_114_API" \
-        -DHDF5_ROOT=/opt/hdf5 \
-        -DHDF5_INCLUDE_DIR=/opt/hdf5/include \
+        -DHDF5_ROOT=/usr/local \
+        -DHDF5_INCLUDE_DIR=/usr/local/include \
         -DHAVE_HDF5_ZLIB=ON \
         -DUSE_HDF5_SZIP=ON \
         -DENABLE_FILTER_SZIP=ON \
@@ -71,7 +46,7 @@ curl -L -o /tmp/netcdf-c.tar.gz \
         -DENABLE_TESTS=OFF \
     && cmake --build netcdf-c-build -j$(nproc) \
     && cmake --install netcdf-c-build \
-    && sed -i 's|hdf5_hl-shared|/opt/hdf5/lib/libhdf5_hl.so|g; s|hdf5-shared|/opt/hdf5/lib/libhdf5.so|g' \
+    && sed -i 's|hdf5_hl-shared|/usr/local/lib/libhdf5_hl.so|g; s|hdf5-shared|/usr/local/lib/libhdf5.so|g' \
        /opt/netcdf/lib/cmake/netCDF/netCDFTargets*.cmake \
     && rm -rf /tmp/netcdf-c*
 
@@ -93,35 +68,11 @@ export NETCDF=/opt/netcdf
 export PATH=/opt/netcdf/bin:${PATH}
 export LD_LIBRARY_PATH=/opt/netcdf/lib:${LD_LIBRARY_PATH}
 
-# ---- ADIOS2 v2.10.2 (MPI + HDF5 + Fortran) -------------------------------------
-git clone --branch v2.10.2 --depth 1 \
-        https://github.com/ornladios/ADIOS2.git /tmp/adios2-src \
-    && cmake -S /tmp/adios2-src -B /tmp/adios2-build \
-        -DCMAKE_INSTALL_PREFIX=/opt/adios2 \
-        -DCMAKE_INSTALL_LIBDIR=lib \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_C_FLAGS="-DH5_USE_114_API" \
-        -DCMAKE_CXX_FLAGS="-DH5_USE_114_API" \
-        -DADIOS2_USE_MPI=ON \
-        -DADIOS2_USE_HDF5=ON \
-        -DHDF5_ROOT=/opt/hdf5 \
-        -DADIOS2_USE_Fortran=ON \
-        -DADIOS2_USE_Python=OFF \
-        -DADIOS2_BUILD_EXAMPLES=OFF \
-        -DBUILD_TESTING=OFF \
-    && cmake --build /tmp/adios2-build -j$(nproc) \
-    && cmake --install /tmp/adios2-build \
-    && rm -rf /tmp/adios2-src /tmp/adios2-build
-
-export ADIOS2=/opt/adios2
-export PATH=/opt/adios2/bin:${PATH}
-export LD_LIBRARY_PATH=/opt/adios2/lib:${LD_LIBRARY_PATH}
-
 # ---- WRF v4.6.0 -----------------------------------------------------------------
 export WRFIO_NCD_LARGE_FILE_SUPPORT=1
 export JASPERLIB=/opt/jasper/lib
 export JASPERINC=/opt/jasper/include
-export HDF5=/opt/hdf5
+export HDF5=/usr/local
 
 git clone --branch v4.6.0 --depth 1 \
         https://github.com/wrf-model/WRF.git /opt/WRF

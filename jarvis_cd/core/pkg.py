@@ -963,6 +963,36 @@ class Application(Pkg):
         pass
 
 
+class Library(Pkg):
+    """
+    Base class for library packages that only need to be built, not run.
+
+    Libraries provide headers, shared objects, and binaries that other
+    packages link against (e.g., HDF5, ADIOS2, compression libraries).
+    They participate in the container build phase but have no runtime
+    lifecycle — start(), stop(), and clean() are no-ops.
+
+    In pipeline YAMLs, Library packages must appear BEFORE any packages
+    that depend on them so the build container has the libraries installed
+    when later packages compile.
+    """
+
+    def __init__(self, pipeline):
+        super().__init__(pipeline=pipeline)
+
+    def _init(self):
+        pass
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def clean(self):
+        pass
+
+
 class Interceptor(Pkg):
     """
     Base class for interceptors that modify environment variables.
