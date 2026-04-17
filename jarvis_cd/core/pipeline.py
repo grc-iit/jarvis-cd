@@ -249,14 +249,17 @@ class Pipeline:
         if self.install_manager:
             pipeline_config['install_manager'] = self.install_manager
 
-        # Add hostfile parameter (save path if set, None means use global jarvis hostfile)
-        # Hostfile is always saved into the shared directory so it is
-        # accessible from both host and container via the same path.
-        if self.hostfile:
+        # Add hostfile parameter. The effective hostfile (pipeline override
+        # if set, else the global jarvis hostfile) is always persisted to
+        # <shared_dir>/hostfile so container mode can read it at the same
+        # path the bind-mount exposes — no /tmp passthrough or external
+        # bind required.
+        effective_hostfile = self.hostfile or self.jarvis.hostfile
+        if effective_hostfile and effective_hostfile.path:
             shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
             shared_dir.mkdir(parents=True, exist_ok=True)
             hostfile_shared_path = str(shared_dir / 'hostfile')
-            self.hostfile.save(hostfile_shared_path)
+            effective_hostfile.save(hostfile_shared_path)
             pipeline_config['hostfile'] = hostfile_shared_path
         else:
             pipeline_config['hostfile'] = None
@@ -1429,7 +1432,7 @@ class Pipeline:
         # Phase 2: Deploy — build deploy image(s) from Dockerfile.deploy
         # -----------------------------------------------------------------
 
-        deploy_dockerfile_parts = []
+        per_pkg_deploy_images = []
 
         for pkg_def in self.packages:
             pkg_instance = self._load_package_instance(pkg_def, self.env)
@@ -1444,63 +1447,71 @@ class Pipeline:
             deploy_content, deploy_suffix = deploy_result
             if not deploy_content:
                 continue
+
+            # Per-package deploy image name — stable, reusable across pipelines
+            pkg_name = pkg_def['pkg_type'].split('.')[-1].replace('_', '-')
+            pkg_deploy_name = f'jarvis-deploy-{pkg_name}'
+            if deploy_suffix:
+                pkg_deploy_name = f'{pkg_deploy_name}-{deploy_suffix}'
+
             # Replace ##BUILD_IMAGE## references with the committed image name
             deploy_content = deploy_content.replace(
                 pkg_instance.build_image_name(), build_image_name)
-            deploy_dockerfile_parts.append({
-                'pkg_id': pkg_def['pkg_id'],
-                'content': deploy_content,
-            })
 
-        if not deploy_dockerfile_parts:
-            print("Warning: No deploy Dockerfile content from any package")
-            return
-
-        # Build deploy image
-        if len(deploy_dockerfile_parts) == 1:
-            deploy_dockerfile = deploy_dockerfile_parts[0]['content']
-        else:
-            # Multiple packages — build each as temp image, then merge
-            temp_images = []
-            for i, part in enumerate(deploy_dockerfile_parts):
-                temp_name = f"{deploy_image_name}-stage{i}"
-                temp_df_path = pipeline_shared_dir / f'deploy-stage{i}.Dockerfile'
-                with open(temp_df_path, 'w') as f:
-                    f.write(part['content'])
-                print(f"Building deploy stage {i}: {temp_name}")
+            # Check if this per-package deploy image is already cached
+            use_cache = pkg_def.get('config', {}).get('container_cache', True)
+            if use_cache and Pkg._image_exists(build_engine, pkg_deploy_name):
+                print(f"Deploy image '{pkg_deploy_name}' cached, skipping build")
+            else:
+                deploy_df_path = pipeline_shared_dir / f'deploy-{pkg_name}.Dockerfile'
+                with open(deploy_df_path, 'w') as f:
+                    f.write(deploy_content)
+                print(f"Building per-package deploy image: {pkg_deploy_name}")
                 build_cmd = (
-                    f"{build_engine} build --network=host -t {temp_name} "
-                    f"-f {temp_df_path} {pipeline_shared_dir}"
+                    f"{build_engine} build --network=host -t {pkg_deploy_name} "
+                    f"-f {deploy_df_path} {pipeline_shared_dir}"
                 )
                 result = Exec(build_cmd, LocalExecInfo()).run()
                 if result.exit_code.get('localhost', 1) != 0:
                     raise RuntimeError(
-                        f"Failed to build deploy stage '{temp_name}'"
+                        f"Failed to build deploy image '{pkg_deploy_name}'"
                     )
-                temp_images.append(temp_name)
 
-            lines = [f"FROM {temp_images[0]}"]
-            for temp_img in temp_images[1:]:
-                lines.append(f"COPY --from={temp_img} /usr/local /usr/local")
-                lines.append(f"COPY --from={temp_img} /opt /opt")
+            per_pkg_deploy_images.append(pkg_deploy_name)
+
+        if not per_pkg_deploy_images:
+            print("Warning: No deploy Dockerfile content from any package")
+            return
+
+        # Merge per-package deploy images into a single pipeline image
+        if len(per_pkg_deploy_images) == 1:
+            # Single package — just tag it as the pipeline image
+            tag_cmd = f"{build_engine} tag {per_pkg_deploy_images[0]} {deploy_image_name}"
+            Exec(tag_cmd, LocalExecInfo()).run()
+        else:
+            # Multiple packages — overlay files from all per-package images
+            lines = [f"FROM {per_pkg_deploy_images[0]}"]
+            for img in per_pkg_deploy_images[1:]:
+                lines.append(f"COPY --from={img} /usr/local /usr/local")
+                lines.append(f"COPY --from={img} /opt /opt")
             lines.append("RUN ldconfig")
             lines.append('CMD ["/bin/bash"]')
             deploy_dockerfile = "\n".join(lines)
 
-        deploy_dockerfile_path = pipeline_shared_dir / 'deploy.Dockerfile'
-        with open(deploy_dockerfile_path, 'w') as f:
-            f.write(deploy_dockerfile)
+            deploy_dockerfile_path = pipeline_shared_dir / 'deploy.Dockerfile'
+            with open(deploy_dockerfile_path, 'w') as f:
+                f.write(deploy_dockerfile)
 
-        print(f"Building deploy image: {deploy_image_name}")
-        deploy_cmd = (
-            f"{build_engine} build --network=host -t {deploy_image_name} "
-            f"-f {deploy_dockerfile_path} {pipeline_shared_dir}"
-        )
-        result = Exec(deploy_cmd, LocalExecInfo()).run()
-        if result.exit_code.get('localhost', 1) != 0:
-            raise RuntimeError(
-                f"Failed to build deploy image '{deploy_image_name}'"
+            print(f"Building merged deploy image: {deploy_image_name}")
+            deploy_cmd = (
+                f"{build_engine} build --network=host -t {deploy_image_name} "
+                f"-f {deploy_dockerfile_path} {pipeline_shared_dir}"
             )
+            result = Exec(deploy_cmd, LocalExecInfo()).run()
+            if result.exit_code.get('localhost', 1) != 0:
+                raise RuntimeError(
+                    f"Failed to build deploy image '{deploy_image_name}'"
+                )
 
         # Convert to SIF for apptainer
         if self.container_engine == 'apptainer':

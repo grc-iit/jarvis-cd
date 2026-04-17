@@ -19,9 +19,14 @@ def initialize_jarvis_for_test(config_dir, private_dir, shared_dir):
     """Helper function to properly initialize Jarvis for testing"""
     # Get Jarvis singleton and initialize it
     jarvis = Jarvis.get_instance()
+    saved_config = None
+    if jarvis.config_file.exists():
+        import yaml
+        with open(jarvis.config_file, 'r') as f:
+            saved_config = yaml.safe_load(f)
     jarvis.initialize(config_dir, private_dir, shared_dir, force=False)
 
-    return jarvis
+    return jarvis, saved_config
 
 
 class TestIorDelegation(unittest.TestCase):
@@ -43,7 +48,7 @@ class TestIorDelegation(unittest.TestCase):
         os.environ['JARVIS_SHARED'] = self.shared_dir
 
         # Initialize Jarvis properly
-        self.jarvis = initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
+        self.jarvis, self._saved_config = initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
 
         # Create a test pipeline
         self.pipeline = Pipeline()
@@ -51,6 +56,13 @@ class TestIorDelegation(unittest.TestCase):
 
     def tearDown(self):
         """Clean up test environment"""
+        if self._saved_config:
+            import yaml
+            jarvis = Jarvis.get_instance()
+            jarvis.save_config(self._saved_config)
+            jarvis.config_dir = self._saved_config.get('config_dir', jarvis.config_dir)
+            jarvis.private_dir = self._saved_config.get('private_dir', jarvis.private_dir)
+            jarvis.shared_dir = self._saved_config.get('shared_dir', jarvis.shared_dir)
         if os.path.exists(self.test_dir):
             shutil.rmtree(self.test_dir)
 

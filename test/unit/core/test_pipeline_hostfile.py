@@ -27,9 +27,23 @@ def jarvis_env(tmp_path):
 
     # Get Jarvis singleton and initialize it
     jarvis = Jarvis.get_instance()
+    saved_config = None
+    if jarvis.config_file.exists():
+        import yaml
+        with open(jarvis.config_file, 'r') as f:
+            saved_config = yaml.safe_load(f)
     jarvis.initialize(str(config_dir), str(private_dir), str(shared_dir), force=False)
 
     yield jarvis, tmp_path
+
+    # Restore original config so tests don't clobber the user's setup
+    if saved_config:
+        import yaml
+        jarvis = Jarvis.get_instance()
+        jarvis.save_config(saved_config)
+        jarvis.config_dir = saved_config.get('config_dir', jarvis.config_dir)
+        jarvis.private_dir = saved_config.get('private_dir', jarvis.private_dir)
+        jarvis.shared_dir = saved_config.get('shared_dir', jarvis.shared_dir)
 
     # Cleanup
     Jarvis._instance = None
