@@ -1,0 +1,25 @@
+# Pipeline: IOR single-node bare-metal
+# 8 MPI ranks on one host, 1 GiB block each, 3 reps = 24 GiB total work.
+# Usage:
+#   hostfile must contain exactly one host (e.g. localhost)
+#   jarvis ppl load yaml builtin/pipelines/examples/local/ior_single_node.yaml
+#   jarvis ppl run
+
+name: ior_single_node
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior
+    deploy_mode: default
+    nprocs: 8
+    ppn: 8
+    block: 1G
+    xfer: 1M
+    api: posix
+    out: /tmp/ior_big_file
+    log: /tmp/ior_big_output.log
+    write: true
+    read: true
+    fpp: false
+    reps: 3
+    direct: false
