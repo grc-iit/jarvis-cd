@@ -21,7 +21,7 @@ from jarvis_cd.util.hostfile import Hostfile
 def initialize_jarvis_for_test(config_dir, private_dir, shared_dir):
     """Helper function to properly initialize Jarvis for testing"""
     jarvis = Jarvis.get_instance()
-    jarvis.initialize(config_dir, private_dir, shared_dir, force=True)
+    jarvis.initialize(config_dir, private_dir, shared_dir, force=False)
     return jarvis
 
 

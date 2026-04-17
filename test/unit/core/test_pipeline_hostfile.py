@@ -27,7 +27,7 @@ def jarvis_env(tmp_path):
 
     # Get Jarvis singleton and initialize it
     jarvis = Jarvis.get_instance()
-    jarvis.initialize(str(config_dir), str(private_dir), str(shared_dir), force=True)
+    jarvis.initialize(str(config_dir), str(private_dir), str(shared_dir), force=False)
 
     yield jarvis, tmp_path
 

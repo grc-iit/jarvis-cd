@@ -20,7 +20,7 @@ from jarvis_cd.core.pipeline import Pipeline
 
 def initialize_jarvis_for_test(config_dir, private_dir, shared_dir):
     jarvis = Jarvis.get_instance()
-    jarvis.initialize(config_dir, private_dir, shared_dir, force=True)
+    jarvis.initialize(config_dir, private_dir, shared_dir, force=False)
     return jarvis
 
 
