@@ -6,11 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-server openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-# HDF5 headers, libraries, and tools
-COPY --from=builder /usr/local/lib/libhdf5* /usr/local/lib/
-COPY --from=builder /usr/local/include/ /usr/local/include/
-COPY --from=builder /usr/local/bin/h5* /usr/local/bin/
-COPY --from=builder /usr/local/share/cmake/ /usr/local/share/cmake/
+# HDF5 libraries, headers, tools, and cmake config
+COPY --from=builder /usr/local/ /usr/local/
 RUN ldconfig
 
 # Generate SSH keys so all containers from this image share the same identity

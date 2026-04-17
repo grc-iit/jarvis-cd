@@ -6,12 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-server openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-# ADIOS2 libraries, headers, and cmake config
-COPY --from=builder /usr/local/lib/libadios2* /usr/local/lib/
-COPY --from=builder /usr/local/lib/cmake/adios2/ /usr/local/lib/cmake/adios2/
-COPY --from=builder /usr/local/include/adios2/ /usr/local/include/adios2/
-COPY --from=builder /usr/local/include/adios2.h /usr/local/include/adios2.h
-COPY --from=builder /usr/local/bin/adios2* /usr/local/bin/
+# ADIOS2 libraries, headers, tools, and cmake config
+COPY --from=builder /usr/local/ /usr/local/
 RUN ldconfig
 
 # Generate SSH keys so all containers from this image share the same identity

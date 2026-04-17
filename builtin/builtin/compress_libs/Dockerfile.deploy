@@ -7,10 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-server openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-# Compression libraries
-COPY --from=builder /usr/local/lib/ /usr/local/lib/
-COPY --from=builder /usr/local/include/ /usr/local/include/
-COPY --from=builder /usr/local/share/cmake/ /usr/local/share/cmake/
+# Compression libraries, headers, and cmake config
+COPY --from=builder /usr/local/ /usr/local/
 RUN ldconfig
 
 # Generate SSH keys so all containers from this image share the same identity
