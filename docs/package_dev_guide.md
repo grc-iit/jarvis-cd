@@ -590,6 +590,18 @@ For this to work, `libdarshan.so` must exist inside the deploy container. Build 
 | `_read_build_script(filename, replacements)` | Read build.sh template with `##VAR##` substitution |
 | `_read_dockerfile(filename, replacements)` | Read Dockerfile.deploy template with `##VAR##` substitution |
 
+### Hostfile: Always Use `self.hostfile`
+
+In package code, always use `self.hostfile` (which resolves via `self.get_hostfile()`), never `self.jarvis.hostfile`. The pipeline saves its hostfile into the shared directory so it is accessible from both the host and inside containers via the same path. The global jarvis hostfile (`self.jarvis.hostfile`) lives in `~/.ppi-jarvis/` which is node-local and invisible to containers and remote nodes.
+
+```python
+# Correct — uses the pipeline hostfile from shared_dir
+Exec(cmd, MpiExecInfo(hostfile=self.hostfile, ...)).run()
+
+# Wrong — global hostfile, not visible inside containers or on remote nodes
+Exec(cmd, MpiExecInfo(hostfile=self.jarvis.hostfile, ...)).run()
+```
+
 ## Wrapper Packages (No Build Required)
 
 Some packages are wrappers around software that is installed by another package in the pipeline. These packages don't need their own container image or spack spec — they rely on binaries and libraries provided by a companion package.

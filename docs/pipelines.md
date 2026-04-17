@@ -369,6 +369,8 @@ volumes:
 
 This means all configuration files (hostfile, redis.conf, pipeline YAML, package data) resolve identically on host and inside the container. The hostfile is automatically saved into the pipeline's shared directory.
 
+**Important:** The pipeline hostfile (in `shared_dir`) is the only hostfile visible to containers and remote nodes. The global jarvis hostfile (`~/.ppi-jarvis/`) is node-local. Package code should always use `self.hostfile`, never `self.jarvis.hostfile`.
+
 #### Container Environment Variables
 
 Use `container_env` to pass environment variables into containers. This is the recommended way to configure MPI network interfaces and other runtime settings:
