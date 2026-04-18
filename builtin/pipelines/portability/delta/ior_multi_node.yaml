@@ -1,0 +1,34 @@
+# Pipeline: IOR multi-node on Delta (apptainer container)
+# Purpose: Run IOR benchmark across multiple Delta CPU nodes inside Apptainer containers.
+# Hostfile: must contain N hosts (>=2). Set ppn = ranks-per-host, nprocs = ppn * N.
+# Usage:
+#   salloc --account=bekn-delta-cpu --partition=cpu --nodes=2 --ntasks=4 --time=00:30:00
+#   scontrol show hostnames $SLURM_JOB_NODELIST > ~/hostfile_multi.txt
+#   jarvis hostfile set ~/hostfile_multi.txt
+#   jarvis ppl load yaml builtin/pipelines/portability/delta/ior_multi_node.yaml
+#   jarvis ppl run
+
+name: ior_delta_multi_node
+install_manager: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+hostfile: /u/imuradli/hostfile_multi.txt
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior_delta_multi
+    # Scale: ppn = ranks-per-host, nprocs = ppn * number_of_hosts_in_hostfile
+    nprocs: 4
+    ppn: 2
+    block: 1G
+    xfer: 1M
+    api: posix
+    out: /u/imuradli/ior_delta_multi_file
+    log: /tmp/ior_delta_multi_output.log
+    write: true
+    read: true
+    fpp: false
+    reps: 3
+    direct: false

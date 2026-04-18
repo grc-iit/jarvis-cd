@@ -1020,7 +1020,10 @@ class Pipeline:
         if self.install_manager == 'container' and self.is_containerized():
             print(f"Generating container configuration files...")
             self._generate_pipeline_container_yaml()
-            self._generate_pipeline_compose_file()
+            # Apptainer runs commands directly via 'apptainer exec .sif';
+            # it has no compose file or long-running container daemons.
+            if self.container_engine != 'apptainer':
+                self._generate_pipeline_compose_file()
 
         # Set as current pipeline
         self.jarvis.set_current_pipeline(self.name)
@@ -1755,32 +1758,37 @@ class Pipeline:
 
         logger.info("Starting containerized pipeline deployment")
 
-        # Get compose file path (already generated during load)
-        shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
-        compose_path = shared_dir / 'docker-compose.yaml'
-
-        if not compose_path.exists():
-            raise FileNotFoundError(f"Compose file not found: {compose_path}. Did you load the pipeline?")
-
-        # Determine container runtime
         engine = self.container_engine.lower()
-        if engine == 'podman':
-            up_cmd = f"podman-compose -f {compose_path} up -d"
-        else:
-            up_cmd = f"docker compose -f {compose_path} up -d"
 
-        # Launch containers on every node in the hostfile
-        hostfile = self.get_hostfile()
-        if not hostfile or len(hostfile) == 0:
-            logger.warning("No hostfile found, deploying to localhost only")
-            exec_info = LocalExecInfo()
-        else:
-            logger.info("Deploying containers to all nodes in hostfile")
-            self._distribute_image_to_hosts(hostfile)
-            exec_info = PsshExecInfo(hostfile=hostfile)
+        # Apptainer wraps each command in 'apptainer exec .sif' —
+        # no long-running containers or compose files needed.
+        if engine != 'apptainer':
+            # Get compose file path (already generated during load)
+            shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
+            compose_path = shared_dir / 'docker-compose.yaml'
 
-        Exec(up_cmd, exec_info).run()
-        logger.success("Containers started (SSH ready)")
+            if not compose_path.exists():
+                raise FileNotFoundError(f"Compose file not found: {compose_path}. Did you load the pipeline?")
+
+            if engine == 'podman':
+                up_cmd = f"podman-compose -f {compose_path} up -d"
+            else:
+                up_cmd = f"docker compose -f {compose_path} up -d"
+
+            # Launch containers on every node in the hostfile
+            hostfile = self.get_hostfile()
+            if not hostfile or len(hostfile) == 0:
+                logger.warning("No hostfile found, deploying to localhost only")
+                exec_info = LocalExecInfo()
+            else:
+                logger.info("Deploying containers to all nodes in hostfile")
+                self._distribute_image_to_hosts(hostfile)
+                exec_info = PsshExecInfo(hostfile=hostfile)
+
+            Exec(up_cmd, exec_info).run()
+            logger.success("Containers started (SSH ready)")
+        else:
+            logger.info("Apptainer engine — skipping container startup")
 
         # Now run each package via the normal per-package flow.
         # Packages use PsshExecInfo / MpiExecInfo with the hostfile,
@@ -1888,23 +1896,24 @@ class Pipeline:
             except Exception as e:
                 logger.error(f"Error stopping package {pkg_def['pkg_id']}: {e}")
 
-        # Bring down the containers
-        shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
-        compose_path = shared_dir / 'docker-compose.yaml'
-
+        # Bring down the containers (apptainer has no running containers)
         engine = self.container_engine.lower()
-        if engine == 'podman':
-            down_cmd = f"podman-compose -f {compose_path} down"
-        else:
-            down_cmd = f"docker compose -f {compose_path} down"
+        if engine != 'apptainer':
+            shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
+            compose_path = shared_dir / 'docker-compose.yaml'
 
-        hostfile = self.get_hostfile()
-        if not hostfile or len(hostfile) == 0:
-            exec_info = LocalExecInfo()
-        else:
-            exec_info = PsshExecInfo(hostfile=hostfile)
+            if engine == 'podman':
+                down_cmd = f"podman-compose -f {compose_path} down"
+            else:
+                down_cmd = f"docker compose -f {compose_path} down"
 
-        Exec(down_cmd, exec_info).run()
+            hostfile = self.get_hostfile()
+            if not hostfile or len(hostfile) == 0:
+                exec_info = LocalExecInfo()
+            else:
+                exec_info = PsshExecInfo(hostfile=hostfile)
+
+            Exec(down_cmd, exec_info).run()
         logger.success("Containers stopped")
 
     def _kill_containerized_pipeline(self):
@@ -1929,24 +1938,25 @@ class Pipeline:
             except Exception as e:
                 logger.error(f"Error killing package {pkg_def['pkg_id']}: {e}")
 
-        # Force-remove containers
-        shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
-        compose_path = shared_dir / 'docker-compose.yaml'
-
+        # Force-remove containers (apptainer has no running containers)
         engine = self.container_engine.lower()
-        if engine == 'podman':
-            kill_cmd = f"podman-compose -f {compose_path} kill"
-            down_cmd = f"podman-compose -f {compose_path} down"
-        else:
-            kill_cmd = f"docker compose -f {compose_path} kill"
-            down_cmd = f"docker compose -f {compose_path} down"
+        if engine != 'apptainer':
+            shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
+            compose_path = shared_dir / 'docker-compose.yaml'
 
-        hostfile = self.get_hostfile()
-        if not hostfile or len(hostfile) == 0:
-            exec_info = LocalExecInfo()
-        else:
-            exec_info = PsshExecInfo(hostfile=hostfile)
+            if engine == 'podman':
+                kill_cmd = f"podman-compose -f {compose_path} kill"
+                down_cmd = f"podman-compose -f {compose_path} down"
+            else:
+                kill_cmd = f"docker compose -f {compose_path} kill"
+                down_cmd = f"docker compose -f {compose_path} down"
 
-        Exec(kill_cmd, exec_info).run()
-        Exec(down_cmd, exec_info).run()
+            hostfile = self.get_hostfile()
+            if not hostfile or len(hostfile) == 0:
+                exec_info = LocalExecInfo()
+            else:
+                exec_info = PsshExecInfo(hostfile=hostfile)
+
+            Exec(kill_cmd, exec_info).run()
+            Exec(down_cmd, exec_info).run()
         logger.success("Containers force-killed")
