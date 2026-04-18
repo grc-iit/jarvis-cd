@@ -266,8 +266,13 @@ class MpiVersion(LocalExec):
         c = exec_info.container
         if c and c not in ('none',):
             img = exec_info.container_image or ''
-            container_name = f'{img}_container' if img else ''
-            self.cmd = f'{c} exec {container_name} mpiexec --version'
+            if c == 'apptainer':
+                from pathlib import Path
+                sif = str(Path(exec_info.shared_dir).parent / f'{img}.sif')
+                self.cmd = f'apptainer exec {sif} mpiexec --version'
+            else:
+                container_name = f'{img}_container' if img else ''
+                self.cmd = f'{c} exec {container_name} mpiexec --version'
 
         # Create modified exec_info for introspection
         # CRITICAL: Must set exec_async=False to ensure we wait for output
