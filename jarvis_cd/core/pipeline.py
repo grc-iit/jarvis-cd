@@ -1398,13 +1398,30 @@ class Pipeline:
                     temp_name = f'jarvis-inject-{pkg_name_raw}'
                     Exec(f"{build_engine} rm -f {temp_name}",
                          LocalExecInfo(hide_output=True)).run()
-                    Exec(f"{build_engine} create --name {temp_name} {pkg_deploy_name}",
-                         LocalExecInfo(hide_output=True)).run()
-                    for src_path in ['/usr/local/.', '/opt/.']:
-                        dest_path = src_path.rstrip('.')
-                        Exec(f"{build_engine} cp {temp_name}:{src_path} "
-                             f"{build_container_name}:{dest_path}",
-                             LocalExecInfo(hide_output=True)).run()
+                    result = Exec(
+                        f"{build_engine} create --name {temp_name} {pkg_deploy_name}",
+                        LocalExecInfo(hide_output=True)).run()
+                    if result.exit_code.get('localhost', 1) != 0:
+                        raise RuntimeError(
+                            f"Failed to create inject container from '{pkg_deploy_name}'"
+                        )
+                    # docker/podman `cp` does not support
+                    # container:src -> container:dest directly
+                    # ("copying between containers is not supported"). Stream
+                    # a tar archive out of the source container's src path
+                    # and extract it into the build container at dest path.
+                    for src_path in ['/usr/local', '/opt']:
+                        pipe_cmd = (
+                            f"{build_engine} cp {temp_name}:{src_path}/. - | "
+                            f"{build_engine} cp - {build_container_name}:{src_path}"
+                        )
+                        result = Exec(pipe_cmd,
+                                      LocalExecInfo(hide_output=True)).run()
+                        if result.exit_code.get('localhost', 1) != 0:
+                            raise RuntimeError(
+                                f"Failed to inject '{pkg_deploy_name}' "
+                                f"({src_path}) into build container"
+                            )
                     Exec(f"{build_engine} rm {temp_name}",
                          LocalExecInfo(hide_output=True)).run()
                     Exec(f"{build_engine} exec {build_container_name} ldconfig",
@@ -1463,10 +1480,28 @@ class Pipeline:
 
         per_pkg_deploy_images = []
 
+        # Library pkgs (Hdf5, Adios2, CompressLibs, …) exist to supply
+        # /usr/local artifacts to later pkgs' build containers via Phase-1
+        # injection. We still build their per-pkg deploy image here so
+        # that cache is populated for future pipeline loads, but we skip
+        # them in the merge: their /usr/local has already been COPY'd into
+        # the consuming app pkg's builder stage, so including them here
+        # again would just set a narrower apt base (e.g. hdf5's minimal
+        # Dockerfile.deploy, which lacks liburing/libfuse3/etc.) as the
+        # merge base and mask the app pkg's richer runtime deps.
+        from jarvis_cd.core.pkg import Library
+
         for pkg_def in self.packages:
             pkg_instance = self._load_package_instance(pkg_def, self.env)
             pkg_instance.config['deploy_mode'] = pkg_def.get(
                 'config', {}).get('deploy_mode', 'default')
+            # Re-derive the build suffix from _build_phase so the
+            # per-pkg deploy image name matches Phase-1's cache-lookup
+            # (jarvis-deploy-<pkg>-<build_suffix>) instead of losing
+            # the suffix when _build_suffix is reset for Dockerfile
+            # template substitution below.
+            build_result = pkg_instance._build_phase()
+            build_suffix = build_result[1] if build_result and len(build_result) > 1 else ''
             # Point ##BUILD_IMAGE## at the committed build image
             pkg_instance._build_suffix = ''
 
@@ -1477,11 +1512,16 @@ class Pipeline:
             if not deploy_content:
                 continue
 
+            # Prefer the build suffix (matches Phase-1 cache key) over the
+            # deploy-phase suffix, which is reset to '' above to simplify
+            # BUILD_IMAGE template substitution.
+            effective_suffix = build_suffix or deploy_suffix
+
             # Per-package deploy image name — stable, reusable across pipelines
             pkg_name = pkg_def['pkg_type'].split('.')[-1].replace('_', '-')
             pkg_deploy_name = f'jarvis-deploy-{pkg_name}'
-            if deploy_suffix:
-                pkg_deploy_name = f'{pkg_deploy_name}-{deploy_suffix}'
+            if effective_suffix:
+                pkg_deploy_name = f'{pkg_deploy_name}-{effective_suffix}'
 
             # Replace ##BUILD_IMAGE## references with the committed image name
             deploy_content = deploy_content.replace(
@@ -1506,7 +1546,9 @@ class Pipeline:
                         f"Failed to build deploy image '{pkg_deploy_name}'"
                     )
 
-            per_pkg_deploy_images.append(pkg_deploy_name)
+            # Only non-Library pkgs participate in the final pipeline merge.
+            if not isinstance(pkg_instance, Library):
+                per_pkg_deploy_images.append(pkg_deploy_name)
 
         if not per_pkg_deploy_images:
             print("Warning: No deploy Dockerfile content from any package")
