@@ -153,19 +153,26 @@ class Exec(CoreExec):
         if is_mpi and is_container:
             is_apptainer = self.exec_info.container == 'apptainer'
             if is_apptainer:
-                # Apptainer (HPC): mpirun runs INSIDE the container but
-                # without SSH-based launching (the host handles node
-                # distribution).  Build the mpirun command, then wrap the
-                # whole thing in 'apptainer exec .sif'.
+                # Apptainer (HPC): mpirun runs INSIDE the container and
+                # uses SSH to reach apptainer instances on remote nodes.
+                # Clear env so mpirun -x flags don't override the
+                # container's PATH/LD_LIBRARY_PATH with host values.
                 mpi_type = self._detect_mpi(self.exec_info)
-                # Clear env so mpirun doesn't override the container's
-                # PATH/LD_LIBRARY_PATH with host values via -x flags.
                 mpi_executor = self._create_mpi_executor_with_type(
                     self.cmd,
                     self.exec_info.mod(container='none', dry_run=True,
-                                       hostfile=None, env={}),
+                                       env={}),
                     mpi_type)
                 mpi_cmd = mpi_executor.cmd
+                # Force SSH launcher (not Slurm) so mpirun reaches the
+                # sshd running inside apptainer instances on remote nodes.
+                # Export PATH so remote orted finds application binaries
+                # (the remote SSH login shell may override the container PATH).
+                if '--mca plm rsh' not in mpi_cmd:
+                    mpi_cmd = mpi_cmd.replace(
+                        'mpiexec ', 'mpiexec --mca plm rsh ', 1)
+                mpi_cmd = mpi_cmd.replace(
+                    'mpiexec ', 'mpiexec -x PATH ', 1)
                 wrapped_cmd, local_info = self._prepare_container(mpi_cmd)
                 wrapped_cmd, local_info = self._resolve_exec_info(
                     wrapped_cmd, local_info.mod(exec_type=ExecType.LOCAL))
