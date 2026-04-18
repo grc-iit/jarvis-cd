@@ -1,0 +1,43 @@
+{
+  "name": "ppi-jarvis-cd",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "..",
+    "args": {
+      "APPTAINER_VERSION": "1.4.1"
+    }
+  },
+
+  // --privileged is required for:
+  //   • Docker daemon (dockerd) inside the container
+  //   • Apptainer user-namespace operations
+  //   • Podman rootless storage (fuse-overlayfs)
+  "runArgs": ["--privileged"],
+
+  // Start the Docker daemon and SSH server on container launch.
+  "initializeCommand": "",
+  "onCreateCommand": "nohup dockerd > /tmp/dockerd.log 2>&1 & sleep 2 && ssh-keygen -A",
+  "postCreateCommand": "pip3 install --break-system-packages -e '.[dev]' 2>/dev/null || pip3 install --break-system-packages -e . && pip3 install --break-system-packages pytest",
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/bin/python3",
+        "python.testing.pytestEnabled": true,
+        "python.testing.pytestArgs": ["test/unit/"]
+      },
+      "extensions": [
+        "ms-python.python",
+        "ms-python.pylint",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  },
+
+  // Forward SSH port used by jarvis multi-node tests
+  "forwardPorts": [2222],
+
+  "remoteEnv": {
+    "PYTHONPATH": "${containerWorkspaceFolder}"
+  }
+}
