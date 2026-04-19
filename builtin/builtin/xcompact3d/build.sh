@@ -5,7 +5,13 @@ export DEBIAN_FRONTEND=noninteractive
 
 # Xcompact3d — High-order finite-difference flow solver (DNS/LES)
 # Builds 2DECOMP&FFT and Incompact3d. CPU-only (MPI parallelism).
-# ADIOS2 is provided by the adios2 Library package (installed to /opt/adios2).
+# ADIOS2 (+Fortran bindings) is provided by the adios2 Library package.
+# Its artifacts live under /usr/local; add
+#   - pkg_type: builtin.adios2
+#     use_fortran: true   # required — 2decomp-fft and Incompact3d link the
+#                         # ADIOS2 Fortran module
+#     use_hdf5: false     # xcompact3d uses only the native BP engines
+# ahead of builtin.xcompact3d in the pipeline YAML.
 
 # ---- System packages ------------------------------------------------------------
 apt-get update && apt-get install -y --no-install-recommends \
@@ -47,7 +53,7 @@ cd /opt/2decomp-fft \
     && FC=mpif90 cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DIO_BACKEND=adios2 \
-        -Dadios2_DIR=/opt/adios2/lib/cmake/adios2 \
+        -Dadios2_DIR=/usr/local/lib/cmake/adios2 \
     && cmake --build build -j$(nproc) \
     && cmake --install build
 
@@ -62,7 +68,7 @@ cd /opt/Incompact3d \
     && FC=mpif90 cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DIO_BACKEND=adios2 \
-        -Dadios2_DIR=/opt/adios2/lib/cmake/adios2 \
+        -Dadios2_DIR=/usr/local/lib/cmake/adios2 \
         -Ddecomp2d_DIR=/opt/2decomp-fft/build/opt/lib/decomp2d \
         -DBUILD_TESTING=ON \
     && cmake --build build -j$(nproc) \

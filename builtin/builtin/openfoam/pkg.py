@@ -51,12 +51,6 @@ class Openfoam(Application):
                 'default': './Allrun',
             },
             {
-                'name': 'adios2_version',
-                'msg': 'ADIOS2 version built into the container image',
-                'type': str,
-                'default': '2.10.2',
-            },
-            {
                 'name': 'base_image',
                 'msg': 'Base Docker image for build container',
                 'type': str,
@@ -73,7 +67,6 @@ class Openfoam(Application):
             return None
         content = self._read_build_script('build.sh', {
             'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
-            'ADIOS2_VERSION': self.config.get('adios2_version', '2.10.2'),
         })
         return content, 'openfoam-dev'
 

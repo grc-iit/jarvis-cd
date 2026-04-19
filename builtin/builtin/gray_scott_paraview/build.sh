@@ -9,8 +9,11 @@ export DEBIAN_FRONTEND=noninteractive
 # ADIOS2 provides the data transport layer (SST/BP) from the Gray-Scott
 # simulation; Fides reads ADIOS2 data into ParaView's VTK pipeline; Catalyst
 # enables in-situ analysis without writing intermediate files.
+#
+# ADIOS2 is provided by the adios2 Library package (installed under
+# /usr/local). Fides and ParaView's VTK-IOADIOS2 module both require the
+# Python bindings, so the pipeline YAML must set use_python=true.
 
-ADIOS2_VERSION="${ADIOS2_VERSION:-v2.10.2}"
 CATALYST_VERSION="${CATALYST_VERSION:-v2.0.0}"
 PARAVIEW_VERSION="${PARAVIEW_VERSION:-v5.13.1}"
 

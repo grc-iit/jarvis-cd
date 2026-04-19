@@ -16,9 +16,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Pre-built OpenFOAM tree (binaries, libraries, config, tutorials)
 COPY --from=builder /opt/OpenFOAM /opt/OpenFOAM
 
-# ADIOS2 + HDF5 runtime libraries
-COPY --from=builder /opt/adios2 /opt/adios2
-COPY --from=builder /opt/hdf5   /opt/hdf5
+# ADIOS2 (and HDF5 if the pipeline included the hdf5 Library) live under
+# /usr/local in the builder image, placed there by the adios2/hdf5 Library
+# packages. Pull them across wholesale so openfoam-dev add-ons and coupled
+# workflows can link against them at runtime.
+COPY --from=builder /usr/local /usr/local
+RUN ldconfig
 
 # Generate SSH keys so all containers from this image share the same identity
 RUN mkdir -p /var/run/sshd /root/.ssh && ssh-keygen -A \
@@ -32,9 +35,7 @@ RUN mkdir -p /var/run/sshd /root/.ssh && ssh-keygen -A \
 RUN /bin/bash -c 'echo "source /opt/OpenFOAM/OpenFOAM-dev/etc/bashrc" >> /root/.bashrc'
 
 ENV FOAM_INST_DIR=/opt/OpenFOAM
-ENV ADIOS2_ROOT=/opt/adios2
-ENV HDF5_ROOT=/opt/hdf5
-ENV LD_LIBRARY_PATH=/opt/adios2/lib:/opt/hdf5/lib:${LD_LIBRARY_PATH}
+ENV ADIOS2_ROOT=/usr/local
 
 EXPOSE 22
 CMD ["/bin/bash"]

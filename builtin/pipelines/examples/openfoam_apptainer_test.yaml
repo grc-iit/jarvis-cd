@@ -3,6 +3,9 @@
 # Requirements: Apptainer installed, sci-hpc-base image built locally
 #               (Apptainer uses docker/podman for the build stage; ensure
 #               one of those is also present.)
+#
+# ADIOS2 comes from the adios2 Library (C++/MPI+HDF5 flavour). Fortran and
+# Python bindings are off because openfoam-dev doesn't need them.
 
 name: openfoam_apptainer_test
 install_manager: container
@@ -11,6 +14,13 @@ container_engine: apptainer
 container_base: sci-hpc-base
 
 pkgs:
+  - pkg_type: builtin.adios2
+    pkg_name: adios2
+    version: v2.10.2
+    use_hdf5: true
+    use_mpi: true
+    use_fortran: false
+    use_python: false
   - pkg_type: builtin.openfoam
     pkg_name: openfoam_apptainer
     nprocs: 1

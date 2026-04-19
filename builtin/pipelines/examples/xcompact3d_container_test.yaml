@@ -9,8 +9,14 @@ container_engine: docker
 container_base: ubuntu:24.04
 
 pkgs:
+  # 2decomp-fft and Incompact3d both use ADIOS2's Fortran bindings with
+  # native BP engines — HDF5 is intentionally off.
   - pkg_type: builtin.adios2
     pkg_name: adios2
+    use_hdf5: false
+    use_mpi: true
+    use_fortran: true
+    use_python: false
   - pkg_type: builtin.xcompact3d
     pkg_name: xcompact3d_container
     nprocs: 2

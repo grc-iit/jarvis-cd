@@ -1,6 +1,9 @@
 # Pipeline: Gray-Scott ParaView Container Test
 # Purpose: Test Gray-Scott with ParaView visualization using Docker
 # Requirements: Docker installed, sci-hpc-base image built locally
+#
+# ParaView links ADIOS2 via VTK-IOADIOS2 and Fides. Both require the
+# ADIOS2 Python bindings (use_python: true).
 
 name: gray_scott_paraview_container_test
 install_manager: container
@@ -13,6 +16,11 @@ pkgs:
     pkg_name: hdf5
   - pkg_type: builtin.adios2
     pkg_name: adios2
+    version: v2.10.2
+    use_hdf5: true
+    use_mpi: true
+    use_fortran: false
+    use_python: true
   - pkg_type: builtin.gray_scott_paraview
     pkg_name: gray_scott_paraview_container
     nprocs: 2

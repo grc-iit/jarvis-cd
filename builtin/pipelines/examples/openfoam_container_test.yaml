@@ -4,11 +4,10 @@
 #          deploy container.
 # Requirements: Docker installed, sci-hpc-base image built locally
 #
-# The case directory is the upstream tutorial shipped with OpenFOAM-dev.
-# The Openfoam package cd's into script_location inside the container and
-# runs ./Allrun under MPI. tutorials/ is read-only in the deploy image, so
-# this pipeline demonstrates the minimum invocation; for read-write runs
-# copy the case to a shared volume and point script_location there.
+# OpenFOAM-dev has no native ADIOS2 integration. ADIOS2 is installed by the
+# adios2 Library package for coupled workflows / in-situ analysis.
+# use_fortran/use_python are off because openfoam-dev links ADIOS2 at the
+# C++ level only.
 
 name: openfoam_container_test
 install_manager: container
@@ -17,6 +16,13 @@ container_engine: docker
 container_base: sci-hpc-base
 
 pkgs:
+  - pkg_type: builtin.adios2
+    pkg_name: adios2
+    version: v2.10.2
+    use_hdf5: true
+    use_mpi: true
+    use_fortran: false
+    use_python: false
   - pkg_type: builtin.openfoam
     pkg_name: openfoam_container
     nprocs: 1

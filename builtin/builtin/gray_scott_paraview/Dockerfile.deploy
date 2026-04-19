@@ -23,11 +23,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libxt6t64 libxext6 libxkbcommon0 \
     && rm -rf /var/lib/apt/lists/*
 
-# Pre-built HDF5
-COPY --from=builder /opt/hdf5 /opt/hdf5
-
-# Pre-built ADIOS2 (BP5 default engine, SST, HDF5)
-COPY --from=builder /opt/adios2 /opt/adios2
+# HDF5 (hdf5 Library) and ADIOS2 (adios2 Library, with Python bindings)
+# both install under /usr/local.
+COPY --from=builder /usr/local /usr/local
 
 # Pre-built Catalyst (in-situ API)
 COPY --from=builder /opt/catalyst /opt/catalyst
@@ -35,16 +33,18 @@ COPY --from=builder /opt/catalyst /opt/catalyst
 # Pre-built ParaView (paraview, pvserver, pvbatch, pvpython)
 COPY --from=builder /opt/paraview /opt/paraview
 
+RUN ldconfig
+
 # SSH keys (shared with builder so cluster nodes trust each other)
 # Generate SSH keys so all containers from this image share the same identity
 RUN mkdir -p /var/run/sshd /root/.ssh && ssh-keygen -A && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys && printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /root/.ssh/config && chmod 600 /root/.ssh/config
 
-ENV HDF5_ROOT=/opt/hdf5
-ENV ADIOS2_DIR=/opt/adios2
+ENV HDF5_ROOT=/usr/local
+ENV ADIOS2_DIR=/usr/local
 ENV catalyst_DIR=/opt/catalyst
-ENV PATH=/opt/paraview/bin:/opt/adios2/bin:${PATH}
-ENV LD_LIBRARY_PATH=/opt/paraview/lib:/opt/adios2/lib:/opt/catalyst/lib:/opt/hdf5/lib:${LD_LIBRARY_PATH}
-ENV PYTHONPATH=/opt/paraview/lib/python3.12/site-packages:/opt/adios2/local/lib/python3.12/dist-packages:${PYTHONPATH}
+ENV PATH=/opt/paraview/bin:/usr/local/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/paraview/lib:/opt/catalyst/lib:/usr/local/lib:${LD_LIBRARY_PATH}
+ENV PYTHONPATH=/opt/paraview/lib/python3.12/site-packages:/usr/local/lib/python3.12/dist-packages:${PYTHONPATH}
 
 EXPOSE 22
 CMD ["/bin/bash"]
