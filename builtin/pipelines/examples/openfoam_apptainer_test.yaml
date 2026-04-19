@@ -1,0 +1,19 @@
+# Pipeline: OpenFOAM Apptainer Test
+# Purpose: Build and run the OpenFOAM-dev cavity tutorial under Apptainer.
+# Requirements: Apptainer installed, sci-hpc-base image built locally
+#               (Apptainer uses docker/podman for the build stage; ensure
+#               one of those is also present.)
+
+name: openfoam_apptainer_test
+install_manager: container
+
+container_engine: apptainer
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.openfoam
+    pkg_name: openfoam_apptainer
+    nprocs: 1
+    ppn: 1
+    script_location: /opt/OpenFOAM/OpenFOAM-dev/tutorials/incompressibleFluid/cavity
+    script: ./Allrun

@@ -1,0 +1,25 @@
+# Pipeline: OpenFOAM Container Test
+# Purpose: Test OpenFOAM-dev deployment using Docker, driving the bundled
+#          lid-driven cavity tutorial end-to-end via ./Allrun inside the
+#          deploy container.
+# Requirements: Docker installed, sci-hpc-base image built locally
+#
+# The case directory is the upstream tutorial shipped with OpenFOAM-dev.
+# The Openfoam package cd's into script_location inside the container and
+# runs ./Allrun under MPI. tutorials/ is read-only in the deploy image, so
+# this pipeline demonstrates the minimum invocation; for read-write runs
+# copy the case to a shared volume and point script_location there.
+
+name: openfoam_container_test
+install_manager: container
+
+container_engine: docker
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.openfoam
+    pkg_name: openfoam_container
+    nprocs: 1
+    ppn: 1
+    script_location: /opt/OpenFOAM/OpenFOAM-dev/tutorials/incompressibleFluid/cavity
+    script: ./Allrun
