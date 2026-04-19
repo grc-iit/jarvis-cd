@@ -22,13 +22,16 @@ python3 -m venv /opt/ddmd-env \
         radical.entk==1.103.0 radical.pilot==1.103.2 radical.utils==1.103.1 \
         'git+https://github.com/braceal/MD-tools.git'
 
-# DeepDriveMD source with the self.cfg patch applied.
+# DeepDriveMD source with the self.cfg patch applied. The patch file is
+# staged in CWD from pkg_dir by jarvis, so we capture an absolute path
+# before cd'ing into the cloned repo.
+CTX=$(pwd)
 git clone --depth 1 \
         https://github.com/DeepDriveMD/DeepDriveMD-pipeline.git /opt/DeepDriveMD
-# NOTE: deepdrivemd-selfcfg.patch must be copied separately (was a COPY directive)
 cd /opt/DeepDriveMD \
-    && git apply deepdrivemd-selfcfg.patch \
+    && git apply "$CTX/deepdrivemd-selfcfg.patch" \
     && /opt/ddmd-env/bin/pip install --no-cache-dir -e .
+cd "$CTX"
 
 # Tiny benchmark input: 1FME (36-residue test structure) in sys1/
 mkdir -p /opt/ddmd-bench/sys1 \
@@ -36,6 +39,9 @@ mkdir -p /opt/ddmd-bench/sys1 \
         https://files.rcsb.org/download/1FME.pdb \
     && cp /opt/ddmd-bench/sys1/comp.pdb /opt/ddmd-bench/1FME-folded.pdb
 
-# NOTE: deepdrivemd.template.yaml and run_ddmd.sh must be copied separately (were COPY directives)
+# Pipeline drivers (staged in CWD from pkg_dir by jarvis).
+cp deepdrivemd.template.yaml /opt/deepdrivemd.template.yaml
+cp run_ddmd.sh               /opt/run_ddmd.sh
+chmod +x /opt/run_ddmd.sh
 
 export PATH=/opt/ddmd-env/bin:${PATH}

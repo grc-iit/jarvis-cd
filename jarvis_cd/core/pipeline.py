@@ -1446,18 +1446,59 @@ class Pipeline:
                 with open(script_path, 'w') as f:
                     f.write(script_content)
 
-                # Copy script into build container
+                # Stage the package context: build.sh plus any auxiliary
+                # files in pkg_dir (patches, run scripts, config templates,
+                # test datasets, etc.) that the build needs. Jarvis used to
+                # only copy the build script, forcing every package that
+                # referenced aux files to embed them as base64 heredocs.
+                # We now copy everything relevant into /tmp/pkg-ctx-{pkg_name}/
+                # in the build container and run build.sh with that dir as
+                # the working directory, so `COPY file .` style references
+                # from upstream Dockerfiles translate to bare filenames in
+                # build.sh.
+                pkg_ctx_dir = f'/tmp/pkg-ctx-{pkg_name}'
+                Exec(
+                    f"{build_engine} exec {build_container_name} "
+                    f"mkdir -p {pkg_ctx_dir}",
+                    LocalExecInfo(hide_output=True),
+                ).run()
+                # Always include the build script itself under the name
+                # the original exec_cmd referenced.
                 cp_cmd = (
                     f"{build_engine} cp {script_path} "
-                    f"{build_container_name}:/tmp/build-{pkg_name}.sh"
+                    f"{build_container_name}:{pkg_ctx_dir}/build.sh"
                 )
                 Exec(cp_cmd, LocalExecInfo()).run()
+                # Copy aux files from pkg_dir (skipping Python sources,
+                # build.sh, Dockerfile.deploy, and docs — the build only
+                # needs data/patches/scripts/templates).
+                pkg_dir = Path(pkg_instance.pkg_dir) if pkg_instance.pkg_dir else None
+                if pkg_dir and pkg_dir.is_dir():
+                    skip = {
+                        'pkg.py', '__pycache__', '__init__.py',
+                        'build.sh', 'Dockerfile.deploy',
+                        'README.md', 'README.MD',
+                        'INSTALL.md', 'INSTALL.MD',
+                        'USE.md', 'USE.MD',
+                    }
+                    for entry in sorted(pkg_dir.iterdir()):
+                        if entry.name in skip:
+                            continue
+                        if entry.suffix in ('.pyc', '.pyo'):
+                            continue
+                        cp_entry = (
+                            f"{build_engine} cp {entry} "
+                            f"{build_container_name}:{pkg_ctx_dir}/"
+                        )
+                        Exec(cp_entry, LocalExecInfo(hide_output=True)).run()
 
-                # Execute build script inside the container
+                # Execute build script inside the container with the
+                # pkg context as the working directory.
                 print(f"Building {pkg_name} in container...")
                 exec_cmd = (
-                    f"{build_engine} exec {build_container_name} "
-                    f"bash /tmp/build-{pkg_name}.sh"
+                    f"{build_engine} exec -w {pkg_ctx_dir} "
+                    f"{build_container_name} "
+                    f"bash {pkg_ctx_dir}/build.sh"
                 )
                 result = Exec(exec_cmd, LocalExecInfo()).run()
                 if result.exit_code.get('localhost', 1) != 0:

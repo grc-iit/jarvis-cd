@@ -24,6 +24,9 @@ conda create -p /opt/biobb-env python=3.10 -c conda-forge -c bioconda -y \
 mkdir -p /opt/biobb-bench \
     && curl -L -o /opt/biobb-bench/1AKI.pdb https://files.rcsb.org/download/1AKI.pdb
 
-# NOTE: run_md_setup.py and run_batch.sh must be copied separately (were COPY directives)
+# Pipeline drivers (staged in CWD from pkg_dir by jarvis).
+cp run_md_setup.py /opt/run_md_setup.py
+cp run_batch.sh    /opt/run_batch.sh
+chmod +x /opt/run_md_setup.py /opt/run_batch.sh
 
 export PATH=/opt/biobb-env/bin:${PATH}

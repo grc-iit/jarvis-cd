@@ -26,7 +26,11 @@ git clone --depth 1 https://github.com/FlexTRKR/PyFLEXTRKR.git /opt/PyFLEXTRKR \
 /opt/pyflextrkr-env/bin/pip install --no-cache-dir \
         mpi4py dask-mpi h5netcdf h5py healpy
 
+# Pipeline drivers (staged in CWD from pkg_dir by jarvis).
+cp run_demo.sh           /opt/run_demo.sh
+cp run_demo_multinode.sh /opt/run_demo_multinode.sh
+cp run_mcs_tbpf_mpi.py   /opt/run_mcs_tbpf_mpi.py
+chmod +x /opt/run_demo.sh /opt/run_demo_multinode.sh /opt/run_mcs_tbpf_mpi.py
+
 export PATH=/opt/pyflextrkr-env/bin:${PATH}
 export PYTHONNOUSERSITE=1
-
-# NOTE: run_demo.sh, run_demo_multinode.sh, run_mcs_tbpf_mpi.py must be copied separately (were COPY directives)

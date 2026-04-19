@@ -22,7 +22,11 @@ git clone --depth 1 --branch v2.2.0 \
         https://github.com/snakemake-workflows/rna-seq-star-deseq2.git \
         /opt/rna-seq-star-deseq2
 
-# NOTE: bench/ directory and run_rnaseq.sh must be copied separately (were COPY directives)
+# Bundled S. cerevisiae benchmark + pipeline driver. Both staged in CWD
+# from pkg_dir by jarvis.
+cp -r bench /opt/rnaseq-bench
+cp run_rnaseq.sh /opt/run_rnaseq.sh
+chmod +x /opt/run_rnaseq.sh
 
 export PATH=/opt/rnaseq-env/bin:${PATH}
 export PYTHONNOUSERSITE=1

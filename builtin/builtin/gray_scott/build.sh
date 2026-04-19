@@ -3,19 +3,13 @@ set -e
 
 CUDA_ARCH="${CUDA_ARCH:-##CUDA_ARCH##}"
 
-# Download Gray-Scott source from awesome-scienctific-applications
-# Cached until repo URL changes
-git clone --depth 1 \
-    https://github.com/grc-iit/awesome-scienctific-applications.git \
-    /tmp/awesome-sci
-
-mkdir -p /opt/gray_scott && cd /opt/gray_scott
-cp /tmp/awesome-sci/grayscott/CMakeLists.txt . && \
-    cp /tmp/awesome-sci/grayscott/gray_scott.cu . && \
-    rm -rf /tmp/awesome-sci
+# CMakeLists.txt and gray_scott.cu are staged in CWD from pkg_dir by jarvis.
+mkdir -p /opt/gray_scott
+cp CMakeLists.txt gray_scott.cu /opt/gray_scott/
 
 # Build (expensive — cached when source and CMakeLists unchanged)
-cmake -S . -B build \
+cd /opt/gray_scott \
+    && cmake -S . -B build \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCH} \
         -DHDF5_ROOT=/opt/hdf5 \
