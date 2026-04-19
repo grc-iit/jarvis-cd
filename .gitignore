@@ -142,3 +142,5 @@ dmypy.json
 /.idea/inspectionProfiles/Project_Default.xml
 /.idea/vcs.xml
 /.idea/deployment.xml
+*.sif
+builtin/pipelines/portability/*/\ *
