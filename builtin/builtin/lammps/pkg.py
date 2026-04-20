@@ -107,10 +107,13 @@ class Lammps(Application):
     def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
+        use_gpu = self.config.get('kokkos_gpu', True)
+        deploy_base = ('nvidia/cuda:12.6.0-runtime-ubuntu24.04'
+                       if use_gpu else 'ubuntu:24.04')
         suffix = getattr(self, '_build_suffix', '')
         content = self._read_dockerfile('Dockerfile.deploy', {
             'BUILD_IMAGE': self.build_image_name(),
-            'DEPLOY_BASE': 'nvidia/cuda:12.6.0-runtime-ubuntu24.04',
+            'DEPLOY_BASE': deploy_base,
         })
         return content, suffix
 
@@ -146,7 +149,7 @@ class Lammps(Application):
         container mode, MpiExecInfo with hostfile for default mode.
         """
         if self.config.get('deploy_mode') == 'container':
-            cmd = ['/usr/local/bin/lmp']
+            cmd = ['/opt/lammps/build/lmp']
             if self.config.get('script'):
                 cmd.append(f"-in {self.config['script']}")
             if self.config.get('kokkos_gpu'):

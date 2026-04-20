@@ -109,10 +109,14 @@ class Nyx(Application):
     def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
+        base = self.config.get('base_image', 'sci-hpc-base')
+        use_gpu = 'sci-hpc' in base
+        deploy_base = ('nvidia/cuda:12.6.0-runtime-ubuntu24.04'
+                       if use_gpu else 'ubuntu:24.04')
         suffix = getattr(self, '_build_suffix', '')
         content = self._read_dockerfile('Dockerfile.deploy', {
             'BUILD_IMAGE': self.build_image_name(),
-            'DEPLOY_BASE': 'nvidia/cuda:12.6.0-runtime-ubuntu24.04',
+            'DEPLOY_BASE': deploy_base,
         })
         return content, suffix
 
@@ -152,15 +156,13 @@ class Nyx(Application):
 
             nprocs = self.config.get('nprocs', 4)
             inner = ' '.join([
-                '/usr/bin/nyx_HydroTests',
+                '/opt/Nyx/build/Exec/HydroTests/nyx_HydroTests',
+                '/opt/Nyx/Exec/HydroTests/inputs.regtest.sedov',
                 f'max_step={self.config["max_step"]}',
                 f'amr.n_cell={self.config["n_cell"]}',
                 f'amr.max_level={self.config["max_level"]}',
                 f'amr.plot_file={outdir}/plt',
                 f'amr.plot_int={self.config["plot_int"]}',
-                'geometry.prob_lo=0 0 0',
-                'geometry.prob_extent=1 1 1',
-                'geometry.is_periodic=1 1 1',
             ])
             Exec(inner, MpiExecInfo(
                 nprocs=nprocs,
