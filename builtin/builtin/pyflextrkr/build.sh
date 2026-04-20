@@ -3,6 +3,10 @@ set -e
 
 export DEBIAN_FRONTEND=noninteractive
 
+# PyFLEXTRKR — Python FLEXible object TRacKeR for atmospheric feature
+# tracking (mesoscale convective systems, convective cells, etc.).
+# CPU-only. Mirrors awesome-scienctific-applications/pyflextrkr/Dockerfile.
+
 # Extra runtime deps for netCDF4, scikit-image wheels, and mpi4py build.
 # openmpi headers come from the base image (libopenmpi-dev).
 apt-get update && apt-get install -y --no-install-recommends \
@@ -26,11 +30,12 @@ git clone --depth 1 https://github.com/FlexTRKR/PyFLEXTRKR.git /opt/PyFLEXTRKR \
 /opt/pyflextrkr-env/bin/pip install --no-cache-dir \
         mpi4py dask-mpi h5netcdf h5py healpy
 
-# Pipeline drivers (staged in CWD from pkg_dir by jarvis).
-cp run_demo.sh           /opt/run_demo.sh
-cp run_demo_multinode.sh /opt/run_demo_multinode.sh
-cp run_mcs_tbpf_mpi.py   /opt/run_mcs_tbpf_mpi.py
-chmod +x /opt/run_demo.sh /opt/run_demo_multinode.sh /opt/run_mcs_tbpf_mpi.py
+# Pipeline drivers — staged in CWD from pkg_dir by jarvis
+# (equivalent to the apps-repo Dockerfile's COPY directives).
+cp run_demo.sh            /opt/run_demo.sh
+cp run_demo_multinode.sh  /opt/run_demo_multinode.sh
+cp run_mcs_tbpf_mpi.py    /opt/run_mcs_tbpf_mpi.py
+chmod +x /opt/run_demo.sh /opt/run_demo_multinode.sh
 
 export PATH=/opt/pyflextrkr-env/bin:${PATH}
 export PYTHONNOUSERSITE=1

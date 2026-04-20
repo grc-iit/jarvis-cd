@@ -10,15 +10,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /opt/pyflextrkr-env       /opt/pyflextrkr-env
-COPY --from=builder /opt/PyFLEXTRKR           /opt/PyFLEXTRKR
-COPY --from=builder /opt/run_demo.sh          /opt/run_demo.sh
+COPY --from=builder /opt/pyflextrkr-env        /opt/pyflextrkr-env
+COPY --from=builder /opt/PyFLEXTRKR            /opt/PyFLEXTRKR
+COPY --from=builder /opt/run_demo.sh           /opt/run_demo.sh
 COPY --from=builder /opt/run_demo_multinode.sh /opt/run_demo_multinode.sh
-COPY --from=builder /opt/run_mcs_tbpf_mpi.py  /opt/run_mcs_tbpf_mpi.py
+COPY --from=builder /opt/run_mcs_tbpf_mpi.py   /opt/run_mcs_tbpf_mpi.py
 
-# SSH host keys (shared with builder so cluster nodes trust each other)
-# Generate SSH keys so all containers from this image share the same identity
-RUN mkdir -p /var/run/sshd /root/.ssh && ssh-keygen -A && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys && printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /root/.ssh/config && chmod 600 /root/.ssh/config
+# SSH host keys: self-generate so every replica of this deploy image
+# shares one identity and can mpirun/ssh to its peers out of the box.
+RUN mkdir -p /var/run/sshd /root/.ssh && ssh-keygen -A \
+    && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 \
+    && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys \
+    && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys \
+    && printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /root/.ssh/config \
+    && chmod 600 /root/.ssh/config
 
 ENV PATH=/opt/pyflextrkr-env/bin:${PATH}
 ENV PYTHONNOUSERSITE=1

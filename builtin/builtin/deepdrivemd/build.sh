@@ -3,6 +3,12 @@ set -e
 
 export DEBIAN_FRONTEND=noninteractive
 
+# DeepDriveMD — adaptive biomolecular simulation framework.
+# CPU-only in this configuration (placeholder /bin/echo stages in the
+# YAML); re-wire molecular_dynamics_stage.executable to a real OpenMM
+# driver for production MD.
+# Mirrors awesome-scienctific-applications/deepdrivemd/Dockerfile.
+
 apt-get update && apt-get install -y --no-install-recommends \
         python3-venv \
     && rm -rf /var/lib/apt/lists/*
@@ -22,16 +28,16 @@ python3 -m venv /opt/ddmd-env \
         radical.entk==1.103.0 radical.pilot==1.103.2 radical.utils==1.103.1 \
         'git+https://github.com/braceal/MD-tools.git'
 
-# DeepDriveMD source with the self.cfg patch applied. The patch file is
-# staged in CWD from pkg_dir by jarvis, so we capture an absolute path
-# before cd'ing into the cloned repo.
-CTX=$(pwd)
+# DeepDriveMD source with the self.cfg patch applied.
+# The patch, template yaml, and run_ddmd.sh are staged in CWD from pkg_dir
+# by jarvis — the upstream Dockerfile COPYs them in one at a time.
 git clone --depth 1 \
         https://github.com/DeepDriveMD/DeepDriveMD-pipeline.git /opt/DeepDriveMD
+cp deepdrivemd-selfcfg.patch /opt/DeepDriveMD/deepdrivemd-selfcfg.patch
 cd /opt/DeepDriveMD \
-    && git apply "$CTX/deepdrivemd-selfcfg.patch" \
+    && git apply deepdrivemd-selfcfg.patch \
     && /opt/ddmd-env/bin/pip install --no-cache-dir -e .
-cd "$CTX"
+cd -
 
 # Tiny benchmark input: 1FME (36-residue test structure) in sys1/
 mkdir -p /opt/ddmd-bench/sys1 \
@@ -39,7 +45,6 @@ mkdir -p /opt/ddmd-bench/sys1 \
         https://files.rcsb.org/download/1FME.pdb \
     && cp /opt/ddmd-bench/sys1/comp.pdb /opt/ddmd-bench/1FME-folded.pdb
 
-# Pipeline drivers (staged in CWD from pkg_dir by jarvis).
 cp deepdrivemd.template.yaml /opt/deepdrivemd.template.yaml
 cp run_ddmd.sh               /opt/run_ddmd.sh
 chmod +x /opt/run_ddmd.sh
