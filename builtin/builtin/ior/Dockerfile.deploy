@@ -6,8 +6,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-server openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-# IOR binary and darshan library from build container
-COPY --from=builder /opt/ior/install/bin/ior /usr/bin/ior
+# IOR binary, HDF5 libraries, and darshan library from build container
+COPY --from=builder /opt/ior/install/bin/ior /usr/local/bin/ior
+COPY --from=builder /usr/local/lib/libhdf5*.so* /usr/local/lib/
 COPY --from=builder /opt/darshan/install/lib/libdarshan.so /opt/darshan/lib/libdarshan.so
 
 # Generate SSH keys so all containers from this image share the same identity

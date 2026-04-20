@@ -35,8 +35,10 @@ class Hdf5(Library):
     def _build_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
+        parallel = self.config.get('parallel', True)
         content = self._read_build_script('build.sh', {
             'HDF5_VERSION': self.config.get('version', '2.1.1'),
+            'PARALLEL_FLAG': '-DHDF5_ENABLE_PARALLEL=ON' if parallel else '',
         })
         return content, self.config.get('version', '2.1.1')
 
