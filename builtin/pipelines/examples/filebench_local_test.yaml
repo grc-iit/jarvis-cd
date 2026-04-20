@@ -1,0 +1,42 @@
+# Pipeline: Filebench Local Container Test
+# Purpose: Run the filebench fileserver workload inside a container on the local machine.
+# Requirements: Docker or Podman installed.
+# Multi-node: swap exec_mode to 'pssh' or 'mpi' and add a hostfile to scale out.
+# Expected Runtime: 2-3 minutes (image builds fast; filebench is an apt install).
+
+name: filebench_local_test
+install_manager: container
+
+# Container configuration — filebench installed via apt, no spack or source build.
+container_engine: docker
+container_base: ubuntu:22.04
+
+# Filebench needs ASLR disabled (echo 0 > /proc/sys/kernel/randomize_va_space).
+# Writing /proc/sys/kernel requires CAP_SYS_ADMIN, which privileged mode grants.
+# Without this, workers die with "Unexpected Process termination Code 3".
+container_extensions:
+  privileged: true
+
+pkgs:
+  - pkg_type: builtin.filebench
+    pkg_name: filebench_fileserver
+
+    # Filebench workload personality (fileserver, varmail, videoserver, webproxy, webserver)
+    workload: fileserver
+
+    # Target directory for the filebench fileset (inside the container)
+    dir: /tmp/filebench
+
+    # Filebench runtime in seconds
+    run: 10
+
+    # Small fileset for a fast local validation run — real workloads should
+    # bump nfiles/filesize/nthreads back up (defaults are 10000/128k/50).
+    nfiles: 100
+    filesize: 16k
+    nthreads: 4
+
+    # Single-node local run; set exec_mode to 'pssh' or 'mpi' for multi-node
+    exec_mode: pssh
+    nprocs: 1
+    ppn: 1
