@@ -1446,17 +1446,40 @@ class Pipeline:
                 with open(script_path, 'w') as f:
                     f.write(script_content)
 
-                # Copy script into build container
+                # Copy the build script into the container
                 cp_cmd = (
                     f"{build_engine} cp {script_path} "
                     f"{build_container_name}:/tmp/build-{pkg_name}.sh"
                 )
                 Exec(cp_cmd, LocalExecInfo()).run()
 
+                # Copy any non-Python support files from the package
+                # directory (patches, templates, scripts, etc.) so that
+                # build.sh can reference them by name under /tmp/.
+                pkg_dir = getattr(pkg_instance, 'pkg_dir', None)
+                if pkg_dir:
+                    import os
+                    skip_exts = {'.py', '.pyc'}
+                    skip_names = {'__pycache__'}
+                    for fname in os.listdir(pkg_dir):
+                        if fname in skip_names:
+                            continue
+                        ext = os.path.splitext(fname)[1]
+                        if ext in skip_exts:
+                            continue
+                        src = os.path.join(pkg_dir, fname)
+                        if os.path.isfile(src):
+                            Exec(
+                                f"{build_engine} cp {src} "
+                                f"{build_container_name}:/tmp/{fname}",
+                                LocalExecInfo()
+                            ).run()
+
                 # Execute build script inside the container
                 print(f"Building {pkg_name} in container...")
                 exec_cmd = (
-                    f"{build_engine} exec {build_container_name} "
+                    f"{build_engine} exec --workdir /tmp "
+                    f"{build_container_name} "
                     f"bash /tmp/build-{pkg_name}.sh"
                 )
                 result = Exec(exec_cmd, LocalExecInfo()).run()
