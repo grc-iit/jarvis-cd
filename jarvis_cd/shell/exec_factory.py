@@ -172,7 +172,7 @@ class Exec(CoreExec):
                     mpi_cmd = mpi_cmd.replace(
                         'mpiexec ', 'mpiexec --mca plm rsh ', 1)
                 mpi_cmd = mpi_cmd.replace(
-                    'mpiexec ', 'mpiexec -x PATH ', 1)
+                    'mpiexec ', 'mpiexec -x PATH -x LD_LIBRARY_PATH ', 1)
                 wrapped_cmd, local_info = self._prepare_container(mpi_cmd)
                 wrapped_cmd, local_info = self._resolve_exec_info(
                     wrapped_cmd, local_info.mod(exec_type=ExecType.LOCAL))

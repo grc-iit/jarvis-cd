@@ -975,6 +975,7 @@ class Pipeline:
         self.container_env = pipeline_def.get('container_env', {})
         self.container_host_path = pipeline_def.get('container_host_path', '')
         self.container_workspace = pipeline_def.get('container_workspace', '')
+        self.container_gpu = pipeline_def.get('container_gpu', False)
 
         # Load install manager
         self.install_manager = pipeline_def.get('install_manager', None)
@@ -1836,9 +1837,10 @@ class Pipeline:
             instance_name = self.name
             ssh_port = self.container_ssh_port
 
+            nv_flag = '--nv ' if getattr(self, 'container_gpu', False) else ''
             start_cmd = (
-                f"apptainer instance start --writable-tmpfs {sif_path} {instance_name}"
-                f" && apptainer exec instance://{instance_name}"
+                f"apptainer instance start {nv_flag}--writable-tmpfs {sif_path} {instance_name}"
+                f" && apptainer exec {nv_flag}instance://{instance_name}"
                 f" /usr/sbin/sshd -p {ssh_port}"
                 f" -o StrictModes=no -o UsePAM=no"
             )

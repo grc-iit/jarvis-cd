@@ -84,6 +84,12 @@ class Warpx(Application):
                 'type': str,
                 'default': 'sci-hpc-base',
             },
+            {
+                'name': 'use_gpu',
+                'msg': 'Build with CUDA/GPU backend (WarpX_COMPUTE=CUDA)',
+                'type': bool,
+                'default': False,
+            },
         ]
 
     # ------------------------------------------------------------------
@@ -94,7 +100,7 @@ class Warpx(Application):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = self.config.get('base_image', 'sci-hpc-base')
-        use_gpu = 'sci-hpc' in base
+        use_gpu = self.config.get('use_gpu', False) or 'sci-hpc' in base
         cuda_arch = self.config.get('cuda_arch', 80)
         if use_gpu:
             content = self._read_build_script('build.sh', {
@@ -112,7 +118,7 @@ class Warpx(Application):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = self.config.get('base_image', 'sci-hpc-base')
-        use_gpu = 'sci-hpc' in base
+        use_gpu = self.config.get('use_gpu', False) or 'sci-hpc' in base
         deploy_file = 'Dockerfile.deploy' if use_gpu else 'cpu/Dockerfile.deploy'
         deploy_base = ('nvidia/cuda:12.6.0-runtime-ubuntu24.04'
                        if use_gpu else 'ubuntu:24.04')
@@ -176,19 +182,17 @@ class Warpx(Application):
                 )
 
             base = self.config.get('base_image', 'sci-hpc-base')
-            use_gpu = 'sci-hpc' in base
-            if use_gpu:
-                warpx_bin = '/opt/warpx/build/bin/warpx.3d'
-                diag_args = [
-                    f'amr.plot_file={outdir}/plt',
-                    f'amr.plot_int={self.config["plot_int"]}',
-                ]
-            else:
-                warpx_bin = '/opt/warpx/build/bin/warpx.3d'
-                diag_args = [
-                    f'diag1.file_prefix={outdir}/diag1',
-                    f'diag1.intervals={self.config["plot_int"]}',
-                ]
+            use_gpu = self.config.get('use_gpu', False) or 'sci-hpc' in base
+            # WarpX binary name embeds feature flags (MPI/CUDA/SP/PSP/OPMD/EB/QED).
+            # Use a shell-glob with the shared prefix — inner runs inside the
+            # container where the actual binary path is resolved by the shell.
+            warpx_bin = '$(ls /opt/warpx/build/bin/warpx.3d* | head -1)'
+            diag_args = [
+                'diagnostics.diags_names=diag1',
+                'diag1.diag_type=Full',
+                f'diag1.file_prefix={outdir}/diag1',
+                f'diag1.intervals={self.config["plot_int"]}',
+            ]
             inner = ' '.join([
                 warpx_bin,
                 inputs_arg,

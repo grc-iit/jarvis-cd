@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euo pipefail
+set -e
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -34,9 +34,13 @@ CC=$(which gcc) CXX=$(which g++) \
     -DCMAKE_PREFIX_PATH=/usr/local \
     -DCMAKE_CXX_FLAGS=-mcmodel=large
 
-cmake --build . -j$(nproc)
+cmake --build . -j"${BUILD_JOBS:-4}"
 
-# Sanity-check: fail loudly if the expected binary isn't produced.
-test -x /opt/warpx/build/bin/warpx.3d
+# WarpX binary name embeds feature flags (e.g. warpx.3d.MPI.NOACC.SP.PSP.OPMD…).
+# Symlink to a canonical name so pkg.py can invoke `warpx.3d` regardless.
+built_bin=$(ls /opt/warpx/build/bin/warpx.3d* 2>/dev/null | head -1)
+test -n "$built_bin"
+ln -sf "$built_bin" /usr/local/bin/warpx.3d
+ln -sf "$built_bin" /opt/warpx/build/bin/warpx.3d
 
 export PATH=/opt/warpx/build/bin:${PATH}
