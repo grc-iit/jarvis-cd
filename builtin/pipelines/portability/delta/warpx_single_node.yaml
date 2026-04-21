@@ -1,0 +1,42 @@
+# Pipeline: WarpX single-node on Delta (apptainer container, CUDA build)
+# Purpose: Validate WarpX build+run inside Apptainer on one Delta GPU node.
+#          NOTE: builtin.warpx is hardcoded to CUDA, so the base image must
+#          provide nvcc — we use nvidia/cuda:12.8.0-devel-ubuntu24.04 instead
+#          of ubuntu:24.04. No Ares reference exists; modelled on IOR Delta
+#          pattern + examples/warpx_container_test.yaml args.
+# Usage:
+#   salloc --account=bekn-delta-gpu --partition=gpuA100x4 \
+#          --nodes=1 --ntasks=2 --gpus=1 --time=02:00:00 --mem=64g
+#   scontrol show hostnames $SLURM_JOB_NODELIST > ~/hostfile_single.txt
+#   jarvis hostfile set ~/hostfile_single.txt
+#   jarvis ppl load yaml builtin/pipelines/portability/delta/warpx_single_node.yaml
+#   jarvis ppl run
+
+name: warpx_delta_single_node
+install_manager: container
+
+container_engine: apptainer
+container_base: nvidia/cuda:12.8.0-devel-ubuntu24.04
+container_ssh_port: 2233
+container_gpu: true
+
+hostfile: /u/imuradli/hostfile_single.txt
+
+pkgs:
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
+  - pkg_type: builtin.warpx
+    pkg_name: warpx_delta
+    nprocs: 2
+    ppn: 2
+    use_gpu: true
+    cuda_arch: 80
+    example: laser_acceleration
+    # Scaled up for ~1-2 min A100 runtime:
+    # 128x128x256 cells (4x more than 64x64x128), 500 steps (10x more),
+    # plot every 50 steps -> 10 openPMD plotfiles
+    max_step: 500
+    n_cell: 128 128 256
+    out: /tmp/warpx_out
+    plot_int: 50
+    base_image: nvidia/cuda:12.8.0-devel-ubuntu24.04
