@@ -171,7 +171,14 @@ class Pyflextrkr(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
-        
+
+        # Container mode runs the self-contained demo scripts baked into
+        # the image — none of the bare-metal conda/scspkg/EXPERIMENT_INPUT_PATH
+        # machinery below applies, and requiring it would make container
+        # runs fail on host-side path checks.
+        if self.config.get('deploy_mode') == 'container':
+            return
+
         experiment_input_path = os.getenv('EXPERIMENT_INPUT_PATH')
         if experiment_input_path is None:
             raise Exception("Must set the experiment_input_path")
@@ -392,7 +399,7 @@ class Pyflextrkr(Application):
         if self.config.get('deploy_mode') == 'container':
             demo = self.config.get('demo', 'mcs_tbpf')
             if demo == 'mcs_tbpf_multinode':
-                cmd = '/opt/pyflextrkr/run_demo_multinode.sh'
+                cmd = '/opt/run_demo_multinode.sh'
                 Exec(cmd, MpiExecInfo(
                     nprocs=self.config.get('nprocs', 1),
                     ppn=self.config.get('ppn', 1),
@@ -405,7 +412,7 @@ class Pyflextrkr(Application):
                     env=self.mod_env,
                 )).run()
             else:
-                cmd = '/opt/pyflextrkr/run_demo.sh'
+                cmd = '/opt/run_demo.sh'
                 Exec(cmd, LocalExecInfo(
                     container=self._container_engine,
                     container_image=self.deploy_image_name(),

@@ -6,7 +6,9 @@ name: montage_container_test
 install_manager: container
 
 container_engine: docker
-container_base: sci-hpc-base
+# ubuntu:24.04 matches Dockerfile.deploy's DEPLOY_BASE. sci-hpc-base was
+# a bespoke local image referenced by older examples but never committed.
+container_base: ubuntu:24.04
 
 pkgs:
   - pkg_type: builtin.montage

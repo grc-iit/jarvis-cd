@@ -39,7 +39,7 @@ class BiobbWfMdSetup(Application):
                 'name': 'pdb_file',
                 'msg': 'Path to input PDB file',
                 'type': str,
-                'default': '/opt/biobb_bench/1aki.pdb',
+                'default': '/opt/biobb-bench/1AKI.pdb',
             },
             {
                 'name': 'out',

@@ -13,6 +13,7 @@ COPY --from=builder /opt/ddmd-env              /opt/ddmd-env
 COPY --from=builder /opt/DeepDriveMD           /opt/DeepDriveMD
 COPY --from=builder /opt/ddmd-bench            /opt/ddmd-bench
 COPY --from=builder /opt/deepdrivemd.template.yaml /opt/deepdrivemd.template.yaml
+COPY --from=builder /opt/ddmd_smoke.py         /opt/ddmd_smoke.py
 COPY --from=builder /opt/run_ddmd.sh           /opt/run_ddmd.sh
 
 # SSH host keys (shared with builder so cluster nodes trust each other)

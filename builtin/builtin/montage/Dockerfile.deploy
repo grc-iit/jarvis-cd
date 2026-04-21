@@ -12,8 +12,7 @@ FROM ##BUILD_IMAGE## AS builder
 FROM ##DEPLOY_BASE##
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgomp1 \
-        openmpi-bin libopenmpi3 \
+        libgomp1 libgfortran5 \
         openssh-server openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
