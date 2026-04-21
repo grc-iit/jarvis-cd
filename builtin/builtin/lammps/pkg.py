@@ -76,6 +76,24 @@ class Lammps(Application):
                 'type': int,
                 'default': 1,
             },
+            {
+                'name': 'io_dump_interval',
+                'msg': 'If >0, auto-generate LJ input with dump every N steps',
+                'type': int,
+                'default': 0,
+            },
+            {
+                'name': 'io_lattice_size',
+                'msg': 'FCC lattice size per dim (4*N^3 atoms) for auto-generated IO input',
+                'type': int,
+                'default': 80,
+            },
+            {
+                'name': 'io_run_steps',
+                'msg': 'Total steps for auto-generated IO input',
+                'type': int,
+                'default': 5000,
+            },
         ]
 
     # ------------------------------------------------------------------
@@ -107,10 +125,13 @@ class Lammps(Application):
     def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
+        use_gpu = self.config.get('kokkos_gpu', True)
+        deploy_base = ('nvidia/cuda:12.6.0-runtime-ubuntu24.04'
+                       if use_gpu else 'ubuntu:24.04')
         suffix = getattr(self, '_build_suffix', '')
         content = self._read_dockerfile('Dockerfile.deploy', {
             'BUILD_IMAGE': self.build_image_name(),
-            'DEPLOY_BASE': 'nvidia/cuda:12.6.0-runtime-ubuntu24.04',
+            'DEPLOY_BASE': deploy_base,
         })
         return content, suffix
 
@@ -146,9 +167,38 @@ class Lammps(Application):
         container mode, MpiExecInfo with hostfile for default mode.
         """
         if self.config.get('deploy_mode') == 'container':
+            script_path = self.config.get('script')
+            if self.config.get('io_dump_interval', 0) > 0:
+                import os
+                n = self.config.get('io_lattice_size', 20)
+                steps = self.config.get('io_run_steps', 100)
+                interval = self.config['io_dump_interval']
+                out_dir = self.config.get('out', '/tmp/lammps_out')
+                script_path = os.path.join(
+                    str(self.shared_dir), 'generated_io_input.lmp')
+                with open(script_path, 'w') as f:
+                    f.write(
+                        f"shell mkdir -p {out_dir}\n"
+                        f"units lj\natom_style atomic\n"
+                        f"lattice fcc 0.8442\n"
+                        f"region box block 0 {n} 0 {n} 0 {n}\n"
+                        f"create_box 1 box\ncreate_atoms 1 box\n"
+                        f"mass 1 1.0\n"
+                        f"velocity all create 1.44 87287 loop geom\n"
+                        f"pair_style lj/cut 2.5\npair_coeff 1 1 1.0 1.0 2.5\n"
+                        f"neighbor 0.3 bin\n"
+                        f"neigh_modify every 10 delay 0 check no\n"
+                        f"fix 1 all nve\n"
+                        f"dump d1 all custom {interval} "
+                        f"{out_dir}/dump.*.lammpstrj "
+                        f"id type x y z vx vy vz\n"
+                        f"dump_modify d1 sort id\n"
+                        f"thermo {interval}\n"
+                        f"timestep 0.005\nrun {steps}\n"
+                    )
             cmd = ['/usr/local/bin/lmp']
-            if self.config.get('script'):
-                cmd.append(f"-in {self.config['script']}")
+            if script_path:
+                cmd.append(f"-in {script_path}")
             if self.config.get('kokkos_gpu'):
                 n_gpus = self.config.get('num_gpus', 1)
                 cmd += [f'-k on g {n_gpus}', '-sf kk', '-pk kokkos cuda/aware on']

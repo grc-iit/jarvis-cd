@@ -13,13 +13,14 @@ cd /tmp
 wget -q https://github.com/HDFGroup/hdf5/releases/download/##HDF5_VERSION##/hdf5-##HDF5_VERSION##.tar.gz
 tar xzf hdf5-##HDF5_VERSION##.tar.gz
 cd hdf5-##HDF5_VERSION##
-cmake -B build -S . \
+CC=mpicc CXX=mpicxx cmake -B build -S . \
     -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_SHARED_LIBS=ON -DBUILD_STATIC_LIBS=OFF \
-    -DHDF5_BUILD_CPP_LIB=ON -DHDF5_BUILD_TOOLS=ON \
+    -DHDF5_ENABLE_PARALLEL=##HDF5_PARALLEL## \
+    -DHDF5_BUILD_CPP_LIB=OFF -DHDF5_BUILD_TOOLS=ON \
     -DHDF5_ENABLE_Z_LIB_SUPPORT=ON -DHDF5_ENABLE_SZIP_SUPPORT=OFF \
     -DHDF5_BUILD_EXAMPLES=OFF -DHDF5_BUILD_FORTRAN=OFF -DBUILD_TESTING=OFF
-cmake --build build -j$(nproc)
+cmake --build build -j"${BUILD_JOBS:-4}"
 cmake --install build
 ldconfig
 cd /tmp && rm -rf hdf5-*

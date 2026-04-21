@@ -61,9 +61,9 @@ class TestPrepareContainerApptainer(unittest.TestCase):
         self.assertIn('myimg.sif', wrapped_cmd)
 
     def test_apptainer_wraps_with_shared_dir_path(self):
-        """When shared_dir is set, SIF path is resolved from shared_dir."""
+        """When shared_dir is set, SIF path is resolved from the parent of shared_dir."""
         exec_obj = self._make_apptainer_exec(
-            container_image='myimg', shared_dir='/shared')
+            container_image='myimg', shared_dir='/shared/mypkg')
         wrapped_cmd, _ = exec_obj._prepare_container('echo hello')
         self.assertIn('/shared/myimg.sif', wrapped_cmd)
 

@@ -1,0 +1,25 @@
+# Pipeline: VPIC single-node on Ares CPU
+# vpic pkg auto-detects CPU mode (ENABLE_KOKKOS_CUDA=OFF) when
+# base_image lacks 'sci-hpc'. Uses bundled Kokkos Serial backend.
+# No builtin.hdf5 dep — VPIC-Kokkos doesn't use HDF5.
+
+name: vpic_ares_single_node
+install_manager: container
+
+container_engine: docker
+container_base: ubuntu:24.04
+
+hostfile: /home/imuradli/hostfile_single.txt
+
+container_env:
+  OMPI_MCA_btl_tcp_if_include: eno1
+  OMPI_MCA_oob_tcp_if_include: eno1
+
+pkgs:
+  - pkg_type: builtin.vpic
+    pkg_name: vpic_ares_single
+    nprocs: 4
+    ppn: 4
+    base_image: ubuntu:24.04
+    sample_deck: harris
+    run_dir: /tmp/vpic_ares_run

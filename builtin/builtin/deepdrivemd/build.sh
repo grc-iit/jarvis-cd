@@ -11,6 +11,7 @@ export DEBIAN_FRONTEND=noninteractive
 
 apt-get update && apt-get install -y --no-install-recommends \
         python3-venv \
+        python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 python3 -m venv /opt/ddmd-env \

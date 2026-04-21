@@ -1,0 +1,24 @@
+name: ior_aurora_single_node                                                                                                                                                                                                                                          
+install_manager: container                                                                                                                                                                                                                                            
+                                                                                                                                                                                                                                                                      
+container_engine: apptainer                                                                                                                                                                                                                                           
+container_base: ubuntu:24.04                                                                                                                                                                                                                                          
+container_ssh_port: 2233                                                                                                                                                                                                                                              
+                                        
+hostfile: /home/isamuradli/hostfile_single.txt
+                                                                                                                                                                                                                                                                      
+pkgs:
+  - pkg_type: builtin.ior                                                                                                                                                                                                                                             
+    pkg_name: ior_aurora_single             
+    nprocs: 8                           
+    ppn: 8
+    block: 1G                                                                                                                                                                                                                                                         
+    xfer: 1M
+    api: posix                                                                                                                                                                                                                                                        
+    out: /home/isamuradli/ior_aurora_single_file
+    log: /tmp/ior_aurora_single_output.log  
+    write: true                         
+    read: true
+    fpp: false                                                                                                                                                                                                                                                        
+    reps: 3                                 
+    direct: true 

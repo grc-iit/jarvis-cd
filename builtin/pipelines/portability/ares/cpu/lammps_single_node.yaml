@@ -1,0 +1,27 @@
+# Pipeline: LAMMPS single-node on Ares CPU
+# Uses builtin.hdf5 to provide HDF5 at /usr/local, then builds+runs
+# LAMMPS with Kokkos Serial backend (kokkos_gpu:false) on ubuntu:24.04.
+
+name: lammps_ares_single_node
+install_manager: container
+
+container_engine: docker
+container_base: ubuntu:24.04
+
+hostfile: /home/imuradli/hostfile_single.txt
+
+container_env:
+  OMPI_MCA_btl_tcp_if_include: eno1
+  OMPI_MCA_oob_tcp_if_include: eno1
+
+pkgs:
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
+  - pkg_type: builtin.lammps
+    pkg_name: lammps_ares_single
+    nprocs: 4
+    ppn: 4
+    base_image: ubuntu:24.04
+    kokkos_gpu: false
+    script: /opt/lammps/bench/in.lj
+    out: /tmp/lammps_ares_out
