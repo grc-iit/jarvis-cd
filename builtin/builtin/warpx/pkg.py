@@ -184,9 +184,9 @@ class Warpx(Application):
             base = self.config.get('base_image', 'sci-hpc-base')
             use_gpu = self.config.get('use_gpu', False) or 'sci-hpc' in base
             # WarpX binary name embeds feature flags (MPI/CUDA/SP/PSP/OPMD/EB/QED).
-            # Use a shell-glob with the shared prefix — inner runs inside the
-            # container where the actual binary path is resolved by the shell.
-            warpx_bin = '$(ls /opt/warpx/build/bin/warpx.3d* | head -1)'
+            # Dockerfile.deploy creates a stable symlink at this path; mpiexec
+            # doesn't invoke a shell per rank, so a glob wouldn't expand here.
+            warpx_bin = '/opt/warpx/build/bin/warpx.3d'
             diag_args = [
                 'diagnostics.diags_names=diag1',
                 'diag1.diag_type=Full',

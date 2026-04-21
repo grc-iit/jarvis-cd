@@ -65,6 +65,16 @@ class Pipeline:
             return self.hostfile
         return self.jarvis.hostfile
 
+    def _hostfile_is_local_only(self, hf) -> bool:
+        """True when every host in the hostfile is this machine (or hostfile
+        is empty). Used to pick LocalExecInfo over PsshExecInfo for
+        single-node/local runs without requiring sshd on :22. Real cluster
+        hostfiles contain remote hostnames and return False."""
+        if not hf or len(hf) == 0:
+            return True
+        local_names = {'localhost', '127.0.0.1', socket.gethostname()}
+        return all(h in local_names for h in hf.hosts)
+
     def is_containerized(self) -> bool:
         """
         Check if this pipeline uses containers.
@@ -858,7 +868,7 @@ class Pipeline:
         # Load hostfile parameter (None means use global jarvis hostfile)
         hostfile_path = pipeline_config.get('hostfile')
         if hostfile_path:
-            self.hostfile = Hostfile(path=hostfile_path)
+            self.hostfile = Hostfile(path=os.path.expandvars(hostfile_path))
         else:
             self.hostfile = None
 
@@ -983,7 +993,7 @@ class Pipeline:
         # Load hostfile parameter (None means use global jarvis hostfile)
         hostfile_path = pipeline_def.get('hostfile')
         if hostfile_path:
-            self.hostfile = Hostfile(path=hostfile_path)
+            self.hostfile = Hostfile(path=os.path.expandvars(hostfile_path))
         else:
             self.hostfile = None
 
@@ -1528,10 +1538,15 @@ class Pipeline:
             tag_cmd = f"{build_engine} tag {per_pkg_deploy_images[0]} {deploy_image_name}"
             Exec(tag_cmd, LocalExecInfo()).run()
         else:
-            # Multiple packages — overlay files from all per-package images
+            # Multiple packages — overlay files from all per-package images.
+            # Also pull /usr/lib/x86_64-linux-gnu so apt-installed runtime
+            # shared libs (e.g. libgomp1 for LAMMPS OpenMP) follow their
+            # binaries into the merged image. All deploy bases derive from
+            # the same distro, so the overlay is a compatible superset.
             lines = [f"FROM {per_pkg_deploy_images[0]}"]
             for img in per_pkg_deploy_images[1:]:
                 lines.append(f"COPY --from={img} /usr/local /usr/local")
+                lines.append(f"COPY --from={img} /usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu")
                 lines.append(f"COPY --from={img} /opt /opt")
             lines.append("RUN ldconfig")
             lines.append('CMD ["/bin/bash"]')
@@ -1768,7 +1783,8 @@ class Pipeline:
         # Inject container environment variables into the compose service
         if self.container_env:
             service_config['environment'] = {
-                str(k): str(v) for k, v in self.container_env.items()
+                str(k): os.path.expandvars(str(v))
+                for k, v in self.container_env.items()
             }
 
         # Note: GPU configuration is not included by default
@@ -1846,8 +1862,8 @@ class Pipeline:
             )
 
             hostfile = self.get_hostfile()
-            if not hostfile or len(hostfile) == 0:
-                logger.warning("No hostfile found, deploying to localhost only")
+            if self._hostfile_is_local_only(hostfile):
+                logger.info("Hostfile is local-only, deploying to localhost directly")
                 exec_info = LocalExecInfo()
             else:
                 exec_info = PsshExecInfo(hostfile=hostfile)
@@ -1868,8 +1884,8 @@ class Pipeline:
                 up_cmd = f"docker compose -f {compose_path} up -d"
 
             hostfile = self.get_hostfile()
-            if not hostfile or len(hostfile) == 0:
-                logger.warning("No hostfile found, deploying to localhost only")
+            if self._hostfile_is_local_only(hostfile):
+                logger.info("Hostfile is local-only, deploying to localhost directly")
                 exec_info = LocalExecInfo()
             else:
                 logger.info("Deploying containers to all nodes in hostfile")
@@ -1997,7 +2013,7 @@ class Pipeline:
             stop_cmd = f"docker compose -f {compose_path} down"
 
         hostfile = self.get_hostfile()
-        if not hostfile or len(hostfile) == 0:
+        if self._hostfile_is_local_only(hostfile):
             exec_info = LocalExecInfo()
         else:
             exec_info = PsshExecInfo(hostfile=hostfile)
@@ -2039,7 +2055,7 @@ class Pipeline:
             kill_cmd = f"docker compose -f {compose_path} kill && docker compose -f {compose_path} down"
 
         hostfile = self.get_hostfile()
-        if not hostfile or len(hostfile) == 0:
+        if self._hostfile_is_local_only(hostfile):
             exec_info = LocalExecInfo()
         else:
             exec_info = PsshExecInfo(hostfile=hostfile)

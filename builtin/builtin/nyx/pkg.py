@@ -168,7 +168,7 @@ class Nyx(Application):
             inner = ' '.join([
                 'env',
                 'LD_LIBRARY_PATH=/.singularity.d/libs:/usr/local/cuda/lib64:/opt/hdf5/install/lib:/opt/nyx/install/lib',
-                '/usr/bin/nyx_HydroTests',
+                '/opt/Nyx/build/Exec/HydroTests/nyx_HydroTests',
                 inputs_file,
                 f'max_step={self.config["max_step"]}',
                 f'amr.n_cell={self.config["n_cell"]}',
