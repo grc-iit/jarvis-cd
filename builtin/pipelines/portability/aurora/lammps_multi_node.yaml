@@ -1,0 +1,60 @@
+# Pipeline: LAMMPS multi-node on Aurora (apptainer container, Kokkos SYCL build)
+# Purpose: Validate LAMMPS Kokkos/SYCL build+run inside Apptainer on
+#          multiple Aurora GPU nodes. Each node contributes 6 Intel
+#          Data Center GPU Max (PVC) tiles via SYCL/Level Zero JIT.
+#          Default is 2 nodes × 6 ranks = 12 MPI ranks (one rank per
+#          PVC tile). If you change the node count in qsub (-l select=N),
+#          set nprocs = N × ppn in lockstep.
+#
+# The SIF content is identical to the single-node pipeline; if you
+# already built nyx-aurora-style, you can hardlink the existing SIF
+# into this pipeline's shared_dir to skip rebuild (see README).
+#
+# Step 1 — build (login node, needs internet for docker pull on first run):
+#   source ~/jarvis-venv/bin/activate
+#   echo localhost > ~/hostfile_multi.txt
+#   jarvis ppl load yaml \
+#     ~/jarvis-cd/builtin/pipelines/portability/aurora/lammps_multi_node.yaml
+#
+# Step 2 — run (compute allocation, 2 nodes × 6 PVCs):
+#   qsub -l select=2 -l walltime=01:00:00 -l filesystems=flare \
+#        -A gpu_hack -q debug -I
+#   # inside the PBS shell:
+#   source ~/jarvis-venv/bin/activate
+#   cat $PBS_NODEFILE | awk -F. '{print $1}' > ~/hostfile_multi.txt
+#   cp ~/hostfile_multi.txt /lus/flare/projects/<project>/<user>/jarvis_shared/lammps_aurora_multi_node/hostfile
+#   jarvis hostfile set ~/hostfile_multi.txt
+#   jarvis ppl run
+
+name: lammps_aurora_multi_node
+install_manager: container
+
+container_engine: apptainer
+container_base: intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04
+container_ssh_port: 2233
+container_gpu: intel
+
+hostfile: /home/isamuradli/hostfile_multi.txt
+
+pkgs:
+  - pkg_type: builtin.lammps
+    pkg_name: lammps_aurora
+    # 2 nodes × 6 PVC tiles/node = 12 ranks (1 rank per tile).
+    nprocs: 12
+    ppn: 6
+    gpu_backend: sycl
+    num_gpus: 1
+    base_image: intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04
+    # GPU-aware MPI is OFF for the same reason as single-node: the
+    # container's Ubuntu-apt OpenMPI 4 has no Level-Zero transport.
+    # At multi-node scale this costs more (~58 % Comm with host
+    # staging) because halos now cross network boundaries too. Flip
+    # to `true` once you've plugged in a GPU-aware MPI stack.
+    gpu_aware_mpi: false
+    # Bigger LJ workload to exercise inter-node halo/neighbor exchange:
+    # lattice=80 (4 * 80^3 = 2.05M atoms) × 2000 steps, dumping every 200.
+    # `out` is omitted — pkg.py defaults to shared_dir on Lustre so
+    # collective trajectory writes succeed across nodes.
+    io_dump_interval: 200
+    io_lattice_size: 80
+    io_run_steps: 2000

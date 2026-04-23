@@ -1,0 +1,55 @@
+# Pipeline: LAMMPS single-node on Aurora (apptainer container, Kokkos SYCL build)
+# Purpose: Validate LAMMPS Kokkos/SYCL build+run inside Apptainer on one
+#          Aurora GPU node. Uses Intel Data Center GPU Max (PVC) via
+#          Level Zero JIT compilation. container_gpu: intel forwards PBS
+#          ZE_AFFINITY_MASK / ZEX_NUMBER_OF_CCS into the container.
+#
+# Step 1 — build (login node, needs internet for docker pull on first run):
+#   source ~/jarvis-venv/bin/activate
+#   echo localhost > ~/hostfile_single.txt    # placeholder
+#   jarvis ppl load yaml \
+#     ~/jarvis-cd/builtin/pipelines/portability/aurora/lammps_single_node.yaml
+#
+# Step 2 — run (compute allocation, 1 node):
+#   qsub -l select=1 -l walltime=00:30:00 -l filesystems=flare \
+#        -A gpu_hack -q debug -I
+#   # inside the PBS shell:
+#   source ~/jarvis-venv/bin/activate
+#   echo "$HOSTNAME" > ~/hostfile_single.txt
+#   echo "$HOSTNAME" > /lus/flare/projects/<project>/<user>/jarvis_shared/lammps_aurora_single_node/hostfile
+#   jarvis hostfile set ~/hostfile_single.txt
+#   jarvis ppl run
+
+name: lammps_aurora_single_node
+install_manager: container
+
+container_engine: apptainer
+container_base: intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04
+container_ssh_port: 2233
+container_gpu: intel
+
+hostfile: /home/isamuradli/hostfile_single.txt
+
+pkgs:
+  - pkg_type: builtin.lammps
+    pkg_name: lammps_aurora
+    # 4 ranks × 1 PVC tile each — one-per-tile mapping is the canonical
+    # Aurora single-node config for Kokkos (each rank owns its own GPU).
+    nprocs: 4
+    ppn: 4
+    gpu_backend: sycl
+    num_gpus: 1
+    base_image: intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04
+    # GPU-aware MPI is OFF: the container's Ubuntu-apt OpenMPI 4 has
+    # no Level-Zero transport, so passing GPU pointers straight to
+    # MPI_Send segfaults inside libze_intel_gpu. With `false` LAMMPS
+    # stages buffers through host memory — correct but adds `Comm`
+    # overhead. Flip to `true` only when you've swapped in a GPU-aware
+    # MPI stack (e.g. Aurora's native MPICH with libfabric + LevelZero).
+    gpu_aware_mpi: false
+    # Auto-generate an LJ input with lattice=40 (256k atoms) running
+    # 1000 steps, dumping every 100 steps. Quick validation workload.
+    # `out` is omitted — pkg.py defaults to shared_dir on Lustre.
+    io_dump_interval: 100
+    io_lattice_size: 40
+    io_run_steps: 1000
