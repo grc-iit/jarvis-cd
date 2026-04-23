@@ -27,9 +27,20 @@ mkdir -p /var/run/sshd /root/.ssh \
 mkdir -p /opt/ior && curl -sL https://github.com/hpc/ior/releases/download/3.3.0/ior-3.3.0.tar.gz \
     | tar xz --strip-components=1 -C /opt/ior
 
-# Configure and build IOR
+# Patch IOR 3.3.0 HDF5 version check so it compiles with HDF5 2.x
+# The original condition (H5_VERS_MAJOR > 0 && H5_VERS_MINOR > 5) fails for
+# HDF5 2.1.x because minor=1 is not >5; fix to handle major>=2 correctly.
+sed -i 's/#if (H5_VERS_MAJOR > 0 && H5_VERS_MINOR > 5)/#if (H5_VERS_MAJOR > 1 || H5_VERS_MINOR > 5)/' \
+    /opt/ior/src/aiori-HDF5.c
+
+# Configure and build IOR (with HDF5 if available)
+HDF5_FLAG=""
+if [ -f /usr/local/include/hdf5.h ]; then
+    HDF5_FLAG="--with-hdf5"
+fi
 cd /opt/ior \
-    && ./configure --prefix=/opt/ior/install \
+    && ./configure --prefix=/opt/ior/install $HDF5_FLAG \
+        LDFLAGS="-L/usr/local/lib" CPPFLAGS="-I/usr/local/include" \
     && make -j$(nproc) \
     && make install
 

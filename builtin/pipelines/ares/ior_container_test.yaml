@@ -16,6 +16,8 @@ container_env:
   OMPI_MCA_oob_tcp_if_include: eno1
 
 pkgs:
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
   - pkg_type: builtin.ior
     pkg_name: ior_ares
     nprocs: 3

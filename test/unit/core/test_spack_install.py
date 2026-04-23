@@ -20,8 +20,13 @@ from jarvis_cd.core.pipeline import Pipeline
 
 def initialize_jarvis_for_test(config_dir, private_dir, shared_dir):
     jarvis = Jarvis.get_instance()
+    saved_config = None
+    if jarvis.config_file.exists():
+        import yaml
+        with open(jarvis.config_file, 'r') as f:
+            saved_config = yaml.safe_load(f)
     jarvis.initialize(config_dir, private_dir, shared_dir, force=False)
-    return jarvis
+    return jarvis, saved_config
 
 
 class TestInstallManagerBase(unittest.TestCase):
@@ -39,11 +44,18 @@ class TestInstallManagerBase(unittest.TestCase):
         os.environ['JARVIS_PRIVATE'] = self.private_dir
         os.environ['JARVIS_SHARED'] = self.shared_dir
 
-        self.jarvis = initialize_jarvis_for_test(
+        self.jarvis, self._saved_config = initialize_jarvis_for_test(
             self.config_dir, self.private_dir, self.shared_dir
         )
 
     def tearDown(self):
+        if self._saved_config:
+            import yaml
+            jarvis = Jarvis.get_instance()
+            jarvis.save_config(self._saved_config)
+            jarvis.config_dir = self._saved_config.get('config_dir', jarvis.config_dir)
+            jarvis.private_dir = self._saved_config.get('private_dir', jarvis.private_dir)
+            jarvis.shared_dir = self._saved_config.get('shared_dir', jarvis.shared_dir)
         if os.path.exists(self.test_dir):
             shutil.rmtree(self.test_dir)
 

@@ -9,6 +9,8 @@ container_engine: apptainer
 container_base: sci-hpc-base
 
 pkgs:
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
   - pkg_type: builtin.gray_scott
     pkg_name: gray_scott_apptainer
     nprocs: 4

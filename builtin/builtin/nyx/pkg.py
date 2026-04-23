@@ -75,6 +75,12 @@ class Nyx(Application):
                 'type': str,
                 'default': 'sci-hpc-base',
             },
+            {
+                'name': 'use_gpu',
+                'msg': 'Build with CUDA/GPU backend (Nyx_GPU_BACKEND=CUDA)',
+                'type': bool,
+                'default': False,
+            },
         ]
 
     # ------------------------------------------------------------------
@@ -85,7 +91,7 @@ class Nyx(Application):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = self.config.get('base_image', 'sci-hpc-base')
-        use_gpu = 'sci-hpc' in base
+        use_gpu = self.config.get('use_gpu', False) or 'sci-hpc' in base
         cuda_arch = self.config.get('cuda_arch', 80)
         if use_gpu:
             gpu_flags = (
@@ -93,7 +99,7 @@ class Nyx(Application):
                 f'"-DAMReX_CUDA_ARCH={cuda_arch}" '
                 f'-DCMAKE_CUDA_HOST_COMPILER="$(which g++)" '
             )
-            hdf5_flags = '-DAMReX_HDF5=YES -DHDF5_ROOT=/opt/hdf5 '
+            hdf5_flags = '-DAMReX_HDF5=YES -DHDF5_ROOT=/usr/local '
             suffix = f'cuda-{cuda_arch}'
         else:
             gpu_flags = '-DNyx_GPU_BACKEND=NONE '
@@ -109,10 +115,14 @@ class Nyx(Application):
     def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
+        base = self.config.get('base_image', 'sci-hpc-base')
+        use_gpu = 'sci-hpc' in base
+        deploy_base = ('nvidia/cuda:12.6.0-runtime-ubuntu24.04'
+                       if use_gpu else 'ubuntu:24.04')
         suffix = getattr(self, '_build_suffix', '')
         content = self._read_dockerfile('Dockerfile.deploy', {
             'BUILD_IMAGE': self.build_image_name(),
-            'DEPLOY_BASE': 'nvidia/cuda:12.6.0-runtime-ubuntu24.04',
+            'DEPLOY_BASE': deploy_base,
         })
         return content, suffix
 
@@ -151,16 +161,20 @@ class Nyx(Application):
             Mkdir(outdir).run()
 
             nprocs = self.config.get('nprocs', 4)
+            inputs_file = self.config.get(
+                'inputs_file',
+                '/opt/Nyx/Exec/HydroTests/inputs.regtest.sedov',
+            )
             inner = ' '.join([
-                '/usr/bin/nyx_HydroTests',
+                'env',
+                'LD_LIBRARY_PATH=/.singularity.d/libs:/usr/local/cuda/lib64:/opt/hdf5/install/lib:/opt/nyx/install/lib',
+                '/opt/Nyx/build/Exec/HydroTests/nyx_HydroTests',
+                inputs_file,
                 f'max_step={self.config["max_step"]}',
                 f'amr.n_cell={self.config["n_cell"]}',
                 f'amr.max_level={self.config["max_level"]}',
                 f'amr.plot_file={outdir}/plt',
                 f'amr.plot_int={self.config["plot_int"]}',
-                'geometry.prob_lo=0 0 0',
-                'geometry.prob_extent=1 1 1',
-                'geometry.is_periodic=1 1 1',
             ])
             Exec(inner, MpiExecInfo(
                 nprocs=nprocs,
@@ -172,18 +186,21 @@ class Nyx(Application):
                 shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
                 env=self.mod_env,
+                gpu=self.config.get('use_gpu', False),
             )).run()
         else:
+            inputs_file = self.config.get(
+                'inputs_file',
+                '/opt/Nyx/Exec/HydroTests/inputs.regtest.sedov',
+            )
             cmd = [
                 'nyx_HydroTests',
+                inputs_file,
                 f'max_step={self.config["max_step"]}',
                 f'amr.n_cell={self.config["n_cell"]}',
                 f'amr.max_level={self.config["max_level"]}',
                 f'amr.plot_file={self.config["out"]}/plt',
                 f'amr.plot_int={self.config["plot_int"]}',
-                'geometry.prob_lo=0 0 0',
-                'geometry.prob_extent=1 1 1',
-                'geometry.is_periodic=1 1 1',
             ]
             Exec(' '.join(cmd),
                  MpiExecInfo(nprocs=self.config['nprocs'],

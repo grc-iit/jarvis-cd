@@ -84,6 +84,12 @@ class Warpx(Application):
                 'type': str,
                 'default': 'sci-hpc-base',
             },
+            {
+                'name': 'use_gpu',
+                'msg': 'Build with CUDA/GPU backend (WarpX_COMPUTE=CUDA)',
+                'type': bool,
+                'default': False,
+            },
         ]
 
     # ------------------------------------------------------------------
@@ -93,20 +99,33 @@ class Warpx(Application):
     def _build_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
+        base = self.config.get('base_image', 'sci-hpc-base')
+        use_gpu = self.config.get('use_gpu', False) or 'sci-hpc' in base
         cuda_arch = self.config.get('cuda_arch', 80)
-        content = self._read_build_script('build.sh', {
-            'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
-            'CUDA_ARCH': cuda_arch,
-        })
-        return content, f'3d-cuda-{cuda_arch}'
+        if use_gpu:
+            content = self._read_build_script('build.sh', {
+                'BASE_IMAGE': base,
+                'CUDA_ARCH': cuda_arch,
+            })
+            return content, f'3d-cuda-{cuda_arch}'
+        else:
+            content = self._read_build_script('cpu/build.sh', {
+                'BASE_IMAGE': base,
+            })
+            return content, '3d-cpu'
 
     def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
+        base = self.config.get('base_image', 'sci-hpc-base')
+        use_gpu = self.config.get('use_gpu', False) or 'sci-hpc' in base
+        deploy_file = 'Dockerfile.deploy' if use_gpu else 'cpu/Dockerfile.deploy'
+        deploy_base = ('nvidia/cuda:12.6.0-runtime-ubuntu24.04'
+                       if use_gpu else 'ubuntu:24.04')
         suffix = getattr(self, '_build_suffix', '')
-        content = self._read_dockerfile('Dockerfile.deploy', {
+        content = self._read_dockerfile(deploy_file, {
             'BUILD_IMAGE': self.build_image_name(),
-            'DEPLOY_BASE': 'nvidia/cuda:12.6.0-runtime-ubuntu24.04',
+            'DEPLOY_BASE': deploy_base,
         })
         return content, suffix
 
@@ -162,21 +181,35 @@ class Warpx(Application):
                     f'/opt/warpx/Examples/Physics_applications/{example}/inputs_base_3d'
                 )
 
+            base = self.config.get('base_image', 'sci-hpc-base')
+            use_gpu = self.config.get('use_gpu', False) or 'sci-hpc' in base
+            # WarpX binary name embeds feature flags (MPI/CUDA/SP/PSP/OPMD/EB/QED).
+            # Dockerfile.deploy creates a stable symlink at this path; mpiexec
+            # doesn't invoke a shell per rank, so a glob wouldn't expand here.
+            warpx_bin = '/opt/warpx/build/bin/warpx.3d'
+            diag_args = [
+                'diagnostics.diags_names=diag1',
+                'diag1.diag_type=Full',
+                f'diag1.file_prefix={outdir}/diag1',
+                f'diag1.intervals={self.config["plot_int"]}',
+            ]
             inner = ' '.join([
-                '/usr/bin/warpx',
+                warpx_bin,
                 inputs_arg,
                 f'max_step={self.config["max_step"]}',
                 f'amr.n_cell={self.config["n_cell"]}',
-                f'amr.plot_file={outdir}/plt',
-                f'amr.plot_int={self.config["plot_int"]}',
+                *diag_args,
             ])
             Exec(inner, MpiExecInfo(
                 nprocs=nprocs,
+                ppn=self.config.get('ppn'),
+                hostfile=self.hostfile,
+                port=self.ssh_port,
                 container=self._container_engine,
                 container_image=self.deploy_image_name(),
                 shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
-                gpu=True,
+                gpu=use_gpu,
                 env=self.mod_env,
             )).run()
         else:

@@ -48,7 +48,9 @@ class Exec(CoreExec):
         # For apptainer, resolve the SIF path from shared_dir (accessible on all nodes)
         if c == 'apptainer' and self.exec_info.shared_dir and self.exec_info.container_image:
             from pathlib import Path
-            img = str(Path(self.exec_info.shared_dir) / f'{self.exec_info.container_image}.sif')
+            # The .sif lives in the pipeline shared dir (parent of the
+            # per-package shared dir).
+            img = str(Path(self.exec_info.shared_dir).parent / f'{self.exec_info.container_image}.sif')
         else:
             img = self.exec_info.container_image or ''
 
@@ -149,20 +151,42 @@ class Exec(CoreExec):
         is_mpi = self.exec_info.exec_type in _MPI_TYPES
 
         if is_mpi and is_container:
-            # Build the full mpirun command first (without running), then wrap
-            # with the container so the container executes the entire mpirun
-            # invocation rather than just the application binary.
-            # Detect MPI using the original exec_info (with container set)
-            # so MpiVersion can probe inside the container, then build
-            # the command with container='none' (the wrapping happens later).
-            mpi_type = self._detect_mpi(self.exec_info)
-            mpi_executor = self._create_mpi_executor_with_type(
-                self.cmd, self.exec_info.mod(container='none', dry_run=True),
-                mpi_type)
-            mpi_cmd = mpi_executor.cmd
-            wrapped_cmd, local_info = self._prepare_container(mpi_cmd)
-            wrapped_cmd, local_info = self._resolve_exec_info(
-                wrapped_cmd, local_info.mod(exec_type=ExecType.LOCAL))
+            is_apptainer = self.exec_info.container == 'apptainer'
+            if is_apptainer:
+                # Apptainer (HPC): mpirun runs INSIDE the container and
+                # uses SSH to reach apptainer instances on remote nodes.
+                # Clear env so mpirun -x flags don't override the
+                # container's PATH/LD_LIBRARY_PATH with host values.
+                mpi_type = self._detect_mpi(self.exec_info)
+                mpi_executor = self._create_mpi_executor_with_type(
+                    self.cmd,
+                    self.exec_info.mod(container='none', dry_run=True,
+                                       env={}),
+                    mpi_type)
+                mpi_cmd = mpi_executor.cmd
+                # Force SSH launcher (not Slurm) so mpirun reaches the
+                # sshd running inside apptainer instances on remote nodes.
+                # Export PATH so remote orted finds application binaries
+                # (the remote SSH login shell may override the container PATH).
+                if '--mca plm rsh' not in mpi_cmd:
+                    mpi_cmd = mpi_cmd.replace(
+                        'mpiexec ', 'mpiexec --mca plm rsh ', 1)
+                mpi_cmd = mpi_cmd.replace(
+                    'mpiexec ', 'mpiexec -x PATH -x LD_LIBRARY_PATH ', 1)
+                wrapped_cmd, local_info = self._prepare_container(mpi_cmd)
+                wrapped_cmd, local_info = self._resolve_exec_info(
+                    wrapped_cmd, local_info.mod(exec_type=ExecType.LOCAL))
+            else:
+                # Docker/Podman: mpirun runs INSIDE the already-running
+                # container.  Build the full mpirun command, then wrap it.
+                mpi_type = self._detect_mpi(self.exec_info)
+                mpi_executor = self._create_mpi_executor_with_type(
+                    self.cmd, self.exec_info.mod(container='none', dry_run=True),
+                    mpi_type)
+                mpi_cmd = mpi_executor.cmd
+                wrapped_cmd, local_info = self._prepare_container(mpi_cmd)
+                wrapped_cmd, local_info = self._resolve_exec_info(
+                    wrapped_cmd, local_info.mod(exec_type=ExecType.LOCAL))
         elif is_mpi:
             self._delegate = self._create_mpi_executor(self.cmd, self.exec_info)
         else:

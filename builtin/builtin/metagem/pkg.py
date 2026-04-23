@@ -99,13 +99,14 @@ class Metagem(Application):
         """
         Launch metaGEM.
 
-        Branches on deploy_mode: uses LocalExecInfo with container engine for
-        container mode, LocalExecInfo for default mode.
+        run_metagem.sh takes the working directory as its first positional
+        argument and reads CORES from the environment. We pass self.config['out']
+        so Snakemake's root/scratch land under the pipeline's output directory.
         """
-        if self.config.get('deploy_mode') == 'container':
-            Mkdir(self.config['out']).run()
+        self.mod_env['CORES'] = str(self.config.get('cores', 4))
+        cmd = f'/opt/run_metagem.sh {self.config["out"]}'
 
-            cmd = '/opt/run_metagem.sh'
+        if self.config.get('deploy_mode') == 'container':
             Exec(cmd, LocalExecInfo(
                 container=self._container_engine,
                 container_image=self.deploy_image_name(),
@@ -114,7 +115,6 @@ class Metagem(Application):
                 env=self.mod_env,
             )).run()
         else:
-            cmd = '/opt/run_metagem.sh'
             Exec(cmd, LocalExecInfo(env=self.mod_env)).run()
 
     def stop(self):

@@ -65,6 +65,12 @@ class Vpic(Application):
                 'type': str,
                 'default': 'sci-hpc-base',
             },
+            {
+                'name': 'use_gpu',
+                'msg': 'Build with Kokkos CUDA backend',
+                'type': bool,
+                'default': False,
+            },
         ]
 
     # ------------------------------------------------------------------
@@ -75,7 +81,7 @@ class Vpic(Application):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = self.config.get('base_image', 'sci-hpc-base')
-        use_gpu = 'sci-hpc' in base
+        use_gpu = self.config.get('use_gpu', False) or 'sci-hpc' in base
         cuda_arch = self.config.get('cuda_arch', 80)
         if use_gpu:
             cmake_flags = (
@@ -84,13 +90,14 @@ class Vpic(Application):
                 f'"-DKokkos_ARCH_AMPERE{cuda_arch}=ON" '
                 f'-DCMAKE_CXX_COMPILER="$(pwd)/kokkos/bin/nvcc_wrapper"'
             )
+            # Shell-form post-build (runs in apptainer %post and Dockerfile RUN via
+            # explicit shell invocation of build.sh — Dockerfile-style RUN/ENV
+            # directives are not valid here).
             post_build = (
                 '# Patch deck-compiler to link against CUDA stub library\n'
-                'RUN sed -i \\\n'
-                "    's|-lkokkossimd|-lkokkossimd -L/usr/local/cuda/lib64/stubs -lcuda|' \\\n"
-                '    /opt/vpic-kokkos/build/bin/vpic\n'
-                '\n'
-                'ENV NVCC_WRAPPER_DEFAULT_COMPILER=g++\n'
+                "sed -i 's|-lkokkossimd|-lkokkossimd -L/usr/local/cuda/lib64/stubs -lcuda|' "
+                '/opt/vpic-kokkos/build/bin/vpic\n'
+                'export NVCC_WRAPPER_DEFAULT_COMPILER=g++\n'
             )
             suffix = f'kokkos-cuda-{cuda_arch}'
         else:
@@ -111,7 +118,7 @@ class Vpic(Application):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = self.config.get('base_image', 'sci-hpc-base')
-        use_gpu = 'sci-hpc' in base
+        use_gpu = self.config.get('use_gpu', False) or 'sci-hpc' in base
         nvcc_env = 'ENV NVCC_WRAPPER_DEFAULT_COMPILER=g++\n' if use_gpu else ''
         # VPIC needs nvcc at runtime for deck compilation
         deploy_base = 'nvidia/cuda:12.6.0-devel-ubuntu24.04' if use_gpu else 'ubuntu:24.04'
@@ -197,6 +204,7 @@ class Vpic(Application):
                 private_dir=self.private_dir,
                 env=self.mod_env,
                 cwd=run_dir,
+                gpu=self.config.get('use_gpu', False),
             )).run()
         else:
             if self.config.get('deck'):

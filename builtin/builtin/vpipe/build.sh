@@ -22,7 +22,9 @@ conda create -p /opt/vpipe-env -c conda-forge -c bioconda -y \
 git clone --depth 1 --branch v3.0.0 \
         https://github.com/cbg-ethz/V-pipe.git /opt/V-pipe
 
-# NOTE: run_vpipe.sh must be copied separately (was a COPY directive)
+# Pipeline driver (staged in CWD from pkg_dir by jarvis).
+cp run_vpipe.sh /opt/run_vpipe.sh
+chmod +x /opt/run_vpipe.sh
 
 export PATH=/opt/vpipe-env/bin:${PATH}
 # Isolate from any user-site packages (bare-metal benchmark hit this bug).

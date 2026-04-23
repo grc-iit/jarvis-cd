@@ -9,8 +9,11 @@ export DEBIAN_FRONTEND=noninteractive
 # ADIOS2 provides the data transport layer (SST/BP) from the Gray-Scott
 # simulation; Fides reads ADIOS2 data into ParaView's VTK pipeline; Catalyst
 # enables in-situ analysis without writing intermediate files.
+#
+# ADIOS2 is provided by the adios2 Library package (installed under
+# /usr/local). Fides and ParaView's VTK-IOADIOS2 module both require the
+# Python bindings, so the pipeline YAML must set use_python=true.
 
-ADIOS2_VERSION="${ADIOS2_VERSION:-v2.10.2}"
 CATALYST_VERSION="${CATALYST_VERSION:-v2.0.0}"
 PARAVIEW_VERSION="${PARAVIEW_VERSION:-v5.13.1}"
 
@@ -25,32 +28,8 @@ apt-get update && apt-get install -y --no-install-recommends \
         libxt-dev libxext-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# ---- ADIOS2 v2.10.2 (MPI + HDF5 + Python) --------------------------------------
-# H5_USE_114_API: base image ships HDF5 2.0.0; ADIOS2 targets the 1.14 API.
-# Default file engine is BP5 (since ADIOS2 v2.9); BP4, SST, and other engines
-# remain available.
-git clone --branch ${ADIOS2_VERSION} --depth 1 \
-        https://github.com/ornladios/ADIOS2.git /tmp/adios2-src \
-    && cmake -S /tmp/adios2-src -B /tmp/adios2-build -G Ninja \
-        -DCMAKE_INSTALL_PREFIX=/opt/adios2 \
-        -DCMAKE_INSTALL_LIBDIR=lib \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_C_FLAGS="-DH5_USE_114_API" \
-        -DCMAKE_CXX_FLAGS="-DH5_USE_114_API" \
-        -DADIOS2_USE_MPI=ON \
-        -DADIOS2_USE_HDF5=ON \
-        -DHDF5_ROOT=/opt/hdf5 \
-        -DADIOS2_USE_Python=ON \
-        -DADIOS2_USE_Fortran=OFF \
-        -DADIOS2_BUILD_EXAMPLES=OFF \
-        -DBUILD_TESTING=OFF \
-    && cmake --build /tmp/adios2-build -j$(nproc) \
-    && cmake --install /tmp/adios2-build \
-    && rm -rf /tmp/adios2-src /tmp/adios2-build
-
-export ADIOS2_DIR=/opt/adios2
-export PATH=/opt/adios2/bin:${PATH}
-export LD_LIBRARY_PATH=/opt/adios2/lib:${LD_LIBRARY_PATH}
+export ADIOS2_DIR=/usr/local
+export PATH=/usr/local/bin:${PATH}
 
 # ---- Catalyst v2.0.0 (in-situ analysis API) ------------------------------------
 # Standalone Catalyst library that simulations link against.  ParaView provides
@@ -89,7 +68,7 @@ git clone --branch ${PARAVIEW_VERSION} --depth 1 \
         -DVTK_MODULE_ENABLE_VTK_IOADIOS2=YES \
         -DPARAVIEW_ENABLE_FIDES=ON \
         -DPARAVIEW_ENABLE_CATALYST=ON \
-        -DADIOS2_DIR=/opt/adios2 \
+        -DADIOS2_DIR=/usr/local \
         -Dcatalyst_DIR=/opt/catalyst \
         -DPARAVIEW_BUILD_TESTING=OFF \
         -DPARAVIEW_BUILD_EXAMPLES=OFF \
@@ -100,4 +79,4 @@ git clone --branch ${PARAVIEW_VERSION} --depth 1 \
 
 export PATH=/opt/paraview/bin:${PATH}
 export LD_LIBRARY_PATH=/opt/paraview/lib:${LD_LIBRARY_PATH}
-export PYTHONPATH=/opt/paraview/lib/python3.12/site-packages:/opt/adios2/local/lib/python3.12/dist-packages:${PYTHONPATH}
+export PYTHONPATH=/opt/paraview/lib/python3.12/site-packages:/usr/local/lib/python3.12/dist-packages:${PYTHONPATH}

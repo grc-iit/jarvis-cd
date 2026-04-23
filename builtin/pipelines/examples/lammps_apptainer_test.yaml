@@ -10,6 +10,8 @@ container_engine: apptainer
 container_base: sci-hpc-base
 
 pkgs:
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
   - pkg_type: builtin.lammps
     pkg_name: lammps_apptainer
     nprocs: 4

@@ -38,70 +38,9 @@ conda clean -afy
 mkdir -p /opt/biobb-bench \
     && curl -L -o /opt/biobb-bench/1AKI.pdb https://files.rcsb.org/download/1AKI.pdb
 
-# run_md_setup.py and run_batch.sh were COPY directives in the pre-refactor
-# Dockerfile.build — never committed to the repo. The single-build-container
-# refactor dropped host-side COPY directives, so we materialize them here.
-# Dockerfile.deploy then COPY --from=builder pulls them into the deploy image.
-cat >/opt/run_md_setup.py <<'PYEOF'
-#!/usr/bin/env python3
-"""Minimal smoke test for the biobb_wf_md_setup container.
-
-Verifies GROMACS + biobb packages landed correctly and that the bundled
-1AKI PDB parses through biobb_io. A full MD setup requires force-field
-config beyond what the single-build-container refactor carried over.
-"""
-import argparse
-import os
-import shutil
-import subprocess
-import sys
-
-
-def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--pdb", default="/opt/biobb-bench/1AKI.pdb")
-    ap.add_argument("--out", default="/tmp/biobb_out")
-    args = ap.parse_args()
-
-    os.makedirs(args.out, exist_ok=True)
-    print("=== biobb_wf_md_setup container smoke test ===")
-    print(f"host={os.uname().nodename} pid={os.getpid()}")
-
-    print("-- gromacs --")
-    subprocess.run(["gmx", "--version"], check=True)
-
-    print("-- biobb imports --")
-    import biobb_common, biobb_model, biobb_gromacs, biobb_io  # noqa: F401
-    print("biobb_common, biobb_model, biobb_gromacs, biobb_io OK")
-
-    print(f"-- input PDB: {args.pdb} --")
-    if not os.path.isfile(args.pdb):
-        print(f"ERROR: PDB not found at {args.pdb}", file=sys.stderr)
-        return 1
-    with open(args.pdb) as fh:
-        atoms = sum(1 for line in fh if line.startswith(("ATOM", "HETATM")))
-    print(f"parsed {atoms} ATOM/HETATM records")
-
-    shutil.copy(args.pdb, os.path.join(args.out, os.path.basename(args.pdb)))
-    print(f"-- copied PDB into {args.out} --")
-
-    print("=== biobb_wf_md_setup stack smoke test OK ===")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
-PYEOF
-chmod +x /opt/run_md_setup.py
-
-cat >/opt/run_batch.sh <<'SHEOF'
-#!/bin/bash
-set -e
-# Batch-mode wrapper around run_md_setup.py for multi-node jobs. Each
-# node processes the same 1AKI bundle; stub retained so older launchers
-# that invoke this script still work.
-exec /opt/biobb-env/bin/python3 /opt/run_md_setup.py "$@"
-SHEOF
-chmod +x /opt/run_batch.sh
+# Pipeline drivers (staged in CWD from pkg_dir by jarvis).
+cp run_md_setup.py /opt/run_md_setup.py
+cp run_batch.sh    /opt/run_batch.sh
+chmod +x /opt/run_md_setup.py /opt/run_batch.sh
 
 export PATH=/opt/biobb-env/bin:${PATH}

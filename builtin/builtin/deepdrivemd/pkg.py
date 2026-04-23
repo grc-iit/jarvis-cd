@@ -109,28 +109,22 @@ class Deepdrivemd(Application):
         Branches on deploy_mode: uses LocalExecInfo with container engine for
         container mode, LocalExecInfo for default mode.
         """
-        if self.config.get('deploy_mode') == 'container':
-            Mkdir(self.config['out']).run()
+        out = self.config['out']
+        iterations = self.config['iterations']
+        nprocs = self.config['nprocs']
+        cmd = f'/opt/run_ddmd.sh {out} {iterations} {nprocs}'
 
-            cmd = '/opt/run_ddmd.sh'
+        if self.config.get('deploy_mode') == 'container':
+            Mkdir(out).run()
             Exec(cmd, LocalExecInfo(
                 container=self._container_engine,
                 container_image=self.deploy_image_name(),
                 shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
-                env={
-                    **self.mod_env,
-                    'DDMD_ITERATIONS': str(self.config['iterations']),
-                    'DDMD_OUT': self.config['out'],
-                },
+                env=self.mod_env,
             )).run()
         else:
-            cmd = '/opt/run_ddmd.sh'
-            Exec(cmd, LocalExecInfo(env={
-                **self.mod_env,
-                'DDMD_ITERATIONS': str(self.config['iterations']),
-                'DDMD_OUT': self.config['out'],
-            })).run()
+            Exec(cmd, LocalExecInfo(env=self.mod_env)).run()
 
     def stop(self):
         """Stop DeepDriveMD (no-op -- runs to completion)."""
