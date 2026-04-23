@@ -105,17 +105,23 @@ class BiobbWfMdSetup(Application):
         """
         Launch biobb_wf_md_setup.
 
-        Branches on deploy_mode: uses LocalExecInfo with container engine for
-        container mode, LocalExecInfo for default mode.
+        Container mode delegates to /opt/run_batch.sh, which sets PATH,
+        runs the MD setup pipeline in a /tmp scratch dir (GROMACS/biobb
+        use atomic write-then-rename, which wrp_cte_fuse does not
+        support), and stages the finished outputs into the configured
+        output directory via plain cp — which exercises the CTE adapter
+        when ``out`` is on the FUSE mountpoint.
+
+        run_md_setup.py takes POSITIONAL args (pdb, workdir), not
+        --pdb/--out flags; the wrapper script handles that and lets a
+        pdb_file config point at either a single PDB or a directory of
+        PDBs.
         """
         if self.config.get('deploy_mode') == 'container':
-            Mkdir(self.config['out']).run()
-
-            cmd = ' '.join([
-                'python3', '/opt/run_md_setup.py',
-                f'--pdb {self.config["pdb_file"]}',
-                f'--out {self.config["out"]}',
-            ])
+            cmd = (
+                f"/opt/run_batch.sh '{self.config['pdb_file']}' "
+                f"'{self.config['out']}'"
+            )
             Exec(cmd, LocalExecInfo(
                 container=self._container_engine,
                 container_image=self.deploy_image_name(),
@@ -126,8 +132,8 @@ class BiobbWfMdSetup(Application):
         else:
             cmd = ' '.join([
                 'python3', '/opt/run_md_setup.py',
-                f'--pdb {self.config["pdb_file"]}',
-                f'--out {self.config["out"]}',
+                self.config['pdb_file'],
+                self.config['out'],
             ])
             Exec(cmd, LocalExecInfo(env=self.mod_env)).run()
 

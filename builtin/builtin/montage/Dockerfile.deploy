@@ -21,6 +21,14 @@ COPY --from=builder /opt/Montage/bin       /opt/Montage/bin
 COPY --from=builder /opt/montage-bench     /opt/montage-bench
 COPY --from=builder /opt/run_mosaic.sh     /opt/run_mosaic.sh
 
+# Expose Montage binaries via /usr/local/bin. The pipeline-level merge in
+# jarvis (pipeline.py) builds the runtime image as FROM <first-pkg> + COPY
+# --from=<others>, which inherits ENV only from the first image — so the
+# ENV PATH below gets dropped when montage isn't first. /usr/local/bin is
+# always on the default PATH and is one of the dirs jarvis COPYs between
+# per-pkg images, so the symlinks keep the binaries reachable post-merge.
+RUN ln -sf /opt/Montage/bin/* /usr/local/bin/
+
 # SSH host keys (shared with builder so cluster nodes trust each other)
 # Generate SSH keys so all containers from this image share the same identity
 RUN mkdir -p /var/run/sshd /root/.ssh && ssh-keygen -A && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys && printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /root/.ssh/config && chmod 600 /root/.ssh/config

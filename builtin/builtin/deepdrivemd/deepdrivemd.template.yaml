@@ -12,9 +12,9 @@ experiment_directory: __EXPERIMENT_DIR__
 node_local_path: null
 molecular_dynamics_stage:
     pre_exec: []
-    executable: /bin/echo
+    executable: /opt/ddmd_io_task.sh
     arguments:
-    - "MD_TASK_PLACEHOLDER"
+    - "md"
     cpu_reqs:
         processes: 1
         process_type: null
@@ -30,9 +30,9 @@ molecular_dynamics_stage:
         initial_pdb_dir: /opt/ddmd-bench
 aggregation_stage:
     pre_exec: []
-    executable: /bin/echo
+    executable: /opt/ddmd_io_task.sh
     arguments:
-    - "AGGREGATION_TASK_PLACEHOLDER"
+    - "agg"
     cpu_reqs:
         processes: 1
         process_type: null
@@ -47,9 +47,9 @@ aggregation_stage:
     task_config: {}
 machine_learning_stage:
     pre_exec: []
-    executable: /bin/echo
+    executable: /opt/ddmd_io_task.sh
     arguments:
-    - "ML_TASK_PLACEHOLDER"
+    - "ml"
     cpu_reqs:
         processes: 1
         process_type: null
@@ -64,9 +64,9 @@ machine_learning_stage:
     task_config: {}
 model_selection_stage:
     pre_exec: []
-    executable: /bin/echo
+    executable: /opt/ddmd_io_task.sh
     arguments:
-    - "MODEL_SELECTION_TASK_PLACEHOLDER"
+    - "ms"
     cpu_reqs:
         processes: 1
         process_type: null
@@ -80,9 +80,9 @@ model_selection_stage:
     task_config: {}
 agent_stage:
     pre_exec: []
-    executable: /bin/echo
+    executable: /opt/ddmd_io_task.sh
     arguments:
-    - "AGENT_TASK_PLACEHOLDER"
+    - "agent"
     cpu_reqs:
         processes: 1
         process_type: null

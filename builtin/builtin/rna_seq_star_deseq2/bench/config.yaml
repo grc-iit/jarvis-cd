@@ -32,6 +32,6 @@ diffexp:
   model: ~condition
 
 params:
-  star:
-    index: ""
-    align: ""
+  cutadapt-pe: ""
+  cutadapt-se: ""
+  star: ""
