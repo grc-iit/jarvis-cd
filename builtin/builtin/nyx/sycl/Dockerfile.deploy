@@ -1,0 +1,37 @@
+FROM ##BUILD_IMAGE## AS builder
+FROM ##DEPLOY_BASE##
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openmpi-bin libopenmpi3 \
+        openssh-server openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pre-built Nyx HydroTests binary
+COPY --from=builder /opt/Nyx/build/Exec/HydroTests/nyx_HydroTests \
+                    /opt/Nyx/build/Exec/HydroTests/nyx_HydroTests
+
+# Input files and sample decks needed by the test suite
+COPY --from=builder /opt/Nyx/Exec/HydroTests /opt/Nyx/Exec/HydroTests
+
+# Recreate symlink lost in multi-stage copy
+RUN ln -sf /opt/Nyx/build/Exec/HydroTests/nyx_HydroTests /usr/bin/nyx_HydroTests
+
+# Device-selector env vars (written by build.sh into /etc/environment;
+# Dockerfile layers don't source /etc/environment, so set them explicitly).
+ENV ONEAPI_DEVICE_SELECTOR=level_zero:gpu
+ENV SYCL_DEVICE_FILTER=level_zero:gpu
+
+# Generate SSH keys so all containers from this image share the same identity
+RUN mkdir -p /var/run/sshd /root/.ssh \
+    && ssh-keygen -A \
+    && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 \
+    && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys \
+    && chmod 700 /root/.ssh \
+    && chmod 600 /root/.ssh/authorized_keys \
+    && printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /root/.ssh/config \
+    && chmod 600 /root/.ssh/config
+
+ENV PATH=/opt/Nyx/build/Exec/HydroTests:${PATH}
+
+EXPOSE 22
+CMD ["/bin/bash"]

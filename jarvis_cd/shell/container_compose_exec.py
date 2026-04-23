@@ -375,8 +375,25 @@ class ApptainerExec(CoreExec):
     def get_cmd(self) -> str:
         """Get the apptainer exec command string"""
         flags = []
-        if self.gpu:
+        if self.gpu is True or self.gpu == 'nvidia':
             flags.append('--nv')
+        elif self.gpu == 'intel':
+            # Intel GPU passthrough on Aurora-class nodes.
+            # Do NOT bind /dev/dri or /sys/class/drm explicitly —
+            # apptainer auto-mounts both with the correct permissions
+            # for the user namespace. An explicit bind replaces the
+            # namespace-aware /dev mount with a host bind-mount that
+            # the mapped-to-root user cannot open(O_RDWR), producing
+            # EACCES on /dev/dri/renderD*. See apptainer/apptainer#2963.
+            # We only forward PBS-allocated GPU affinity env vars so
+            # jobs see only their assigned PVC tiles.
+            import os as _os
+            for _k in ('ZE_AFFINITY_MASK', 'ZEX_NUMBER_OF_CCS',
+                       'ZE_FLAT_DEVICE_HIERARCHY',
+                       'ONEAPI_DEVICE_SELECTOR'):
+                _v = _os.environ.get(_k)
+                if _v:
+                    flags.append(f'--env {_k}={_v}')
         for bind in self.bind_paths:
             flags.append(f'--bind {bind}')
         flags_str = ' '.join(flags)

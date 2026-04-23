@@ -1,0 +1,65 @@
+# Pipeline: Nyx multi-node on Aurora (apptainer container, AMReX SYCL build)
+# Purpose: Validate Nyx HydroTests AMReX/SYCL build+run inside Apptainer on
+#          multiple Aurora GPU nodes. Each node contributes 6 Intel Data
+#          Center GPU Max (PVC) tiles via SYCL/Level Zero JIT. This YAML
+#          assumes 2 nodes × 6 ranks = 12 MPI ranks (one rank per PVC tile).
+#          Adjust select=N in qsub and nprocs below in lockstep — nprocs
+#          must equal N × ppn.
+#
+# The SIF is shared across pipelines on /lus/flare. If nyx_aurora_single_node
+# was already built, the multi-node pipeline reuses its build recipe; the
+# load-yaml step will just generate a new pipeline config pointing at the
+# same sycl/build.sh. A fresh SIF is still produced per pipeline name under
+# /lus/flare/.../jarvis_shared/nyx_aurora_multi_node/.
+#
+# Step 1 — build (login node, needs internet for docker pull on first run):
+#   jarvis ppl load yaml builtin/pipelines/portability/aurora/nyx_multi_node.yaml
+#
+# Step 2 — run (compute allocation, 2 nodes × 6 PVCs):
+#   qsub -A <project> -q debug -l select=2:ncpus=208:ngpus=6 \
+#        -l walltime=01:00:00 -l filesystems=flare -I
+#   # inside the PBS shell:
+#   cat $PBS_NODEFILE | awk -F. '{print $1}' > ~/hostfile_multi.txt
+#   jarvis hostfile set ~/hostfile_multi.txt
+#   jarvis ppl cd nyx_aurora_multi_node
+#   jarvis ppl run
+#
+# Notes on multi-node env propagation:
+#   - jarvis starts an apptainer instance with sshd on port 2233 on every
+#     node in the hostfile; the head-node mpiexec reaches remote ranks via
+#     SSH to port 2233. sshd inside the container carries SYCL env through
+#     /etc/ssh/sshd_config.d/99-sycl.conf SetEnv entries baked by
+#     sycl/build.sh.
+#   - OpenMPI's -x flag forwards PATH, LD_LIBRARY_PATH, ONEAPI_DEVICE_SELECTOR,
+#     ZE_* and OMPI_MCA_btl_vader_single_copy_mechanism to every remote rank
+#     (exec_factory.py multi-node branch).
+
+name: nyx_aurora_multi_node
+install_manager: container
+
+container_engine: apptainer
+container_base: intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04
+container_ssh_port: 2233
+container_gpu: intel
+
+hostfile: /home/isamuradli/hostfile_multi.txt
+
+pkgs:
+  - pkg_type: builtin.nyx
+    pkg_name: nyx_aurora
+    # 2 nodes × 6 PVC tiles/node = 12 ranks (1 rank per tile).
+    # If you request a different node count in qsub (-l select=N), set
+    # nprocs = N * ppn.
+    nprocs: 12
+    ppn: 6
+    gpu_backend: sycl
+    base_image: intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04
+    # Larger domain to exercise multi-node halo exchange meaningfully.
+    # 256^3 over 12 ranks → ~1.4M cells per rank, plotfile every 25 steps.
+    max_step: 100
+    n_cell: "256 256 256"
+    max_level: 0
+    # Omit `out` — pkg.py defaults to shared_dir on Lustre, which is
+    # visible to every node. Hard-coding /tmp here would break the
+    # collective plotfile write (/tmp is per-node-container tmpfs).
+    plot_int: 25

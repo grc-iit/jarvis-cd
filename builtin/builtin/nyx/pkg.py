@@ -12,8 +12,14 @@ class Nyx(Application):
     Merged Nyx class supporting both default (bare-metal) and container deployment.
 
     Set deploy_mode='container' to build and run Nyx inside a Docker/Podman/Apptainer
-    container with CUDA+MPI+HDF5.  Set deploy_mode='default' to use a
-    system-installed nyx_HydroTests binary via MPI.
+    container.  Set deploy_mode='default' to use a system-installed nyx_HydroTests
+    binary via MPI.
+
+    gpu_backend controls the AMReX GPU backend:
+      'cuda' — NVIDIA CUDA (Nyx_GPU_BACKEND=CUDA)
+      'sycl' — Intel GPU via SYCL/Level Zero (Nyx_GPU_BACKEND=SYCL, icpx)
+      'none' — CPU only (Nyx_GPU_BACKEND=NONE)
+    The legacy use_gpu=True flag is equivalent to gpu_backend='cuda'.
     """
 
     def _init(self):
@@ -53,9 +59,9 @@ class Nyx(Application):
             },
             {
                 'name': 'out',
-                'msg': 'Output directory for plot files',
+                'msg': 'Output directory for plot files (default: <shared_dir>/nyx_out, which is on Lustre and visible to all nodes; set explicitly to /tmp/... only for single-node node-local scratch)',
                 'type': str,
-                'default': '/tmp/nyx_out',
+                'default': None,
             },
             {
                 'name': 'plot_int',
@@ -77,9 +83,15 @@ class Nyx(Application):
             },
             {
                 'name': 'use_gpu',
-                'msg': 'Build with CUDA/GPU backend (Nyx_GPU_BACKEND=CUDA)',
+                'msg': 'Build with CUDA/GPU backend (legacy; prefer gpu_backend)',
                 'type': bool,
                 'default': False,
+            },
+            {
+                'name': 'gpu_backend',
+                'msg': 'GPU backend: cuda, sycl, or none (overrides use_gpu when set). Leave unset to fall back to use_gpu.',
+                'type': str,
+                'default': None,
             },
         ]
 
@@ -87,13 +99,22 @@ class Nyx(Application):
     # Container Dockerfile generators
     # ------------------------------------------------------------------
 
+    def _resolve_gpu_backend(self):
+        """Return the canonical gpu_backend string: 'cuda', 'sycl', or 'none'."""
+        explicit = self.config.get('gpu_backend')
+        if explicit:
+            return explicit
+        use_gpu = self.config.get('use_gpu', False) or 'sci-hpc' in self.config.get('base_image', '')
+        return 'cuda' if use_gpu else 'none'
+
     def _build_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = self.config.get('base_image', 'sci-hpc-base')
-        use_gpu = self.config.get('use_gpu', False) or 'sci-hpc' in base
+        gpu_backend = self._resolve_gpu_backend()
         cuda_arch = self.config.get('cuda_arch', 80)
-        if use_gpu:
+
+        if gpu_backend == 'cuda':
             gpu_flags = (
                 f'-DNyx_GPU_BACKEND=CUDA '
                 f'"-DAMReX_CUDA_ARCH={cuda_arch}" '
@@ -101,34 +122,69 @@ class Nyx(Application):
             )
             hdf5_flags = '-DAMReX_HDF5=YES -DHDF5_ROOT=/usr/local '
             suffix = f'cuda-{cuda_arch}'
+            content = self._read_build_script('build.sh', {
+                'BASE_IMAGE': base,
+                'HDF5_FLAGS': hdf5_flags,
+                'GPU_FLAGS': gpu_flags,
+            })
+        elif gpu_backend == 'sycl':
+            content = self._read_build_script('sycl/build.sh', {
+                'BASE_IMAGE': base,
+            })
+            suffix = 'sycl-jit'
         else:
             gpu_flags = '-DNyx_GPU_BACKEND=NONE '
             hdf5_flags = ''
             suffix = 'cpu'
-        content = self._read_build_script('build.sh', {
-            'BASE_IMAGE': base,
-            'HDF5_FLAGS': hdf5_flags,
-            'GPU_FLAGS': gpu_flags,
-        })
+            content = self._read_build_script('build.sh', {
+                'BASE_IMAGE': base,
+                'HDF5_FLAGS': hdf5_flags,
+                'GPU_FLAGS': gpu_flags,
+            })
+
         return content, suffix
 
     def _build_deploy_phase(self):
         if self.config.get('deploy_mode') != 'container':
             return None
-        base = self.config.get('base_image', 'sci-hpc-base')
-        use_gpu = 'sci-hpc' in base
-        deploy_base = ('nvidia/cuda:12.6.0-runtime-ubuntu24.04'
-                       if use_gpu else 'ubuntu:24.04')
+        gpu_backend = self._resolve_gpu_backend()
         suffix = getattr(self, '_build_suffix', '')
-        content = self._read_dockerfile('Dockerfile.deploy', {
-            'BUILD_IMAGE': self.build_image_name(),
-            'DEPLOY_BASE': deploy_base,
-        })
+
+        if gpu_backend == 'cuda':
+            deploy_base = 'nvidia/cuda:12.6.0-runtime-ubuntu24.04'
+            content = self._read_dockerfile('Dockerfile.deploy', {
+                'BUILD_IMAGE': self.build_image_name(),
+                'DEPLOY_BASE': deploy_base,
+            })
+        elif gpu_backend == 'sycl':
+            # Full hpckit image at runtime: Level Zero runtime + icpx needed
+            # to JIT-compile SYCL kernels on first launch.
+            deploy_base = 'intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04'
+            content = self._read_dockerfile('sycl/Dockerfile.deploy', {
+                'BUILD_IMAGE': self.build_image_name(),
+                'DEPLOY_BASE': deploy_base,
+            })
+        else:
+            deploy_base = 'ubuntu:24.04'
+            content = self._read_dockerfile('Dockerfile.deploy', {
+                'BUILD_IMAGE': self.build_image_name(),
+                'DEPLOY_BASE': deploy_base,
+            })
+
         return content, suffix
 
     # ------------------------------------------------------------------
     # Configuration
     # ------------------------------------------------------------------
+
+    def _gpu_passthrough(self):
+        """Return the gpu value for MpiExecInfo: 'intel', True (nvidia), or False."""
+        backend = self._resolve_gpu_backend()
+        if backend == 'sycl':
+            return 'intel'
+        if backend == 'cuda':
+            return True
+        return False
 
     def _configure(self, **kwargs):
         """
@@ -157,7 +213,14 @@ class Nyx(Application):
         container mode, MpiExecInfo with hostfile for default mode.
         """
         if self.config.get('deploy_mode') == 'container':
-            outdir = self.config.get('out', '/tmp/nyx_out')
+            # Default plotfile dir: the pipeline's shared_dir (on Lustre,
+            # auto-bound into the container by jarvis). /tmp inside an
+            # apptainer instance is a per-node writable-tmpfs, so a
+            # multi-node collective plotfile write fails on remote ranks
+            # with "Couldn't open file" — their /tmp doesn't have the
+            # directory rank 0 created. Shared storage avoids this.
+            # Users can override via `out:` in the YAML.
+            outdir = self.config.get('out') or f'{self.shared_dir}/nyx_out'
             Mkdir(outdir).run()
 
             nprocs = self.config.get('nprocs', 4)
@@ -166,12 +229,10 @@ class Nyx(Application):
                 '/opt/Nyx/Exec/HydroTests/inputs.regtest.sedov',
             )
             inner = ' '.join([
-                'env',
-                'LD_LIBRARY_PATH=/.singularity.d/libs:/usr/local/cuda/lib64:/opt/hdf5/install/lib:/opt/nyx/install/lib',
                 '/opt/Nyx/build/Exec/HydroTests/nyx_HydroTests',
                 inputs_file,
                 f'max_step={self.config["max_step"]}',
-                f'amr.n_cell={self.config["n_cell"]}',
+                f'"amr.n_cell={self.config["n_cell"]}"',
                 f'amr.max_level={self.config["max_level"]}',
                 f'amr.plot_file={outdir}/plt',
                 f'amr.plot_int={self.config["plot_int"]}',
@@ -186,7 +247,7 @@ class Nyx(Application):
                 shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
                 env=self.mod_env,
-                gpu=self.config.get('use_gpu', False),
+                gpu=self._gpu_passthrough(),
             )).run()
         else:
             inputs_file = self.config.get(
@@ -197,7 +258,7 @@ class Nyx(Application):
                 'nyx_HydroTests',
                 inputs_file,
                 f'max_step={self.config["max_step"]}',
-                f'amr.n_cell={self.config["n_cell"]}',
+                f'"amr.n_cell={self.config["n_cell"]}"',
                 f'amr.max_level={self.config["max_level"]}',
                 f'amr.plot_file={self.config["out"]}/plt',
                 f'amr.plot_int={self.config["plot_int"]}',

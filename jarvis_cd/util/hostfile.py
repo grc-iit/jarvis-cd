@@ -152,13 +152,25 @@ class Hostfile:
         
     def is_local(self) -> bool:
         """
-        Whether this file contains only 'localhost'
+        Whether this file contains only a name referring to this machine.
+
+        Returns True for empty hostfiles, single-entry hostfiles whose
+        entry is 'localhost', 127.0.0.1, or the current host's own name
+        (socket.gethostname(), its short form, or an FQDN with matching
+        short form). The last case matters on HPC clusters where a
+        jarvis pipeline's hostfile is set to the compute node's own
+        hostname — logically single-node, but not literally 'localhost'.
+        Without this, _resolve_exec_info would promote LOCAL → SSH and
+        ssh-to-self the wrapped container command, causing subtle env
+        differences vs a direct local exec (most visible: SYCL / Level
+        Zero on Intel PVC failing with "no GPU available" despite a
+        direct apptainer exec seeing all devices).
 
         :return: True or false
         """
         if len(self) == 0:
             return True
-            
+
         if len(self.hosts) == 1:
             if self.hosts[0] == 'localhost':
                 return True
@@ -167,14 +179,26 @@ class Hostfile:
                     return True
             except socket.gaierror:
                 pass
-                
+            # Match current hostname (short or FQDN); compare on the
+            # short form so 'x4218c0s3b0n0' and
+            # 'x4218c0s3b0n0.hsn.cm.aurora.alcf.anl.gov' both resolve
+            # to local for a machine whose short hostname is the same.
+            try:
+                local_hostname = socket.gethostname()
+                local_short = local_hostname.split('.', 1)[0]
+                entry_short = self.hosts[0].split('.', 1)[0]
+                if entry_short == local_short:
+                    return True
+            except Exception:
+                pass
+
         if len(self.hosts_ip) == 1:
             try:
                 if self.hosts_ip[0] == socket.gethostbyname('localhost'):
                     return True
             except socket.gaierror:
                 pass
-                
+
         return False
         
     def save(self, path: str) -> 'Hostfile':

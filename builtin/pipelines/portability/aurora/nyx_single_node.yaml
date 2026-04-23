@@ -1,0 +1,46 @@
+# Pipeline: Nyx single-node on Aurora (apptainer container, AMReX SYCL build)
+# Purpose: Validate Nyx HydroTests AMReX/SYCL build+run inside Apptainer on
+#          one Aurora GPU node. Uses Intel Data Center GPU Max (PVC) via
+#          SYCL/Level Zero JIT compilation. container_gpu: intel passes
+#          container_gpu: intel forwards PBS ZE_AFFINITY_MASK / ZEX_NUMBER_OF_CCS
+#          into the container; /dev/dri and /sys/class/drm are auto-mounted by
+#          apptainer (explicit binds break user-namespace device access).
+#
+# Step 1 — build (login or compute node):
+#   jarvis ppl load yaml builtin/pipelines/portability/aurora/nyx_single_node.yaml
+#   Note: first-time build pulls intel/oneapi-hpckit from Docker Hub, so run
+#   this step from a node with internet access (login node). Subsequent loads
+#   detect the existing SIF on Lustre and skip the build automatically, so
+#   this command is safe to re-run from a compute node as well.
+#
+# Step 2 — run (compute node, GPU required):
+#   qsub -A <project> -q workq -l select=1:ncpus=208:ngpus=6 \
+#        -l walltime=02:00:00 -I
+#   echo "$HOSTNAME" > ~/hostfile_single.txt
+#   jarvis hostfile set ~/hostfile_single.txt
+#   jarvis ppl run
+
+name: nyx_aurora_single_node
+install_manager: container
+
+container_engine: apptainer
+container_base: intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04
+container_ssh_port: 2233
+container_gpu: intel
+
+hostfile: /home/isamuradli/hostfile_single.txt
+
+pkgs:
+  - pkg_type: builtin.nyx
+    pkg_name: nyx_aurora
+    nprocs: 4
+    ppn: 4
+    gpu_backend: sycl
+    base_image: intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04
+    max_step: 100
+    n_cell: "128 128 128"
+    max_level: 0
+    # `out` omitted — pkg.py defaults to shared_dir on Lustre. Safe
+    # for both single and multi-node; set explicitly to /tmp only if
+    # you want node-local scratch and know you're single-node.
+    plot_int: 10

@@ -1853,10 +1853,48 @@ class Pipeline:
             instance_name = self.name
             ssh_port = self.container_ssh_port
 
-            nv_flag = '--nv ' if getattr(self, 'container_gpu', False) else ''
+            _cg = getattr(self, 'container_gpu', False)
+            if _cg is True or _cg == 'nvidia':
+                nv_flag = '--nv '
+            elif _cg == 'intel':
+                # Intel GPU passthrough on Aurora-class nodes.
+                #
+                # IMPORTANT: do NOT add `--bind /dev/dri` or
+                # `--bind /sys/class/drm`. Apptainer already auto-mounts
+                # /dev (including /dev/dri) and /sys by default, with the
+                # correct permissions for an unprivileged user namespace.
+                # Explicitly binding /dev/dri replaces apptainer's
+                # namespace-aware /dev mount with a host bind-mount that
+                # the mapped-to-root user cannot open(O_RDWR), producing
+                # EACCES on /dev/dri/renderD* even though the host nodes
+                # are mode 666. See apptainer/apptainer#2963.
+                #
+                # With default auto-mounts, the container's Level Zero
+                # runtime (installed in sycl/build.sh) enumerates all
+                # 6 PVC tiles of an Aurora node correctly.
+                #
+                # We only forward PBS-allocated GPU affinity env vars so
+                # SYCL sees only the tiles assigned to this job:
+                #   ZE_AFFINITY_MASK     — which PVC tiles are visible
+                #   ZEX_NUMBER_OF_CCS    — compute command streamer split
+                import os as _os
+                ze_envs = []
+                for _k in ('ZE_AFFINITY_MASK', 'ZEX_NUMBER_OF_CCS',
+                           'ZE_FLAT_DEVICE_HIERARCHY',
+                           'ONEAPI_DEVICE_SELECTOR'):
+                    _v = _os.environ.get(_k)
+                    if _v:
+                        ze_envs.append(f'--env {_k}={_v}')
+                nv_flag = (' '.join(ze_envs) + ' ') if ze_envs else ''
+            else:
+                nv_flag = ''
+            # Bind the pipeline shared dir so Lustre paths like
+            # /lus/flare/... are visible inside the container (apptainer
+            # only auto-binds /home, /tmp, /proc, /sys, /dev by default).
+            bind_flag = f'--bind {shared_dir} '
             start_cmd = (
-                f"apptainer instance start {nv_flag}--writable-tmpfs {sif_path} {instance_name}"
-                f" && apptainer exec {nv_flag}instance://{instance_name}"
+                f"apptainer instance start {nv_flag}{bind_flag}--writable-tmpfs {sif_path} {instance_name}"
+                f" && apptainer exec {nv_flag}{bind_flag}instance://{instance_name}"
                 f" /usr/sbin/sshd -p {ssh_port}"
                 f" -o StrictModes=no -o UsePAM=no"
             )
@@ -1867,6 +1905,24 @@ class Pipeline:
                 exec_info = LocalExecInfo()
             else:
                 exec_info = PsshExecInfo(hostfile=hostfile)
+
+            # Pre-create pipeline's private_dir on every host. Per-package
+            # `apptainer exec` invocations (built by exec_factory) auto-bind
+            # the package's private_dir into the container. Apptainer's
+            # bind-mount requires the source path to exist on the executing
+            # host. private_dir lives under /tmp/jarvis_private (machine-
+            # local) and is created only on the deployer node by pkg.py's
+            # _setup_directories, so remote hosts would otherwise fail with
+            # "mount source ... doesn't exist". Also pre-create per-package
+            # private subdirs for each package in the pipeline.
+            private_dir = self.jarvis.get_pipeline_private_dir(self.name)
+            mkdir_paths = [str(private_dir)]
+            for _pkg_def in self.packages:
+                _pkg_id = _pkg_def.get('pkg_id') or _pkg_def.get('pkg_name') or \
+                          _pkg_def['pkg_type'].split('.')[-1]
+                mkdir_paths.append(str(private_dir / _pkg_id))
+            mkdir_cmd = 'mkdir -p ' + ' '.join(f'"{p}"' for p in mkdir_paths)
+            Exec(mkdir_cmd, exec_info).run()
 
             Exec(start_cmd, exec_info).run()
             logger.success("Apptainer instances started (SSH ready)")
