@@ -8,12 +8,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-server openssh-client \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
+# NOTE: rabbitmq-server is NOT installed here. Jarvis's pipeline-merge
+# step (pipeline.py::_build_pipeline_container) only copies /opt,
+# /usr/local, and /usr/lib/x86_64-linux-gnu from per-package deploy
+# images into the merged pipeline image — apt packages in /usr/sbin,
+# /etc, /usr/lib/rabbitmq, and /usr/lib/erlang would be dropped. We
+# install rabbitmq-server at runtime in run_ddmd.sh instead (the merged
+# container has network_mode: host and keeps apt usable).
 
 COPY --from=builder /opt/ddmd-env              /opt/ddmd-env
 COPY --from=builder /opt/DeepDriveMD           /opt/DeepDriveMD
 COPY --from=builder /opt/ddmd-bench            /opt/ddmd-bench
 COPY --from=builder /opt/deepdrivemd.template.yaml /opt/deepdrivemd.template.yaml
 COPY --from=builder /opt/run_ddmd.sh           /opt/run_ddmd.sh
+COPY --from=builder /opt/ddmd_io_task.sh       /opt/ddmd_io_task.sh
 
 # SSH host keys (shared with builder so cluster nodes trust each other)
 # Generate SSH keys so all containers from this image share the same identity

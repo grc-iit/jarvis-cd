@@ -32,7 +32,7 @@ cd /opt/PyFLEXTRKR
 
 # --- 1. Seed: download + template config via upstream harness (serial). ---
 echo "=== seed (serial) to download + template config ==="
-python tests/run_demo_tests.py --demos "$DEMO" --data-root "$DATA_ROOT" -n 1
+/opt/pyflextrkr-env/bin/python3 tests/run_demo_tests.py --demos "$DEMO" --data-root "$DATA_ROOT" -n 1
 
 DEMO_DIR="$DATA_ROOT/mcs_tbpf/idealized/test4"
 CONFIG=$(find "$DEMO_DIR" -maxdepth 2 -name 'config_mcs_idealized.yml' | head -1)
@@ -52,12 +52,12 @@ rm -rf "$DEMO_DIR/stats" "$DEMO_DIR/tracking" "$DEMO_DIR/mcstracking" \
 
 # --- 4. mpirun across the host list. ---
 export HDF5_USE_FILE_LOCKING=FALSE
-echo "=== mpirun -np $NP -host $HOSTS python run_mcs_tbpf_mpi.py ==="
+echo "=== mpirun -np $NP -host $HOSTS python3 run_mcs_tbpf_mpi.py ==="
 mpirun -np "$NP" -host "$HOSTS" \
     --allow-run-as-root \
     -x HDF5_USE_FILE_LOCKING=FALSE \
     -x PATH -x LD_LIBRARY_PATH \
-    python /opt/run_mcs_tbpf_mpi.py "$CONFIG"
+    /opt/pyflextrkr-env/bin/python3 /opt/run_mcs_tbpf_mpi.py "$CONFIG"
 
 # --- 5. Assert the MPI pass produced stats again. ---
 STATS_DIR="$DEMO_DIR/stats"

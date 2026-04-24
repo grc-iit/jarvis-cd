@@ -13,7 +13,7 @@ shift 2 || true
 mkdir -p "$DATA_ROOT"
 cd /opt/PyFLEXTRKR
 
-python tests/run_demo_tests.py \
+/opt/pyflextrkr-env/bin/python3 tests/run_demo_tests.py \
     --demos "$DEMO" \
     --data-root "$DATA_ROOT" \
     -n 1 \

@@ -10,6 +10,8 @@ export DEBIAN_FRONTEND=noninteractive
 # Mirrors awesome-scienctific-applications/deepdrivemd/Dockerfile.
 
 apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git \
+        build-essential pkg-config \
         python3-venv \
         python3-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -19,7 +21,7 @@ python3 -m venv /opt/ddmd-env \
 
 # Pinned versions mirror the bare-metal Ares recipe: pydantic v1 (DDMD's
 # schema is v1-only), relaxed h5py and PyYAML constraints (repo pins do
-# not build on Python 3.10).
+# not build on Python 3.10+).
 /opt/ddmd-env/bin/pip install --no-cache-dir \
         'pydantic==1.10.26' \
         'PyYAML==6.0.3' \
@@ -37,7 +39,7 @@ git clone --depth 1 \
 cp deepdrivemd-selfcfg.patch /opt/DeepDriveMD/deepdrivemd-selfcfg.patch
 cd /opt/DeepDriveMD \
     && git apply deepdrivemd-selfcfg.patch \
-    && /opt/ddmd-env/bin/pip install --no-cache-dir -e .
+    && /opt/ddmd-env/bin/pip install --no-cache-dir --no-deps -e .
 cd -
 
 # Tiny benchmark input: 1FME (36-residue test structure) in sys1/
@@ -48,6 +50,7 @@ mkdir -p /opt/ddmd-bench/sys1 \
 
 cp deepdrivemd.template.yaml /opt/deepdrivemd.template.yaml
 cp run_ddmd.sh               /opt/run_ddmd.sh
-chmod +x /opt/run_ddmd.sh
+cp ddmd_io_task.sh           /opt/ddmd_io_task.sh
+chmod +x /opt/run_ddmd.sh /opt/ddmd_io_task.sh
 
 export PATH=/opt/ddmd-env/bin:${PATH}

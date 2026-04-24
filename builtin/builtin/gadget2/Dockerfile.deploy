@@ -1,0 +1,34 @@
+FROM ##BUILD_IMAGE## AS builder
+FROM ##DEPLOY_BASE##
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+# Runtime deps: mpirun, GSL + HDF5 (dev names used because the runtime
+# sibling package names are Ubuntu-version-specific, and apt pulls the
+# correct .so transitively). openssh for pssh/mpi fan-out.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openmpi-bin libopenmpi-dev \
+        libgsl-dev libhdf5-dev libhdf5-mpi-dev \
+        openssh-server openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# FFTW2 was installed to /usr/local in the builder stage.
+COPY --from=builder /usr/local /usr/local
+# Gadget2 source tree + built binary at /opt/gadget2/build/bin/Gadget2.
+COPY --from=builder /opt/gadget2 /opt/gadget2
+
+RUN mkdir -p /var/run/sshd /root/.ssh \
+    && ssh-keygen -A \
+    && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 \
+    && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys \
+    && chmod 700 /root/.ssh \
+    && chmod 600 /root/.ssh/authorized_keys \
+    && printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /root/.ssh/config \
+    && chmod 600 /root/.ssh/config \
+    && ldconfig
+
+ENV GADGET2_PATH=/opt/gadget2
+ENV PATH=/opt/gadget2/build/bin:$PATH
+
+EXPOSE 22
+CMD ["/bin/bash"]

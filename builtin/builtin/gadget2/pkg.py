@@ -1,179 +1,186 @@
 """
-This module provides classes and methods to launch the Gadget2 application.
-Gadget2 is ....
+Gadget2 cosmological N-body/SPH simulation. Supports bare-metal and
+container deployments. Container mode builds FFTW 2.1.5 from source (Gadget2
+needs the single-precision, type-prefixed, MPI variant — FFTW3 in the Ubuntu
+archive is ABI-incompatible) and clones lukemartinlogan/gadget2 into
+/opt/gadget2 in build.sh.
 """
+import os
+
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo
-from jarvis_cd.shell.process import Mkdir, Rm
-from jarvis_cd.util.config_parser import YamlFile
+from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo, MpiExecInfo, Mkdir
+
+
+_TEST_CASES = ['gassphere']
+_GADGET2_PATH_CONTAINER = '/opt/gadget2'
+_BINARY_REL_PATH = 'build/bin/Gadget2'
 
 
 class Gadget2(Application):
     """
-    This class provides methods to launch the Gadget2 application.
+    Gadget2 driver.
     """
-    def _init(self):
-        """
-        Initialize paths
-        """
-        pass
 
     def _configure_menu(self):
-        """
-        Create a CLI menu for the configurator method.
-        For thorough documentation of these parameters, view:
-        https://github.com/scs-lab/jarvis-util/wiki/3.-Argument-Parsing
-
-        :return: List(dict)
-        """
         return [
-            {
-                'name': 'nprocs',
-                'msg': 'Number of processes to spawn',
-                'type': int,
-                'default': 1,
-            },
-            {
-                'name': 'ppn',
-                'msg': 'Processes per node',
-                'type': int,
-                'default': None,
-            },
-            {
-                'name': 'j',
-                'msg': 'Number of threads to use for building gadget',
-                'type': int,
-                'default': 8,
-            },
-            {
-                'name': 'test_case',
-                'msg': 'The test case to use',
-                'type': str,
-                'default': 'gassphere',
-            },
-            {
-                'name': 'out',
-                'msg': 'The directory to output data to',
-                'type': str,
-                'default': '${HOME}/gadget_data',
-            },
-            {
-                'name': 'buffer_size',
-                'msg': 'The size in MB of buffers used for communication. '
-                       '100MB is typically an upper bound.',
-                'type': float,
-                'default': 15,
-            },
-            {
-                'name': 'part_alloc_factor',
-                'msg': 'Allocate space for particles per processor. '
-                       'Typically should be in the range of 1 to 3.',
-                'type': float,
-                'default': 1.1,
-            },
-            {
-                'name': 'tree_alloc_factor',
-                'msg': 'Allocate space for the BH-tree, which is typically '
-                       'smaller than the number of particles.',
-                'type': float,
-                'default': .9,
-            },
-            {
-                'name': 'max_size_timestep',
-                'msg': 'The maximum time step of a particle',
-                'type': float,
-                'default': .01,
-            },
-            {
-                'name': 'time_max',
-                'msg': 'The maximum time the simulation estimates (seconds)',
-                'type': float,
-                'default': 3,
-            },
-            {
-                'name': 'time_bet_snapshot',
-                'msg': 'The number of estimated seconds before snapshot occurs',
-                'type': float,
-                'default': .2,
-            },
-            {
-                'name': 'ic',
-                'msg': 'The initial conditions file to use.',
-                'type': str,
-                'default': None,
-            },
+            {'name': 'gadget2_path',
+             'msg': ('Absolute path to the Gadget2 source tree (containing '
+                     'ICs/, Gadget2/, build/). In container mode this is '
+                     'baked into the image at /opt/gadget2 and this option '
+                     'is ignored.'),
+             'type': str, 'default': None},
+            {'name': 'test_case', 'msg': 'Predefined test case (paramfile basename)',
+             'type': str, 'default': 'gassphere', 'choices': _TEST_CASES},
+            {'name': 'output', 'msg': 'Output directory (None = under shared_dir)',
+             'type': str, 'default': None},
+            {'name': 'time_max', 'msg': 'Maximum simulation time (internal units)',
+             'type': float, 'default': 0.05},
+            {'name': 'buffer_size', 'msg': 'Communication buffer size in MB',
+             'type': float, 'default': 15},
+            {'name': 'part_alloc_factor',
+             'msg': 'Per-rank particle allocation factor (1.0 - 3.0)',
+             'type': float, 'default': 1.5},
+            {'name': 'tree_alloc_factor', 'msg': 'BH-tree allocation factor',
+             'type': float, 'default': 0.9},
+            {'name': 'nprocs', 'msg': 'Total number of MPI ranks',
+             'type': int, 'default': 2},
+            {'name': 'ppn', 'msg': 'Processes per node',
+             'type': int, 'default': 2},
+            {'name': 'exec_mode', 'msg': 'Multi-node mode: mpi or pssh',
+             'type': str, 'default': 'mpi', 'choices': ['mpi', 'pssh']},
         ]
 
-    def _configure(self, **kwargs):
-        """
-        Converts the Jarvis configuration to application-specific configuration.
-        E.g., OrangeFS produces an orangefs.xml file.
+    # ------------------------------------------------------------------
+    # Container build/deploy
+    # ------------------------------------------------------------------
 
-        :param kwargs: Configuration parameters for this pkg.
-        :return: None
-        """
-        test_case = self.config['test_case']
-        paramfile = f'{self.config_dir}/{test_case}.param'
-        buildconf = f'{self.pkg_dir}/config/{test_case}.yaml'
-        outdir = expand_env(self.config['out'])
-        self.copy_template_file(f'{self.pkg_dir}/paramfiles/{test_case}.param',
-                                paramfile,
-                                replacements={
-                                    'OUTPUT_DIR': outdir,
-                                    'REPO_DIR': self.env['GADGET2_PATH'],
-                                    'BUFFER_SIZE': self.config['buffer_size'],
-                                    'PART_ALLOC_FACTOR': self.config['part_alloc_factor'],
-                                    'TREE_ALLOC_FACTOR': self.config['tree_alloc_factor'],
-                                    'TIME_MAX': self.config['time_max'],
-                                    'TIME_BET_SNAPSHOT': self.config['time_bet_snapshot'],
-                                    'MAX_SIZE_TIMESTEP': self.config['max_size_timestep'],
-                                    'INITCOND': self.config['ic'],
-                                })
-        build_dir = f'{self.shared_dir}/build'
-        cmake_opts = YamlFile(buildconf).load()
-        if 'FFTW_PATH' in self.env:
-            cmake_opts['FFTW_PATH'] = self.env['FFTW_PATH']
-        Cmake(self.env['GADGET2_PATH'],
-              build_dir,
-              opts=cmake_opts,
-              exec_info=LocalExecInfo(env=self.env))
-        Make(build_dir, nthreads=self.config['j'],
-             exec_info=LocalExecInfo(env=self.env))
+    def _build_phase(self):
+        if self.config.get('deploy_mode') != 'container':
+            return None
+        return self._read_build_script('build.sh', {}), 'default'
+
+    def _build_deploy_phase(self):
+        if self.config.get('deploy_mode') != 'container':
+            return None
+        base = getattr(self.pipeline, 'container_base', 'ubuntu:22.04')
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'BUILD_IMAGE': self.build_image_name(),
+            'DEPLOY_BASE': base,
+        })
+        return content, ''
+
+    # ------------------------------------------------------------------
+    # Configuration
+    # ------------------------------------------------------------------
+
+    def _configure(self, **kwargs):
+        super()._configure(**kwargs)
+
+        if self.config.get('deploy_mode') == 'container':
+            gadget2_path = _GADGET2_PATH_CONTAINER
+        else:
+            gadget2_path = (
+                self.config.get('gadget2_path')
+                or self.env.get('GADGET2_PATH')
+                or os.environ.get('GADGET2_PATH')
+            )
+            if not gadget2_path:
+                raise RuntimeError(
+                    "GADGET2_PATH is not set. Set gadget2_path or export "
+                    "GADGET2_PATH for bare-metal, or use deploy_mode=container."
+                )
+            if not os.path.isdir(gadget2_path):
+                raise RuntimeError(
+                    f"gadget2_path does not exist on the local node: {gadget2_path}"
+                )
+        self.config['gadget2_path'] = gadget2_path
+        self.setenv('GADGET2_PATH', gadget2_path)
+
+        if self.config.get('output') is None:
+            self.config['output'] = f'{self.shared_dir}/gadget2_out'
+        Mkdir([self.config['output']], LocalExecInfo()).run()
+
+        test_case = self.config.get('test_case', 'gassphere')
+        paramfile_in = os.path.join(self.pkg_dir, 'paramfiles',
+                                    f'{test_case}.param')
+        paramfile_out = os.path.join(self.config['output'],
+                                     f'{test_case}.param')
+        # MaxSizeTimestep is hard-coded in the stock paramfile to 0.02; with
+        # TimeMax much smaller we'd never take a step. The template only
+        # exposes the params Jarvis users tend to tune.
+        self.copy_template_file(paramfile_in, paramfile_out, replacements={
+            'REPO_DIR': gadget2_path,
+            'OUTPUT_DIR': self.config['output'],
+            'TIME_MAX': self.config['time_max'],
+            'BUFFER_SIZE': self.config['buffer_size'],
+            'PART_ALLOC_FACTOR': self.config['part_alloc_factor'],
+            'TREE_ALLOC_FACTOR': self.config['tree_alloc_factor'],
+        })
+        self.config['paramfile'] = paramfile_out
+
+        binary = os.path.join(gadget2_path, _BINARY_REL_PATH)
+        if self.config.get('deploy_mode') != 'container' and not os.path.exists(binary):
+            raise RuntimeError(
+                f"Gadget2 binary not found at {binary}. Build it first via "
+                f"`cmake -S {gadget2_path} -B {gadget2_path}/build && "
+                f"cmake --build {gadget2_path}/build`."
+            )
+        self.config['binary'] = binary
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def _use_remote(self):
+        return self.hostfile is not None and not self.hostfile.is_local()
+
+    def _container_kwargs(self):
+        if self.config.get('deploy_mode') != 'container':
+            return {}
+        return dict(
+            container=self._container_engine,
+            container_image=self.deploy_image_name(),
+            shared_dir=self.shared_dir,
+            private_dir=self.private_dir,
+        )
+
+    def _exec_info(self, cwd):
+        nprocs = self.config['nprocs']
+        ppn = self.config['ppn']
+        exec_mode = self.config.get('exec_mode', 'mpi')
+        kwargs = dict(env=self.mod_env, cwd=cwd, **self._container_kwargs())
+
+        if exec_mode == 'mpi':
+            hostfile = self.hostfile if self._use_remote() else None
+            return MpiExecInfo(
+                nprocs=nprocs, ppn=ppn, hostfile=hostfile,
+                port=self.ssh_port, **kwargs,
+            )
+        if exec_mode == 'pssh' and self._use_remote():
+            return PsshExecInfo(hostfile=self.hostfile, **kwargs)
+        return LocalExecInfo(**kwargs)
 
     def start(self):
-        """
-        Launch an application. E.g., OrangeFS will launch the servers, clients,
-        and metadata services on all necessary pkgs.
-
-        :return: None
-        """
-        test_case = self.config['test_case']
-        build_dir = f'{self.shared_dir}/build'
-        exec_path = f'{build_dir}/bin/Gadget2'
-        paramfile = f'{self.config_dir}/{test_case}.param'
-        Mkdir(self.config['out']).run()
-        Exec(f'{exec_path} {paramfile}',
-             MpiExecInfo(nprocs=self.config['nprocs'],
-                         ppn=self.config['ppn'],
-                         hostfile=self.hostfile,
-                         env=self.mod_env,
-                         cwd=self.env['GADGET2_PATH'])).run()
+        # Gadget2 reads / writes paths relative to cwd. Run from the output
+        # dir so EnergyFile / InfoFile / snapshots land alongside the
+        # paramfile. Gadget2's MAXLEN_FILENAME is 100 chars — passing the
+        # full absolute path (often >100 under /tmp/...) overflows an early
+        # strcpy on startup ("buffer overflow detected"). We cd into the
+        # output dir and pass just the basename to stay well under the cap.
+        # Also needs a bash -c wrapper: the container exec wrapper doesn't
+        # honor exec_info.cwd, and mpirun takes the first token as the
+        # executable — wrap in `bash -c '...'` so mpirun launches it per-rank.
+        cwd = self.config['output']
+        paramfile_base = os.path.basename(self.config['paramfile'])
+        inner = f'cd {cwd} && {self.config["binary"]} {paramfile_base}'
+        cmd = f"bash -c \"{inner}\""
+        Exec(cmd, self._exec_info(cwd)).run()
 
     def stop(self):
-        """
-        Stop a running application. E.g., OrangeFS will terminate the servers,
-        clients, and metadata services.
-
-        :return: None
-        """
         pass
 
     def clean(self):
-        """
-        Destroy all data for an application. E.g., OrangeFS will delete all
-        metadata and data directories in addition to the orangefs.xml file.
+        pass
 
-        :return: None
-        """
-        build_dir = f'{self.shared_dir}/build'
-        Rm([self.config['out']]).run()
+    def _get_stat(self, stat_dict):
+        stat_dict[f'{self.pkg_id}.runtime'] = self.start_time

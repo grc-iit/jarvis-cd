@@ -1,0 +1,32 @@
+# Pipeline: YCSBC Local Container Test
+# Purpose: Run YCSB-cpp RocksDB benchmark in a container on the local machine.
+# Requirements: Docker or Podman installed.
+# Multi-node: swap exec_mode to 'pssh' or 'mpi' and add a hostfile to scale out.
+# Expected Runtime: 5-10 minutes (first run builds the image from source)
+
+name: ycsbc_local_test
+install_manager: container
+
+# Container configuration — YCSB-cpp is built from source, no spack needed.
+container_engine: docker
+container_base: ubuntu:22.04
+
+pkgs:
+  - pkg_type: builtin.ycsbc
+    pkg_name: ycsbc_leveldb
+
+    # Database backend to benchmark (leveldb = widely available; redis = remote kv)
+    db_name: leveldb
+
+    # YCSB workload (a=50% read/50% update, b=95% read, c=100% read, etc.)
+    workload: a
+
+    # Print throughput status every 10 seconds
+    status: true
+
+    # Single-node local run; switch to 'pssh' or 'mpi' for multi-node
+    exec_mode: pssh
+
+    # Number of client processes (increase for multi-node scale-out)
+    nprocs: 1
+    ppn: 1

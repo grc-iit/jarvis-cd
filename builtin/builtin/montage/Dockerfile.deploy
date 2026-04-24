@@ -12,8 +12,7 @@ FROM ##BUILD_IMAGE## AS builder
 FROM ##DEPLOY_BASE##
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libgomp1 \
-        openmpi-bin libopenmpi3 \
+        libgomp1 libgfortran5 \
         openssh-server openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
@@ -21,6 +20,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /opt/Montage/bin       /opt/Montage/bin
 COPY --from=builder /opt/montage-bench     /opt/montage-bench
 COPY --from=builder /opt/run_mosaic.sh     /opt/run_mosaic.sh
+
+# Expose Montage binaries via /usr/local/bin. The pipeline-level merge in
+# jarvis (pipeline.py) builds the runtime image as FROM <first-pkg> + COPY
+# --from=<others>, which inherits ENV only from the first image — so the
+# ENV PATH below gets dropped when montage isn't first. /usr/local/bin is
+# always on the default PATH and is one of the dirs jarvis COPYs between
+# per-pkg images, so the symlinks keep the binaries reachable post-merge.
+RUN ln -sf /opt/Montage/bin/* /usr/local/bin/
 
 # SSH host keys (shared with builder so cluster nodes trust each other)
 # Generate SSH keys so all containers from this image share the same identity

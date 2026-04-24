@@ -99,13 +99,16 @@ class RnaSeqStarDeseq2(Application):
         """
         Launch rna_seq_star_deseq2.
 
-        Branches on deploy_mode: uses LocalExecInfo with container engine for
-        container mode, LocalExecInfo for default mode.
+        run_rnaseq.sh takes the output directory as its first positional
+        argument. Snakemake runs in a /tmp scratch workdir (snakemake
+        uses atomic write-then-rename, which wrp_cte_fuse does not
+        support) and the final results tree is staged into ``out`` via
+        plain cp — which exercises the CTE adapter when ``out`` is on
+        the FUSE mountpoint.
         """
-        if self.config.get('deploy_mode') == 'container':
-            Mkdir(self.config['out']).run()
+        cmd = f"/opt/run_rnaseq.sh '{self.config['out']}'"
 
-            cmd = '/opt/run_rnaseq.sh'
+        if self.config.get('deploy_mode') == 'container':
             Exec(cmd, LocalExecInfo(
                 container=self._container_engine,
                 container_image=self.deploy_image_name(),
@@ -114,7 +117,6 @@ class RnaSeqStarDeseq2(Application):
                 env=self.mod_env,
             )).run()
         else:
-            cmd = '/opt/run_rnaseq.sh'
             Exec(cmd, LocalExecInfo(env=self.mod_env)).run()
 
     def stop(self):

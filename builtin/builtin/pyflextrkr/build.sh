@@ -10,7 +10,10 @@ export DEBIAN_FRONTEND=noninteractive
 # Extra runtime deps for netCDF4, scikit-image wheels, and mpi4py build.
 # openmpi headers come from the base image (libopenmpi-dev).
 apt-get update && apt-get install -y --no-install-recommends \
-        python3-venv libhdf5-dev libnetcdf-dev libgeos-dev \
+        ca-certificates curl git \
+        python3 python3-venv python3-dev build-essential pkg-config \
+        openmpi-bin libopenmpi-dev \
+        libhdf5-dev libnetcdf-dev libgeos-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Dedicated venv (no conda) mirroring the bare-metal Ares recipe.

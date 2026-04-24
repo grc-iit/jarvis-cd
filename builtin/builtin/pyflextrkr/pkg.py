@@ -185,6 +185,10 @@ class Pyflextrkr(Application):
         :return: None
         """
 
+        # Container mode runs the self-contained demo scripts baked into
+        # the image — none of the bare-metal conda/scspkg/EXPERIMENT_INPUT_PATH
+        # machinery below applies, and requiring it would make container
+        # runs fail on host-side path checks.
         if self.config.get('deploy_mode') == 'container':
             return
 

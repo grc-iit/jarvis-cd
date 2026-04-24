@@ -1,12 +1,14 @@
 # Pipeline: RNA-Seq STAR DESeq2 Container Test
 # Purpose: Test RNA-Seq STAR alignment and DESeq2 analysis using Docker
-# Requirements: Docker installed, sci-hpc-base image built locally
+# Requirements: Docker installed
 
 name: rna_seq_star_deseq2_container_test
 install_manager: container
 
 container_engine: docker
-container_base: sci-hpc-base
+# ubuntu:24.04 matches Dockerfile.deploy's DEPLOY_BASE. sci-hpc-base was
+# a bespoke local image referenced by older examples but never committed.
+container_base: ubuntu:24.04
 
 pkgs:
   - pkg_type: builtin.rna_seq_star_deseq2

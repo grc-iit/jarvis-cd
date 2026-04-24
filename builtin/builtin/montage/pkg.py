@@ -70,8 +70,19 @@ class Montage(Application):
         if self.config.get('deploy_mode') != 'container':
             return None
         base = self.config.get('base_image', 'sci-hpc-base')
+        # Inline run_mosaic.sh into build.sh as base64 so the container
+        # build is self-contained. jarvis's aux-file copy step in
+        # pipeline.py runs `docker cp` with hide_output=True and does not
+        # check exit codes, so a silently-failed copy manifests here as
+        # "cp: cannot stat 'run_mosaic.sh'" deep in the build.
+        import base64
+        import os
+        run_mosaic_path = os.path.join(self.pkg_dir, 'run_mosaic.sh')
+        with open(run_mosaic_path, 'rb') as f:
+            run_mosaic_b64 = base64.b64encode(f.read()).decode('ascii')
         content = self._read_build_script('build.sh', {
             'BASE_IMAGE': base,
+            'RUN_MOSAIC_B64': run_mosaic_b64,
         })
         return content, 'default'
 
