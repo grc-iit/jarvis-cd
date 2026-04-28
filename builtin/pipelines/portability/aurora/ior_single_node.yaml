@@ -5,7 +5,7 @@ container_engine: apptainer
 container_base: ubuntu:24.04                                                                                                                                                                                                                                          
 container_ssh_port: 2233                                                                                                                                                                                                                                              
                                         
-hostfile: /home/isamuradli/hostfile_single.txt
+hostfile: $HOME/hostfile_single.txt
                                                                                                                                                                                                                                                                       
 pkgs:
   - pkg_type: builtin.ior                                                                                                                                                                                                                                             
@@ -15,7 +15,7 @@ pkgs:
     block: 1G                                                                                                                                                                                                                                                         
     xfer: 1M
     api: posix                                                                                                                                                                                                                                                        
-    out: /home/isamuradli/ior_aurora_single_file
+    out: /tmp/ior_aurora_single_file
     log: /tmp/ior_aurora_single_output.log  
     write: true                         
     read: true

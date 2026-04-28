@@ -1816,6 +1816,14 @@ class Pipeline:
 
         def_content = f"Bootstrap: docker\nFrom: {base_image}\n\n"
         def_content += "%post\n"
+        # Forward outbound-proxy env from the build host so package
+        # build.sh's apt-get / git clone / curl reach external mirrors
+        # on HPC nodes that require an explicit proxy (e.g. Aurora).
+        for var in ('http_proxy', 'https_proxy', 'HTTP_PROXY',
+                    'HTTPS_PROXY', 'no_proxy', 'NO_PROXY'):
+            val = os.environ.get(var)
+            if val:
+                def_content += f"export {var}={val}\n"
         def_content += '\n'.join(build_scripts)
         def_content += "\n\n%environment\n"
         def_content += f"export PATH={env_path_str}\n"
