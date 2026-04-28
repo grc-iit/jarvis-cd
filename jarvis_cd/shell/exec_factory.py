@@ -45,12 +45,12 @@ class Exec(CoreExec):
         gpu = self.exec_info.gpu
         env = dict(self.exec_info.env) if self.exec_info.env else {}
 
-        # For apptainer, resolve the SIF path from shared_dir (accessible on all nodes)
-        if c == 'apptainer' and self.exec_info.shared_dir and self.exec_info.container_image:
-            from pathlib import Path
-            # The .sif lives in the pipeline shared dir (parent of the
-            # per-package shared dir).
-            img = str(Path(self.exec_info.shared_dir).parent / f'{self.exec_info.container_image}.sif')
+        # For apptainer, target the running instance started by
+        # _start_containerized_pipeline (instance name == pipeline name ==
+        # deploy_image_name), so daemons spawned by Service.start() (e.g.
+        # chimaera/iowarp runtime) persist across subsequent exec calls.
+        if c == 'apptainer' and self.exec_info.container_image:
+            img = f'instance://{self.exec_info.container_image}'
         else:
             img = self.exec_info.container_image or ''
 
