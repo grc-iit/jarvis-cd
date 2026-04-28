@@ -93,6 +93,30 @@ class Nyx(Application):
                 'type': str,
                 'default': None,
             },
+            {
+                'name': 'do_hydro',
+                'msg': 'Run hydro update each step (1=normal, 0=skip hydro for I/O-benchmark mode where simulation cost is dwarfed by plotfile writes)',
+                'type': int,
+                'default': 1,
+            },
+            {
+                'name': 'check_int',
+                'msg': 'Checkpoint write interval in steps. <=0 disables. Checkpoints store full state in double-precision (~2x plotfile size); set check_int=1 to amplify I/O for I/O-heavy studies',
+                'type': int,
+                'default': -1,
+            },
+            {
+                'name': 'derive_plot_vars',
+                'msg': 'Space-separated derived plot variables (e.g. "pressure x_velocity y_velocity z_velocity magvel divv magvort"). Each adds ~4 bytes/cell to plotfiles. Empty=use inputs file default.',
+                'type': str,
+                'default': None,
+            },
+            {
+                'name': 'small_plot_int',
+                'msg': 'Small plotfile interval in steps. <=0 disables. When >0, Nyx writes a SECOND plotfile stream per step (full state vars) to amplify I/O without changing compute.',
+                'type': int,
+                'default': -1,
+            },
         ]
 
     # ------------------------------------------------------------------
@@ -228,7 +252,8 @@ class Nyx(Application):
                 'inputs_file',
                 '/opt/Nyx/Exec/HydroTests/inputs.regtest.sedov',
             )
-            inner = ' '.join([
+            check_int = int(self.config.get('check_int', -1) or -1)
+            cmd_parts = [
                 '/opt/Nyx/build/Exec/HydroTests/nyx_HydroTests',
                 inputs_file,
                 f'max_step={self.config["max_step"]}',
@@ -236,7 +261,25 @@ class Nyx(Application):
                 f'amr.max_level={self.config["max_level"]}',
                 f'amr.plot_file={outdir}/plt',
                 f'amr.plot_int={self.config["plot_int"]}',
-            ])
+                f'nyx.do_hydro={self.config.get("do_hydro", 1)}',
+            ]
+            if check_int > 0:
+                cmd_parts.extend([
+                    f'amr.check_int={check_int}',
+                    f'amr.checkpoint_files_output=1',
+                    f'amr.check_file={outdir}/chk',
+                ])
+            dpv = self.config.get('derive_plot_vars')
+            if dpv:
+                cmd_parts.append(f'"amr.derive_plot_vars={dpv}"')
+            small_plot_int = int(self.config.get('small_plot_int', -1) or -1)
+            if small_plot_int > 0:
+                cmd_parts.extend([
+                    f'amr.small_plot_int={small_plot_int}',
+                    f'amr.small_plot_file={outdir}/smallplt',
+                    f'"amr.small_plot_vars=density xmom ymom rho_E rho_e Temp"',
+                ])
+            inner = ' '.join(cmd_parts)
             Exec(inner, MpiExecInfo(
                 nprocs=nprocs,
                 ppn=self.config.get('ppn'),
@@ -254,6 +297,7 @@ class Nyx(Application):
                 'inputs_file',
                 '/opt/Nyx/Exec/HydroTests/inputs.regtest.sedov',
             )
+            check_int = int(self.config.get('check_int', -1) or -1)
             cmd = [
                 'nyx_HydroTests',
                 inputs_file,
@@ -262,7 +306,24 @@ class Nyx(Application):
                 f'amr.max_level={self.config["max_level"]}',
                 f'amr.plot_file={self.config["out"]}/plt',
                 f'amr.plot_int={self.config["plot_int"]}',
+                f'nyx.do_hydro={self.config.get("do_hydro", 1)}',
             ]
+            if check_int > 0:
+                cmd.extend([
+                    f'amr.check_int={check_int}',
+                    f'amr.checkpoint_files_output=1',
+                    f'amr.check_file={self.config["out"]}/chk',
+                ])
+            dpv = self.config.get('derive_plot_vars')
+            if dpv:
+                cmd.append(f'"amr.derive_plot_vars={dpv}"')
+            small_plot_int = int(self.config.get('small_plot_int', -1) or -1)
+            if small_plot_int > 0:
+                cmd.extend([
+                    f'amr.small_plot_int={small_plot_int}',
+                    f'amr.small_plot_file={self.config["out"]}/smallplt',
+                    f'"amr.small_plot_vars=density xmom ymom rho_E rho_e Temp"',
+                ])
             Exec(' '.join(cmd),
                  MpiExecInfo(nprocs=self.config['nprocs'],
                              ppn=self.config['ppn'],

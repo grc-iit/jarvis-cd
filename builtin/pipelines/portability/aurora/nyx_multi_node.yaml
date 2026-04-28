@@ -54,12 +54,15 @@ pkgs:
     ppn: 6
     gpu_backend: sycl
     base_image: intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04
-    # Larger domain to exercise multi-node halo exchange meaningfully.
-    # 256^3 over 12 ranks → ~1.4M cells per rank, plotfile every 25 steps.
-    max_step: 100
-    n_cell: "256 256 256"
+    # Validated 60% I/O fraction config: 768³ + plt + chk every step.
+    # Per step: 1.69s compute + 1.18s plt + 1.76s chk = 4.63s.
+    # 10 steps × 31 GiB/step = ~330 GiB total, ~165 GiB/node, ~50s wall.
+    # I/O fraction ~60% — Nyx hydro compute is intrinsic per step.
+    max_step: 10
+    n_cell: "768 768 768"
     max_level: 0
     # Omit `out` — pkg.py defaults to shared_dir on Lustre, which is
     # visible to every node. Hard-coding /tmp here would break the
     # collective plotfile write (/tmp is per-node-container tmpfs).
-    plot_int: 25
+    plot_int: 1
+    check_int: 1
