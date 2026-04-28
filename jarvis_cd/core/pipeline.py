@@ -36,6 +36,7 @@ class Pipeline:
 
         # Container parameters
         self.container_image = ""  # Pre-built image to use
+        self.container_uri = ""  # Pre-built deploy image URI (skips build+deploy when set)
         self.container_engine = "podman"  # Default container engine
         self.container_base = "iowarp/iowarp-build:latest"  # Base image
         self.container_ssh_port = 2222  # Default SSH port for containers
@@ -243,6 +244,7 @@ class Pipeline:
             pipeline_config['last_loaded_file'] = self.last_loaded_file
         # Add container parameters (always save, even if empty/default)
         pipeline_config['container_image'] = self.container_image
+        pipeline_config['container_uri'] = self.container_uri
         pipeline_config['container_engine'] = self.container_engine
         pipeline_config['container_base'] = self.container_base
         pipeline_config['container_ssh_port'] = self.container_ssh_port
@@ -806,6 +808,28 @@ class Pipeline:
         except Exception as e:
             print(f"Error showing README for package {pkg_id}: {e}")
     
+    def show_package_build_script(self, pkg_id: str):
+        """Print the build.sh script for a package within this pipeline."""
+        pkg_def = next((p for p in self.packages if p['pkg_id'] == pkg_id), None)
+        if not pkg_def:
+            raise ValueError(f"Package not found: {pkg_id}")
+        try:
+            pkg_instance = self._load_package_instance(pkg_def, self.env)
+            pkg_instance.show_build_script()
+        except Exception as e:
+            print(f"Error showing build script for package {pkg_id}: {e}")
+
+    def show_package_deploy_dockerfile(self, pkg_id: str):
+        """Print Dockerfile.deploy for a package within this pipeline."""
+        pkg_def = next((p for p in self.packages if p['pkg_id'] == pkg_id), None)
+        if not pkg_def:
+            raise ValueError(f"Package not found: {pkg_id}")
+        try:
+            pkg_instance = self._load_package_instance(pkg_def, self.env)
+            pkg_instance.show_deploy_dockerfile()
+        except Exception as e:
+            print(f"Error showing deploy Dockerfile for package {pkg_id}: {e}")
+
     def show_package_paths(self, pkg_id: str, path_flags: Dict[str, bool]):
         """
         Show directory paths for a specific package in the pipeline.
@@ -854,6 +878,7 @@ class Pipeline:
 
         # Load container parameters
         self.container_image = pipeline_config.get('container_image', '')
+        self.container_uri = pipeline_config.get('container_uri', '')
         self.container_engine = pipeline_config.get('container_engine', 'podman')
         self.container_base = pipeline_config.get('container_base', 'iowarp/iowarp-build:latest')
         self.container_ssh_port = pipeline_config.get('container_ssh_port', 2222)
@@ -978,6 +1003,7 @@ class Pipeline:
 
         # Load container parameters
         self.container_image = pipeline_def.get('container_image', '')
+        self.container_uri = pipeline_def.get('container_uri', '')
         self.container_engine = pipeline_def.get('container_engine', 'podman')
         self.container_base = pipeline_def.get('container_base', 'iowarp/iowarp-build:latest')
         self.container_ssh_port = pipeline_def.get('container_ssh_port', 2222)
@@ -1020,7 +1046,18 @@ class Pipeline:
         if self.install_manager == 'spack':
             self._install_spack_packages()
         elif self.install_manager == 'container':
-            if not self.container_image:
+            if self.container_uri:
+                # Prebuilt deploy container takes priority — skip per-package
+                # build and deploy phases entirely.
+                if not self._ensure_container_uri_available():
+                    raise RuntimeError(
+                        f"container_uri '{self.container_uri}' is not available "
+                        f"locally and could not be pulled with engine "
+                        f"'{self.container_engine}'."
+                    )
+                self.container_image = self.container_uri
+                print(f"Using prebuilt deploy container: {self.container_uri}")
+            elif not self.container_image:
                 self._build_pipeline_container()
                 self.container_image = self.name
 
@@ -1326,6 +1363,41 @@ class Pipeline:
 
             except Exception as e:
                 logger.error(f"Error applying interceptor '{interceptor_name}': {e}")
+
+    def _ensure_container_uri_available(self) -> bool:
+        """
+        Make container_uri usable as the deploy image for this pipeline.
+
+        Checks whether the URI is already present locally; if not, attempts
+        to pull/import it. For docker/podman this runs `<engine> pull`;
+        for apptainer it pulls the URI into <shared_dir>/<name>.sif so that
+        downstream apptainer exec/instance commands find it at the same
+        path as a built SIF.
+
+        :return: True if the image is available after this call, else False.
+        """
+        from jarvis_cd.shell import Exec, LocalExecInfo
+        from jarvis_cd.core.pkg import Pkg
+
+        pipeline_shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
+
+        if self.container_engine == 'apptainer':
+            sif_path = pipeline_shared_dir / f'{self.name}.sif'
+            if sif_path.exists():
+                return True
+            pipeline_shared_dir.mkdir(parents=True, exist_ok=True)
+            print(f"Pulling apptainer image {self.container_uri} -> {sif_path}")
+            pull_cmd = f"apptainer pull {sif_path} {self.container_uri}"
+            result = Exec(pull_cmd, LocalExecInfo()).run()
+            return result.exit_code.get('localhost', 1) == 0
+
+        engine = self.container_engine
+        if Pkg._image_exists(engine, self.container_uri):
+            return True
+        print(f"Pulling container image: {self.container_uri}")
+        result = Exec(f"{engine} pull {self.container_uri}",
+                      LocalExecInfo()).run()
+        return result.exit_code.get('localhost', 1) == 0
 
     def _build_pipeline_container(self):
         """

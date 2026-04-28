@@ -855,6 +855,98 @@ class Pkg:
         ).run()
         return result.exit_code.get('localhost', 1) == 0
 
+    def show_build_script(self):
+        """
+        Print the build.sh content jarvis would feed into the build container
+        for this package. Falls back to the raw build.sh on disk when
+        _build_phase() returns None or empty (e.g., for inspection of
+        packages that gate generation on deploy_mode).
+        """
+        # Most _build_phase implementations require deploy_mode='container'
+        self.config.setdefault('deploy_mode', 'container')
+
+        try:
+            result = self._build_phase()
+        except Exception as e:
+            result = None
+            err = e
+        else:
+            err = None
+
+        content = ''
+        suffix = ''
+        if result and isinstance(result, tuple):
+            content, suffix = (result + ('',))[:2]
+
+        if not content and self.pkg_dir:
+            raw = Path(self.pkg_dir) / 'build.sh'
+            if raw.exists():
+                print(f"=== build.sh for {self.__class__.__name__} (raw template) ===")
+                print(f"Location: {raw}")
+                if err:
+                    print(f"Note: _build_phase() raised {type(err).__name__}: {err}")
+                print()
+                print(raw.read_text(encoding='utf-8'))
+                return
+
+        if content:
+            label = f"build.sh for {self.__class__.__name__}"
+            if suffix:
+                label += f" (suffix: {suffix})"
+            print(f"=== {label} ===")
+            print()
+            print(content)
+            return
+
+        print(f"No build.sh found for package {self.__class__.__name__}")
+        if self.pkg_dir:
+            print(f"Expected location: {Path(self.pkg_dir) / 'build.sh'}")
+
+    def show_deploy_dockerfile(self):
+        """
+        Print the Dockerfile.deploy content jarvis would use to build the
+        deploy image for this package. Falls back to the raw Dockerfile.deploy
+        on disk when _build_deploy_phase() returns None or empty.
+        """
+        self.config.setdefault('deploy_mode', 'container')
+
+        try:
+            result = self._build_deploy_phase()
+        except Exception as e:
+            result = None
+            err = e
+        else:
+            err = None
+
+        content = ''
+        suffix = ''
+        if result and isinstance(result, tuple):
+            content, suffix = (result + ('',))[:2]
+
+        if not content and self.pkg_dir:
+            raw = Path(self.pkg_dir) / 'Dockerfile.deploy'
+            if raw.exists():
+                print(f"=== Dockerfile.deploy for {self.__class__.__name__} (raw template) ===")
+                print(f"Location: {raw}")
+                if err:
+                    print(f"Note: _build_deploy_phase() raised {type(err).__name__}: {err}")
+                print()
+                print(raw.read_text(encoding='utf-8'))
+                return
+
+        if content:
+            label = f"Dockerfile.deploy for {self.__class__.__name__}"
+            if suffix:
+                label += f" (suffix: {suffix})"
+            print(f"=== {label} ===")
+            print()
+            print(content)
+            return
+
+        print(f"No Dockerfile.deploy found for package {self.__class__.__name__}")
+        if self.pkg_dir:
+            print(f"Expected location: {Path(self.pkg_dir) / 'Dockerfile.deploy'}")
+
     def show_readme(self):
         """
         Show README.md for this package.
