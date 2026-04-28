@@ -3,7 +3,7 @@ set -e
 export DEBIAN_FRONTEND=noninteractive
 
 apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates git cmake build-essential \
+    ca-certificates git cmake build-essential pkg-config \
     zlib1g-dev libbz2-dev liblzo2-dev libzstd-dev liblz4-dev liblzma-dev \
     libbrotli-dev libsnappy-dev libblosc2-dev libzfp-dev \
  && rm -rf /var/lib/apt/lists/*
