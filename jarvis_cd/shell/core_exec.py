@@ -267,9 +267,10 @@ class MpiVersion(LocalExec):
         if c and c not in ('none',):
             img = exec_info.container_image or ''
             if c == 'apptainer':
-                from pathlib import Path
-                sif = str(Path(exec_info.shared_dir).parent / f'{img}.sif')
-                self.cmd = f'apptainer exec {sif} mpiexec --version'
+                # Enter the long-running pipeline instance, not a fresh
+                # SIF exec — keeps detection in the same namespace as
+                # the rest of the pipeline.
+                self.cmd = f'apptainer exec instance://{img} mpiexec --version'
             else:
                 container_name = f'{img}_container' if img else ''
                 self.cmd = f'{c} exec {container_name} mpiexec --version'

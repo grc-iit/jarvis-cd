@@ -10,6 +10,7 @@ apt-get update && apt-get install -y --no-install-recommends \
 
 # HDF5 ##HDF5_VERSION##
 cd /tmp
+rm -rf hdf5-##HDF5_VERSION## hdf5-##HDF5_VERSION##.tar.gz
 wget -q https://github.com/HDFGroup/hdf5/releases/download/##HDF5_VERSION##/hdf5-##HDF5_VERSION##.tar.gz
 tar xzf hdf5-##HDF5_VERSION##.tar.gz
 cd hdf5-##HDF5_VERSION##

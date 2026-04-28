@@ -256,6 +256,10 @@ class Pipeline:
             pipeline_config['container_host_path'] = self.container_host_path
         if self.container_workspace:
             pipeline_config['container_workspace'] = self.container_workspace
+        if self.container_caps:
+            pipeline_config['container_caps'] = self.container_caps
+        if self.container_binds:
+            pipeline_config['container_binds'] = self.container_binds
 
         # Add install manager
         if self.install_manager:
@@ -886,6 +890,8 @@ class Pipeline:
         self.container_env = pipeline_config.get('container_env', {})
         self.container_host_path = pipeline_config.get('container_host_path', '')
         self.container_workspace = pipeline_config.get('container_workspace', '')
+        self.container_caps = pipeline_config.get('container_caps', [])
+        self.container_binds = pipeline_config.get('container_binds', [])
 
         # Load install manager
         self.install_manager = pipeline_config.get('install_manager', None)
@@ -1012,6 +1018,13 @@ class Pipeline:
         self.container_host_path = pipeline_def.get('container_host_path', '')
         self.container_workspace = pipeline_def.get('container_workspace', '')
         self.container_gpu = pipeline_def.get('container_gpu', False)
+        # Apptainer-only: capabilities and extra bind mounts that must be
+        # baked into `apptainer instance start`. Per-exec --cap-add and
+        # --bind are silently ignored on a running instance, so anything
+        # the workload needs (e.g., SYS_ADMIN + /dev/fuse for FUSE mounts)
+        # has to be declared at the pipeline level here.
+        self.container_caps = pipeline_def.get('container_caps', [])
+        self.container_binds = pipeline_def.get('container_binds', [])
 
         # Load install manager
         self.install_manager = pipeline_def.get('install_manager', None)
@@ -1500,12 +1513,33 @@ class Pipeline:
                     # docker/podman `cp` does not support
                     # container:src -> container:dest directly
                     # ("copying between containers is not supported"). Stream
-                    # a tar archive out of the source container's src path
-                    # and extract it into the build container at dest path.
+                    # a tar archive out of the source container's src path to
+                    # a temp file, then extract it into the build container.
+                    # Going through a temp file (vs a direct pipe) lets us
+                    # skip empty source dirs — podman `cp src/. -` on an
+                    # empty dir emits a stream the receiving cp rejects with
+                    # "source must be a (compressed) tar archive". Library
+                    # deploy images often have an empty /opt.
                     for src_path in ['/usr/local', '/opt']:
+                        # Stage the tar to a file so we can test for emptiness
+                        # before piping into the destination cp, which only
+                        # extracts when reading from stdin (a regular file
+                        # arg gets copied verbatim, not extracted).
+                        # Empty source dir → podman emits a 1024-byte
+                        # all-zero tar (two 512-byte EOF blocks). Skip when
+                        # the archive holds no entries.
                         pipe_cmd = (
-                            f"{build_engine} cp {temp_name}:{src_path}/. - | "
-                            f"{build_engine} cp - {build_container_name}:{src_path}"
+                            f"set -e; "
+                            f"tarfile=$(mktemp /tmp/jarvis-inject-XXXXXX.tar); "
+                            f"trap 'rm -f \"$tarfile\"' EXIT; "
+                            f"{build_engine} cp {temp_name}:{src_path}/. - "
+                            f"  > \"$tarfile\" 2>/dev/null; "
+                            f"if [ \"$(tar tf \"$tarfile\" 2>/dev/null "
+                            f"          | wc -l)\" -eq 0 ]; then "
+                            f"  exit 0; "
+                            f"fi; "
+                            f"cat \"$tarfile\" | {build_engine} cp - "
+                            f"{build_container_name}:{src_path}"
                         )
                         result = Exec(pipe_cmd,
                                       LocalExecInfo(hide_output=True)).run()
@@ -1922,6 +1956,18 @@ class Pipeline:
             f"{to_host_path(ssh_dir)}:/root/.ssh_host:ro"
         ]
 
+        # Workload-specific bind mounts from `container_binds` in the
+        # pipeline YAML (e.g., /lus/flare/... for IOR output paths).
+        # The apptainer path applies these in _start_containerized_pipeline;
+        # for docker/podman compose we have to bake them into the
+        # service's volume list.
+        for bind in (self.container_binds or []):
+            if ':' in bind:
+                host, _, rest = bind.partition(':')
+                volumes.append(f"{to_host_path(host)}:{rest}")
+            else:
+                volumes.append(f"{to_host_path(bind)}:{bind}")
+
 
         service_config = {
             'container_name': container_name,
@@ -2002,13 +2048,31 @@ class Pipeline:
             # Apptainer: start persistent instances with sshd on every node
             # (mirrors docker compose up -d).
             shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
+            private_dir = self.jarvis.get_pipeline_private_dir(self.name)
             sif_path = shared_dir / f'{self.name}.sif'
             instance_name = self.name
             ssh_port = self.container_ssh_port
 
             nv_flag = '--nv ' if getattr(self, 'container_gpu', False) else ''
+
+            # Bake bind mounts into the instance: per-exec --bind is
+            # silently ignored on a running instance, so anything packages
+            # need access to has to come in here. The pipeline shared/
+            # private dirs cover all per-package shared/private subdirs;
+            # container_binds adds workload-specific extras (e.g.,
+            # /dev/fuse for FUSE mounts).
+            binds = [f'{shared_dir}:{shared_dir}',
+                     f'{private_dir}:{private_dir}']
+            binds.extend(self.container_binds or [])
+            bind_flags = ''.join(f'--bind {b} ' for b in binds)
+
+            cap_flag = ''
+            if self.container_caps:
+                cap_flag = f'--add-caps {",".join(self.container_caps)} '
+
             start_cmd = (
-                f"apptainer instance start {nv_flag}--writable-tmpfs {sif_path} {instance_name}"
+                f"apptainer instance start {nv_flag}{cap_flag}{bind_flags}"
+                f"--writable-tmpfs {sif_path} {instance_name}"
                 f" && apptainer exec {nv_flag}instance://{instance_name}"
                 f" /usr/sbin/sshd -p {ssh_port}"
                 f" -o StrictModes=no -o UsePAM=no"

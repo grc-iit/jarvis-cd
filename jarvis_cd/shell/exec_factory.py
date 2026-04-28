@@ -42,17 +42,8 @@ class Exec(CoreExec):
         if not c or c == 'none':
             return cmd, self.exec_info
 
-        gpu = self.exec_info.gpu
         env = dict(self.exec_info.env) if self.exec_info.env else {}
-
-        # For apptainer, resolve the SIF path from shared_dir (accessible on all nodes)
-        if c == 'apptainer' and self.exec_info.shared_dir and self.exec_info.container_image:
-            from pathlib import Path
-            # The .sif lives in the pipeline shared dir (parent of the
-            # per-package shared dir).
-            img = str(Path(self.exec_info.shared_dir).parent / f'{self.exec_info.container_image}.sif')
-        else:
-            img = self.exec_info.container_image or ''
+        img = self.exec_info.container_image or ''
 
         # Wrap the command in bash -c so that shell metacharacters
         # (&&, |, >, >>, ;, $()) are interpreted inside the container
@@ -73,16 +64,22 @@ class Exec(CoreExec):
         def _shell_quote(value: str) -> str:
             return "'" + str(value).replace("'", "'\\''") + "'"
 
-        mounts = self.exec_info.bind_mounts or []
         if c == 'apptainer':
-            gpu_flag = '--nv ' if gpu else ''
+            # Enter the long-running apptainer instance the pipeline
+            # started in _start_containerized_pipeline (apptainer
+            # instance start ... <pipeline_name>). The container_image
+            # field doubles as the instance name.
+            #
+            # Bind mounts, --nv, and --add-caps are silently ignored on
+            # a running instance, so they must be set at instance-start
+            # time (see pipeline.py) — they are deliberately NOT
+            # forwarded here.
             env_flags_parts = [
                 f'--env {k}={_shell_quote(v)}'
                 for k, v in env.items() if k not in _HOST_ONLY
             ]
             env_flag = (' '.join(env_flags_parts) + ' ') if env_flags_parts else ''
-            mount_flags = ''.join(f'--bind {m} ' for m in mounts)
-            wrapped = f'apptainer exec {gpu_flag}{env_flag}{mount_flags}{img} {shell_cmd}'
+            wrapped = f'apptainer exec {env_flag}instance://{img} {shell_cmd}'
         elif c in ('podman', 'docker'):
             # Use 'exec' into the already-running container (started by
             # docker/podman compose).  The container_image doubles as the

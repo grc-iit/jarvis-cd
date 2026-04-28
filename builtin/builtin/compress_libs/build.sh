@@ -10,6 +10,7 @@ apt-get update && apt-get install -y --no-install-recommends \
 
 # FPZIP
 cd /tmp
+rm -rf fpzip fpzip-build
 git clone https://github.com/LLNL/fpzip.git
 cmake -S fpzip -B fpzip-build \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
@@ -21,6 +22,7 @@ rm -rf /tmp/fpzip*
 
 # SZ3
 cd /tmp
+rm -rf SZ3 sz3-build
 git clone https://github.com/szcompressor/SZ3.git
 cmake -S SZ3 -B sz3-build \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
@@ -32,6 +34,7 @@ rm -rf /tmp/SZ3 /tmp/sz3-build
 
 # std_compat
 cd /tmp
+rm -rf std_compat std_compat-build
 git clone https://github.com/robertu94/std_compat.git
 cmake -S std_compat -B std_compat-build \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_TESTING=OFF
@@ -42,6 +45,7 @@ rm -rf /tmp/std_compat*
 
 # LibPressio (with ZFP, SZ3, FPZIP backends)
 cd /tmp
+rm -rf libpressio libpressio-build
 git clone https://github.com/robertu94/libpressio.git
 cmake -S libpressio -B libpressio-build \
     -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
