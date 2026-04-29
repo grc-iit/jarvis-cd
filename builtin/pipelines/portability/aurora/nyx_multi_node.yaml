@@ -47,19 +47,19 @@ hostfile: /home/isamuradli/hostfile_multi.txt
 pkgs:
   - pkg_type: builtin.nyx
     pkg_name: nyx_aurora
-    # 2 nodes × 6 PVC tiles/node = 12 ranks (1 rank per tile).
+    # 64 nodes × 6 PVC tiles/node = 384 ranks (1 rank per tile).
     # If you request a different node count in qsub (-l select=N), set
     # nprocs = N * ppn.
-    nprocs: 12
+    nprocs: 384
     ppn: 6
     gpu_backend: sycl
     base_image: intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04
-    # Validated 60% I/O fraction config: 768³ + plt + chk every step.
-    # Per step: 1.69s compute + 1.18s plt + 1.76s chk = 4.63s.
-    # 10 steps × 31 GiB/step = ~330 GiB total, ~165 GiB/node, ~50s wall.
-    # I/O fraction ~60% — Nyx hydro compute is intrinsic per step.
-    max_step: 10
-    n_cell: "768 768 768"
+    # 64-node config. Grid bumped to 1024³ to keep ranks busy
+    # (max_grid_size default 128 → 512 boxes ≥ 384 ranks).
+    # Per step ≈ 70 GiB (plt+chk every step). 30 steps × 70 GiB ≈ 2.1 TiB total,
+    # ~32 GiB/node. Expected wall ~2–3 min, I/O fraction ~50%.
+    max_step: 30
+    n_cell: "1024 1024 1024"
     max_level: 0
     # Omit `out` — pkg.py defaults to shared_dir on Lustre, which is
     # visible to every node. Hard-coding /tmp here would break the

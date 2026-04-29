@@ -279,7 +279,17 @@ class Nyx(Application):
                     f'amr.small_plot_file={outdir}/smallplt',
                     f'"amr.small_plot_vars=density xmom ymom rho_E rho_e Temp"',
                 ])
-            inner = ' '.join(cmd_parts)
+            # Wrap with per-rank Intel-GPU affinity + one-line debug log.
+            # Each rank prints: NYXDBG rank=N local=M host=H zemask=K
+            # Count NYXDBG lines vs nprocs to see if all ranks reach the wrapper.
+            nyx_cmd = ' '.join(cmd_parts)
+            dbg = (
+                'export ZE_AFFINITY_MASK=${OMPI_COMM_WORLD_LOCAL_RANK:-0}; '
+                'echo "NYXDBG rank=${OMPI_COMM_WORLD_RANK:-?} '
+                'local=${OMPI_COMM_WORLD_LOCAL_RANK:-?} '
+                'host=$(hostname) zemask=${ZE_AFFINITY_MASK}" >&2; '
+            )
+            inner = f"bash -c '{dbg}exec {nyx_cmd}'"
             Exec(inner, MpiExecInfo(
                 nprocs=nprocs,
                 ppn=self.config.get('ppn'),
@@ -324,7 +334,15 @@ class Nyx(Application):
                     f'amr.small_plot_file={self.config["out"]}/smallplt',
                     f'"amr.small_plot_vars=density xmom ymom rho_E rho_e Temp"',
                 ])
-            Exec(' '.join(cmd),
+            nyx_cmd = ' '.join(cmd)
+            dbg = (
+                'export ZE_AFFINITY_MASK=${OMPI_COMM_WORLD_LOCAL_RANK:-0}; '
+                'echo "NYXDBG rank=${OMPI_COMM_WORLD_RANK:-?} '
+                'local=${OMPI_COMM_WORLD_LOCAL_RANK:-?} '
+                'host=$(hostname) zemask=${ZE_AFFINITY_MASK}" >&2; '
+            )
+            wrapped = f"bash -c '{dbg}exec {nyx_cmd}'"
+            Exec(wrapped,
                  MpiExecInfo(nprocs=self.config['nprocs'],
                              ppn=self.config['ppn'],
                              hostfile=self.hostfile,

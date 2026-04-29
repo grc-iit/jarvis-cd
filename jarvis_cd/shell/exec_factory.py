@@ -253,8 +253,21 @@ class Exec(CoreExec):
                                        for h in hf.hosts)
                 if is_multinode:
                     if '--mca plm rsh' not in mpi_cmd:
+                        # OpenMPI rsh PLM scaling flags. Without these the
+                        # bring-up hangs at >10 nodes:
+                        #   plm_rsh_no_tree_spawn=1 — head daemon SSHes ALL
+                        #     remote daemons directly in parallel (no
+                        #     intermediate-node tree spawn).
+                        #   routed=direct — ranks talk directly to peers
+                        #     (skip proxy hops), simpler at scale.
+                        #   plm_rsh_num_concurrent=32 — allow 32 parallel
+                        #     SSH launches; defaults are too low for >10 nodes.
                         mpi_cmd = mpi_cmd.replace(
-                            'mpiexec ', 'mpiexec --mca plm rsh ', 1)
+                            'mpiexec ',
+                            'mpiexec --mca plm rsh '
+                            '--mca plm_rsh_no_tree_spawn 1 '
+                            '--mca routed direct '
+                            '--mca plm_rsh_num_concurrent 32 ', 1)
                     # sshd login shell into the apptainer instance on a
                     # remote node does NOT source /.singularity.d/env/*.sh,
                     # so Level Zero / SYCL runtime selectors set there are
