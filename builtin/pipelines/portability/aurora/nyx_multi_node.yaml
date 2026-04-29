@@ -47,19 +47,26 @@ hostfile: /home/isamuradli/hostfile_multi.txt
 pkgs:
   - pkg_type: builtin.nyx
     pkg_name: nyx_aurora
-    # 64 nodes × 6 PVC tiles/node = 384 ranks (1 rank per tile).
+    # 512 nodes × 6 PVC tiles/node = 3072 ranks (1 rank per tile).
     # If you request a different node count in qsub (-l select=N), set
     # nprocs = N * ppn.
-    nprocs: 384
+    nprocs: 3072
     ppn: 6
     gpu_backend: sycl
     base_image: intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04
-    # 64-node config. Grid bumped to 1024³ to keep ranks busy
-    # (max_grid_size default 128 → 512 boxes ≥ 384 ranks).
-    # Per step ≈ 70 GiB (plt+chk every step). 30 steps × 70 GiB ≈ 2.1 TiB total,
-    # ~32 GiB/node. Expected wall ~2–3 min, I/O fraction ~50%.
-    max_step: 30
-    n_cell: "1024 1024 1024"
+    # 512-node config. Grid bumped to 2048³ to keep all ranks busy:
+    # (2048/128)³ = 4096 boxes ≥ 3072 ranks. Cells per rank ≈ 2.80M
+    # (matches 64- and 128-node per-rank load — weak-scaling).
+    # Per-cell I/O ≈ 66 bytes (verified from prior runs).
+    # Per step ≈ 567 GiB (plt+chk every step).
+    #
+    # max_step=4 → 5 outputs × 567 GiB ≈ 2.84 TiB total
+    #            → ~0.99 GB per rank (effectively 1 GB/rank).
+    # Per node: ~5.6 GiB. Lustre well within 59 TB free.
+    # Expected wall: ~3-5 min instance setup + ~2-4 min MPI_Init at
+    # 3072 ranks + ~3-5 min compute+I/O = ~10-15 min total.
+    max_step: 4
+    n_cell: "2048 2048 2048"
     max_level: 0
     # Omit `out` — pkg.py defaults to shared_dir on Lustre, which is
     # visible to every node. Hard-coding /tmp here would break the
