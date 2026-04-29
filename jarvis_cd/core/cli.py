@@ -591,7 +591,7 @@ class JarvisCLI(ArgParse):
         ])
 
         self.add_cmd('hostfile unset',
-                     msg="Unset the hostfile (clears to an empty hostfile)")
+                     msg="Unset the hostfile (revert to default: localhost)")
 
         # Resource graph commands
         self.add_menu('rg', msg="Resource graph management")
