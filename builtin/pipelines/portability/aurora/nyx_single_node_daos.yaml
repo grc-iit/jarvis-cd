@@ -1,0 +1,108 @@
+# Pipeline: Nyx single-node on Aurora writing to DAOS (1 node, dfuse mode)
+# Purpose: Same Nyx/AMReX/SYCL build as nyx_single_node.yaml, but plotfiles
+#          and checkpoints land on a DAOS POSIX container instead of Lustre
+#          (/lus/flare). 1 node x 6 PVC tiles = 6 MPI ranks (one rank per
+#          tile).
+#
+# Sized to match: qsub -l select=1 ... -l filesystems=flare:daos_user_fs.
+# For the 4-node DAOS variant see nyx_multi_node_daos.yaml.
+#
+# IMPORTANT - what this YAML DOES and DOES NOT give you:
+#   * DOES: redirects Nyx output to a DAOS POSIX container exposed via
+#     dfuse (FUSE bridge) on the compute node. Reads/writes go through
+#     the kernel FUSE layer.
+#   * DOES NOT: enable the libpil4dfs / libioil interception library,
+#     does NOT pass `--no-vni` to mpiexec, does NOT bind the DAOS agent
+#     socket (/var/run/daos_agent) or /usr/lib64/libpil4dfs.so into the
+#     apptainer container. Those require code changes in
+#     builtin/builtin/nyx/pkg.py + jarvis MpiExecInfo plumbing and are
+#     NOT wired yet (grep -r "libpil4dfs\|no-vni" returns nothing).
+#   So expect DAOS-via-dfuse performance, not IL performance. Good enough
+#   to validate the pool/container/path is reachable end-to-end before
+#   investing in the IL wiring.
+#
+# Reference: https://docs.alcf.anl.gov/aurora/data-management/daos/daos-overview/
+#
+# Step 0 - one-time DAOS pool provisioning (NOT a qsub action):
+#   email support@alcf.anl.gov with project name, ALCF usernames, capacity
+#   (a few hundred GB is plenty for this 1-node test), and a pool name.
+#   You will get back a DAOS_POOL identifier. After that, on a login node:
+#       module use /soft/modulefiles
+#       module load daos
+#       export DAOS_POOL=gpu_hack
+#       export DAOS_CONT=nyx_aurora_1node
+#       daos container create --type=POSIX ${DAOS_POOL} ${DAOS_CONT}
+#       daos pool query ${DAOS_POOL}     # sanity check
+#
+# Step 1 - build (login node, needs internet for docker pull on first run):
+#   jarvis ppl load yaml builtin/pipelines/portability/aurora/nyx_single_node_daos.yaml
+#   (Reuses the SIF from nyx_aurora_single_node if present; otherwise the
+#    sycl/build.sh recipe is rebuilt under jarvis_shared/nyx_aurora_single_node_daos/.)
+#
+# Step 2 - qsub on a login node (note daos_user_fs in filesystems and -k doe
+#          so stdout/stderr stream live to your working dir):
+#   qsub -A <project> -q debug \
+#        -l select=1:ncpus=208:ngpus=6 \
+#        -l walltime=01:00:00 \
+#        -k doe \
+#        -l filesystems=flare:daos_user_fs -I
+#
+# Step 3 - inside the PBS shell, mount the DAOS container with dfuse on
+#          the allocated node, then point this pipeline at it. Use the
+#          ALCF-provided wrappers (they fan out across $PBS_NODEFILE for
+#          you, so this same recipe works for multi-node):
+#     module use /soft/modulefiles
+#     module load daos
+#     export DAOS_POOL=<your_pool>
+#     export DAOS_CONT=nyx_aurora_1node
+#
+#     launch-dfuse.sh ${DAOS_POOL}:${DAOS_CONT}
+#     # mountpoint is now /tmp/${DAOS_POOL}/${DAOS_CONT} on every node.
+#
+#     cat $PBS_NODEFILE | awk -F. '{print $1}' > ~/hostfile_daos.txt
+#     jarvis hostfile set ~/hostfile_daos.txt
+#     jarvis ppl cd nyx_aurora_single_node_daos
+#     jarvis ppl run
+#
+# Step 4 - teardown after the run (otherwise dfuse mounts linger):
+#     clean-dfuse.sh ${DAOS_POOL}:${DAOS_CONT}
+#
+# Sizing for 1 node x 6 PVC tiles = 6 ranks:
+#   n_cell = 256^3 -> (256/128)^3 = 8 boxes >= 6 ranks (every rank busy).
+#   Cells per rank ~ 2.80M (matches the weak-scaling load used at 4-/64-/
+#   128-/512-node scale in the multi-node YAMLs).
+#   Per-cell I/O ~ 66 B; per step plt+chk ~ (256^3 * 66 * 2) / 2^30 ~ 2.06 GiB.
+#   max_step=4, plot_int=1, check_int=1 -> 5 plt + 5 chk ~ 20.6 GiB total,
+#   ~3.4 GiB per rank. Fits any pool with room to spare.
+
+name: nyx_aurora_single_node_daos
+install_manager: container
+
+container_engine: apptainer
+container_base: intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04
+container_ssh_port: 2233
+container_gpu: intel
+
+hostfile: /home/isamuradli/hostfile_daos.txt
+
+pkgs:
+  - pkg_type: builtin.nyx
+    pkg_name: nyx_aurora
+    # 1 node x 6 PVC tiles/node = 6 ranks (1 rank per tile).
+    nprocs: 6
+    ppn: 6
+    gpu_backend: sycl
+    base_image: intel/oneapi-hpckit:2025.0.0-0-devel-ubuntu24.04
+    max_step: 4
+    n_cell: "256 256 256"
+    max_level: 0
+    plot_int: 1
+    check_int: 1
+    # Output goes to the DAOS POSIX container via the dfuse mount that
+    # `launch-dfuse.sh` set up on the allocated node. The wrapper mounts
+    # at /tmp/<DAOS_POOL>/<DAOS_CONT> (per ALCF docs), so the path below
+    # MUST match the DAOS_POOL / DAOS_CONT exported in Step 3 above. Edit
+    # both if you change the names.
+    # Apptainer needs to see this path inside the container; jarvis binds
+    # /tmp on Aurora, so a path under /tmp is reachable from ranks.
+    out: /tmp/gpu_hack/nyx_aurora_1node/nyx_out

@@ -1,0 +1,65 @@
+# Pipeline: Nyx baremetal on Aurora (1 node, no container, no IOWarp)
+#
+# Replicates what `~/nyx_sweep_bm.sh` does, but as a jarvis-managed
+# pipeline. Lays the groundwork for adding IOWarp / CTE adapters in a
+# follow-up YAML — once this validates end-to-end via jarvis.
+#
+# Why baremetal vs containerized (nyx_multi_node.yaml):
+#   - Uses Aurora's Cray MPICH directly (libfabric/HSN, RDMA-aware) instead
+#     of containerized OpenMPI/TCP. Eliminates the ~30-60s MPI_Init wireup
+#     overhead and PMIx GDS shmem failures we saw at >32 nodes.
+#   - Validated 1-node smoke test: 8s total wall, 6.6s Nyx run time, all
+#     6 PVC tiles peaking ~100 GiB HBM, 24% mean compute util.
+#
+# Prerequisites (one-time, see nyx_baremetal_1n.md if it exists):
+#   1. Modules loaded:  module use /soft/modulefiles
+#                       module load oneapi cmake mpich/opt/5.0.0.aurora_test.3c70a61
+#   2. Nyx baremetal binary built at:
+#        /lus/flare/projects/gpu_hack/isamuradli/baremetal_nyx/Nyx/build/Exec/HydroTests/nyx_HydroTests
+#   3. Wrapper at ~/.local/bin/nyx_HydroTests (sets ZE_AFFINITY_MASK from
+#      Aurora MPICH/PALS local-rank env vars; pkg.py's built-in wrapper
+#      uses OMPI_COMM_WORLD_LOCAL_RANK which is unset on MPICH).
+#   4. PBS allocation:
+#        qsub -A gpu_hack -q debug -l select=1:ncpus=208:ngpus=6 \
+#             -l walltime=01:00:00 -l filesystems=flare -I
+#
+# Usage:
+#   source ~/jarvis-venv/bin/activate
+#   cat $PBS_NODEFILE | awk -F. '{print $1}' > ~/hostfile_baremetal.txt
+#   jarvis hostfile set ~/hostfile_baremetal.txt
+#   jarvis ppl load yaml ~/jarvis-cd/builtin/pipelines/portability/aurora/nyx_baremetal_1n.yaml
+#   jarvis ppl run
+
+name: nyx_aurora_baremetal_1n
+
+# IMPORTANT: no `install_manager: container` here. That makes Nyx pkg.py
+# branch into its `else` (baremetal) path which uses `nyx_HydroTests`
+# from PATH and lets `mpiexec` come from the loaded mpich module
+# (Aurora's Cray PALS launcher).
+
+env:
+  # Put the wrapper FIRST on PATH so pkg.py's `cmd = ['nyx_HydroTests', ...]`
+  # finds the wrapper, which then re-exports ZE_AFFINITY_MASK from MPICH
+  # local-rank vars and execs the real Lustre-built binary.
+  PATH: /home/isamuradli/.local/bin:/opt/aurora/26.26.0/spack/unified/1.1.1/install/linux-x86_64/mpich-5.0.0.aurora_test.3c70a61-hlkigtk/bin:/opt/cray/pals/1.8/bin:/opt/aurora/26.26.0/oneapi/compiler/latest/bin:/usr/bin:/bin
+
+pkgs:
+  - pkg_type: builtin.nyx
+    pkg_name: nyx_aurora_bm
+    # Aurora node: 6 PVC tiles, 1 rank per tile.
+    nprocs: 6
+    ppn: 6
+    gpu_backend: sycl
+
+    # Smoke-test sizing (matches nyx_sweep_bm.sh defaults):
+    max_step: 4
+    n_cell: "256 256 256"
+    max_level: 0
+
+    # I/O every step (matches our benchmarking pattern).
+    plot_int: 1
+    check_int: 1
+
+    # Override container-path defaults baked into pkg.py:
+    inputs_file: /lus/flare/projects/gpu_hack/isamuradli/baremetal_nyx/Nyx/Exec/HydroTests/inputs.regtest.sedov
+    out: /lus/flare/projects/gpu_hack/isamuradli/baremetal_nyx_jarvis_run
