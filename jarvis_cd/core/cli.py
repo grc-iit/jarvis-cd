@@ -589,7 +589,10 @@ class JarvisCLI(ArgParse):
                 'pos': True
             }
         ])
-        
+
+        self.add_cmd('hostfile unset',
+                     msg="Unset the hostfile (clears to an empty hostfile)")
+
         # Resource graph commands
         self.add_menu('rg', msg="Resource graph management")
         
@@ -1747,6 +1750,11 @@ class JarvisCLI(ArgParse):
         self._ensure_initialized()
         hostfile_path = self.kwargs['hostfile_path']
         self.jarvis_config.set_hostfile(hostfile_path)
+
+    def hostfile_unset(self):
+        """Unset hostfile (clear to empty hostfile)"""
+        self._ensure_initialized()
+        self.jarvis_config.unset_hostfile()
         
     def rg_build(self):
         """Build resource graph"""

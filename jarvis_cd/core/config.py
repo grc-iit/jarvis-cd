@@ -207,7 +207,10 @@ class Jarvis:
         """Get current hostfile"""
         if self._hostfile is None:
             hostfile_path = self.config.get('hostfile')
-            if hostfile_path and os.path.exists(hostfile_path):
+            if hostfile_path == '':
+                # Explicitly unset -> empty hostfile
+                self._hostfile = Hostfile(hosts=[], find_ips=False)
+            elif hostfile_path and os.path.exists(hostfile_path):
                 self._hostfile = Hostfile(path=hostfile_path)
             else:
                 # Default to localhost
@@ -380,6 +383,14 @@ class Jarvis:
         self.save_config(config)
         self._hostfile = None  # Reset cached hostfile
         print(f"Set hostfile: {hostfile_path}")
+
+    def unset_hostfile(self):
+        """Clear the hostfile in configuration to an empty hostfile"""
+        config = self.config.copy()
+        config['hostfile'] = ''
+        self.save_config(config)
+        self._hostfile = Hostfile(hosts=[], find_ips=False)
+        print("Unset hostfile (using empty hostfile)")
 
     def get_pipeline_dir(self, pipeline_name: str) -> Path:
         """Get the config directory for a specific pipeline"""
