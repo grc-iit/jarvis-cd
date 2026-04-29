@@ -1,0 +1,10 @@
+FROM ##DEPLOY_BASE##
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        redis-server redis-tools \
+        openssh-server openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/sshd
+
+EXPOSE 22
+CMD ["/bin/bash"]

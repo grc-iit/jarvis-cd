@@ -1,0 +1,30 @@
+# Pipeline: WRF Container Test
+# Purpose: Test WRF deployment using Docker
+# Requirements: Docker installed, sci-hpc-base image built locally
+#
+# WRF itself uses NetCDF (built by wrf's own build.sh); ADIOS2 is installed
+# alongside for custom couplers. Fortran bindings are on so WRF add-ons can
+# link the ADIOS2 Fortran module.
+
+name: wrf_container_test
+install_manager: container
+
+container_engine: docker
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
+  - pkg_type: builtin.adios2
+    pkg_name: adios2
+    version: v2.10.2
+    use_hdf5: true
+    use_mpi: true
+    use_fortran: true
+    use_python: false
+  - pkg_type: builtin.wrf
+    pkg_name: wrf_container
+    nprocs: 2
+    ppn: 2
+    case: em_quarter_ss
+    out: /tmp/wrf_out

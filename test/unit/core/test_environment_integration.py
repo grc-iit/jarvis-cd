@@ -192,7 +192,7 @@ class TestEnvironmentIntegration(unittest.TestCase):
             # Verify test_env is in the list
             # The list command should show available environments
             # We can verify by checking the file exists
-            env_dir = jarvis_config.jarvis_root / 'env'
+            env_dir = jarvis.jarvis_root / 'env'
             env_files = list(env_dir.glob('*.yaml'))
             env_names = [f.stem for f in env_files]
             self.assertIn('test_env', env_names, "test_env should be in environment list")

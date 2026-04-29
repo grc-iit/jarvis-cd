@@ -1,41 +1,46 @@
-name: main
+name: CI
 
 on:
-  # push:
-  # pull_request:
-  #   branches: [ main ]
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
   workflow_dispatch:
-    inputs:
-      debug_enabled:
-        description: 'Run the build with tmate debugging enabled'
-        required: false
-        default: false
-env:
-  BUILD_TYPE: Debug
-  LOCAL: local
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Get Sources
+      - name: Checkout
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-      - name: Install Apt Dependencies
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install system dependencies
         run: bash ci/install_deps.sh
 
       - name: Install Jarvis
         run: bash ci/install_jarvis.sh
 
-      - name: Run pylint
-        run: bash ci/lint.sh
-
-      - name: Test
+      - name: Run tests with coverage
         run: bash ci/run_tests.sh
 
-#      - name: Coveralls
-#        uses: coverallsapp/github-action@master
-#        with:
-#          path-to-lcov: lcov.info
-#          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: htmlcov/
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          files: coverage.xml
+          fail_ci_if_error: false

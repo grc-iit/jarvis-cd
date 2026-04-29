@@ -381,6 +381,14 @@ class Jarvis:
         self._hostfile = None  # Reset cached hostfile
         print(f"Set hostfile: {hostfile_path}")
 
+    def unset_hostfile(self):
+        """Clear the hostfile, reverting to the default (localhost)"""
+        config = self.config.copy()
+        config['hostfile'] = None
+        self.save_config(config)
+        self._hostfile = None  # Reset cached hostfile
+        print("Unset hostfile (reverted to default: localhost)")
+
     def get_pipeline_dir(self, pipeline_name: str) -> Path:
         """Get the config directory for a specific pipeline"""
         return Path(self.config_dir) / 'pipelines' / pipeline_name

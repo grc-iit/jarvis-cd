@@ -1,0 +1,28 @@
+# Pipeline: Gray-Scott Apptainer Test
+# Purpose: Test Gray-Scott CUDA+MPI+HDF5 using Apptainer
+# Requirements: NVIDIA GPU, sci-hpc-base image built locally
+
+name: gray_scott_apptainer_test
+install_manager: container
+
+container_engine: apptainer
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
+  - pkg_type: builtin.gray_scott
+    pkg_name: gray_scott_apptainer
+    nprocs: 4
+    ppn: 4
+    cuda_arch: 80
+    base_image: sci-hpc-base
+    width: 512
+    height: 512
+    steps: 5000
+    out_every: 500
+    outdir: /tmp/gray_scott_out
+    F: 0.035
+    k: 0.060
+    Du: 0.16
+    Dv: 0.08

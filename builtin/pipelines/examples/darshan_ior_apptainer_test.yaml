@@ -1,0 +1,35 @@
+# Pipeline: Darshan + IOR Apptainer Test
+# Purpose: Verify Darshan correctly intercepts IOR inside an Apptainer container
+# Requirements: Docker or Podman (for building), Apptainer (for running)
+#
+# Darshan logs will be written to /tmp/darshan_logs on the host (via apptainer bind mount).
+
+name: darshan_ior_apptainer_test
+install_manager: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+interceptors:
+  - pkg_type: builtin.darshan
+    pkg_name: darshan_interceptor
+    log_dir: /tmp/darshan_logs
+    job_id: ior_apptainer_test
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior_container
+    interceptors:
+      - darshan_interceptor
+    nprocs: 4
+    ppn: 4
+    block: 256m
+    xfer: 1m
+    api: posix
+    out: /tmp/ior_test_file
+    log: /tmp/ior_output.log
+    write: true
+    read: true
+    fpp: false
+    reps: 1
+    direct: false

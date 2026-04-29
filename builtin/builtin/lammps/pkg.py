@@ -1,120 +1,241 @@
 """
-This module provides classes and methods to launch the Lammps application.
-Lammps is ....
+This module provides classes and methods to launch the LAMMPS application.
+LAMMPS (Large-scale Atomic/Molecular Massively Parallel Simulator) is a
+classical molecular-dynamics code from Sandia National Laboratories.
 """
 from jarvis_cd.core.pkg import Application
 from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
-from jarvis_cd.shell.process import Rm
-import os
+from jarvis_cd.shell.process import Mkdir, Rm
 
 
 class Lammps(Application):
     """
-    This class provides methods to launch the Lammps application.
+    Merged LAMMPS class supporting both default (bare-metal) and container deployment.
+
+    Set deploy_mode='container' to build and run LAMMPS inside a Docker/Podman/Apptainer
+    container with Kokkos CUDA.  Set deploy_mode='default' to use a
+    system-installed lmp binary via MPI.
     """
+
     def _init(self):
-        """
-        Initialize paths
-        """
         pass
 
     def _configure_menu(self):
-        """
-        Create a CLI menu for the configurator method.
-        For thorough documentation of these parameters, view:
-        https://github.com/scs-lab/jarvis-util/wiki/3.-Argument-Parsing
-
-        :return: List(dict)
-        """
         return [
             {
                 'name': 'nprocs',
-                'msg': 'Number of processes',
-                'type': int,
-                'default': 1,
-            },
-            {
-                'name': 'ppn',
-                'msg': 'The number of processes per node',
+                'msg': 'Number of MPI processes',
                 'type': int,
                 'default': 4,
             },
             {
-                'name': 'engine',
-                'msg': 'Engine to be used',
-                'choices': ['bp4', 'hermes', 'iowarp'],
-                'type': str,
-                'default': 'bp4',
+                'name': 'ppn',
+                'msg': 'Processes per node',
+                'type': int,
+                'default': 4,
             },
             {
-                'name': 'script_location',
-                'msg': 'the location of lammps script',  # the location for lammps scirpt
+                'name': 'script',
+                'msg': 'Path to LAMMPS input script (e.g., in.lj)',
                 'type': str,
                 'default': None,
-
             },
             {
-                'name': 'db_path',
-                'msg': 'Path where the DB will be stored',
+                'name': 'lmp_bin',
+                'msg': 'Path to LAMMPS binary (default: lmp in PATH)',
                 'type': str,
-                'default': 'benchmark_metadata.db',
+                'default': 'lmp',
+            },
+            {
+                'name': 'cuda_arch',
+                'msg': 'CUDA architecture code (80=A100, 90=H100, 70=V100)',
+                'type': int,
+                'default': 80,
+            },
+            {
+                'name': 'base_image',
+                'msg': 'Base Docker image for build container',
+                'type': str,
+                'default': 'sci-hpc-base',
+            },
+            {
+                'name': 'out',
+                'msg': 'Output directory for results',
+                'type': str,
+                'default': '/tmp/lammps_out',
+            },
+            {
+                'name': 'kokkos_gpu',
+                'msg': 'Enable Kokkos GPU (CUDA) acceleration',
+                'type': bool,
+                'default': True,
+            },
+            {
+                'name': 'num_gpus',
+                'msg': 'Number of GPUs per node',
+                'type': int,
+                'default': 1,
+            },
+            {
+                'name': 'io_dump_interval',
+                'msg': 'If >0, auto-generate LJ input with dump every N steps',
+                'type': int,
+                'default': 0,
+            },
+            {
+                'name': 'io_lattice_size',
+                'msg': 'FCC lattice size per dim (4*N^3 atoms) for auto-generated IO input',
+                'type': int,
+                'default': 80,
+            },
+            {
+                'name': 'io_run_steps',
+                'msg': 'Total steps for auto-generated IO input',
+                'type': int,
+                'default': 5000,
             },
         ]
 
+    # ------------------------------------------------------------------
+    # Container Dockerfile generators
+    # ------------------------------------------------------------------
+
+    def _build_phase(self):
+        if self.config.get('deploy_mode') != 'container':
+            return None
+        base = self.config.get('base_image', 'sci-hpc-base')
+        use_gpu = self.config.get('kokkos_gpu', True)
+        cuda_arch = self.config.get('cuda_arch', 80)
+        if use_gpu:
+            cmake_extra = (
+                f'-DPKG_KOKKOS=ON '
+                f'-DKokkos_ENABLE_CUDA=ON '
+                f'"-DKokkos_ARCH_AMPERE{cuda_arch}=ON" '
+            )
+            suffix = f'kokkos-gpu-{cuda_arch}'
+        else:
+            cmake_extra = ''
+            suffix = 'cpu'
+        content = self._read_build_script('build.sh', {
+            'BASE_IMAGE': base,
+            'CMAKE_EXTRA': cmake_extra,
+        })
+        return content, suffix
+
+    def _build_deploy_phase(self):
+        if self.config.get('deploy_mode') != 'container':
+            return None
+        use_gpu = self.config.get('kokkos_gpu', True)
+        deploy_base = ('nvidia/cuda:12.6.0-runtime-ubuntu24.04'
+                       if use_gpu else 'ubuntu:24.04')
+        suffix = getattr(self, '_build_suffix', '')
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'BUILD_IMAGE': self.build_image_name(),
+            'DEPLOY_BASE': deploy_base,
+        })
+        return content, suffix
+
+    # ------------------------------------------------------------------
+    # Configuration
+    # ------------------------------------------------------------------
+
     def _configure(self, **kwargs):
         """
-        Converts the Jarvis configuration to application-specific configuration.
-        E.g., OrangeFS produces an orangefs.xml file.
+        Configure LAMMPS.
 
-        :param kwargs: Configuration parameters for this pkg.
-        :return: None
+        Calls super()._configure() which updates self.config and (when
+        deploy_mode == 'container') triggers build_phase / build_deploy_phase.
+
+        In default mode, also creates the output directory on all nodes.
         """
-        if self.config['engine'].lower() == 'bp4':
-            self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
-                                    f'{self.config["script_location"]}/adios_config.xml')
-        elif  self.config['engine'].lower == 'hermes':
-            replacement = [("ppn", self.config['ppn']), ("DB_FIEL", self.config['db_file'])]
-            self.copy_template_file(f'{self.pkg_dir}/config/hermes.xml',
-                                    f'{self.config["script_location"]}/adios_config.xml', replacement)
-        elif self.config['engine'].lower() == 'iowarp':
-            replacement = [("ppn", self.config['ppn']), ("DB_FIEL", self.config['db_path'])]
-            self.copy_template_file(f'{self.pkg_dir}/config/iowarp.xml',
-                                    f'{self.config["script_location"]}/adios_config.xml', replacement)
-        else:
-            raise Exception('Engine not defined')
+        super()._configure(**kwargs)
+
+        if self.config.get('deploy_mode') == 'default':
+            if self.config['out']:
+                Mkdir(self.config['out'],
+                      PsshExecInfo(hostfile=self.hostfile, env=self.env)).run()
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     def start(self):
         """
-        Launch an application. E.g., OrangeFS will launch the servers, clients,
-        and metadata services on all necessary pkgs.
+        Launch LAMMPS.
 
-        :return: None
+        Branches on deploy_mode: uses MpiExecInfo with container engine for
+        container mode, MpiExecInfo with hostfile for default mode.
         """
-        Exec('lmp -in input.lammps',
-             MpiExecInfo(nprocs=self.config['nprocs'],
-                         ppn=self.config['ppn'],
-                         hostfile=self.hostfile,
-                         env=self.mod_env,
-                         cwd=self.config['script_location'])).run()
-        pass
+        if self.config.get('deploy_mode') == 'container':
+            script_path = self.config.get('script')
+            if self.config.get('io_dump_interval', 0) > 0:
+                import os
+                n = self.config.get('io_lattice_size', 20)
+                steps = self.config.get('io_run_steps', 100)
+                interval = self.config['io_dump_interval']
+                out_dir = self.config.get('out', '/tmp/lammps_out')
+                script_path = os.path.join(
+                    str(self.shared_dir), 'generated_io_input.lmp')
+                with open(script_path, 'w') as f:
+                    f.write(
+                        f"shell mkdir -p {out_dir}\n"
+                        f"units lj\natom_style atomic\n"
+                        f"lattice fcc 0.8442\n"
+                        f"region box block 0 {n} 0 {n} 0 {n}\n"
+                        f"create_box 1 box\ncreate_atoms 1 box\n"
+                        f"mass 1 1.0\n"
+                        f"velocity all create 1.44 87287 loop geom\n"
+                        f"pair_style lj/cut 2.5\npair_coeff 1 1 1.0 1.0 2.5\n"
+                        f"neighbor 0.3 bin\n"
+                        f"neigh_modify every 10 delay 0 check no\n"
+                        f"fix 1 all nve\n"
+                        f"dump d1 all custom {interval} "
+                        f"{out_dir}/dump.*.lammpstrj "
+                        f"id type x y z vx vy vz\n"
+                        f"dump_modify d1 sort id\n"
+                        f"thermo {interval}\n"
+                        f"timestep 0.005\nrun {steps}\n"
+                    )
+            cmd = ['/usr/local/bin/lmp']
+            if script_path:
+                cmd.append(f"-in {script_path}")
+            if self.config.get('kokkos_gpu'):
+                n_gpus = self.config.get('num_gpus', 1)
+                cmd += [f'-k on g {n_gpus}', '-sf kk', '-pk kokkos cuda/aware on']
+
+            Exec(' '.join(cmd), MpiExecInfo(
+                nprocs=self.config['nprocs'],
+                ppn=self.config['ppn'],
+                hostfile=self.hostfile,
+                port=self.ssh_port,
+                container=self._container_engine,
+                container_image=self.deploy_image_name(),
+                shared_dir=self.shared_dir,
+                private_dir=self.private_dir,
+                gpu=self.config.get('kokkos_gpu', False),
+                env=self.mod_env,
+            )).run()
+        else:
+            cmd = [self.config['lmp_bin']]
+            if self.config['script']:
+                cmd.append(f"-in {self.config['script']}")
+            if self.config.get('kokkos_gpu'):
+                n_gpus = self.config.get('num_gpus', 1)
+                cmd += [f'-k on g {n_gpus}', '-sf kk', '-pk kokkos cuda/aware on']
+
+            Exec(' '.join(cmd),
+                 MpiExecInfo(nprocs=self.config['nprocs'],
+                             ppn=self.config['ppn'],
+                             hostfile=self.hostfile,
+                             env=self.mod_env,
+                             cwd=self.config.get('out'))).run()
 
     def stop(self):
-        """
-        Stop a running application. E.g., OrangeFS will terminate the servers,
-        clients, and metadata services.
-
-        :return: None
-        """
+        """Stop LAMMPS (no-op — LAMMPS runs to completion)."""
         pass
 
     def clean(self):
-        """
-        Destroy all data for an application. E.g., OrangeFS will delete all
-        metadata and data directories in addition to the orangefs.xml file.
-
-        :return: None
-        """
-
-        output_file = [self.config['db_path']]
-        Rm(output_file, PsshExecInfo(hostfile=self.hostfile)).run()
-        pass
+        """Remove LAMMPS output directory."""
+        if self.config['out']:
+            Rm(self.config['out'] + '*',
+               PsshExecInfo(hostfile=self.hostfile, env=self.env)).run()

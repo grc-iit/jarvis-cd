@@ -1,0 +1,30 @@
+# Pipeline: SparkCluster Local Container Test
+# Purpose: Start a Spark master + worker inside a container on the local machine.
+# Requirements: Docker or Podman installed.
+# Multi-node: swap exec_mode to 'pssh' or 'mpi' and add a hostfile; bump num_workers.
+# Expected Runtime: 3-5 minutes on first run (Spark tarball download dominates).
+
+name: spark_cluster_local_test
+install_manager: container
+
+# Container configuration — Spark is fetched as a prebuilt tarball, no spack.
+container_engine: docker
+container_base: ubuntu:22.04
+
+
+pkgs:
+  - pkg_type: builtin.spark_cluster
+    pkg_name: spark
+
+    # Spark master / worker ports
+    master_port: 7077
+    worker_port: 7078
+
+    # Single worker for local test; bump up when adding a hostfile.
+    num_workers: 1
+
+    # Seconds to wait after starting workers (gives Spark time to register).
+    sleep: 3
+
+    # Single-node local run; set exec_mode to 'pssh' or 'mpi' for multi-node.
+    exec_mode: pssh

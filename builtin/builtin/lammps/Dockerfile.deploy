@@ -1,0 +1,20 @@
+FROM ##BUILD_IMAGE## AS builder
+FROM ##DEPLOY_BASE##
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgomp1 \
+        openmpi-bin libopenmpi3 \
+        openssh-server openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# LAMMPS binary and benchmark inputs
+COPY --from=builder /opt/lammps/build/lmp /opt/lammps/build/lmp
+COPY --from=builder /opt/lammps/bench     /opt/lammps/bench
+
+# Generate SSH keys so all containers from this image share the same identity
+RUN mkdir -p /var/run/sshd /root/.ssh && ssh-keygen -A && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys && printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /root/.ssh/config && chmod 600 /root/.ssh/config
+
+ENV PATH=/opt/lammps/build:${PATH}
+
+EXPOSE 22
+CMD ["/bin/bash"]

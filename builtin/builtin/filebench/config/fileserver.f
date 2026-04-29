@@ -24,10 +24,10 @@
 #
 
 set $dir=##DIR##
-set $nfiles=10000
+set $nfiles=##NFILES##
 set $meandirwidth=20
-set $meanfilesize=128k
-set $nthreads=50
+set $meanfilesize=##FILESIZE##
+set $nthreads=##NTHREADS##
 set $iosize=1m
 set $meanappendsize=16k
 
@@ -52,13 +52,5 @@ define process name=filereader,instances=1
 }
 
 echo  "File-server Version 3.0 personality successfully loaded"
-usage "Usage: set \$dir=<dir>"
-usage "       set \$meanfilesize=<size>     defaults to $meanfilesize"
-usage "       set \$nfiles=<value>      defaults to $nfiles"
-usage "       set \$nthreads=<value>    defaults to $nthreads"
-usage "       set \$meanappendsize=<value>  defaults to $meanappendsize"
-usage "       set \$iosize=<size>  defaults to $iosize"
-usage "       set \$meandirwidth=<size> defaults to $meandirwidth"
-usage "       run runtime (e.g. run 60)"
 
 run ##RUN##

@@ -1,0 +1,18 @@
+# Pipeline: BioExcel Building Blocks MD Setup Container Test
+# Purpose: Test biobb_wf_md_setup workflow using Docker
+# Requirements: Docker installed
+
+name: biobb_wf_md_setup_container_test
+install_manager: container
+
+container_engine: docker
+# ubuntu:24.04 matches Dockerfile.deploy's DEPLOY_BASE. sci-hpc-base was
+# a bespoke local image referenced by older examples but never committed.
+container_base: ubuntu:24.04
+
+pkgs:
+  - pkg_type: builtin.biobb_wf_md_setup
+    pkg_name: biobb_wf_md_setup_container
+    nprocs: 1
+    ppn: 1
+    out: /tmp/biobb_wf_md_setup_out

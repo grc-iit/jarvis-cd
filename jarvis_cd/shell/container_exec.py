@@ -26,8 +26,10 @@ class PodmanContainerExec(CoreExec):
         self.local_exec = None
 
     def get_cmd(self) -> str:
-        """Get the podman exec command string"""
-        return f"podman exec {self.container_name} {self.command}"
+        """Get the podman exec command string.
+        Wraps in bash -c so shell metacharacters run inside the container."""
+        escaped = self.command.replace("'", "'\\''")
+        return f"podman exec {self.container_name} bash -c '{escaped}'"
 
     def run(self):
         """Execute the command inside the container"""
@@ -62,8 +64,10 @@ class DockerContainerExec(CoreExec):
         self.local_exec = None
 
     def get_cmd(self) -> str:
-        """Get the docker exec command string"""
-        return f"docker exec {self.container_name} {self.command}"
+        """Get the docker exec command string.
+        Wraps in bash -c so shell metacharacters run inside the container."""
+        escaped = self.command.replace("'", "'\\''")
+        return f"docker exec {self.container_name} bash -c '{escaped}'"
 
     def run(self):
         """Execute the command inside the container"""

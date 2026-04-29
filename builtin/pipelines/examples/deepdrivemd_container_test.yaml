@@ -1,0 +1,19 @@
+# Pipeline: DeepDriveMD Container Test
+# Purpose: Test DeepDriveMD AI-driven molecular dynamics using Docker
+# Requirements: Docker installed, sci-hpc-base image built locally
+
+name: deepdrivemd_container_test
+install_manager: container
+
+container_engine: docker
+# ubuntu:24.04 matches Dockerfile.deploy's DEPLOY_BASE. sci-hpc-base was
+# a bespoke local image referenced by older examples but never committed.
+container_base: ubuntu:24.04
+
+pkgs:
+  - pkg_type: builtin.deepdrivemd
+    pkg_name: deepdrivemd_container
+    nprocs: 1
+    ppn: 1
+    iterations: 2
+    out: /tmp/deepdrivemd_out

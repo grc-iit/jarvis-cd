@@ -1,0 +1,39 @@
+# Pipeline: LAMMPS single-node on Delta (apptainer container, Kokkos CUDA build)
+# Purpose: Validate LAMMPS Kokkos/CUDA build+run inside Apptainer on one Delta
+#          GPU node. Requires jarvis pipeline.py with --nv support (container_gpu).
+# Usage:
+#   salloc --account=bekn-delta-gpu --partition=gpuA100x4 \
+#          --nodes=1 --ntasks=4 --gpus=1 --time=03:00:00 --mem=64g
+#   scontrol show hostnames $SLURM_JOB_NODELIST > ~/hostfile_single.txt
+#   jarvis hostfile set ~/hostfile_single.txt
+#   jarvis ppl load yaml builtin/pipelines/portability/delta/lammps_single_node.yaml
+#   jarvis ppl run
+
+name: lammps_delta_single_node
+install_manager: container
+
+container_engine: apptainer
+container_base: nvidia/cuda:12.8.0-devel-ubuntu24.04
+container_ssh_port: 2233
+container_gpu: true
+
+hostfile: /u/imuradli/hostfile_single.txt
+
+pkgs:
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
+  - pkg_type: builtin.lammps
+    pkg_name: lammps_delta
+    nprocs: 1
+    ppn: 1
+    kokkos_gpu: true
+    cuda_arch: 80
+    num_gpus: 1
+    script: /opt/lammps/bench/in.lj
+    out: /tmp/lammps_out
+    base_image: nvidia/cuda:12.8.0-devel-ubuntu24.04
+    # Opt-in I/O workload (2.05M atoms × 5000 steps, ~60s on A100).
+    # Setting io_dump_interval > 0 tells builtin.lammps to auto-generate
+    # an LJ input with trajectory dumps, overriding 'script:' above.
+    # Default io_dump_interval is 0 (use bare script).
+    io_dump_interval: 500

@@ -20,9 +20,14 @@ def initialize_jarvis_for_test(config_dir, private_dir, shared_dir):
     """Helper function to properly initialize Jarvis for testing"""
     # Get Jarvis singleton and initialize it
     jarvis = Jarvis.get_instance()
-    jarvis.initialize(config_dir, private_dir, shared_dir, force=True)
+    saved_config = None
+    if jarvis.config_file.exists():
+        import yaml
+        with open(jarvis.config_file, 'r') as f:
+            saved_config = yaml.safe_load(f)
+    jarvis.initialize(config_dir, private_dir, shared_dir, force=False)
 
-    return jarvis
+    return jarvis, saved_config
 
 
 class TestPkgLoadStandalone(unittest.TestCase):
@@ -44,12 +49,20 @@ class TestPkgLoadStandalone(unittest.TestCase):
         os.environ['JARVIS_SHARED'] = self.shared_dir
 
         # Initialize Jarvis properly
-        initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
+        self.jarvis, self._saved_config = initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
 
         self.original_env = os.environ.copy()
 
     def tearDown(self):
         """Clean up test environment"""
+        if self._saved_config:
+            import yaml
+            jarvis = Jarvis.get_instance()
+            jarvis.save_config(self._saved_config)
+            jarvis.config_dir = self._saved_config.get('config_dir', jarvis.config_dir)
+            jarvis.private_dir = self._saved_config.get('private_dir', jarvis.private_dir)
+            jarvis.shared_dir = self._saved_config.get('shared_dir', jarvis.shared_dir)
+
         os.environ.clear()
         os.environ.update(self.original_env)
 
@@ -127,12 +140,20 @@ class TestPkgEnvironmentMethods(unittest.TestCase):
         os.environ['JARVIS_SHARED'] = self.shared_dir
 
         # Initialize Jarvis properly
-        initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
+        self.jarvis, self._saved_config = initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
 
         self.original_env = os.environ.copy()
 
     def tearDown(self):
         """Clean up test environment"""
+        if self._saved_config:
+            import yaml
+            jarvis = Jarvis.get_instance()
+            jarvis.save_config(self._saved_config)
+            jarvis.config_dir = self._saved_config.get('config_dir', jarvis.config_dir)
+            jarvis.private_dir = self._saved_config.get('private_dir', jarvis.private_dir)
+            jarvis.shared_dir = self._saved_config.get('shared_dir', jarvis.shared_dir)
+
         os.environ.clear()
         os.environ.update(self.original_env)
 
@@ -274,12 +295,20 @@ class TestPkgFindLibrary(unittest.TestCase):
         os.environ['JARVIS_SHARED'] = self.shared_dir
 
         # Initialize Jarvis properly
-        initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
+        self.jarvis, self._saved_config = initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
 
         self.original_env = os.environ.copy()
 
     def tearDown(self):
         """Clean up test environment"""
+        if self._saved_config:
+            import yaml
+            jarvis = Jarvis.get_instance()
+            jarvis.save_config(self._saved_config)
+            jarvis.config_dir = self._saved_config.get('config_dir', jarvis.config_dir)
+            jarvis.private_dir = self._saved_config.get('private_dir', jarvis.private_dir)
+            jarvis.shared_dir = self._saved_config.get('shared_dir', jarvis.shared_dir)
+
         os.environ.clear()
         os.environ.update(self.original_env)
 
@@ -393,12 +422,20 @@ class TestPkgCopyTemplateFile(unittest.TestCase):
         os.environ['JARVIS_SHARED'] = self.shared_dir
 
         # Initialize Jarvis properly
-        initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
+        self.jarvis, self._saved_config = initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
 
         self.original_env = os.environ.copy()
 
     def tearDown(self):
         """Clean up test environment"""
+        if self._saved_config:
+            import yaml
+            jarvis = Jarvis.get_instance()
+            jarvis.save_config(self._saved_config)
+            jarvis.config_dir = self._saved_config.get('config_dir', jarvis.config_dir)
+            jarvis.private_dir = self._saved_config.get('private_dir', jarvis.private_dir)
+            jarvis.shared_dir = self._saved_config.get('shared_dir', jarvis.shared_dir)
+
         os.environ.clear()
         os.environ.update(self.original_env)
 
@@ -517,12 +554,20 @@ class TestPkgDisplayMethods(unittest.TestCase):
         os.environ['JARVIS_SHARED'] = self.shared_dir
 
         # Initialize Jarvis properly
-        initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
+        self.jarvis, self._saved_config = initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
 
         self.original_env = os.environ.copy()
 
     def tearDown(self):
         """Clean up test environment"""
+        if self._saved_config:
+            import yaml
+            jarvis = Jarvis.get_instance()
+            jarvis.save_config(self._saved_config)
+            jarvis.config_dir = self._saved_config.get('config_dir', jarvis.config_dir)
+            jarvis.private_dir = self._saved_config.get('private_dir', jarvis.private_dir)
+            jarvis.shared_dir = self._saved_config.get('shared_dir', jarvis.shared_dir)
+
         os.environ.clear()
         os.environ.update(self.original_env)
 
@@ -666,12 +711,20 @@ class TestPkgConfigurationMethods(unittest.TestCase):
         os.environ['JARVIS_SHARED'] = self.shared_dir
 
         # Initialize Jarvis properly
-        initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
+        self.jarvis, self._saved_config = initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
 
         self.original_env = os.environ.copy()
 
     def tearDown(self):
         """Clean up test environment"""
+        if self._saved_config:
+            import yaml
+            jarvis = Jarvis.get_instance()
+            jarvis.save_config(self._saved_config)
+            jarvis.config_dir = self._saved_config.get('config_dir', jarvis.config_dir)
+            jarvis.private_dir = self._saved_config.get('private_dir', jarvis.private_dir)
+            jarvis.shared_dir = self._saved_config.get('shared_dir', jarvis.shared_dir)
+
         os.environ.clear()
         os.environ.update(self.original_env)
 
@@ -768,12 +821,20 @@ class TestPkgUtilityMethods(unittest.TestCase):
         os.environ['JARVIS_SHARED'] = self.shared_dir
 
         # Initialize Jarvis properly
-        initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
+        self.jarvis, self._saved_config = initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
 
         self.original_env = os.environ.copy()
 
     def tearDown(self):
         """Clean up test environment"""
+        if self._saved_config:
+            import yaml
+            jarvis = Jarvis.get_instance()
+            jarvis.save_config(self._saved_config)
+            jarvis.config_dir = self._saved_config.get('config_dir', jarvis.config_dir)
+            jarvis.private_dir = self._saved_config.get('private_dir', jarvis.private_dir)
+            jarvis.shared_dir = self._saved_config.get('shared_dir', jarvis.shared_dir)
+
         os.environ.clear()
         os.environ.update(self.original_env)
 
@@ -866,12 +927,20 @@ class TestPkgSubclasses(unittest.TestCase):
         os.environ['JARVIS_SHARED'] = self.shared_dir
 
         # Initialize Jarvis properly
-        initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
+        self.jarvis, self._saved_config = initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
 
         self.original_env = os.environ.copy()
 
     def tearDown(self):
         """Clean up test environment"""
+        if self._saved_config:
+            import yaml
+            jarvis = Jarvis.get_instance()
+            jarvis.save_config(self._saved_config)
+            jarvis.config_dir = self._saved_config.get('config_dir', jarvis.config_dir)
+            jarvis.private_dir = self._saved_config.get('private_dir', jarvis.private_dir)
+            jarvis.shared_dir = self._saved_config.get('shared_dir', jarvis.shared_dir)
+
         os.environ.clear()
         os.environ.update(self.original_env)
 
@@ -946,12 +1015,20 @@ class TestPkgLifecycleMethods(unittest.TestCase):
         os.environ['JARVIS_SHARED'] = self.shared_dir
 
         # Initialize Jarvis properly
-        initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
+        self.jarvis, self._saved_config = initialize_jarvis_for_test(self.config_dir, self.private_dir, self.shared_dir)
 
         self.original_env = os.environ.copy()
 
     def tearDown(self):
         """Clean up test environment"""
+        if self._saved_config:
+            import yaml
+            jarvis = Jarvis.get_instance()
+            jarvis.save_config(self._saved_config)
+            jarvis.config_dir = self._saved_config.get('config_dir', jarvis.config_dir)
+            jarvis.private_dir = self._saved_config.get('private_dir', jarvis.private_dir)
+            jarvis.shared_dir = self._saved_config.get('shared_dir', jarvis.shared_dir)
+
         os.environ.clear()
         os.environ.update(self.original_env)
 

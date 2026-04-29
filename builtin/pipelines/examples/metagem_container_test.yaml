@@ -1,0 +1,18 @@
+# Pipeline: MetaGEM Container Test
+# Purpose: Test MetaGEM metagenomics workflow using Docker
+# Requirements: Docker installed, sci-hpc-base image built locally
+
+name: metagem_container_test
+install_manager: container
+
+container_engine: docker
+# ubuntu:24.04 matches Dockerfile.deploy's DEPLOY_BASE. sci-hpc-base was
+# a bespoke local image referenced by older examples but never committed.
+container_base: ubuntu:24.04
+
+pkgs:
+  - pkg_type: builtin.metagem
+    pkg_name: metagem_container
+    nprocs: 1
+    cores: 4
+    out: /tmp/metagem_out

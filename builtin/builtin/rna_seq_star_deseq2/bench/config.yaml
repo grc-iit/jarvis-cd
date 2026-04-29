@@ -1,0 +1,37 @@
+# For a fully commented config.yaml file, see the main `config/config.yaml`
+# example file.
+
+samples: config_basic/samples.tsv
+units: config_basic/units.tsv
+
+ref:
+  species: saccharomyces_cerevisiae
+  release: 115
+  build: R64-1-1
+
+trimming:
+  activate: True
+
+mergeReads:
+  activate: False
+
+pca:
+  activate: True
+  labels:
+    - condition
+
+diffexp:
+  variables_of_interest:
+    condition:
+      base_level: untreated
+  batch_effects: ""
+  contrasts:
+    treated-vs-untreated:
+      variable_of_interest: condition
+      level_of_interest: treated
+  model: ~condition
+
+params:
+  cutadapt-pe: ""
+  cutadapt-se: ""
+  star: ""

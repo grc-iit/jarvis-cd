@@ -6,7 +6,8 @@ import os
 # Add the project root to the path so we can import jarvis_cd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from jarvis_cd.shell.mpi_exec import MpiExec, OpenMpiExec, MpichExec, CrayMpichExec, IntelMpiExec
+from jarvis_cd.shell.exec_factory import Exec as MpiExec
+from jarvis_cd.shell.mpi_exec import OpenMpiExec, MpichExec, CrayMpichExec, IntelMpiExec
 from jarvis_cd.shell.exec_info import MpiExecInfo, ExecType
 from jarvis_cd.util.hostfile import Hostfile
 
@@ -23,10 +24,11 @@ class TestMpiExec(unittest.TestCase):
             nprocs=4,
             ppn=2,
             hostfile=self.hostfile,
-            env={'TEST_VAR': 'test_value'}
+            env={'TEST_VAR': 'test_value'},
+            dry_run=True
         )
 
-        mpi_exec = MpiExec('echo "hello world"', exec_info)
+        mpi_exec = OpenMpiExec('echo "hello world"', exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify basic command structure
@@ -37,7 +39,8 @@ class TestMpiExec(unittest.TestCase):
         """Test MPI execution with multiple commands"""
         exec_info = MpiExecInfo(
             nprocs=10,
-            hostfile=self.hostfile
+            hostfile=self.hostfile,
+            dry_run=True
         )
 
         cmd_list = [
@@ -45,7 +48,7 @@ class TestMpiExec(unittest.TestCase):
             {'cmd': './myapp', 'nprocs': None}  # Should get remaining 9 procs
         ]
 
-        mpi_exec = MpiExec(cmd_list, exec_info)
+        mpi_exec = OpenMpiExec(cmd_list, exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify multi-command structure
@@ -57,7 +60,8 @@ class TestMpiExec(unittest.TestCase):
         """Test that commands with 0 nprocs are skipped"""
         exec_info = MpiExecInfo(
             nprocs=4,
-            hostfile=self.hostfile
+            hostfile=self.hostfile,
+            dry_run=True
         )
 
         cmd_list = [
@@ -65,7 +69,7 @@ class TestMpiExec(unittest.TestCase):
             {'cmd': './myapp', 'nprocs': None}  # Should get all 4 procs
         ]
 
-        mpi_exec = MpiExec(cmd_list, exec_info)
+        mpi_exec = OpenMpiExec(cmd_list, exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify gdbserver command is not included
@@ -77,10 +81,11 @@ class TestMpiExec(unittest.TestCase):
         exec_info = MpiExecInfo(
             nprocs=2,
             hostfile=self.hostfile,
-            env={'MY_VAR': 'my_value', 'ANOTHER_VAR': 'another_value'}
+            env={'MY_VAR': 'my_value', 'ANOTHER_VAR': 'another_value'},
+            dry_run=True
         )
 
-        mpi_exec = MpiExec('./myapp', exec_info)
+        mpi_exec = OpenMpiExec('./myapp', exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify environment variables are in the command
@@ -96,11 +101,12 @@ class TestMpiExec(unittest.TestCase):
         exec_info = MpiExecInfo(
             nprocs=1,
             hostfile=self.hostfile,
-            env={'TEST_VAR': 'test_value'}
+            env={'TEST_VAR': 'test_value'},
+            dry_run=True
         )
 
         if os.path.exists(test_binary):
-            mpi_exec = MpiExec(f'{test_binary} TEST_VAR', exec_info)
+            mpi_exec = OpenMpiExec(f'{test_binary} TEST_VAR', exec_info)
             cmd = mpi_exec.get_cmd()
 
             self.assertIn('TEST_VAR', cmd)
@@ -116,11 +122,12 @@ class TestMpiExec(unittest.TestCase):
                 'VAR1': 'value1',
                 'VAR2': 'value2',
                 'VAR3': 'value3'
-            }
+            },
+            dry_run=True
         )
 
         if os.path.exists(test_binary):
-            mpi_exec = MpiExec(f'{test_binary} VAR1 VAR2 VAR3', exec_info)
+            mpi_exec = OpenMpiExec(f'{test_binary} VAR1 VAR2 VAR3', exec_info)
             cmd = mpi_exec.get_cmd()
 
             self.assertIn('VAR1', cmd)
@@ -135,10 +142,11 @@ class TestMpiExec(unittest.TestCase):
         exec_info = MpiExecInfo(
             nprocs=1,
             hostfile=self.hostfile,
-            env={'SPECIAL_VAR': 'value with "quotes" and spaces'}
+            env={'SPECIAL_VAR': 'value with "quotes" and spaces'},
+            dry_run=True
         )
 
-        mpi_exec = MpiExec('echo $SPECIAL_VAR', exec_info)
+        mpi_exec = OpenMpiExec('echo $SPECIAL_VAR', exec_info)
         cmd = mpi_exec.get_cmd()
 
         self.assertIn('SPECIAL_VAR', cmd)
@@ -151,10 +159,11 @@ class TestMpiExec(unittest.TestCase):
             env={
                 'INT_VAR': 42,
                 'FLOAT_VAR': 3.14
-            }
+            },
+            dry_run=True
         )
 
-        mpi_exec = MpiExec('echo test', exec_info)
+        mpi_exec = OpenMpiExec('echo test', exec_info)
         cmd = mpi_exec.get_cmd()
 
         self.assertIn('INT_VAR', cmd)
@@ -167,7 +176,8 @@ class TestMpiExec(unittest.TestCase):
         exec_info = MpiExecInfo(
             nprocs=1,
             hostfile=self.hostfile,
-            env={'LD_PRELOAD': '/lib/test.so', 'OTHER_VAR': 'value'}
+            env={'LD_PRELOAD': '/lib/test.so', 'OTHER_VAR': 'value'},
+            dry_run=True
         )
 
         # basic_env should not have LD_PRELOAD
@@ -179,7 +189,8 @@ class TestMpiExec(unittest.TestCase):
         exec_info = MpiExecInfo(
             nprocs=4,
             hostfile=self.hostfile,
-            env={'GLOBAL_VAR': 'global_value'}
+            env={'GLOBAL_VAR': 'global_value'},
+            dry_run=True
         )
 
         cmd_list = [
@@ -187,7 +198,7 @@ class TestMpiExec(unittest.TestCase):
             {'cmd': 'echo cmd2', 'nprocs': 2}
         ]
 
-        mpi_exec = MpiExec(cmd_list, exec_info)
+        mpi_exec = OpenMpiExec(cmd_list, exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Environment should be included for both commands
@@ -198,7 +209,8 @@ class TestMpiExec(unittest.TestCase):
         exec_info = MpiExecInfo(
             nprocs=4,
             hostfile=self.hostfile,
-            env={'LD_PRELOAD': '/lib/test.so', 'OTHER_VAR': 'value'}
+            env={'LD_PRELOAD': '/lib/test.so', 'OTHER_VAR': 'value'},
+            dry_run=True
         )
 
         cmd_list = [
@@ -206,7 +218,7 @@ class TestMpiExec(unittest.TestCase):
             {'cmd': 'echo cmd2', 'nprocs': 2, 'disable_preload': False}
         ]
 
-        mpi_exec = MpiExec(cmd_list, exec_info)
+        mpi_exec = OpenMpiExec(cmd_list, exec_info)
         # The first command should not have LD_PRELOAD in its env
         # This is implementation-specific, so we just verify it doesn't crash
         cmd = mpi_exec.get_cmd()
@@ -217,10 +229,11 @@ class TestMpiExec(unittest.TestCase):
         exec_info = MpiExecInfo(
             nprocs=8,
             ppn=4,
-            hostfile=self.hostfile
+            hostfile=self.hostfile,
+            dry_run=True
         )
 
-        mpi_exec = MpiExec('./myapp', exec_info)
+        mpi_exec = OpenMpiExec('./myapp', exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify ppn option is included (format varies by MPI)
@@ -234,10 +247,11 @@ class TestMpiExec(unittest.TestCase):
         multi_host = Hostfile(hosts=['host1', 'host2', 'host3'], find_ips=False)
         exec_info = MpiExecInfo(
             nprocs=6,
-            hostfile=multi_host
+            hostfile=multi_host,
+            dry_run=True
         )
 
-        mpi_exec = MpiExec('./myapp', exec_info)
+        mpi_exec = OpenMpiExec('./myapp', exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify hostfile or host option is included
@@ -250,7 +264,8 @@ class TestMpiExec(unittest.TestCase):
         """Test that remainder nprocs are calculated correctly"""
         exec_info = MpiExecInfo(
             nprocs=10,
-            hostfile=self.hostfile
+            hostfile=self.hostfile,
+            dry_run=True
         )
 
         cmd_list = [
@@ -259,7 +274,7 @@ class TestMpiExec(unittest.TestCase):
             {'cmd': 'cmd3', 'nprocs': None}  # Should get 10 - 2 - 3 = 5
         ]
 
-        mpi_exec = MpiExec(cmd_list, exec_info)
+        mpi_exec = OpenMpiExec(cmd_list, exec_info)
 
         # Access internal cmd_list to verify calculation
         processed_list = mpi_exec.cmd_list
@@ -269,7 +284,8 @@ class TestMpiExec(unittest.TestCase):
         """Test error when total nprocs exceeds available"""
         exec_info = MpiExecInfo(
             nprocs=5,
-            hostfile=self.hostfile
+            hostfile=self.hostfile,
+            dry_run=True
         )
 
         cmd_list = [
@@ -279,7 +295,7 @@ class TestMpiExec(unittest.TestCase):
         ]
 
         with self.assertRaises(ValueError):
-            MpiExec(cmd_list, exec_info)
+            OpenMpiExec(cmd_list, exec_info)
 
 
 class TestOpenMpiExec(unittest.TestCase):
@@ -641,7 +657,7 @@ class TestMpiExecFactory(unittest.TestCase):
         """Set up test fixtures"""
         self.hostfile = Hostfile(hosts=['localhost'], find_ips=False)
 
-    @patch('jarvis_cd.shell.mpi_exec.MpiVersion')
+    @patch('jarvis_cd.shell.exec_factory.MpiVersion')
     def test_factory_openmpi_detection(self, mock_mpi_version):
         """Test factory creates OpenMpiExec when OpenMPI is detected"""
         # Mock MPI version detection to return OpenMPI
@@ -652,15 +668,17 @@ class TestMpiExecFactory(unittest.TestCase):
         exec_info = MpiExecInfo(
             nprocs=2,
             hostfile=self.hostfile,
-            env={}
+            env={},
+            dry_run=True
         )
 
         mpi_exec = MpiExec('./myapp', exec_info)
+        mpi_exec.run()
 
         # Should be an instance of OpenMpiExec
-        self.assertIsInstance(mpi_exec, OpenMpiExec)
+        self.assertIsInstance(mpi_exec._delegate, OpenMpiExec)
 
-    @patch('jarvis_cd.shell.mpi_exec.MpiVersion')
+    @patch('jarvis_cd.shell.exec_factory.MpiVersion')
     def test_factory_mpich_detection(self, mock_mpi_version):
         """Test factory creates MpichExec when MPICH is detected"""
         # Mock MPI version detection to return MPICH
@@ -671,15 +689,17 @@ class TestMpiExecFactory(unittest.TestCase):
         exec_info = MpiExecInfo(
             nprocs=2,
             hostfile=self.hostfile,
-            env={}
+            env={},
+            dry_run=True
         )
 
         mpi_exec = MpiExec('./myapp', exec_info)
+        mpi_exec.run()
 
         # Should be an instance of MpichExec
-        self.assertIsInstance(mpi_exec, MpichExec)
+        self.assertIsInstance(mpi_exec._delegate, MpichExec)
 
-    @patch('jarvis_cd.shell.mpi_exec.MpiVersion')
+    @patch('jarvis_cd.shell.exec_factory.MpiVersion')
     def test_factory_intel_mpi_detection(self, mock_mpi_version):
         """Test factory creates IntelMpiExec when Intel MPI is detected"""
         # Mock MPI version detection to return Intel MPI
@@ -690,15 +710,17 @@ class TestMpiExecFactory(unittest.TestCase):
         exec_info = MpiExecInfo(
             nprocs=2,
             hostfile=self.hostfile,
-            env={}
+            env={},
+            dry_run=True
         )
 
         mpi_exec = MpiExec('./myapp', exec_info)
+        mpi_exec.run()
 
         # Should be an instance of IntelMpiExec
-        self.assertIsInstance(mpi_exec, IntelMpiExec)
+        self.assertIsInstance(mpi_exec._delegate, IntelMpiExec)
 
-    @patch('jarvis_cd.shell.mpi_exec.MpiVersion')
+    @patch('jarvis_cd.shell.exec_factory.MpiVersion')
     def test_factory_cray_mpich_detection(self, mock_mpi_version):
         """Test factory creates CrayMpichExec when Cray MPICH is detected"""
         # Mock MPI version detection to return Cray MPICH
@@ -709,15 +731,17 @@ class TestMpiExecFactory(unittest.TestCase):
         exec_info = MpiExecInfo(
             nprocs=2,
             hostfile=self.hostfile,
-            env={}
+            env={},
+            dry_run=True
         )
 
         mpi_exec = MpiExec('./myapp', exec_info)
+        mpi_exec.run()
 
         # Should be an instance of CrayMpichExec
-        self.assertIsInstance(mpi_exec, CrayMpichExec)
+        self.assertIsInstance(mpi_exec._delegate, CrayMpichExec)
 
-    @patch('jarvis_cd.shell.mpi_exec.MpiVersion')
+    @patch('jarvis_cd.shell.exec_factory.MpiVersion')
     def test_factory_unknown_mpi_defaults_to_mpich(self, mock_mpi_version):
         """Test factory defaults to MPICH for unknown MPI type"""
         # Mock MPI version detection to return unknown type
@@ -728,7 +752,8 @@ class TestMpiExecFactory(unittest.TestCase):
         exec_info = MpiExecInfo(
             nprocs=2,
             hostfile=self.hostfile,
-            env={}
+            env={},
+            dry_run=True
         )
 
         # Capture print output
@@ -738,11 +763,12 @@ class TestMpiExecFactory(unittest.TestCase):
         sys.stdout = captured_output
 
         mpi_exec = MpiExec('./myapp', exec_info)
+        mpi_exec.run()
 
         sys.stdout = sys.__stdout__
 
         # Should default to MpichExec
-        self.assertIsInstance(mpi_exec, MpichExec)
+        self.assertIsInstance(mpi_exec._delegate, MpichExec)
         # Should print warning
         self.assertIn('Unknown MPI type', captured_output.getvalue())
 

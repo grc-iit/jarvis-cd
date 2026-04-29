@@ -1,0 +1,35 @@
+# Pipeline: IOR single-node on Delta (apptainer container)
+# Purpose: Run IOR benchmark inside an Apptainer container on one Delta CPU node.
+# Hostfile: must contain exactly ONE host (allocated via Slurm).
+# Usage:
+#   salloc --account=bekn-delta-cpu --partition=cpu --nodes=1 --ntasks=8 --time=00:30:00
+#   echo "<node>" > ~/hostfile_single.txt
+#   module load ior/3.3.0-gcc13.3.1   # only needed if running bare-metal fallback
+#   jarvis hostfile set ~/hostfile_single.txt
+#   jarvis ppl load yaml builtin/pipelines/portability/delta/ior_single_node.yaml
+#   jarvis ppl run
+
+name: ior_delta_single_node
+install_manager: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+container_ssh_port: 2233
+
+hostfile: /u/imuradli/hostfile_single.txt
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior_delta_single
+    nprocs: 8
+    ppn: 8
+    block: 1G
+    xfer: 1M
+    api: posix
+    out: /tmp/ior_delta_single_file
+    log: /tmp/ior_delta_single_output.log
+    write: true
+    read: true
+    fpp: false
+    reps: 3
+    direct: true

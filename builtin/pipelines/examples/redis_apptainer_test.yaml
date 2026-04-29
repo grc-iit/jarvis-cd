@@ -1,0 +1,18 @@
+name: redis_apptainer_test
+install_manager: container
+container_engine: apptainer
+container_base: ubuntu:24.04
+pkgs:
+  - pkg_type: builtin.redis
+    pkg_name: redis
+    port: 6379
+    sleep: 2
+  - pkg_type: builtin.redis-benchmark
+    pkg_name: redis_bench
+    port: 6379
+    count: 100000
+    write: true
+    read: true
+    nthreads: 4
+    pipeline: 16
+    req_size: 64

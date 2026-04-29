@@ -1,0 +1,96 @@
+title: "DeepDriveMD-container-smoke"
+resource: local.localhost
+queue: ""
+schema_: local
+project: ""
+walltime_min: 30
+max_iteration: __MAX_ITER__
+cpus_per_node: 4
+gpus_per_node: 1
+hardware_threads_per_cpu: 1
+experiment_directory: __EXPERIMENT_DIR__
+node_local_path: null
+molecular_dynamics_stage:
+    pre_exec: []
+    executable: /opt/ddmd_io_task.sh
+    arguments:
+    - "md"
+    cpu_reqs:
+        processes: 1
+        process_type: null
+        threads_per_process: 1
+        thread_type: null
+    gpu_reqs:
+        processes: 0
+        process_type: null
+        threads_per_process: 0
+        thread_type: null
+    num_tasks: __NUM_TASKS__
+    task_config:
+        initial_pdb_dir: /opt/ddmd-bench
+aggregation_stage:
+    pre_exec: []
+    executable: /opt/ddmd_io_task.sh
+    arguments:
+    - "agg"
+    cpu_reqs:
+        processes: 1
+        process_type: null
+        threads_per_process: 1
+        thread_type: null
+    gpu_reqs:
+        processes: 0
+        process_type: null
+        threads_per_process: 0
+        thread_type: null
+    skip_aggregation: true
+    task_config: {}
+machine_learning_stage:
+    pre_exec: []
+    executable: /opt/ddmd_io_task.sh
+    arguments:
+    - "ml"
+    cpu_reqs:
+        processes: 1
+        process_type: null
+        threads_per_process: 1
+        thread_type: null
+    gpu_reqs:
+        processes: 0
+        process_type: null
+        threads_per_process: 0
+        thread_type: null
+    retrain_freq: 1
+    task_config: {}
+model_selection_stage:
+    pre_exec: []
+    executable: /opt/ddmd_io_task.sh
+    arguments:
+    - "ms"
+    cpu_reqs:
+        processes: 1
+        process_type: null
+        threads_per_process: 1
+        thread_type: null
+    gpu_reqs:
+        processes: 0
+        process_type: null
+        threads_per_process: 0
+        thread_type: null
+    task_config: {}
+agent_stage:
+    pre_exec: []
+    executable: /opt/ddmd_io_task.sh
+    arguments:
+    - "agent"
+    cpu_reqs:
+        processes: 1
+        process_type: null
+        threads_per_process: 1
+        thread_type: null
+    gpu_reqs:
+        processes: 0
+        process_type: null
+        threads_per_process: 0
+        thread_type: null
+    task_config: {}

@@ -48,7 +48,8 @@ class Pkg:
             pkg_name = import_parts[1]
 
         # Determine class name (convert snake_case to PascalCase)
-        class_name = ''.join(word.capitalize() for word in pkg_name.split('_'))
+        import re
+        class_name = ''.join(word.capitalize() for word in re.split(r'[_-]', pkg_name))
 
         # Load class
         if repo_name == 'builtin':
@@ -168,7 +169,7 @@ class Pkg:
         Override this method to handle package configuration.
         Takes as input a dictionary with keys determined from _configure_menu.
         Updates self.config and generates application-specific configuration files.
-        
+
         :param kwargs: Configuration parameters
         """
         self.update_config(kwargs, rebuild=False)
@@ -186,11 +187,16 @@ class Pkg:
         # Add common parameters that all packages should have
         common_menu = [
             {
-                'name': 'deploy_mode',
-                'msg': 'Deployment mode',
+                'name': 'install',
+                'msg': 'Spack spec for this package (used with install_manager: spack)',
                 'type': str,
-                'choices': ['default', 'container'],
-                'default': 'default',
+                'default': '',
+            },
+            {
+                'name': 'container_cache',
+                'msg': 'Use Docker layer cache when building containers (set false to force rebuild)',
+                'type': bool,
+                'default': True,
             },
             {
                 'name': 'interceptors',
@@ -533,20 +539,6 @@ class Pkg:
             # Keep mod_env in sync (exact replica of env + LD_PRELOAD)
             self.mod_env[env_name] = val
 
-    def augment_container(self) -> str:
-        """
-        Generate Dockerfile commands to install this package in a container.
-        This is an instance method called after package configuration.
-        The package can access its configuration via self.config.
-
-        Override this method in package implementations to provide
-        package-specific installation commands.
-
-        :return: Dockerfile commands as a string
-        """
-        # Default: no installation needed (packages should override this)
-        return ""
-
     def find_library(self, library_name: str) -> Optional[str]:
         """
         Find a shared library by searching LD_LIBRARY_PATH and system paths.
@@ -692,6 +684,269 @@ class Pkg:
             
         
     
+    # ------------------------------------------------------------------
+    # Container support — properties
+    # ------------------------------------------------------------------
+
+    def build_image_name(self, suffix=None) -> str:
+        """
+        Stable name for the BUILD container image.
+
+        :param suffix: Image suffix identifying this configuration.
+                       When None, uses self._build_suffix (set by build_phase).
+        :return: e.g. 'jarvis-build-lammps-kokkos-a100'
+        """
+        pkg_name = self.pkg_type.split('.')[-1].replace('_', '-')
+        s = suffix if suffix is not None else getattr(self, '_build_suffix', '')
+        if s:
+            return f'jarvis-build-{pkg_name}-{s}'
+        return f'jarvis-build-{pkg_name}'
+
+    def deploy_image_name(self, suffix=None) -> str:
+        """
+        Name for the DEPLOY container image (pipeline-specific).
+
+        :param suffix: Image suffix identifying this configuration.
+                       When None, uses self._deploy_suffix (set by build_deploy_phase).
+        """
+        base = self.pipeline.name if hasattr(self, 'pipeline') and self.pipeline else 'jarvis-deploy'
+        s = suffix if suffix is not None else getattr(self, '_deploy_suffix', '')
+        if s:
+            return f'{base}-{s}'
+        return base
+
+    @property
+    def container_mounts(self) -> list:
+        """
+        Bind-mount list for container runs: shared_dir and private_dir mapped
+        at the same path inside the container so config files are accessible.
+        """
+        mounts = []
+        if self.shared_dir:
+            mounts.append(f'{self.shared_dir}:{self.shared_dir}')
+        if self.private_dir:
+            mounts.append(f'{self.private_dir}:{self.private_dir}')
+        return mounts
+
+    @property
+    def ssh_port(self) -> int:
+        """SSH port for reaching container nodes.
+        Returns the pipeline's container_ssh_port when the pipeline is
+        containerized, otherwise the default SSH port (22)."""
+        if hasattr(self, 'pipeline') and self.pipeline:
+            if self.pipeline._has_containerized_packages():
+                return getattr(self.pipeline, 'container_ssh_port', 22)
+        return 22
+
+    @property
+    def _container_engine(self) -> str:
+        """Return the pipeline's container engine when running in container mode,
+        so that Exec/MpiExecInfo wraps commands in docker/podman exec."""
+        if hasattr(self, 'pipeline') and self.pipeline:
+            if self.pipeline._has_containerized_packages():
+                return getattr(self.pipeline, 'container_engine', 'none')
+        return 'none'
+
+    @property
+    def _build_engine(self) -> str:
+        """Get the engine to use for building (apptainer needs docker/podman as intermediate)."""
+        engine = self._container_engine
+        if engine == 'apptainer':
+            import shutil
+            if shutil.which('docker'):
+                return 'docker'
+            elif shutil.which('podman'):
+                return 'podman'
+            else:
+                raise RuntimeError(
+                    "Apptainer requires docker or podman for the build phase. "
+                    "Neither was found in PATH."
+                )
+        return engine
+
+    # ------------------------------------------------------------------
+    # Container support — template helpers
+    # ------------------------------------------------------------------
+
+    def _read_template(self, filename, replacements=None):
+        """
+        Read a template file from self.pkg_dir and apply ##VAR##
+        substitutions.  Used for both build.sh scripts and
+        Dockerfile.deploy templates.
+
+        :param filename: File name relative to self.pkg_dir
+        :param replacements: dict of {VAR_NAME: value} replacements
+        :return: File content with substitutions applied
+        """
+        import os
+        path = os.path.join(self.pkg_dir, filename)
+        with open(path, 'r') as f:
+            content = f.read()
+        if replacements:
+            for key, value in replacements.items():
+                content = content.replace(f'##{key}##', str(value))
+        return content
+
+    # Keep old name as alias for backwards compatibility
+    _read_dockerfile = _read_template
+    _read_build_script = _read_template
+
+    # ------------------------------------------------------------------
+    # Container support — overrideable generators
+    # ------------------------------------------------------------------
+
+    def _build_phase(self):
+        """
+        Return the build script content and image suffix.
+
+        Override in subclasses.  The returned script is executed inside
+        a long-running build container (started from ``container_base``).
+        It should install all build dependencies and compile the software.
+
+        The image suffix identifies a specific build configuration so that
+        different configurations (e.g., GPU vs CPU) produce distinct images.
+
+        :return: (script_content, image_suffix) tuple, or None to skip.
+                 Returning ('', suffix) also skips — normal for wrapper
+                 packages that don't need their own build.
+        """
+        return None
+
+    def _build_deploy_phase(self):
+        """
+        Return the Dockerfile content and image suffix for the DEPLOY container.
+
+        Override in subclasses. Return None to skip.
+
+        The deploy Dockerfile typically uses a multi-stage pattern:
+        ``FROM ##BUILD_IMAGE## AS builder`` then ``FROM ##DEPLOY_BASE##``
+        and copies compiled artifacts from the builder.
+
+        :return: (dockerfile_content, image_suffix) tuple, or None to skip.
+                 Returning ('', suffix) also skips the build.
+        """
+        return None
+
+    # ------------------------------------------------------------------
+    # Container support — image existence check
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _image_exists(engine, image_name, shared_dir=None):
+        """
+        Check whether a container image already exists locally.
+
+        :param engine: 'docker', 'podman', or 'apptainer'
+        :param image_name: Image name to check
+        :param shared_dir: Shared directory (needed for apptainer .sif check)
+        :return: True if the image exists
+        """
+        if engine == 'apptainer':
+            from pathlib import Path
+            if not shared_dir:
+                return False
+            sif = Path(shared_dir) / f'{image_name}.sif'
+            return sif.exists()
+        # docker / podman
+        from jarvis_cd.shell import Exec, LocalExecInfo
+        result = Exec(
+            f'{engine} image inspect {image_name}',
+            LocalExecInfo(hide_output=True)
+        ).run()
+        return result.exit_code.get('localhost', 1) == 0
+
+    def show_build_script(self):
+        """
+        Print the build.sh content jarvis would feed into the build container
+        for this package. Falls back to the raw build.sh on disk when
+        _build_phase() returns None or empty (e.g., for inspection of
+        packages that gate generation on deploy_mode).
+        """
+        # Most _build_phase implementations require deploy_mode='container'
+        self.config.setdefault('deploy_mode', 'container')
+
+        try:
+            result = self._build_phase()
+        except Exception as e:
+            result = None
+            err = e
+        else:
+            err = None
+
+        content = ''
+        suffix = ''
+        if result and isinstance(result, tuple):
+            content, suffix = (result + ('',))[:2]
+
+        if not content and self.pkg_dir:
+            raw = Path(self.pkg_dir) / 'build.sh'
+            if raw.exists():
+                print(f"=== build.sh for {self.__class__.__name__} (raw template) ===")
+                print(f"Location: {raw}")
+                if err:
+                    print(f"Note: _build_phase() raised {type(err).__name__}: {err}")
+                print()
+                print(raw.read_text(encoding='utf-8'))
+                return
+
+        if content:
+            label = f"build.sh for {self.__class__.__name__}"
+            if suffix:
+                label += f" (suffix: {suffix})"
+            print(f"=== {label} ===")
+            print()
+            print(content)
+            return
+
+        print(f"No build.sh found for package {self.__class__.__name__}")
+        if self.pkg_dir:
+            print(f"Expected location: {Path(self.pkg_dir) / 'build.sh'}")
+
+    def show_deploy_dockerfile(self):
+        """
+        Print the Dockerfile.deploy content jarvis would use to build the
+        deploy image for this package. Falls back to the raw Dockerfile.deploy
+        on disk when _build_deploy_phase() returns None or empty.
+        """
+        self.config.setdefault('deploy_mode', 'container')
+
+        try:
+            result = self._build_deploy_phase()
+        except Exception as e:
+            result = None
+            err = e
+        else:
+            err = None
+
+        content = ''
+        suffix = ''
+        if result and isinstance(result, tuple):
+            content, suffix = (result + ('',))[:2]
+
+        if not content and self.pkg_dir:
+            raw = Path(self.pkg_dir) / 'Dockerfile.deploy'
+            if raw.exists():
+                print(f"=== Dockerfile.deploy for {self.__class__.__name__} (raw template) ===")
+                print(f"Location: {raw}")
+                if err:
+                    print(f"Note: _build_deploy_phase() raised {type(err).__name__}: {err}")
+                print()
+                print(raw.read_text(encoding='utf-8'))
+                return
+
+        if content:
+            label = f"Dockerfile.deploy for {self.__class__.__name__}"
+            if suffix:
+                label += f" (suffix: {suffix})"
+            print(f"=== {label} ===")
+            print()
+            print(content)
+            return
+
+        print(f"No Dockerfile.deploy found for package {self.__class__.__name__}")
+        if self.pkg_dir:
+            print(f"Expected location: {Path(self.pkg_dir) / 'Dockerfile.deploy'}")
+
     def show_readme(self):
         """
         Show README.md for this package.
@@ -791,12 +1046,42 @@ class Application(Pkg):
 
     def __init__(self, pipeline):
         super().__init__(pipeline=pipeline)
-        
+
     def _init(self):
         """
         Initialize application-specific variables.
         Override in subclasses.
         """
+        pass
+
+
+class Library(Pkg):
+    """
+    Base class for library packages that only need to be built, not run.
+
+    Libraries provide headers, shared objects, and binaries that other
+    packages link against (e.g., HDF5, ADIOS2, compression libraries).
+    They participate in the container build phase but have no runtime
+    lifecycle — start(), stop(), and clean() are no-ops.
+
+    In pipeline YAMLs, Library packages must appear BEFORE any packages
+    that depend on them so the build container has the libraries installed
+    when later packages compile.
+    """
+
+    def __init__(self, pipeline):
+        super().__init__(pipeline=pipeline)
+
+    def _init(self):
+        pass
+
+    def start(self):
+        pass
+
+    def stop(self):
+        pass
+
+    def clean(self):
         pass
 
 

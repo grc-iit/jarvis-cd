@@ -1,0 +1,20 @@
+# Pipeline: PyFLEXTRKR Container Test
+# Purpose: Test PyFLEXTRKR cloud/storm tracking using Docker
+# Requirements: Docker installed, sci-hpc-base image built locally
+
+name: pyflextrkr_container_test
+install_manager: container
+
+container_engine: docker
+# ubuntu:24.04 runs as root (iowarp/iowarp-build runs as uid 1001 and
+# breaks apt/mkdir /opt). Matches Dockerfile.deploy's DEPLOY_BASE so the
+# t64 libnetcdf19t64 / libopenmpi3t64 ABI names line up. sci-hpc-base was
+# a bespoke local image referenced by older examples but never committed.
+container_base: ubuntu:24.04
+
+pkgs:
+  - pkg_type: builtin.pyflextrkr
+    pkg_name: pyflextrkr_container
+    nprocs: 1
+    ppn: 1
+    demo: mcs_tbpf

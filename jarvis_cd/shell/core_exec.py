@@ -117,9 +117,13 @@ class LocalExec(CoreExec):
         self.stderr[self.hostname] = ""
         self.exit_code[self.hostname] = 0
         
+        # Skip execution in dry_run mode (used to build command strings)
+        if exec_info.dry_run:
+            return
+
         # Run the command
         self.run()
-        
+
         # If not async, wait for completion
         if not exec_info.exec_async:
             self.wait(self.hostname)
@@ -258,19 +262,55 @@ class MpiVersion(LocalExec):
     def __init__(self, exec_info: ExecInfo):
         self.cmd = 'mpiexec --version'
 
+        # When running in a container, detect MPI inside the container
+        c = exec_info.container
+        if c and c not in ('none',):
+            img = exec_info.container_image or ''
+            if c == 'apptainer':
+                # Enter the long-running pipeline instance, not a fresh
+                # SIF exec — keeps detection in the same namespace as
+                # the rest of the pipeline.
+                self.cmd = f'apptainer exec instance://{img} mpiexec --version'
+            else:
+                container_name = f'{img}_container' if img else ''
+                self.cmd = f'{c} exec {container_name} mpiexec --version'
+
         # Create modified exec_info for introspection
         # CRITICAL: Must set exec_async=False to ensure we wait for output
+        # CRITICAL: Must set dry_run=False to actually run mpiexec --version
         introspect_info = exec_info.mod(
             env=exec_info.basic_env,
             collect_output=True,
             hide_output=True,
-            exec_async=False
+            exec_async=False,
+            dry_run=False,
+            container='none',
         )
+
+        # If the hostfile points to remote nodes, run via SSH on the
+        # first host (the container lives there, not on the login node).
+        hostfile = introspect_info.hostfile
+        if hostfile and not hostfile.is_local():
+            from .ssh_exec import SshExec
+            probe = SshExec(self.cmd, introspect_info.mod(
+                exec_type=ExecType.SSH,
+                hostfile=hostfile.subset(1),
+                port=22,
+            ))
+        else:
+            probe = LocalExec(self.cmd, introspect_info)
+        self.exit_code = probe.exit_code
+        self.stdout = probe.stdout
+        self.stderr = probe.stderr
+        self.processes = probe.processes
+        self.output_threads = probe.output_threads
         
-        super().__init__(self.cmd, introspect_info)
-        
-        # Determine MPI version from output
-        vinfo = self.stdout.get('localhost', '')
+        # Determine MPI version from output (key may be hostname, not 'localhost')
+        vinfo = ''
+        for v in self.stdout.values():
+            if v:
+                vinfo = v
+                break
         
         if 'mpich' in vinfo.lower():
             self.version = ExecType.MPICH

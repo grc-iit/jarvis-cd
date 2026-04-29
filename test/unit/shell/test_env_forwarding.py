@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from jarvis_cd.shell.core_exec import LocalExec
 from jarvis_cd.shell.ssh_exec import SshExec, PsshExec
-from jarvis_cd.shell.mpi_exec import MpiExec
+from jarvis_cd.shell.exec_factory import Exec as MpiExec
 from jarvis_cd.shell.exec_info import LocalExecInfo, SshExecInfo, PsshExecInfo, MpiExecInfo
 from jarvis_cd.util.hostfile import Hostfile
 
@@ -233,6 +233,7 @@ class TestMpiExecEnvForwarding(unittest.TestCase):
             }
         )
         mpi_exec = MpiExec(f'python3 {self.print_env} CUSTOM_VAR ANOTHER_VAR THIRD_VAR', exec_info)
+        mpi_exec.run()
 
         self.assertEqual(mpi_exec.exit_code['localhost'], 0)
         stdout = mpi_exec.stdout['localhost']
@@ -251,6 +252,7 @@ class TestMpiExecEnvForwarding(unittest.TestCase):
             env={'CUSTOM_VAR': 'HELLO WORLD'}
         )
         mpi_exec = MpiExec(f'python3 {self.print_env} CUSTOM_VAR', exec_info)
+        mpi_exec.run()
 
         self.assertEqual(mpi_exec.exit_code['localhost'], 0)
         self.assertIn('CUSTOM_VAR=HELLO WORLD', mpi_exec.stdout['localhost'])
@@ -266,6 +268,7 @@ class TestMpiExecEnvForwarding(unittest.TestCase):
             env={'CUSTOM_VAR': 54321}
         )
         mpi_exec = MpiExec(f'python3 {self.print_env} CUSTOM_VAR', exec_info)
+        mpi_exec.run()
 
         self.assertEqual(mpi_exec.exit_code['localhost'], 0)
         self.assertIn('CUSTOM_VAR=54321', mpi_exec.stdout['localhost'])
@@ -281,6 +284,7 @@ class TestMpiExecEnvForwarding(unittest.TestCase):
             env={'CUSTOM_VAR': 'HELLO'}
         )
         mpi_exec = MpiExec(f'python3 {self.print_env} CUSTOM_VAR', exec_info)
+        mpi_exec.run()
 
         self.assertEqual(mpi_exec.exit_code['localhost'], 0)
         # With 2 processes, we should see the output twice (or at least once)

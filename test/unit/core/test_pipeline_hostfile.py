@@ -27,9 +27,23 @@ def jarvis_env(tmp_path):
 
     # Get Jarvis singleton and initialize it
     jarvis = Jarvis.get_instance()
-    jarvis.initialize(str(config_dir), str(private_dir), str(shared_dir), force=True)
+    saved_config = None
+    if jarvis.config_file.exists():
+        import yaml
+        with open(jarvis.config_file, 'r') as f:
+            saved_config = yaml.safe_load(f)
+    jarvis.initialize(str(config_dir), str(private_dir), str(shared_dir), force=False)
 
     yield jarvis, tmp_path
+
+    # Restore original config so tests don't clobber the user's setup
+    if saved_config:
+        import yaml
+        jarvis = Jarvis.get_instance()
+        jarvis.save_config(saved_config)
+        jarvis.config_dir = saved_config.get('config_dir', jarvis.config_dir)
+        jarvis.private_dir = saved_config.get('private_dir', jarvis.private_dir)
+        jarvis.shared_dir = saved_config.get('shared_dir', jarvis.shared_dir)
 
     # Cleanup
     Jarvis._instance = None
@@ -88,7 +102,13 @@ def test_pipeline_hostfile_fallback_to_jarvis(jarvis_env):
 
 
 def test_pipeline_hostfile_container_path(jarvis_env):
-    """Test hostfile path is updated for containerized pipelines"""
+    """Test hostfile is saved into the pipeline's shared directory.
+
+    When a hostfile is set on a containerized pipeline the save() method
+    copies it into shared_dir so it is accessible inside containers via
+    the bind-mount at the same path.  The pipeline.yaml then references
+    that shared-dir path (not a hardcoded container-internal path).
+    """
     jarvis, tmp_path = jarvis_env
 
     # Create a hostfile
@@ -99,20 +119,24 @@ def test_pipeline_hostfile_container_path(jarvis_env):
     # Create containerized pipeline
     pipeline = Pipeline()
     pipeline.create("test_container_pipeline")
-    pipeline.container_name = "test_container"
+    pipeline.install_manager = "container"
+    pipeline.container_engine = "docker"
     pipeline.hostfile = Hostfile(path=str(hostfile_path))
     pipeline.save()
 
-    # Load pipeline config
-    config_dir = jarvis.get_pipeline_dir("test_container_pipeline")
-    config_file = config_dir / "pipeline.yaml"
+    # The hostfile must physically exist in the pipeline's shared dir
+    shared_dir = jarvis.get_pipeline_shared_dir("test_container_pipeline")
+    expected_hostfile = str(shared_dir / "hostfile")
+    assert os.path.exists(expected_hostfile), \
+        f"Hostfile not found in shared dir: {expected_hostfile}"
 
+    # pipeline.yaml must reference the shared-dir path
     import yaml
+    config_file = jarvis.get_pipeline_dir("test_container_pipeline") / "pipeline.yaml"
     with open(config_file, 'r') as f:
         config = yaml.safe_load(f)
 
-    # Verify hostfile path is set to container path
-    assert config['hostfile'] == "/root/.ppi-jarvis/hostfile"
+    assert config['hostfile'] == expected_hostfile
 
 
 def test_package_hostfile_fallback(jarvis_env):
