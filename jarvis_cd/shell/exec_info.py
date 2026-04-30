@@ -37,7 +37,7 @@ class ExecInfo:
                  strict_ssh=False, timeout=None,
                  container='none', gpu=False, container_image=None,
                  shared_dir=None, private_dir=None, bind_mounts=None,
-                 dry_run=False,
+                 dry_run=False, cpu_bind=None,
                  **kwargs):
         """
         Initialize execution information.
@@ -106,6 +106,11 @@ class ExecInfo:
         self.private_dir = private_dir
         self.bind_mounts = bind_mounts or []
         self.dry_run = dry_run
+        # Optional MPI cpu-binding spec (passed through to mpicmd as
+        # --cpu-bind=list:<cpu_bind>). Aurora's official 12-rank socket-
+        # balanced pattern is e.g. "1-8:9-16:...:93-100"; any string ZMQ
+        # mpiexec accepts works.
+        self.cpu_bind = cpu_bind
 
         # Basic environment for process execution (without LD_PRELOAD)
         # This is used for launching MPI itself, not the MPI processes
@@ -128,7 +133,7 @@ class ExecInfo:
                      'exec_async', 'stdin', 'strict_ssh', 'timeout',
                      'container', 'gpu', 'container_image',
                      'shared_dir', 'private_dir', 'bind_mounts',
-                     'dry_run']:
+                     'dry_run', 'cpu_bind']:
             current_attrs[attr] = getattr(self, attr)
 
         # Update with new values

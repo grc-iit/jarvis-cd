@@ -29,6 +29,7 @@ class LocalMpiExec(LocalExec):
         self.hostfile = exec_info.hostfile or Hostfile(hosts=['localhost'])
         self.mpi_env = exec_info.env
         self.ssh_port = exec_info.port if exec_info.port else None
+        self.cpu_bind = getattr(exec_info, 'cpu_bind', None)
 
         # Process command format
         if isinstance(cmd, str):
@@ -123,6 +124,10 @@ class OpenMpiExec(LocalMpiExec):
         if self.ppn is not None:
             params.append(f'-npernode {self.ppn}')
 
+        # CPU binding (Aurora canonical socket-balanced list, etc.)
+        if self.cpu_bind:
+            params.append(f'--cpu-bind=list:{self.cpu_bind}')
+
         if len(self.hostfile):
             if self.hostfile.path is None:
                 params.append(f'--host {",".join(self.hostfile.hosts)}')
@@ -173,6 +178,10 @@ class MpichExec(LocalMpiExec):
 
         if self.ppn is not None:
             params.append(f'-ppn {self.ppn}')
+
+        # CPU binding (Aurora canonical socket-balanced list, etc.)
+        if self.cpu_bind:
+            params.append(f'--cpu-bind=list:{self.cpu_bind}')
 
         if len(self.hostfile):
             if self.hostfile.path is None:
@@ -227,6 +236,10 @@ class CrayMpichExec(LocalMpiExec):
 
         if self.ppn is not None:
             params.append(f'--ppn {self.ppn}')
+
+        # CPU binding (Aurora canonical socket-balanced list, etc.)
+        if self.cpu_bind:
+            params.append(f'--cpu-bind=list:{self.cpu_bind}')
 
         if len(self.hostfile):
             if (self.hostfile.hosts[0] == 'localhost' and
