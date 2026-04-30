@@ -1,0 +1,88 @@
+# Pipeline B: Nyx-only writer pointing at an EXTERNALLY-MOUNTED FUSE path.
+#
+# Pipeline B has NO IOWarp packages of its own. It assumes Pipeline A
+# (iowarp_fuse_standalone.yaml) has already been started via
+# `jarvis ppl start`, which keeps wrp_runtime + wrp_cte + wrp_cte_libfuse
+# alive in the background. From Nyx's perspective, the mountpoint
+# /lus/flare/.../wrp_cte_mount/ is just a regular Lustre directory —
+# Nyx writes plotfiles/checkpoints there, the FUSE kernel layer
+# transparently routes writes to wrp_cte_fuse, which calls CtePutBlob
+# against the running chimaera runtime.
+#
+# Decoupling Nyx from IOWarp lifecycle has two benefits:
+#   1. Nyx can start/stop independently of the IOWarp daemon (multiple
+#      Nyx runs against the same long-lived foundation).
+#   2. If Nyx fails, IOWarp keeps running so we can inspect the mount
+#      state, the wrp_cte_fuse log, and chimaera pool stats without
+#      racing the auto-stop.
+#
+# Full-node Nyx config (1 MPI rank per Intel PVC GPU on a single Aurora node):
+#   nprocs:  6           (6 PVC GPUs per Aurora node)
+#   ppn:     6           (1 rank per GPU, all collocated on one node)
+#   n_cell:  128 128 128 (~2.1M cells = 64 boxes at default max_grid_size=32,
+#                         distributable across 6 ranks; bump to 256^3 for
+#                         a heavier benchmark once this passes)
+#   max_step: 1          (one advance step + checkpoints — extend later)
+#   plot_int: 0          (no periodic plotfile; final plotfile written at exit)
+#   check_int: 1         (checkpoint each step)
+#
+# Per-rank affinity is set by ~/.local/bin/nyx_HydroTests wrapper which
+# reads PALS_LOCAL_RANKID and exports ZE_AFFINITY_MASK so each MPI rank
+# binds to one tile. Verified via NYXWRAP_AURORA log lines per rank.
+#
+# AMReX arena cap: relies on `amrex.the_arena_init_size = 4G` line in
+# inputs.regtest.sedov.iowarp to prevent the default ~98 GB GPU
+# pre-allocation that exceeds a single PVC tile's HBM. Cap of 4 GB per
+# rank × 6 ranks = 24 GB total HBM used (well under per-tile capacity).
+#
+# Usage (after Pipeline A is up):
+#   jarvis ppl load yaml ~/jarvis-cd/builtin/pipelines/portability/aurora/nyx_writes_to_mount.yaml
+#   jarvis ppl run
+
+name: nyx_writes_to_mount
+
+env:
+  # Inherit conda + jarvis-venv shell env. Only PATH override needed:
+  # ~/.local/bin holds the nyx_HydroTests wrapper that fixes Aurora
+  # MPICH/PALS rank affinity (pkg.py's built-in wrapper assumes
+  # OMPI_COMM_WORLD_LOCAL_RANK which is unset under MPICH).
+  PATH: /home/isamuradli/.local/bin:/home/isamuradli/miniconda3/envs/iowarp/bin:/opt/aurora/26.26.0/spack/unified/1.1.1/install/linux-x86_64/mpich-5.0.0.aurora_test.3c70a61-hlkigtk/bin:/opt/cray/pals/1.8/bin:/opt/aurora/26.26.0/oneapi/compiler/latest/bin:/usr/bin:/bin
+
+  # Capture every Nyx file syscall to /lus/flare/.../nyx_strace.<rank>.log
+  # so we can see EXACTLY which syscall fails if writes don't go through.
+  NYX_STRACE: "1"
+
+  # Aurora's Cray MPICH defaults to MPI_THREAD_SINGLE. AMReX's AsyncOut
+  # path (enabled via amrex.async_out=1 in inputs.regtest.sedov.iowarp,
+  # which we use to dodge SYCL device-USM EFAULT in FUSE writes) spawns
+  # a background I/O thread that requires MPI_THREAD_MULTIPLE. Without
+  # this env var, multi-rank runs abort with:
+  #   AsyncOut with N processes requires MPI_THREAD_MULTIPLE at runtime,
+  #   but got MPI_THREAD_SINGLE
+  # Single-rank runs don't trip this because there's no concurrent MPI.
+  MPICH_MAX_THREAD_SAFETY: "multiple"
+
+pkgs:
+  - pkg_type: builtin.nyx
+    pkg_name: nyx_app
+    nprocs: 1                     # single rank — avoids SYCL device-USM
+                                  # EFAULT through FUSE that hits at >1
+                                  # rank (sync VisMF write of L0 device
+                                  # pointer fails kernel copy_from_user;
+                                  # AsyncOut workaround needs MPI_THREAD_
+                                  # MULTIPLE which Cray MPICH on Aurora
+                                  # doesn't provide). 1 rank → sync VisMF
+                                  # path is host-staged → goes through
+                                  # FUSE cleanly.
+    ppn: 1
+    gpu_backend: sycl
+    max_step: 4                   # 5 checkpoints + 1 final plotfile
+    n_cell: "256 256 256"         # ≈6.5 GB total over 6 outputs, fits the
+                                  # 8 GB CTE RAM tier in Pipeline A. Bump
+                                  # to 384³ only after raising the tier
+                                  # to >=24 GB in iowarp_fuse_standalone.
+    max_level: 0
+    plot_int: 0
+    check_int: 1
+    inputs_file: /lus/flare/projects/gpu_hack/isamuradli/inputs.regtest.sedov.iowarp
+    out: /lus/flare/projects/gpu_hack/isamuradli/wrp_cte_mount/nyx_out

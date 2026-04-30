@@ -1,0 +1,67 @@
+# Pipeline A: IOWarp foundation as a STANDALONE long-running deployment.
+#
+# Designed to be launched with `jarvis ppl start` (NOT `jarvis ppl run`):
+#   - ppl start  → runs each package's START hook, returns to shell.
+#                  Daemons stay alive, mount stays mounted.
+#                  We can interactively test the mount, then later run
+#                  Pipeline B (Nyx) against the existing mount.
+#   - ppl stop   → unmounts FUSE, stops chimaera daemon, cleans up.
+#
+# This is exactly the iowarp_fuse_baremetal_1n.yaml recipe that we
+# verified working in the previous session (Task #11), but renamed to
+# emphasize its long-running standalone role.
+#
+# Usage:
+#   jarvis ppl load yaml ~/jarvis-cd/builtin/pipelines/portability/aurora/iowarp_fuse_standalone.yaml
+#   jarvis ppl start
+#   # now interactively test:
+#   ls /lus/flare/projects/gpu_hack/isamuradli/wrp_cte_mount
+#   touch /lus/flare/projects/gpu_hack/isamuradli/wrp_cte_mount/hello.txt
+#   echo "hi" > /lus/flare/projects/gpu_hack/isamuradli/wrp_cte_mount/hi.txt
+#   ls -la /lus/flare/projects/gpu_hack/isamuradli/wrp_cte_mount
+#   # then either run Pipeline B (Nyx) or tear down:
+#   jarvis ppl stop
+#
+# Prereqs:
+#   conda activate iowarp
+#   source ~/jarvis-venv/bin/activate
+#   module load oneapi cmake mpich/opt/5.0.0.aurora_test.3c70a61
+#   ~/.local/wrp_fuse_only/bin/wrp_cte_fuse must symlink to native build
+#   patched wrp_cte_libfuse/pkg.py: self.binary = 'wrp_cte_fuse'
+#   cat $PBS_NODEFILE | awk -F. '{print $1}' > ~/hostfile_baremetal.txt
+#   jarvis hostfile set ~/hostfile_baremetal.txt
+
+name: iowarp_fuse_standalone
+
+env:
+  # PATH picks up wrp_cte_fuse from wrp_fuse_only/bin (a dir containing
+  # ONLY a symlink to native's wrp_cte_fuse — NOT iowarp_native/bin
+  # because that also has a `chimaera` binary, and putting native chimaera
+  # ahead of conda's makes the runtime daemon bind hsn0 IP only and break
+  # loopback connectivity (verified empirically last session).
+  # We rely on inherited LD_LIBRARY_PATH so the conda chimaera daemon
+  # loads its own conda libs, while wrp_cte_fuse uses its RUNPATH to
+  # locate its native sibling client libs (RUNPATH=$ORIGIN/../lib first).
+  PATH: /home/isamuradli/.local/iowarp_hsn0_wrap/bin:/home/isamuradli/miniconda3/envs/iowarp/bin:/opt/aurora/26.26.0/spack/unified/1.1.1/install/linux-x86_64/mpich-5.0.0.aurora_test.3c70a61-hlkigtk/bin:/opt/cray/pals/1.8/bin:/opt/aurora/26.26.0/oneapi/compiler/latest/bin:/usr/bin:/bin
+
+pkgs:
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    pkg_name: runtime
+    port: 9413
+    ipc_mode: tcp
+    num_threads: 4
+    client_data_segment_size: "2G"
+    log_level: info
+    sleep: 4
+
+  - pkg_type: jarvis_iowarp.wrp_cte
+    pkg_name: cte_core
+    devices:
+      - ["ram::cte_ram_tier1", "8GB", 1.0]
+    dpe_type: max_bw
+    neighborhood: 1
+
+  - pkg_type: jarvis_iowarp.wrp_cte_libfuse
+    pkg_name: cte_fuse
+    mountpoint: /lus/flare/projects/gpu_hack/isamuradli/wrp_cte_mount
+    sleep: 2

@@ -1,0 +1,132 @@
+# Pipeline: Nyx baremetal + IOWarp ingestion via libfuse adapter (Aurora, 1n/1p)
+#
+# Baremetal version of clio-core/jarvis_iowarp/pipelines/container/iowarp_ior_libfuse_apptainer_test.yaml
+# — same 4-package structure (wrp_runtime + wrp_cte + wrp_cte_libfuse + app),
+# but stripped of `install_manager: container` and `deploy_mode: container`
+# fields so jarvis runs everything directly on the host.
+#
+# Goal: minimal proof-of-concept that IOWarp can ingest data Nyx writes to
+# a FUSE-mounted path. Single node, single rank — bottom of the scaling
+# pyramid. Once this validates, we scale ranks → nodes → bigger checkpoints.
+#
+# Prerequisites:
+#   1. conda activate iowarp
+#   2. source ~/jarvis-venv/bin/activate
+#   3. module use /soft/modulefiles
+#      module load oneapi cmake mpich/opt/5.0.0.aurora_test.3c70a61
+#   4. Nyx baremetal binary at:
+#        /lus/flare/projects/gpu_hack/isamuradli/baremetal_nyx/Nyx/build/Exec/HydroTests/nyx_HydroTests
+#   5. ~/.local/bin/nyx_HydroTests wrapper (Aurora MPICH affinity + LD_LIBRARY_PATH).
+#   6. wrp_cte_fuse reachable at /usr/local/bin/wrp_cte_fuse (where upstream pkg.py
+#      looks). Either create a symlink:
+#        sudo ln -s ~/.local/iowarp_native/bin/wrp_cte_fuse /usr/local/bin/wrp_cte_fuse
+#      OR change pkg.py's `self.binary` to `'wrp_cte_fuse'` so PATH resolves it.
+#   7. PBS allocation:
+#        qsub -A gpu_hack -q debug -l select=1:ncpus=208:ngpus=6 \
+#             -l walltime=01:00:00 -l filesystems=flare -I
+#
+# Usage:
+#   cat $PBS_NODEFILE | awk -F. '{print $1}' > ~/hostfile_baremetal.txt
+#   jarvis hostfile set ~/hostfile_baremetal.txt
+#   jarvis ppl load yaml ~/jarvis-cd/builtin/pipelines/portability/aurora/nyx_iowarp_baremetal_1n.yaml
+#   jarvis ppl run
+
+name: nyx_iowarp_baremetal_1n
+
+# No `install_manager: container` — pipeline runs baremetal.
+
+env:
+  # PATH order: ~/.local/bin (nyx_HydroTests + wrp_cte_fuse wrappers) first,
+  # then iowarp_native (binaries), then conda iowarp (chimaera), then Aurora
+  # MPICH/oneAPI, then system /usr/bin.
+  PATH: /home/isamuradli/.local/bin:/home/isamuradli/.local/iowarp_native/bin:/home/isamuradli/miniconda3/envs/iowarp/bin:/opt/aurora/26.26.0/spack/unified/1.1.1/install/linux-x86_64/mpich-5.0.0.aurora_test.3c70a61-hlkigtk/bin:/opt/cray/pals/1.8/bin:/opt/aurora/26.26.0/oneapi/compiler/latest/bin:/usr/bin:/bin
+
+  # Native iowarp_native libs first (built from clio-core, has the
+  # transparent-compress-router-port-offset PR fixes); conda iowarp
+  # second as fallback for transitive deps (zeromq, msgpack, etc.).
+  LD_LIBRARY_PATH: /home/isamuradli/.local/iowarp_native/lib:/home/isamuradli/miniconda3/envs/iowarp/lib
+
+  # Capture every Nyx file syscall to /lus/flare/.../nyx_strace.<rank>.log
+  # for post-mortem debugging. Adds ~5x overhead but lets us see exactly
+  # which syscall fails (e.g., write() returning EFAULT on a USM pointer).
+  NYX_STRACE: "1"
+
+  # Pin lightbeam ZMQ TCP transport to Aurora HSN rail hsn0. Per
+  # transparent-compress-router-port-offset (commits 706f3967 / 799dfbd2),
+  # the runtime now applies this only to client-side outbound TCP
+  # connections to non-loopback peers, so it is a no-op for this 1-node
+  # IPC pipeline (Unix domain socket) but kept here so the file stays
+  # ready to scale out to multi-node TCP without yaml edits.
+  LIGHTBEAM_TCP_DEVICE: hsn0
+
+pkgs:
+  # ---------------------------------------------------------------
+  # Layer 1: chimaera runtime
+  # ---------------------------------------------------------------
+  - pkg_type: jarvis_iowarp.wrp_runtime
+    pkg_name: runtime
+    port: 9413
+    ipc_mode: ipc        # Unix domain socket — single-node only.
+    sleep: 4
+    # Scaled-up tunables (defaults are too small for AMReX async_out bursts):
+    #   - client_data_segment_size: each chimaera client (incl. wrp_cte_fuse)
+    #     stages PutBlob data through this SHM segment. Default 512MB; AMReX
+    #     async_out queues entire MultiFabs (multiple GB at 256^3) before
+    #     the runtime can drain → AllocateBuffer returns NULL → CtePutBlob
+    #     returns false → FUSE write returns EIO. Verified at config_manager.cc:181.
+    #   - num_threads: more workers drain the runtime side faster, reducing
+    #     the time the client SHM stays full.
+    #   - queue_depth: deeper per-worker task queue absorbs bursts.
+    num_threads: 8
+    client_data_segment_size: "4G"
+    queue_depth: 4096
+
+  # ---------------------------------------------------------------
+  # Layer 2: CTE storage tier (8 GB RAM tier on this node)
+  # ---------------------------------------------------------------
+  - pkg_type: jarvis_iowarp.wrp_cte
+    pkg_name: cte_core
+    devices:
+      # 32 GB RAM tier per node. Aurora node has ~512 GB host RAM, plenty
+      # of headroom. Sized for: 256^3 grid × 4 plotfiles + 4 checkpoints
+      # ≈ 7-15 GB peak; 32 GB has 2× headroom.
+      - ["ram::cte_ram_tier1", "32GB", 1.0]
+    dpe_type: max_bw
+    neighborhood: 1
+
+  # ---------------------------------------------------------------
+  # Layer 2b: libfuse adapter — mounts CTE filesystem at user-writable path
+  # ---------------------------------------------------------------
+  - pkg_type: jarvis_iowarp.wrp_cte_libfuse
+    pkg_name: cte_fuse
+    # Lustre project dir — persistent, plenty of space (31 PB free).
+    # Default /mnt/wrp_cte requires root. /tmp on Aurora is shared with
+    # other users' jobs and fills up (verified 100% from other users'
+    # core dumps); using Lustre avoids that. The mountpoint directory
+    # is just a "hole" FUSE routes through — underlying FS performance
+    # doesn't matter since real data lives in IOWarp RAM tier.
+    mountpoint: /lus/flare/projects/gpu_hack/isamuradli/wrp_cte_mount
+    sleep: 2
+
+  # ---------------------------------------------------------------
+  # Layer 3: Nyx — writes plotfiles/checkpoints under the FUSE mount
+  # ---------------------------------------------------------------
+  - pkg_type: builtin.nyx
+    pkg_name: nyx_app
+    nprocs: 1
+    ppn: 1
+    gpu_backend: sycl
+    # Incremental scaling progress (1-rank, async_out=1, 4G client SHM,
+    # 32GB RAM tier, 8 workers, queue_depth=4096):
+    #   - 64^3 × 1 step:  4.80 MB clean (1st validation)
+    #   - 64^3 × 4 steps: 8.60 MB clean (4.64s run time, 0 EIO)
+    #   - 128^3 × 4 steps: ← currently testing (~8x more data than 64^3)
+    max_step: 4
+    n_cell: "128 128 128"
+    max_level: 0
+    plot_int: 1
+    check_int: 1
+    # Modified copy with amrex.async_out=1 to force host-buffer staging
+    # before write() (works around SYCL device-USM EFAULT in FUSE write path).
+    inputs_file: /lus/flare/projects/gpu_hack/isamuradli/inputs.regtest.sedov.iowarp
+    out: /lus/flare/projects/gpu_hack/isamuradli/wrp_cte_mount/nyx_out
