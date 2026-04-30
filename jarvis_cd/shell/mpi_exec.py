@@ -124,9 +124,29 @@ class OpenMpiExec(LocalMpiExec):
         if self.ppn is not None:
             params.append(f'-npernode {self.ppn}')
 
-        # CPU binding (Aurora canonical socket-balanced list, etc.)
+        # CPU binding. cpu_bind is provided in MPICH/Cray-PALS list syntax
+        # ("1-8:9-16:...:93-100"). OpenMPI does NOT accept that syntax;
+        # translate to its native --map-by ppr:R:socket:PE=W --bind-to core
+        # form. We assume a balanced layout: equal ranks per socket, equal
+        # PE (cores per rank). The cores reserved for system services
+        # (Aurora cores 0/52/104/156) end up unused as a side effect of
+        # PE=cores_per_rank not consuming the lower-end-of-socket spare
+        # cores.
         if self.cpu_bind:
-            params.append(f'--cpu-bind=list:{self.cpu_bind}')
+            slots = self.cpu_bind.split(':')
+            n = len(slots)
+            # Cores per rank from the first slot (e.g. "1-8" -> 8).
+            try:
+                a, b = slots[0].split('-')
+                pe = int(b) - int(a) + 1
+            except ValueError:
+                pe = 1
+            # Aurora has 2 sockets; balanced layout puts n/2 ranks/socket.
+            ppr_per_socket = max(1, n // 2)
+            params.append(
+                f'--map-by ppr:{ppr_per_socket}:socket:PE={pe} '
+                f'--bind-to core'
+            )
 
         if len(self.hostfile):
             if self.hostfile.path is None:
