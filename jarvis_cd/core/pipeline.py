@@ -69,11 +69,51 @@ class Pipeline:
         """True when every host in the hostfile is this machine (or hostfile
         is empty). Used to pick LocalExecInfo over PsshExecInfo for
         single-node/local runs without requiring sshd on :22. Real cluster
-        hostfiles contain remote hostnames and return False."""
+        hostfiles contain remote hostnames and return False.
+
+        On HPC like Aurora a hostfile can contain a domain alias the bare
+        gethostname doesn't match (e.g. x4305c5s0b0n0.hsn.cm.aurora.alcf...
+        while gethostname() returns x4305c5s0b0n0). Match by resolved IP
+        against every IP bound on this machine to handle multi-rail HSN.
+        """
         if not hf or len(hf) == 0:
             return True
         local_names = {'localhost', '127.0.0.1', socket.gethostname()}
-        return all(h in local_names for h in hf.hosts)
+        try:
+            local_names.add(socket.getfqdn())
+        except Exception:
+            pass
+        local_ips = set()
+        try:
+            local_ips.add(socket.gethostbyname('localhost'))
+        except socket.gaierror:
+            pass
+        try:
+            _, _, ips = socket.gethostbyname_ex(socket.gethostname())
+            local_ips.update(ips)
+        except socket.gaierror:
+            pass
+        # gethostbyname_ex on the bare hostname returns only the primary IP,
+        # not every NIC. On multi-rail HSN systems (Aurora's Slingshot has
+        # 8 hsn0..hsn7 interfaces) the hostfile entry can resolve to a
+        # secondary NIC IP we'd otherwise miss. Enumerate all bound IPs.
+        try:
+            import subprocess
+            out = subprocess.run(['hostname', '-I'], capture_output=True,
+                                 text=True, timeout=2)
+            local_ips.update(out.stdout.split())
+        except Exception:
+            pass
+        for h in hf.hosts:
+            if h in local_names:
+                continue
+            try:
+                if socket.gethostbyname(h) in local_ips:
+                    continue
+            except socket.gaierror:
+                pass
+            return False
+        return True
 
     def is_containerized(self) -> bool:
         """
@@ -1718,6 +1758,21 @@ class Pipeline:
             val = os.environ.get(var)
             if val:
                 def_content += f"export {var}={val}\n"
+        # Aurora's outbound HTTP proxy can reach most hosts but
+        # archive.ubuntu.com / security.ubuntu.com / *.ubuntu.com hang
+        # indefinitely (observed 2026-04-30). Swap apt sources to a
+        # public mirror that the proxy CAN reach so apt-get update
+        # doesn't block forever during SIF build. Override via
+        # JARVIS_APT_MIRROR=<host> if a different one is preferred.
+        apt_mirror = os.environ.get(
+            'JARVIS_APT_MIRROR', 'mirror.cs.uchicago.edu')
+        def_content += (
+            f"sed -ri 's|https?://(archive|security|[a-z]{{2}}\\.archive)\\.ubuntu\\.com|http://{apt_mirror}|g' "
+            "/etc/apt/sources.list "
+            "/etc/apt/sources.list.d/*.list "
+            "/etc/apt/sources.list.d/*.sources "
+            "2>/dev/null || true\n"
+        )
         def_content += '\n'.join(build_scripts)
         def_content += "\n\n%environment\n"
         def_content += f"export PATH={env_path_str}\n"
