@@ -4,6 +4,7 @@ Provides the consolidated Pipeline class that combines pipeline creation, loadin
 """
 
 import os
+import shlex
 import socket
 import yaml
 import copy
@@ -1998,7 +1999,25 @@ class Pipeline:
             ssh_port = self.container_ssh_port
 
             nv_flag = '--nv ' if getattr(self, 'container_gpu', False) else ''
+            # Pipeline yaml's `env:` block lands in self.env, but PSSH ssh's
+            # to each compute node strip the head-node env, so the apptainer
+            # instance launches with default env. Re-export the pipeline env
+            # vars on the compute node side as APPTAINERENV_<NAME> so they
+            # propagate inside the apptainer instance and reach every
+            # process spawned inside (including chimaera daemon and gray-
+            # scott ranks). Skip vars that would corrupt the container env
+            # (PATH, LD_*, HOME, USER, container-local mounts).
+            env_skip = {'PATH', 'LD_LIBRARY_PATH', 'LD_PRELOAD', 'HOME',
+                        'USER', 'PWD', 'OLDPWD', 'SHELL', 'TERM', 'TMPDIR',
+                        'APPTAINER_TMPDIR', 'PYTHONPATH'}
+            env_exports = ' '.join(
+                f'APPTAINERENV_{k}={shlex.quote(str(v))}'
+                for k, v in (self.env or {}).items()
+                if k not in env_skip and not k.startswith('_')
+                and not k.startswith('SLURM_') and not k.startswith('PBS_')
+            )
             start_cmd = (
+                f"{env_exports} "
                 f"apptainer instance start {nv_flag}--writable-tmpfs {sif_path} {instance_name}"
                 f" && apptainer exec {nv_flag}instance://{instance_name}"
                 f" /usr/sbin/sshd -p {ssh_port}"
