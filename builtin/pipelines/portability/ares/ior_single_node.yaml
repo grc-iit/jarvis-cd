@@ -1,0 +1,36 @@
+# Pipeline: IOR single-node on Ares (docker container)
+# Purpose: Run IOR benchmark inside a Docker container on one Ares node.
+# Hostfile: must contain exactly ONE host (e.g. ares-comp-25).
+# Usage:
+#   jarvis hostfile set /path/to/single_host_file   # one line: ares-comp-XX
+#   jarvis ppl load yaml builtin/pipelines/portability/ior_ares_single_node.yaml
+#   jarvis ppl run
+
+name: ior_ares_single_node
+install_manager: container
+
+container_engine: docker
+container_base: ubuntu:24.04
+
+hostfile: /home/imuradli/hostfile_single.txt
+
+# OpenMPI on Ares: pin TCP traffic to the eno1 interface
+container_env:
+  OMPI_MCA_btl_tcp_if_include: eno1
+  OMPI_MCA_oob_tcp_if_include: eno1
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior_ares_single
+    nprocs: 8
+    ppn: 8
+    block: 1G
+    xfer: 1M
+    api: posix
+    out: /tmp/ior_ares_single_file
+    log: /tmp/ior_ares_single_output.log
+    write: true
+    read: true
+    fpp: false
+    reps: 3
+    direct: false

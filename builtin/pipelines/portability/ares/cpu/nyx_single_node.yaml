@@ -1,0 +1,29 @@
+# Pipeline: Nyx single-node on Ares CPU
+# builtin.hdf5 provides HDF5 at /usr/local; nyx is built with
+# -DNyx_GPU_BACKEND=NONE automatically when base_image lacks 'sci-hpc'.
+
+name: nyx_ares_single_node
+install_manager: container
+
+container_engine: docker
+container_base: ubuntu:24.04
+
+hostfile: /home/imuradli/hostfile_single.txt
+
+container_env:
+  OMPI_MCA_btl_tcp_if_include: eno1
+  OMPI_MCA_oob_tcp_if_include: eno1
+
+pkgs:
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
+  - pkg_type: builtin.nyx
+    pkg_name: nyx_ares_single
+    nprocs: 4
+    ppn: 4
+    base_image: ubuntu:24.04
+    max_step: 10
+    n_cell: 64 64 64
+    max_level: 0
+    out: /tmp/nyx_ares_out
+    plot_int: 5

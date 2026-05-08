@@ -1,0 +1,40 @@
+# Pipeline: FIO Local Container Test
+# Purpose: Run FIO I/O benchmark in a container on the local machine.
+# Requirements: Docker or Podman installed.
+# Multi-node: add a hostfile and switch exec_mode to 'pssh' or 'mpi' to scale out.
+# Expected Runtime: 1-2 minutes (image builds fast; FIO is just an apt install).
+
+name: fio_local_test
+install_manager: container
+
+# Container configuration — FIO installed via apt, no spack or source build.
+container_engine: docker
+container_base: ubuntu:22.04
+
+pkgs:
+  - pkg_type: builtin.fio
+    pkg_name: fio_job
+
+    # I/O workload type
+    write: true
+    read: false
+
+    # Transfer block size and total data per job
+    xfer: 1m
+    total_size: 64m
+
+    # I/O engine and depth
+    engine: psync
+    iodepth: 1
+
+    # Output test file (inside the container)
+    out: /tmp/fio_test.bin
+
+    # Direct I/O and random access pattern
+    direct: false
+    random: false
+
+    # Single-node local run; set exec_mode to 'pssh' or 'mpi' for multi-node
+    exec_mode: pssh
+    nprocs: 1
+    ppn: 1

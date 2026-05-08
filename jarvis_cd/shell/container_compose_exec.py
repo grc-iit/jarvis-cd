@@ -306,3 +306,89 @@ class ContainerComposeExec(CoreExec):
         self.stderr = self.delegate.stderr
         self.processes = self.delegate.processes
         self.output_threads = self.delegate.output_threads
+
+
+class ApptainerBuildExec(CoreExec):
+    """
+    Build an Apptainer SIF image from a local Docker/Podman image.
+    Converts a locally available container image to an Apptainer SIF file.
+    """
+
+    def __init__(self, image_name: str, sif_path: str, exec_info: ExecInfo,
+                 source: str = 'docker-daemon'):
+        """
+        Initialize apptainer build.
+
+        :param image_name: Local docker/podman image name (e.g., 'mypipeline:latest')
+        :param sif_path: Output path for the SIF file
+        :param exec_info: Execution information
+        :param source: Source protocol ('docker-daemon' for docker, 'docker-daemon' for podman too)
+        """
+        super().__init__()
+        self.image_name = image_name
+        self.sif_path = sif_path
+        self.exec_info = exec_info
+        self.source = source
+        self.local_exec = None
+
+    def get_cmd(self) -> str:
+        """Get the apptainer build command string"""
+        tag = self.image_name if ':' in self.image_name else f'{self.image_name}:latest'
+        return f"apptainer build --force {self.sif_path} {self.source}://{tag}"
+
+    def run(self):
+        """Execute the apptainer build command"""
+        cmd = self.get_cmd()
+        self.local_exec = LocalExec(cmd, self.exec_info)
+
+        self.exit_code = self.local_exec.exit_code
+        self.stdout = self.local_exec.stdout
+        self.stderr = self.local_exec.stderr
+        self.processes = self.local_exec.processes
+        self.output_threads = self.local_exec.output_threads
+
+
+class ApptainerExec(CoreExec):
+    """
+    Execute a command inside an Apptainer container.
+    """
+
+    def __init__(self, sif_path: str, command: str, exec_info: ExecInfo,
+                 gpu: bool = False, bind_paths: list = None):
+        """
+        Initialize apptainer exec.
+
+        :param sif_path: Path to the SIF file
+        :param command: Command to execute inside container
+        :param exec_info: Execution information
+        :param gpu: Enable GPU support (--nv flag)
+        :param bind_paths: List of host:container path pairs to bind
+        """
+        super().__init__()
+        self.sif_path = sif_path
+        self.command = command
+        self.exec_info = exec_info
+        self.gpu = gpu
+        self.bind_paths = bind_paths or []
+        self.local_exec = None
+
+    def get_cmd(self) -> str:
+        """Get the apptainer exec command string"""
+        flags = []
+        if self.gpu:
+            flags.append('--nv')
+        for bind in self.bind_paths:
+            flags.append(f'--bind {bind}')
+        flags_str = ' '.join(flags)
+        return f"apptainer exec {flags_str} {self.sif_path} {self.command}"
+
+    def run(self):
+        """Execute the command inside the apptainer container"""
+        cmd = self.get_cmd()
+        self.local_exec = LocalExec(cmd, self.exec_info)
+
+        self.exit_code = self.local_exec.exit_code
+        self.stdout = self.local_exec.stdout
+        self.stderr = self.local_exec.stderr
+        self.processes = self.local_exec.processes
+        self.output_threads = self.local_exec.output_threads

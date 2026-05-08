@@ -1,0 +1,29 @@
+# Pipeline: IOR multi-node bare-metal
+# Usage:
+#   hostfile must contain N hosts (>=2)
+#   adjust ppn to ranks/host; nprocs = ppn * N
+#   jarvis hostfile set /path/to/hostfile
+#   jarvis ppl load yaml builtin/pipelines/examples/local/ior_multi_node.yaml
+#   jarvis ppl run
+# Local note: genuine multi-node requires >1 host; on a single machine you can
+# simulate by putting localhost and 127.0.0.1 in the hostfile (sshd required).
+
+name: ior_multi_node
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior
+    deploy_mode: default
+    # Scale: set ppn = ranks-per-host, nprocs = ppn * number_of_hosts_in_hostfile
+    nprocs: 4
+    ppn: 2
+    block: 1G
+    xfer: 1M
+    api: posix
+    out: /tmp/ior_multi_file
+    log: /tmp/ior_multi_output.log
+    write: true
+    read: true
+    fpp: false
+    reps: 3
+    direct: false

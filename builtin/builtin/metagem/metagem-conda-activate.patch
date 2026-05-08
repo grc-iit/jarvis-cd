@@ -1,0 +1,211 @@
+diff --git a/workflow/Snakefile b/workflow/Snakefile
+index 22a9e06..e384588 100644
+--- a/workflow/Snakefile
++++ b/workflow/Snakefile
+@@ -153,7 +153,7 @@ rule qfilter:
+         """
+         # Activate metagem environment
+         echo -e "Activating {config[envs][metagem]} conda environment ... "
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # This is just to make sure that output folder exists
+         mkdir -p $(dirname {output.R1})
+@@ -204,7 +204,7 @@ rule qfilterVis:
+     shell:
+         """
+         # Activate metagem env
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Make sure stats folder exists
+         mkdir -p $(dirname {output.text})
+@@ -281,7 +281,7 @@ rule megahit:
+     shell:
+         """
+         # Activate metagem environment
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Make sure that output folder exists
+         mkdir -p $(dirname {output})
+@@ -341,7 +341,7 @@ rule assemblyVis:
+     shell:
+         """
+         # Activate metagem env
+-        set +uo pipefail;source activate {config[envs][metagem]};set -u;
++        set +uo pipefail; eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};set -u;
+ 
+         # Make sure stats folder exists
+         mkdir -p $(dirname {output.text})
+@@ -407,7 +407,7 @@ rule crossMapSeries:
+     shell:
+         """
+         # Activate metagem environment
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Create output folders
+         mkdir -p {output.concoct}
+@@ -506,7 +506,7 @@ rule kallistoIndex:
+     shell:
+         """
+         # Activate metagem environment
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Create output folder
+         mkdir -p $(dirname {output})
+@@ -555,7 +555,7 @@ rule crossMapParallel:
+     shell:
+         """
+         # Activate metagem environment
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Create output folder
+         mkdir -p {output}
+@@ -609,7 +609,7 @@ rule concoct:
+     shell:
+         """
+         # Activate metagem environment
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Create output folder
+         mkdir -p $(dirname {output})
+@@ -660,7 +660,7 @@ rule metabatCross:
+     shell:
+         """
+         # Activate metagem environment
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Create output folder
+         mkdir -p {output}
+@@ -698,7 +698,7 @@ rule maxbinCross:
+     shell:
+         """
+         # Activate metagem environment
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Create output folder
+         mkdir -p $(dirname {output})
+@@ -751,7 +751,7 @@ rule binRefine:
+     shell:
+         """
+         # Activate metawrap environment
+-        set +u;source activate {config[envs][metawrap]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metawrap]};
+ 
+         # Create output folder
+         mkdir -p {output}
+@@ -800,7 +800,7 @@ rule binReassemble:
+     shell:
+         """
+         # Activate metawrap environment
+-        set +u;source activate {config[envs][metawrap]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metawrap]};
+ 
+         # Prevents spades from using just one thread
+         export OMP_NUM_THREADS={config[cores][reassemble]}
+@@ -858,7 +858,7 @@ rule binningVis:
+     shell:
+         """
+         # Activate metagem env
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+         
+         # Read CONCOCT bins
+         echo "Generating concoct_bins.stats file containing bin ID, number of contigs, and length ... "
+@@ -1046,7 +1046,7 @@ rule abundance:
+     shell:
+         """     
+         # Activate metagem environment
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Make sure output folder exists
+         mkdir -p {output}
+@@ -1173,7 +1173,7 @@ rule GTDBTk:
+     shell:
+         """
+         # Activate metagem environment
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Make sure output folder exists
+         mkdir -p {output}
+@@ -1214,7 +1214,7 @@ rule compositionVis:
+         """
+     shell:
+         """
+-        set +u;source activate {config[envs][metagem]};set -u
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Generate summary abundance file
+ 
+@@ -1288,7 +1288,7 @@ rule carveme:
+     shell:
+         """
+         # Activate metagem environment
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Make sure output folder exists
+         mkdir -p $(dirname {output})
+@@ -1329,7 +1329,7 @@ rule modelVis:
+         """
+     shell:
+         """
+-        set +u;source activate {config[envs][metagem]};set -u;
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+         cd {input}
+ 
+         echo -e "\nBegin reading models ... \n"
+@@ -1429,7 +1429,7 @@ rule smetana:
+     shell:
+         """
+         # Activate metagem env
+-        set +u;source activate {config[envs][metagem]};set -u
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Make sure output folder exists
+         mkdir -p $(dirname {output})
+@@ -1480,7 +1480,7 @@ rule memote:
+     shell:
+         """
+         # Activate metagem env
+-        set +u;source activate {config[envs][metagem]};set -u
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         # Make sure output folder exists
+         mkdir -p {output}
+@@ -1523,7 +1523,7 @@ rule grid:
+         f'{config["path"]["root"]}/{config["folder"]["benchmarks"]}/{{IDs}}.grid.benchmark.txt'
+     shell:
+         """
+-        set +u;source activate {config[envs][metagem]};set -u
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][metagem]};
+ 
+         cp -r {input.bins} {input.R1} {input.R2} {config[path][scratch]}
+         cd {config[path][scratch]}
+@@ -1582,7 +1582,7 @@ rule prokka:
+         f'{config["path"]["root"]}/{config["folder"]["benchmarks"]}/{{binIDs}}.prokka.benchmark.txt'
+     shell:
+         """
+-        set +u;source activate {config[envs][prokkaroary]};set -u
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][prokkaroary]};
+         mkdir -p $(dirname $(dirname {output}))
+         mkdir -p $(dirname {output})
+ 
+@@ -1604,7 +1604,7 @@ rule roary:
+         f'{config["path"]["root"]}/{config["folder"]["benchmarks"]}/{{speciesIDs}}.roary.benchmark.txt'
+     shell:
+         """
+-        set +u;source activate {config[envs][prokkaroary]};set -u
++        eval "$(conda shell.bash hook)" && conda activate {config[envs][prokkaroary]};
+         mkdir -p $(dirname {output})
+         cd {config[path][scratch]}
+         cp -r {input} .

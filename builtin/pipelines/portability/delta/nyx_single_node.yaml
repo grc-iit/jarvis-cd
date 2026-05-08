@@ -1,0 +1,38 @@
+# Pipeline: Nyx single-node on Delta (apptainer container, AMReX CUDA build)
+# Purpose: Validate Nyx HydroTests CUDA build+run inside Apptainer on one Delta
+#          GPU node. Requires jarvis pipeline.py with --nv support (container_gpu).
+# Usage:
+#   salloc --account=bekn-delta-gpu --partition=gpuA100x4 \
+#          --nodes=1 --ntasks=4 --gpus=1 --time=03:00:00 --mem=64g
+#   scontrol show hostnames $SLURM_JOB_NODELIST > ~/hostfile_single.txt
+#   jarvis hostfile set ~/hostfile_single.txt
+#   jarvis ppl load yaml builtin/pipelines/portability/delta/nyx_single_node.yaml
+#   jarvis ppl run
+
+name: nyx_delta_single_node
+install_manager: container
+
+container_engine: apptainer
+container_base: nvidia/cuda:12.8.0-devel-ubuntu24.04
+container_ssh_port: 2233
+container_gpu: true
+
+hostfile: /u/imuradli/hostfile_single.txt
+
+pkgs:
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
+  - pkg_type: builtin.nyx
+    pkg_name: nyx_delta
+    nprocs: 1
+    ppn: 1
+    use_gpu: true
+    cuda_arch: 80
+    # Scaled up for ~1-2 min GPU runtime on A100:
+    # 192^3 cells × 200 steps, plots every 50
+    max_step: 200
+    n_cell: "192 192 192"
+    max_level: 0
+    out: /tmp/nyx_out
+    plot_int: 50
+    base_image: nvidia/cuda:12.8.0-devel-ubuntu24.04

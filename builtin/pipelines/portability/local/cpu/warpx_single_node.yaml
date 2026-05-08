@@ -1,0 +1,32 @@
+# Pipeline: WarpX single-node on a local workstation (CPU).
+# builtin.hdf5 provides parallel HDF5 at /usr/local; warpx is built
+# with -DWarpX_COMPUTE=NOACC when base_image lacks 'sci-hpc'.
+#
+# Usage:
+#   (optional) export JARVIS_NET_IF=lo   # or your NIC from `ip -br link`
+#   bin/jarvis ppl load yaml builtin/pipelines/portability/local/cpu/warpx_single_node.yaml
+#   bin/jarvis ppl run
+
+name: warpx_local_single_node
+install_manager: container
+
+container_engine: docker
+container_base: ubuntu:24.04
+
+container_env:
+  OMPI_MCA_btl_tcp_if_include: $JARVIS_NET_IF
+  OMPI_MCA_oob_tcp_if_include: $JARVIS_NET_IF
+
+pkgs:
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
+  - pkg_type: builtin.warpx
+    pkg_name: warpx_local_single
+    nprocs: 4
+    ppn: 4
+    base_image: ubuntu:24.04
+    example: laser_acceleration
+    max_step: 10
+    n_cell: 32 32 64
+    out: /tmp/warpx_local_out
+    plot_int: 5

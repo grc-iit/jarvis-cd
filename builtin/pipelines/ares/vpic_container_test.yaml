@@ -1,0 +1,24 @@
+# Pipeline: VPIC Container Test on Ares (CPU-only)
+# Purpose: Run VPIC plasma simulation inside Docker containers on Ares
+# Hosts: ares-comp-25, ares-comp-27, ares-comp-28
+
+name: vpic_ares_container_test
+install_manager: container
+
+container_engine: docker
+container_base: ubuntu:24.04
+
+hostfile: /home/llogan/hostfile.txt
+
+container_env:
+  OMPI_MCA_btl_tcp_if_include: eno1
+  OMPI_MCA_oob_tcp_if_include: eno1
+
+pkgs:
+  - pkg_type: builtin.vpic
+    pkg_name: vpic_ares
+    nprocs: 3
+    ppn: 1
+    sample_deck: harris
+    run_dir: /tmp/vpic_run
+    base_image: ubuntu:24.04

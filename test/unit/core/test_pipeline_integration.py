@@ -535,7 +535,7 @@ class TestEnvironmentOperations(unittest.TestCase):
         result = self.run_command(['ppl', 'env', 'copy', 'test_env_copy'])
 
         if result.get('success'):
-            self.assertEqual(result['kwargs'].get('new_env_name'), 'test_env_copy')
+            self.assertEqual(result['kwargs'].get('env_name'), 'test_env_copy')
             print("Pipeline environment copy command parsed successfully")
         else:
             print(f"Ppl env copy result: {result}")
@@ -662,7 +662,7 @@ class TestPipelineEnvironmentIntegration(unittest.TestCase):
         # Copy pipeline environment to new name
         result = self.run_command(['ppl', 'env', 'copy', 'copied_env'])
         if result.get('success'):
-            self.assertEqual(result['kwargs'].get('new_env_name'), 'copied_env')
+            self.assertEqual(result['kwargs'].get('env_name'), 'copied_env')
         print("Pipeline env copy executed")
 
         # Don't destroy pipeline - leave it for env copy test

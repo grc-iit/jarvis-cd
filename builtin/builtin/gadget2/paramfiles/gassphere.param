@@ -1,6 +1,6 @@
 %  Relevant files
 
-InitCondFile  	  ICs/gassphere_littleendian.dat
+InitCondFile  	  ##REPO_DIR##/ICs/gassphere_littleendian.dat
 OutputDir         ##OUTPUT_DIR##/
 
 EnergyFile        energy.txt

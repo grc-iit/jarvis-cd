@@ -1,0 +1,17 @@
+# Pipeline: V-pipe Container Test
+# Purpose: Test V-pipe viral sequencing pipeline using Docker
+# Requirements: Docker installed, sci-hpc-base image built locally
+
+name: vpipe_container_test
+install_manager: container
+
+container_engine: docker
+container_base: sci-hpc-base
+
+pkgs:
+  - pkg_type: builtin.vpipe
+    pkg_name: vpipe_container
+    nprocs: 1
+    cores: 4
+    virus: sars-cov-2
+    out: /tmp/vpipe_out

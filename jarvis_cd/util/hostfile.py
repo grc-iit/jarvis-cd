@@ -150,31 +150,53 @@ class Hostfile:
         """Return a copy of this hostfile"""
         return self.subset(len(self))
         
+    @staticmethod
+    def _local_addresses() -> set:
+        """Names and IPs that resolve to this machine.
+
+        Includes 'localhost', loopback IP, the machine's hostname / FQDN,
+        and every IP bound to the local hostname. Used by is_local() so a
+        hostfile containing the host's own name (common on HPC compute
+        nodes) is treated as a single-node run instead of being promoted
+        to a no-op SSH.
+        """
+        addrs = {'localhost'}
+        try:
+            addrs.add(socket.gethostbyname('localhost'))
+        except socket.gaierror:
+            pass
+        try:
+            hostname = socket.gethostname()
+            addrs.add(hostname)
+            addrs.add(socket.getfqdn())
+            try:
+                _, _, ips = socket.gethostbyname_ex(hostname)
+                addrs.update(ips)
+            except socket.gaierror:
+                pass
+        except Exception:
+            pass
+        return addrs
+
     def is_local(self) -> bool:
         """
-        Whether this file contains only 'localhost'
+        Whether this hostfile points only to the local machine.
 
-        :return: True or false
+        Single-host entries that match localhost, the loopback IP, or
+        the running machine's own hostname / IP are treated as local so
+        single-node runs don't get promoted to SSH on port 22.
         """
         if len(self) == 0:
             return True
-            
-        if len(self.hosts) == 1:
-            if self.hosts[0] == 'localhost':
-                return True
-            try:
-                if self.hosts[0] == socket.gethostbyname('localhost'):
-                    return True
-            except socket.gaierror:
-                pass
-                
-        if len(self.hosts_ip) == 1:
-            try:
-                if self.hosts_ip[0] == socket.gethostbyname('localhost'):
-                    return True
-            except socket.gaierror:
-                pass
-                
+
+        if len(self.hosts) != 1:
+            return False
+
+        local = self._local_addresses()
+        if self.hosts[0] in local:
+            return True
+        if self.hosts_ip and self.hosts_ip[0] in local:
+            return True
         return False
         
     def save(self, path: str) -> 'Hostfile':

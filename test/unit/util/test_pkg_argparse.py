@@ -26,11 +26,11 @@ class TestPkgArgParse(unittest.TestCase):
     def test_initialization(self):
         """Test PkgArgParse initialization"""
         self.assertEqual(self.parser.pkg_name, 'test_package')
-        self.assertIsNotNone(self.parser.cmds)
+        self.assertIsNotNone(self.parser.commands)
 
     def test_configure_command_exists(self):
         """Test that configure command is automatically added"""
-        self.assertIn('configure', self.parser.cmds)
+        self.assertIn('configure', self.parser.commands)
 
     def test_parse_configure_with_args(self):
         """Test parsing configure command with arguments"""

@@ -1,191 +1,130 @@
 """
-This module provides classes and methods to launch the Ior application.
-Ior is ....
+FIO benchmark package. Supports default (bare-metal) and container
+deployment via the two-phase build/deploy container architecture.
+FIO itself is tiny — apt-installed in the deploy image, no build.sh needed.
 """
-from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, LocalExecInfo
-from jarvis_cd.shell.process import Rm
 import os
 import pathlib
+
+from jarvis_cd.core.pkg import Application
+from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo, MpiExecInfo, Mkdir
+from jarvis_cd.shell.process import Rm
 
 
 class Fio(Application):
     """
-    This class provides methods to launch the Ior application.
+    FIO benchmark driver.
     """
-    def _init(self):
-        """
-        Initialize paths
-        """
-        pass
 
     def _configure_menu(self):
-        """
-        Create a CLI menu for the configurator method.
-        For thorough documentation of these parameters, view:
-        https://github.com/scs-lab/jarvis-util/wiki/3.-Argument-Parsing
-
-        :return: List(dict)
-        """
         return [
-            {
-                'name': 'write',
-                'msg': 'Perform a write workload',
-                'type': bool,
-                'default': True,
-                'choices': [],
-                'args': [],
-            },
-            {
-                'name': 'read',
-                'msg': 'Perform a read workload',
-                'type': bool,
-                'default': False,
-            },
-            {
-                'name': 'xfer',
-                'msg': 'The size of data transfer',
-                'type': str,
-                'default': '1m',
-            },
-            {
-                'name': 'total_size',
-                'msg': 'Total amount of data to generate',
-                'type': str,
-                'default': '32m',
-            },
-            {
-                'name': 'iodepth',
-                'msg': 'Total I/O to generate at a time',
-                'type': int,
-                'default': 1,
-            },
-            {
-                'name': 'reps',
-                'msg': 'Number of times to repeat',
-                'type': int,
-                'default': 1,
-            },
-            {
-                'name': 'nprocs',
-                'msg': 'Number of threads/processes',
-                'type': int,
-                'default': 1,
-            },
-            {
-                'name': 'out',
-                'msg': 'Path to the output file',
-                'type': str,
-                'default': '/tmp/ior.bin',
-            },
-            {
-                'name': 'direct',
-                'msg': 'Use direct I/O',
-                'type': bool,
-                'default': False,
-            },
-            {
-                'name': 'random',
-                'msg': 'Use random I/O',
-                'type': bool,
-                'default': False,
-            },
-            {
-                'name': 'engine',
-                'msg': 'backend engine',
-                'type': bool,
-                'default': 'psync',
-            },
-            {
-                'name': 'log',
-                'msg': 'Path to IOR output log',
-                'type': str,
-                'default': None,
-            },
+            {'name': 'write', 'msg': 'Perform a write workload',
+             'type': bool, 'default': True},
+            {'name': 'read', 'msg': 'Perform a read workload',
+             'type': bool, 'default': False},
+            {'name': 'xfer', 'msg': 'Block size for each I/O transfer',
+             'type': str, 'default': '1m'},
+            {'name': 'total_size', 'msg': 'Total data per job',
+             'type': str, 'default': '32m'},
+            {'name': 'iodepth', 'msg': 'I/O ops in flight',
+             'type': int, 'default': 1},
+            {'name': 'reps', 'msg': 'Number of repetitions',
+             'type': int, 'default': 1},
+            {'name': 'nprocs', 'msg': 'Number of FIO jobs',
+             'type': int, 'default': 1},
+            {'name': 'ppn', 'msg': 'FIO jobs per node',
+             'type': int, 'default': 1},
+            {'name': 'out', 'msg': 'Output test file path',
+             'type': str, 'default': '/tmp/fio_test.bin'},
+            {'name': 'direct', 'msg': 'Use direct I/O',
+             'type': bool, 'default': False},
+            {'name': 'random', 'msg': 'Use random access pattern',
+             'type': bool, 'default': False},
+            {'name': 'engine', 'msg': 'FIO I/O engine',
+             'type': str, 'default': 'psync'},
+            {'name': 'log', 'msg': 'Path to FIO output log',
+             'type': str, 'default': None},
+            {'name': 'exec_mode', 'msg': 'Multi-node mode: pssh or mpi',
+             'type': str, 'default': 'pssh', 'choices': ['pssh', 'mpi']},
         ]
 
-    def _configure(self, **kwargs):
-        """
-        Converts the Jarvis configuration to application-specific configuration.
-        E.g., OrangeFS produces an orangefs.xml file.
+    # ------------------------------------------------------------------
+    # Container build/deploy
+    # ------------------------------------------------------------------
 
-        :param kwargs: Configuration parameters for this pkg.
-        :return: None
-        """
-        pass
+    def _build_deploy_phase(self):
+        if self.config.get('deploy_mode') != 'container':
+            return None
+        base = getattr(self.pipeline, 'container_base', 'ubuntu:22.04')
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'DEPLOY_BASE': base,
+        })
+        return content, ''
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def _configure(self, **kwargs):
+        super()._configure(**kwargs)
+
+    def _exec_info(self):
+        exec_mode = self.config.get('exec_mode', 'pssh')
+        nprocs = self.config.get('nprocs', 1)
+        ppn = self.config.get('ppn', 1)
+        use_remote = self.hostfile is not None and not self.hostfile.is_local()
+
+        kwargs = dict(env=self.mod_env)
+        if self.config.get('deploy_mode') == 'container':
+            kwargs.update(
+                container=self._container_engine,
+                container_image=self.deploy_image_name(),
+                shared_dir=self.shared_dir,
+                private_dir=self.private_dir,
+            )
+
+        if exec_mode == 'mpi' and use_remote:
+            return MpiExecInfo(hostfile=self.hostfile, nprocs=nprocs, ppn=ppn,
+                               port=self.ssh_port, **kwargs)
+        if exec_mode == 'pssh' and use_remote:
+            return PsshExecInfo(hostfile=self.hostfile, **kwargs)
+        return LocalExecInfo(**kwargs)
 
     def start(self):
-        """
-        Launch an application. E.g., OrangeFS will launch the servers, clients,
-        and metadata services on all necessary pkgs.
-
-        :return: None
-        """
-        # Read/write
         if self.config['read'] and self.config['write']:
             mode = 'readwrite'
         elif self.config['read']:
             mode = 'read'
-        elif self.config['write']:
+        else:
             mode = 'write'
-        # Direct I/O
-        if self.config['direct']:
-            direct = 1
-        else:
-            direct = 0
-        # Random I/O
-        if self.config['random']:
-            random = 1
-        else:
-            random = 0
-        cmd = [
+
+        out = self.config['out']
+        out_dir = str(pathlib.Path(out).parent) \
+            if '.' in os.path.basename(out) else out
+
+        exec_info = self._exec_info()
+        Mkdir(out_dir, exec_info).run()
+
+        cmd = ' '.join([
             'fio',
             f'--rw={mode}',
             f'--size={self.config["total_size"]}',
             f'--bs={self.config["xfer"]}',
             f'--iodepth={self.config["iodepth"]}',
-            f'--numjobs={self.config["nprocs"]}',
-            f'--direct={direct}',
-            f'--randrepeat={random}',
-            f'--filename={self.config["out"]}',
+            f'--numjobs={self.config.get("nprocs", 1)}',
+            f'--direct={1 if self.config["direct"] else 0}',
+            f'--randrepeat={1 if self.config["random"] else 0}',
+            f'--filename={out}',
             f'--ioengine={self.config["engine"]}',
-            f'--name=job',
-        ]
-        # The path
-        if '.' in os.path.basename(self.config['out']):
-            os.makedirs(str(pathlib.Path(self.config['out']).parent),
-                        exist_ok=True)
-        else:
-            os.makedirs(self.config['out'], exist_ok=True)
-        # pipe_stdout=self.config['log'] 
-        Exec(' '.join(cmd),
-             LocalExecInfo(env=self.mod_env,
-                         hostfile=self.hostfile)).run()
-        
-    def stop(self):
-        """
-        Stop a running application. E.g., OrangeFS will terminate the servers,
-        clients, and metadata services.
+            '--name=job',
+        ])
+        Exec(cmd, exec_info).run()
 
-        :return: None
-        """
+    def stop(self):
         pass
 
     def clean(self):
-        """
-        Destroy all data for an application. E.g., OrangeFS will delete all
-        metadata and data directories in addition to the orangefs.xml file.
-
-        :return: None
-        """
-        Rm(self.config['out'] + '*',
-           LocalExecInfo()).run()
+        Rm(self.config['out'] + '*', self._exec_info()).run()
 
     def _get_stat(self, stat_dict):
-        """
-        Get statistics from the application.
-
-        :param stat_dict: A dictionary of statistics.
-        :return: None
-        """
         stat_dict[f'{self.pkg_id}.runtime'] = self.start_time

@@ -1,0 +1,32 @@
+# Pipeline: ARLDM Local Container Test
+# Purpose: Build the ARLDM image (apt + git clone, no spack) and run a
+#          deterministic multi-rank smoke check on the local machine.
+# Requirements: Docker or Podman installed.
+# Multi-node: switch exec_mode to 'pssh' or keep 'mpi' and provide a hostfile;
+#             bump nprocs/ppn accordingly. The image is multi-node ready
+#             (OpenMPI + sshd already inside).
+# Expected Runtime: ~3-5 minutes on first run (image build); seconds thereafter.
+
+name: arldm_local_test
+install_manager: container
+
+# Container build — ARLDM source cloned from upstream, no spack, no PyTorch
+# (full training image is downstream — see container.py docstring).
+container_engine: docker
+container_base: ubuntu:22.04
+
+pkgs:
+  - pkg_type: builtin.arldm
+    pkg_name: arldm_smoke
+
+    # vistsis is the smallest dataset choice. Smoke test does not actually
+    # touch dataset bytes, but the value is propagated to ARLDM config in
+    # downstream production images.
+    runscript: vistsis
+    mode: train
+
+    # 2 ranks on a single node — exercises the MPI launch path while
+    # finishing in seconds.
+    nprocs: 2
+    ppn: 2
+    exec_mode: mpi

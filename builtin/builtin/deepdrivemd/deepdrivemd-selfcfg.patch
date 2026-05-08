@@ -1,0 +1,17 @@
+diff --git a/deepdrivemd/deepdrivemd.py b/deepdrivemd/deepdrivemd.py
+index d8f77c2..d897b0b 100644
+--- a/deepdrivemd/deepdrivemd.py
++++ b/deepdrivemd/deepdrivemd.py
+@@ -67,10 +67,10 @@ class PipelineManager:
+ 
+         self.pipeline.add_stages(self.generate_molecular_dynamics_stage())
+ 
+-        if not cfg.aggregation_stage.skip_aggregation:
++        if not self.cfg.aggregation_stage.skip_aggregation:
+             self.pipeline.add_stages(self.generate_aggregating_stage())
+ 
+-        if self.stage_idx % cfg.machine_learning_stage.retrain_freq == 0:
++        if self.stage_idx % self.cfg.machine_learning_stage.retrain_freq == 0:
+             self.pipeline.add_stages(self.generate_machine_learning_stage())
+         self.pipeline.add_stages(self.generate_model_selection_stage())
+ 

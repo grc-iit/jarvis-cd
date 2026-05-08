@@ -1,0 +1,22 @@
+# Pipeline: IOR Spack Test
+# Purpose: Test IOR deployment using spack package manager
+# Requirements: Spack installed and in PATH (or SPACK_ROOT set)
+
+name: ior_spack_test
+install_manager: spack
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior_spack
+    install: ior
+    nprocs: 2
+    ppn: 2
+    block: 32m
+    xfer: 1m
+    api: posix
+    out: /tmp/ior_spack_test.bin
+    write: true
+    read: true
+    fpp: false
+    reps: 1
+    direct: false

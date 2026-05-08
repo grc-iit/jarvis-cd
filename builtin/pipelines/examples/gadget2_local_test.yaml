@@ -1,0 +1,33 @@
+# Pipeline: Gadget2 Local Container Test
+# Purpose: Build the Gadget2 image (apt + git clone + FFTW2-from-source +
+#          CMake build, no spack) and run the gassphere test case end-to-end
+#          on the local machine.
+# Requirements: Docker or Podman installed.
+# Multi-node: switch exec_mode to 'pssh' or keep 'mpi' and provide a hostfile;
+#             bump nprocs/ppn accordingly. The image is multi-node ready
+#             (OpenMPI + sshd already inside).
+# Expected Runtime: ~5-10 minutes on first run (FFTW2 + Gadget2 compile);
+#                   under a minute thereafter.
+
+name: gadget2_local_test
+install_manager: container
+
+container_engine: docker
+container_base: ubuntu:22.04
+
+pkgs:
+  - pkg_type: builtin.gadget2
+    pkg_name: gadget2_gassphere
+
+    # gassphere is the smallest Gadget2 stock test case (1472 SPH particles
+    # in a hydrostatic sphere). With time_max=0.05 the simulation finishes
+    # in seconds and produces real Gadget2 output (energy.txt, info.txt,
+    # snapshot files) under the package's output directory.
+    test_case: gassphere
+    time_max: 0.05
+
+    # 2 ranks on a single node — exercises the MPI launch path while
+    # finishing in seconds.
+    nprocs: 2
+    ppn: 2
+    exec_mode: mpi

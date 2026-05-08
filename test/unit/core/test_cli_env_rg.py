@@ -56,7 +56,7 @@ class TestCLIEnvironment(CLITestBase):
         result = self.run_command(args)
 
         if result.get('success'):
-            self.assertEqual(result['kwargs']['new_env_name'], 'new_env')
+            self.assertEqual(result['kwargs']['env_name'], 'new_env')
 
     def test_ppl_env_show(self):
         """Test showing pipeline environment"""

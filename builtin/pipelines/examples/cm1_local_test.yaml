@@ -1,0 +1,36 @@
+# Pipeline: CM1 Local Container Test
+# Purpose: Run a tiny CM1 (nssl3) simulation inside a container on the local machine.
+# Requirements: Docker or Podman installed.
+# Multi-node: swap to a hostfile and bump corex/corey or switch exec_mode to 'pssh'.
+# Expected Runtime: 10-15 minutes on first run (CM1 is compiled from source in-image).
+
+name: cm1_local_test
+install_manager: container
+
+# Container configuration — CM1 built from upstream tarball with apt deps, no spack.
+container_engine: docker
+container_base: ubuntu:22.04
+
+pkgs:
+  - pkg_type: builtin.cm1
+    pkg_name: cm1_nssl3
+
+    # Small grid so the local test finishes in a few minutes.
+    nx: 16
+    ny: 16
+    nz: 16
+
+    # 2x2 decomposition => 4 MPI ranks on a single node.
+    corex: 2
+    corey: 2
+    ppn: 4
+
+    # NetCDF output in a shared file.
+    file_format: netcdf
+    file_count: shared
+
+    # Only test case ships with a namelist template.
+    test_case: nssl3
+
+    # MPI is CM1's native execution model; set to 'pssh' for fan-out without mpirun.
+    exec_mode: mpi

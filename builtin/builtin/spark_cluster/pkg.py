@@ -1,108 +1,138 @@
 """
-This module provides classes and methods to launch the SparkCluster service.
-SparkCluster is ....
+SparkCluster package. Runs a Spark master + worker, bare-metal or in a
+container. Container mode downloads a prebuilt Spark tarball inside
+build.sh (no source compilation), then the deploy image copies
+/opt/spark + a JRE for runtime.
 """
+import os
+import time
 
 from jarvis_cd.core.pkg import Service
-from jarvis_cd.shell import Exec, PsshExecInfo
+from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo, MpiExecInfo
 
 
 class SparkCluster(Service):
     """
-    This class provides methods to launch the SparkCluster service.
+    Spark standalone cluster driver (master + worker).
     """
-    def _init(self):
-        """
-        Initialize paths
-        """
-        pass
 
     def _configure_menu(self):
-        """
-        Create a CLI menu for the configurator method.
-        For thorough documentation of these parameters, view:
-        https://github.com/scs-lab/jarvis-util/wiki/3.-Argument-Parsing
-
-        :return: List(dict)
-        """
         return [
-            {
-                'name': 'port',
-                'msg': '',
-                'type': int,
-                'default': 7077,
-            },
-            {
-                'name': 'num_nodes',
-                'msg': '',
-                'type': int,
-                'default': 1,
-            },
+            {'name': 'master_port', 'msg': 'Spark master RPC port',
+             'type': int, 'default': 7077},
+            {'name': 'worker_port', 'msg': 'Spark worker RPC port',
+             'type': int, 'default': 7078},
+            {'name': 'num_workers', 'msg': 'Number of worker nodes',
+             'type': int, 'default': 1},
+            {'name': 'sleep', 'msg': 'Seconds to wait after starting workers',
+             'type': int, 'default': 2},
+            {'name': 'exec_mode', 'msg': 'Multi-node mode: pssh or mpi',
+             'type': str, 'default': 'pssh', 'choices': ['pssh', 'mpi']},
         ]
 
-    def _configure(self, **kwargs):
-        """
-        Converts the Jarvis configuration to application-specific configuration.
-        E.g., OrangeFS produces an orangefs.xml file.
+    # ------------------------------------------------------------------
+    # Container build/deploy
+    # ------------------------------------------------------------------
 
-        :param kwargs: Configuration parameters for this pkg.
-        :return: None
-        """
-        self.config['SPARK_SCRIPTS'] = self.env['SPARK_SCRIPTS']
-        self.env['SPARK_MASTER_HOST'] = self.hostfile.hosts[0]
-        self.env['SPARK_MASTER_PORT'] = '7077'
-        self.env['SPARK_WORKER_PORT'] = '7078'
+    def _build_phase(self):
+        if self.config.get('deploy_mode') != 'container':
+            return None
+        return self._read_build_script('build.sh', {}), 'default'
+
+    def _build_deploy_phase(self):
+        if self.config.get('deploy_mode') != 'container':
+            return None
+        base = getattr(self.pipeline, 'container_base', 'ubuntu:22.04')
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'BUILD_IMAGE': self.build_image_name(),
+            'DEPLOY_BASE': base,
+        })
+        return content, ''
+
+    # ------------------------------------------------------------------
+    # Configuration
+    # ------------------------------------------------------------------
+
+    def _configure(self, **kwargs):
+        super()._configure(**kwargs)
+
+        if self.config.get('deploy_mode') == 'container':
+            spark_home = '/opt/spark'
+        else:
+            spark_home = (
+                self.env.get('SPARK_HOME')
+                or self.env.get('SPARK_SCRIPTS')
+                or os.environ.get('SPARK_HOME')
+                or os.environ.get('SPARK_SCRIPTS')
+            )
+            if not spark_home:
+                raise RuntimeError(
+                    "SPARK_HOME is not set. Export SPARK_HOME or use "
+                    "deploy_mode=container."
+                )
+        self.config['SPARK_HOME'] = spark_home
+        master_host = self.hostfile.hosts[0] if self.hostfile else 'localhost'
+        self.env['SPARK_MASTER_HOST'] = master_host
+        self.env['SPARK_MASTER_PORT'] = str(self.config['master_port'])
+        self.env['SPARK_WORKER_PORT'] = str(self.config['worker_port'])
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def _use_remote(self):
+        return self.hostfile is not None and not self.hostfile.is_local()
+
+    def _container_kwargs(self):
+        if self.config.get('deploy_mode') != 'container':
+            return {}
+        return dict(
+            container=self._container_engine,
+            container_image=self.deploy_image_name(),
+            shared_dir=self.shared_dir,
+            private_dir=self.private_dir,
+        )
+
+    def _master_exec_info(self):
+        kwargs = dict(env=self.mod_env, **self._container_kwargs())
+        if self._use_remote():
+            return PsshExecInfo(hosts=self.hostfile.subset(1), **kwargs)
+        return LocalExecInfo(**kwargs)
+
+    def _workers_exec_info(self):
+        num_workers = self.config.get('num_workers', 1)
+        exec_mode = self.config.get('exec_mode', 'pssh')
+        kwargs = dict(env=self.mod_env, **self._container_kwargs())
+        if exec_mode == 'mpi' and self._use_remote():
+            return MpiExecInfo(hostfile=self.hostfile.subset(num_workers),
+                               nprocs=num_workers, ppn=1,
+                               port=self.ssh_port, **kwargs)
+        if self._use_remote():
+            return PsshExecInfo(hosts=self.hostfile.subset(num_workers), **kwargs)
+        return LocalExecInfo(**kwargs)
 
     def start(self):
-        """
-        Launch an application. E.g., OrangeFS will launch the servers, clients,
-        and metadata services on all necessary pkgs.
-
-        :return: None
-        """
-        # Start the master node
-        Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/start-master.sh',
-             PsshExecInfo(env=self.env,
-                          hosts=self.hostfile.subset(1))).run()
+        spark_home = self.config['SPARK_HOME']
+        Exec(f'{spark_home}/sbin/start-master.sh',
+             self._master_exec_info()).run()
         time.sleep(1)
-        # Start the worker nodes
-        Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/start-worker.sh '
-             f'{self.env["SPARK_MASTER_HOST"]}:{self.env["SPARK_MASTER_PORT"]}',
-             PsshExecInfo(env=self.mod_env,
-                          hosts=self.hostfile.subset(self.config['num_nodes']))).run()
-        time.sleep(self.config['sleep'])
+        master_host = self.env['SPARK_MASTER_HOST']
+        master_port = self.env['SPARK_MASTER_PORT']
+        Exec(
+            f'{spark_home}/sbin/start-worker.sh spark://{master_host}:{master_port}',
+            self._workers_exec_info(),
+        ).run()
+        time.sleep(self.config.get('sleep', 2))
 
     def stop(self):
-        """
-        Stop a running application. E.g., OrangeFS will terminate the servers,
-        clients, and metadata services.
-
-        :return: None
-        """
-        # Start the master node
-        Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/stop-master.sh',
-             PsshExecInfo(env=self.env,
-                          hosts=self.hostfile.subset(1))).run()
-        # Start the worker nodes
-        Exec(f'{self.config["SPARK_SCRIPTS"]}/sbin/stop-worker.sh '
-             f'{self.env["SPARK_MASTER_HOST"]}',
-             PsshExecInfo(env=self.env,
-                          hosts=self.hostfile)).run()
+        spark_home = self.config['SPARK_HOME']
+        Exec(f'{spark_home}/sbin/stop-worker.sh',
+             self._workers_exec_info()).run()
+        Exec(f'{spark_home}/sbin/stop-master.sh',
+             self._master_exec_info()).run()
 
     def clean(self):
-        """
-        Destroy all data for an application. E.g., OrangeFS will delete all
-        metadata and data directories in addition to the orangefs.xml file.
-
-        :return: None
-        """
         pass
 
     def status(self):
-        """
-        Check whether or not an application is running. E.g., are OrangeFS
-        servers running?
-
-        :return: True or false
-        """
         return True

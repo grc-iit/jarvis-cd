@@ -1,0 +1,39 @@
+# Pipeline: IOR multi-node on Ares (docker container)
+# Purpose: Run IOR benchmark across multiple Ares nodes inside Docker containers.
+# Hostfile: must contain N hosts (>=2). Set ppn = ranks-per-host, nprocs = ppn * N.
+# Usage:
+#   jarvis hostfile set /path/to/multi_host_file   # one line per ares-comp-XX
+#   jarvis ppl load yaml builtin/pipelines/portability/ior_ares_multi_node.yaml
+#   jarvis ppl run
+
+name: ior_ares_multi_node
+install_manager: container
+
+container_engine: docker
+container_base: ubuntu:24.04
+
+hostfile: /home/imuradli/hostfile_multi.txt
+
+# OpenMPI on Ares: pin TCP traffic to the eno1 interface
+container_env:
+  OMPI_MCA_btl_tcp_if_include: eno1
+  OMPI_MCA_oob_tcp_if_include: eno1
+
+pkgs:
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
+  - pkg_type: builtin.ior
+    pkg_name: ior_ares_multi
+    # Scale: ppn = ranks-per-host, nprocs = ppn * number_of_hosts_in_hostfile
+    nprocs: 4
+    ppn: 2
+    block: 1G
+    xfer: 1M
+    api: posix
+    out: /home/imuradli/.ppi-jarvis/shared/ior_ares_multi_node/test_file
+    log: /tmp/ior_ares_multi_output.log
+    write: true
+    read: true
+    fpp: false
+    reps: 3
+    direct: false

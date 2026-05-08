@@ -1,0 +1,3 @@
+[submodule "awesome-scienctific-applications"]
+	path = awesome-scienctific-applications
+	url = git@github.com:grc-iit/awesome-scienctific-applications.git

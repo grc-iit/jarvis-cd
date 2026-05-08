@@ -301,6 +301,63 @@ class EnvironmentManager:
                 
         return captured
         
+    def capture_spack_environment(self, spack_specs: List[str]) -> Dict[str, str]:
+        """
+        Run 'spack load' for the given specs in a subprocess and capture
+        the resulting environment variables.
+
+        Sources spack's setup-env.sh if SPACK_ROOT is set, then loads
+        each spec and captures the environment via 'env'.
+
+        :param spack_specs: List of spack spec strings to load
+        :return: Dictionary of captured environment variables
+        """
+        import subprocess
+
+        # Build spack setup prefix
+        spack_root = os.environ.get('SPACK_ROOT', '')
+        if spack_root:
+            setup = f'. {spack_root}/share/spack/setup-env.sh && '
+        else:
+            setup = ''
+
+        # Build the spack load commands
+        load_cmds = ' && '.join(f'spack load {spec}' for spec in spack_specs)
+
+        script = f'{setup}{load_cmds} && env'
+
+        try:
+            result = subprocess.run(
+                ['bash', '-c', script],
+                capture_output=True, text=True, timeout=120,
+                env=os.environ.copy()
+            )
+            if result.returncode != 0:
+                raise RuntimeError(
+                    f"spack load failed (exit code {result.returncode}).\n"
+                    f"stderr: {result.stderr}"
+                )
+        except FileNotFoundError:
+            raise RuntimeError("bash not found. Cannot capture spack environment.")
+
+        # Parse the environment output
+        spack_env = {}
+        for line in result.stdout.splitlines():
+            if '=' in line:
+                key, _, value = line.partition('=')
+                spack_env[key] = value
+
+        # Filter to COMMON_ENV_VARS + SPACK_* variables
+        filtered_env = {}
+        for var_name in self.COMMON_ENV_VARS:
+            if var_name in spack_env:
+                filtered_env[var_name] = spack_env[var_name]
+        for key, value in spack_env.items():
+            if key.startswith('SPACK_'):
+                filtered_env[key] = value
+
+        return filtered_env
+
     def _parse_env_args(self, env_args: List[str]) -> Dict[str, str]:
         """
         Parse environment arguments in VAR=value format.

@@ -4,21 +4,19 @@
 # Expected Runtime: 2-5 minutes
 
 name: ior_podman_test
+install_manager: container
 
 # Auto-build environment from current shell
 # No env field - will capture current environment automatically
 
 # Container configuration
-container_build: ior_test_container_podman
 container_engine: podman
-container_base: docker.io/iowarp/iowarp-build:latest
+container_base: docker.io/ubuntu:24.04
 
 pkgs:
   # IOR benchmark with container deployment
   - pkg_type: builtin.ior
     pkg_name: ior_container
-    # Deployment mode: 'default' for bare metal, 'container' for containerized
-    deploy_mode: container
     # IOR benchmark parameters
     nprocs: 2
     ppn: 2

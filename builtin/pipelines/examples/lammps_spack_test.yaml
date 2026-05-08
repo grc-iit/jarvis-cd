@@ -1,0 +1,15 @@
+# Pipeline: LAMMPS Spack Test
+# Purpose: Test LAMMPS deployment using spack package manager
+# Requirements: Spack installed and in PATH (or SPACK_ROOT set)
+
+name: lammps_spack_test
+install_manager: spack
+
+pkgs:
+  - pkg_type: builtin.lammps
+    pkg_name: lammps_spack
+    install: lammps
+    nprocs: 4
+    ppn: 4
+    script: /opt/lammps/bench/in.lj
+    out: /tmp/lammps_spack_out

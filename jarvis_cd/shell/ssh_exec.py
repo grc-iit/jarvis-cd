@@ -79,9 +79,14 @@ class SshExec(LocalExec):
         else:
             ssh_parts.append(self.target_hostname)
             
-        # Build remote command
+        # Build remote command. The cmd may already contain single-quoted
+        # substrings (e.g. `docker exec <c> bash -c 'inner'` from
+        # _prepare_container); escape any inner single quotes before
+        # wrapping the whole thing in outer single quotes so the remote
+        # shell sees one argument, not three.
         remote_cmd = self._build_remote_command(cmd, exec_info)
-        ssh_parts.append(f"'{remote_cmd}'")
+        escaped = remote_cmd.replace("'", "'\\''")
+        ssh_parts.append(f"'{escaped}'")
         
         return ' '.join(ssh_parts)
         

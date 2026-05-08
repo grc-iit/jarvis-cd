@@ -286,395 +286,413 @@ This integration provides a complete development ecosystem where users can:
 
 ## Package Types
 
-Jarvis-CD provides several base classes for different types of packages. **The recommended approach is to use multi-implementation packages with RouteApp**, which allows a single package to support multiple deployment modes (e.g., bare metal, containerized).
+Jarvis-CD provides several base classes for different types of packages. All packages inherit from `Application` (or `Service` for long-running daemons). Container support is built directly into `Application` — there are no separate base classes for containerized packages.
 
-## Multi-Implementation Packages (RECOMMENDED)
+## Package Structure
 
-**This is the default and recommended way to create packages.** Multi-implementation packages use the `RouteApp` pattern to support multiple deployment modes from a single package interface.
-
-### Architecture Overview
-
-A multi-implementation package consists of:
-
-1. **Router Class (`pkg.py`)**: Main package class that inherits from `RouteApp` and defines the configuration menu
-2. **Implementation Delegates**: Separate files for each deployment mode (e.g., `default.py`, `container.py`)
-3. **Deployment Mode Routing**: The router automatically delegates lifecycle methods to the appropriate implementation based on `deploy_mode`
-
-### Directory Structure
+Every package is a single `pkg.py` file containing one class that extends `Application`:
 
 ```
 my_package/
-├── __init__.py               # Package initialization
-├── pkg.py                    # Router class (inherits from RouteApp)
-├── default.py                # Default (bare metal) implementation
-├── container.py              # Container implementation (optional)
-└── README.md                 # Package documentation
+├── __init__.py    # Package initialization
+├── pkg.py         # Single class — handles all deploy modes
+└── README.md      # Package documentation
 ```
 
-### The RouteApp Pattern
+The class name must be the PascalCase of the package directory name (e.g., directory `ior` → class `Ior`).
 
-`RouteApp` is a base class that provides automatic routing to deployment-specific implementations. It eliminates code duplication and makes packages deployment-agnostic.
+## Container Support
 
-#### Router Class Example (`pkg.py`)
+Container support is built into `Application`. The pipeline's `install_manager: container` setting enables containerized deployment for all packages. Any package can support container deployment by:
+
+1. Providing a `build.sh` script (shell commands to compile software) in the package directory
+2. Providing a `Dockerfile.deploy` template (lean runtime image) in the package directory
+3. Overriding `_build_phase()` and `_build_deploy_phase()` to return template content
+4. Branching on `self.config.get('deploy_mode') == 'container'` in `start()`
+
+Note: `deploy_mode` is set automatically by the pipeline based on `install_manager`. Packages do **not** include `deploy_mode` in their `_configure_menu()`.
+
+### How Container Builds Work
+
+Jarvis uses a **single long-running build container** to compile all packages, then creates a lean deploy image from the results.
+
+**Step 1 — Check cache:** If the deploy image already exists and all packages have `container_cache: true` (the default), the entire build is skipped.
+
+**Step 2 — Build phase:** Jarvis starts one container from `container_base` (e.g., `ubuntu:24.04`) and runs each package's `build.sh` script inside it via `docker exec`. All packages share the same build container, so dependencies installed by one package are available to the next.
+
+**Step 3 — Commit:** The build container is committed as a temporary build image (`jarvis-build-{pipeline_name}`).
+
+**Step 4 — Deploy phase:** Each package's `Dockerfile.deploy` uses `COPY --from=builder` to extract only the compiled binaries into a minimal runtime image. The deploy image generates its own SSH keys so all containers from the same image can communicate via MPI.
+
+**Step 5 — Cleanup:** The build container and temporary build image are removed. Only the deploy image remains.
+
+```
+container_base (ubuntu:24.04)
+    │
+    ▼
+┌──────────────────────────────┐
+│  Build Container             │
+│  docker run ... sleep inf    │
+│                              │
+│  docker exec build-pkg1.sh   │  ← Each package's build.sh
+│  docker exec build-pkg2.sh   │    runs in the same container
+│  ...                         │
+└──────────────────────────────┘
+    │ docker commit
+    ▼
+┌──────────────────────────────┐
+│  jarvis-build-{pipeline}     │  ← Temporary build image
+└──────────────────────────────┘
+    │ Dockerfile.deploy (COPY --from=builder)
+    ▼
+┌──────────────────────────────┐
+│  {pipeline_name}             │  ← Final deploy image
+│  - Runtime deps only         │    (small, SSH-ready)
+│  - Compiled binaries         │
+│  - Self-generated SSH keys   │
+└──────────────────────────────┘
+```
+
+### Deploy Image SSH
+
+Deploy containers generate their own SSH keypair at image build time. Since the same image runs on all cluster nodes, all containers share the same identity and can SSH to each other without any host key setup. The `Dockerfile.deploy` includes:
+
+```dockerfile
+RUN mkdir -p /var/run/sshd /root/.ssh \
+    && ssh-keygen -A \
+    && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 \
+    && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys \
+    && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys \
+    && printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /root/.ssh/config \
+    && chmod 600 /root/.ssh/config
+```
+
+### Caching and Rebuilds
+
+If the deploy image already exists locally, the build is skipped entirely. To force a rebuild (e.g., when upstream git repos have new commits but the build.sh hasn't changed):
+
+```yaml
+pkgs:
+  - pkg_type: builtin.lammps
+    container_cache: false    # forces full rebuild
+```
+
+Image existence is checked per engine:
+- **Docker/Podman:** `docker image inspect <name>` (exit code 0 = exists)
+- **Apptainer:** checks for `.sif` file in shared directory
+
+### Supported Container Engines
+
+Set `container_engine` in the pipeline YAML:
+
+| Value | Build tool | Run tool |
+|-------|-----------|----------|
+| `docker` | `docker run` + `docker exec` + `docker commit` | `docker compose up` |
+| `podman` | `podman run` + `podman exec` + `podman commit` | `podman-compose up` |
+| `apptainer` | docker/podman (intermediate), then `apptainer build` to convert to `.sif` | `apptainer exec` |
+
+### Directory Structure Example (IOR)
+
+```
+ior/
+├── __init__.py
+├── pkg.py              # Single Ior(Application) class — bare metal + container
+├── build.sh            # Build script: shell commands to compile software
+└── Dockerfile.deploy   # Deploy Dockerfile: copies binaries into runtime image
+```
+
+### Package Example
 
 ```python
-"""
-IOR benchmark package - supports both bare metal and containerized deployment.
-"""
-from jarvis_cd.core.route_pkg import RouteApp
+from jarvis_cd.core.pkg import Application
+from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo, Rm, Mkdir
+import os, pathlib
 
 
-class Ior(RouteApp):
+class Ior(Application):
     """
-    Router class for IOR deployment - delegates to default or container implementation.
+    IOR benchmark. Supports bare-metal and container deployment.
     """
 
     def _configure_menu(self):
-        """
-        Define configuration parameters shared by all deployment modes.
-
-        :return: List of configuration dictionaries
-        """
-        # Get base menu from RouteApp (includes deploy_mode parameter)
-        base_menu = super()._configure_menu()
-
-        # Override deploy_mode choices to specify available deployment modes for this package
-        for item in base_menu:
-            if item['name'] == 'deploy_mode':
-                item['choices'] = ['default', 'container']
-                break
-
-        # Add package-specific parameters
-        ior_menu = [
-            {
-                'name': 'nprocs',
-                'msg': 'Number of processes',
-                'type': int,
-                'default': 1,
-            },
-            {
-                'name': 'block',
-                'msg': 'Amount of data to generate per-process',
-                'type': str,
-                'default': '32m',
-            },
-            {
-                'name': 'xfer',
-                'msg': 'The size of data transfer',
-                'type': str,
-                'default': '1m',
-            },
-            {
-                'name': 'api',
-                'msg': 'The I/O api to use',
-                'type': str,
-                'choices': ['posix', 'mpiio', 'hdf5'],
-                'default': 'posix',
-            }
+        return [
+            {'name': 'nprocs', 'msg': 'Number of processes',
+             'type': int, 'default': 1},
+            {'name': 'block', 'msg': 'Amount of data per process',
+             'type': str, 'default': '32m'},
+            {'name': 'out', 'msg': 'Output file path',
+             'type': str, 'default': '/tmp/ior.bin'},
         ]
 
-        return base_menu + ior_menu
-```
+    def _build_phase(self):
+        """Return build script content, or None when not in container mode."""
+        if self.config.get('deploy_mode') != 'container':
+            return None
+        content = self._read_build_script('build.sh', {})
+        return content, 'mpi'
 
-**Key Points:**
-- Router class name matches package name (e.g., `Ior` for `builtin.ior`)
-- Only implements `_configure_menu()` to define parameters and available deployment modes
-- Overrides `deploy_mode` choices to specify which deployment modes are supported (e.g., `['default', 'container']`)
-- All lifecycle methods (`start`, `stop`, `clean`, `kill`, `status`) are automatically delegated
-- Configuration menu is shared across all deployment modes
-- The `deploy_mode` parameter defaults to `'default'` and is automatically included in the configuration menu
-
-#### Default Implementation (`default.py`)
-
-```python
-"""
-IOR benchmark - bare metal deployment.
-"""
-from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo, Mkdir
-
-
-class IorDefault(Application):
-    """
-    IOR deployment on bare metal using MPI.
-    """
-
-    def _init(self):
-        """Initialize paths"""
-        pass
+    def _build_deploy_phase(self):
+        """Return deploy Dockerfile content."""
+        if self.config.get('deploy_mode') != 'container':
+            return None
+        suffix = getattr(self, '_build_suffix', '')
+        content = self._read_dockerfile('Dockerfile.deploy', {
+            'BUILD_IMAGE': self.build_image_name(),
+            'DEPLOY_BASE': 'ubuntu:24.04',
+        })
+        return content, suffix
 
     def _configure(self, **kwargs):
-        """
-        Configure for bare metal deployment.
-
-        :param kwargs: Configuration parameters
-        """
-        # Call parent configuration
         super()._configure(**kwargs)
-
-        # Create output directory on all nodes
-        import os
-        import pathlib
-        out = os.path.expandvars(self.config['out'])
-        parent_dir = str(pathlib.Path(out).parent)
-        Mkdir(parent_dir,
-              PsshExecInfo(env=self.mod_env,
-                           hostfile=self.jarvis.hostfile)).run()
+        if self.config.get('deploy_mode') == 'default':
+            out = os.path.expandvars(self.config['out'])
+            Mkdir(str(pathlib.Path(out).parent),
+                  PsshExecInfo(env=self.mod_env, hostfile=self.hostfile)).run()
 
     def start(self):
-        """
-        Start IOR benchmark.
-        """
-        cmd = [
-            'ior',
-            f'-b {self.config["block"]}',
-            f'-t {self.config["xfer"]}',
-            f'-a {self.config["api"]}',
-            f'-o {self.config["out"]}',
-        ]
-
-        Exec(' '.join(cmd),
-             MpiExecInfo(env=self.mod_env,
-                         hostfile=self.jarvis.hostfile,
-                         nprocs=self.config['nprocs'],
-                         ppn=self.config['ppn'])).run()
-
-    def stop(self):
-        """Stop IOR (usually no action needed for benchmarks)"""
-        pass
+        if self.config.get('deploy_mode') == 'container':
+            Exec('ior -b {0} -o {1}'.format(self.config['block'], self.config['out']),
+                 MpiExecInfo(nprocs=self.config['nprocs'],
+                             container=self._container_engine,
+                             container_image=self.deploy_image_name(),
+                             shared_dir=self.shared_dir,
+                             private_dir=self.private_dir,
+                             env=self.mod_env)).run()
+        else:
+            Exec(f'ior -b {self.config["block"]} -o {self.config["out"]}',
+                 MpiExecInfo(env=self.mod_env, hostfile=self.hostfile,
+                             nprocs=self.config['nprocs'])).run()
 
     def clean(self):
-        """Clean IOR output files"""
-        from jarvis_cd.shell import Rm
         Rm(self.config['out'] + '*',
-           PsshExecInfo(env=self.env,
-                        hostfile=self.jarvis.hostfile)).run()
+           PsshExecInfo(env=self.env, hostfile=self.hostfile)).run()
 ```
 
-**Key Points:**
-- Class name is `{PackageName}Default` (e.g., `IorDefault`)
-- Inherits from `Application` or `Service`
-- Implements standard lifecycle methods for bare metal deployment
-- Has access to all package configuration via `self.config`
+### `build.sh` — Build Script
 
-#### Container Implementation (`container.py`)
+Each package provides a `build.sh` shell script with `##VAR##` placeholders:
+
+```bash
+#!/bin/bash
+set -e
+export DEBIAN_FRONTEND=noninteractive
+
+apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl openmpi-bin libopenmpi-dev
+
+curl -sL https://github.com/hpc/ior/releases/download/3.3.0/ior-3.3.0.tar.gz \
+    | tar xz --strip-components=1 -C /opt/ior
+
+cd /opt/ior && ./configure --prefix=/opt/ior/install \
+    && make -j$(nproc) && make install
+```
+
+The script runs inside the build container via `docker exec`. It should install dependencies and compile software, leaving artifacts in `/opt` or `/usr/local`.
+
+### `_build_phase()` Return Value
+
+Returns `(script_content, image_suffix)` or `None`:
 
 ```python
-"""
-IOR benchmark - containerized deployment.
-"""
-from jarvis_cd.core.container_pkg import ContainerApplication
-
-
-class IorContainer(ContainerApplication):
-    """
-    IOR deployment using Docker/Podman containers.
-    """
-
-    def augment_container(self) -> str:
-        """
-        Generate Dockerfile commands to install IOR in a container.
-
-        :return: Dockerfile commands as a string
-        """
-        return """
-# Install IOR using spack
-RUN . "${SPACK_DIR}/share/spack/setup-env.sh" && \\
-    spack install -y ior
-
-# Copy IOR executables to /usr/bin
-RUN . "${SPACK_DIR}/share/spack/setup-env.sh" && \\
-    spack load ior && \\
-    cp -r $(spack location -i ior)/bin/* /usr/bin || true && \\
-    cp -r $(spack location -i mpi)/bin/* /usr/bin || true
-"""
-
-    def _configure(self, **kwargs):
-        """
-        Configure container deployment.
-
-        :param kwargs: Configuration parameters
-        """
-        # Call parent configuration
-        super()._configure(**kwargs)
-
-        # Note: For pipeline-level containers, Dockerfile and compose files
-        # are generated by the pipeline, not by individual packages.
+def _build_phase(self):
+    if self.config.get('deploy_mode') != 'container':
+        return None
+    content = self._read_build_script('build.sh', {
+        'CUDA_ARCH': self.config.get('cuda_arch', 80),
+    })
+    return content, 'kokkos-gpu-80'
 ```
 
-**Key Points:**
-- Class name is `{PackageName}Container` (e.g., `IorContainer`)
-- Inherits from `ContainerApplication`
-- Implements `augment_container()` to add package to container image
-- `start()`, `stop()`, `clean()` are handled by pipeline-level container orchestration
+### `Dockerfile.deploy` — Deploy Template
 
-### Deploy Mode Routing
+```dockerfile
+FROM ##BUILD_IMAGE## AS builder
+FROM ##DEPLOY_BASE##
 
-The `deploy_mode` parameter determines which implementation delegate is used:
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        openmpi-bin libopenmpi3 openssh-server openssh-client \
+    && rm -rf /var/lib/apt/lists/*
 
-| `deploy_mode` Value | Delegate Class Name | Implementation File |
-|---------------------|---------------------|---------------------|
-| `default` | `{PackageName}Default` | `default.py` |
-| `container` | `{PackageName}Container` | `container.py` |
-| `kubernetes` | `{PackageName}Kubernetes` | `kubernetes.py` |
-| Custom | `{PackageName}{CustomMode}` | `{custom_mode}.py` |
+COPY --from=builder /opt/ior/install/bin/ior /usr/bin/ior
 
-**Routing Logic:**
-1. Router reads `deploy_mode` from `self.config['deploy_mode']` (defaults to `'default'`)
-2. Router constructs delegate class name: `f"{PackageName}{DeployMode.title()}"`
-3. Router imports and instantiates delegate from appropriate file
-4. Router forwards lifecycle method calls to delegate
+# Self-generated SSH keys — all containers from this image share the same identity
+RUN mkdir -p /var/run/sshd /root/.ssh && ssh-keygen -A \
+    && ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 \
+    && cat /root/.ssh/id_ed25519.pub >> /root/.ssh/authorized_keys \
+    && chmod 700 /root/.ssh && chmod 600 /root/.ssh/authorized_keys \
+    && printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /root/.ssh/config \
+    && chmod 600 /root/.ssh/config
 
-**Configuration:**
-- The `deploy_mode` parameter is automatically included in the package configuration menu
-- Subclasses specify available modes by overriding the `choices` field
-- Users can see available deployment modes via `jarvis pkg conf --help`
+EXPOSE 22
+CMD ["/bin/bash"]
+```
 
-### Deploy Mode Configuration
+`##BUILD_IMAGE##` is replaced with the committed build image name. `##DEPLOY_BASE##` is the minimal runtime base (e.g., `ubuntu:24.04` or `nvidia/cuda:12.6.0-runtime-ubuntu24.04`).
 
-The `deploy_mode` can be set at two levels:
+### Template Helpers
 
-#### 1. Pipeline-Level (Recommended for Containers)
+| Method | Description |
+|---|---|
+| `_read_build_script(filename, replacements)` | Read a `build.sh` template from `self.pkg_dir` with `##VAR##` substitution |
+| `_read_dockerfile(filename, replacements)` | Read a `Dockerfile.deploy` template with `##VAR##` substitution |
 
-Set `deploy_mode` at the pipeline level to containerize all packages:
+Both are aliases for `_read_template()`.
+
+### Pipeline YAML for Container Mode
 
 ```yaml
-name: my_pipeline
+name: ior_apptainer_test
+install_manager: container
 
-# Container configuration - applies to all packages with container support
-deploy_mode: container
-container_name: my_app_container
-container_engine: podman
-container_base: docker.io/iowarp/iowarp-build:latest
+container_engine: apptainer          # docker | podman | apptainer
+container_base: ubuntu:24.04         # base image for the build container
 
 pkgs:
   - pkg_type: builtin.ior
     pkg_name: ior_benchmark
-    # Inherits deploy_mode=container from pipeline
     nprocs: 4
     block: 1G
+    out: /tmp/ior_test_file
 ```
 
-#### 2. Package-Level (Per-Package Control)
+### Using Interceptors with Containers
 
-Set `deploy_mode` per package for mixed deployments:
+Interceptors (e.g., Darshan) work transparently with container mode:
 
 ```yaml
-name: my_pipeline
+interceptors:
+  - pkg_type: builtin.darshan
+    pkg_name: darshan_interceptor
+    log_dir: /tmp/darshan_logs
+    job_id: my_job
 
 pkgs:
-  # Run IOR in container
   - pkg_type: builtin.ior
     pkg_name: ior_benchmark
-    deploy_mode: container  # Package-specific setting
+    interceptors:
+      - darshan_interceptor
     nprocs: 4
-
-  # Run database on bare metal
-  - pkg_type: builtin.redis
-    pkg_name: database
-    deploy_mode: default  # Bare metal deployment
-    port: 6379
 ```
 
-### Adding Multiple Deployment Modes
+The interceptor's `modify_env()` sets `LD_PRELOAD` in `mod_env`. `Exec` wraps it with `bash -c` inside the container and passes `LD_PRELOAD` via the engine's `--env` flag.
 
-To support additional deployment modes:
+For this to work, `libdarshan.so` must exist inside the deploy container. Build it in `build.sh` and copy it in `Dockerfile.deploy`.
 
-1. **Add the implementation file**:
+### Available Container Methods and Properties
+
+| Method / Property | Description |
+|---|---|
+| `build_image_name(suffix=None)` | Build image name: `jarvis-build-{pipeline}` |
+| `deploy_image_name(suffix=None)` | Deploy image name: `{pipeline}-{suffix}` |
+| `_container_engine` | Active engine from pipeline config |
+| `_build_engine` | Engine used for builds (apptainer uses docker/podman) |
+| `_image_exists(engine, name, shared_dir)` | Check if image exists (docker inspect / podman inspect / .sif file) |
+| `_read_build_script(filename, replacements)` | Read build.sh template with `##VAR##` substitution |
+| `_read_dockerfile(filename, replacements)` | Read Dockerfile.deploy template with `##VAR##` substitution |
+
+### Hostfile: Always Use `self.hostfile`
+
+In package code, always use `self.hostfile` (which resolves via `self.get_hostfile()`), never `self.jarvis.hostfile`. The pipeline saves its hostfile into the shared directory so it is accessible from both the host and inside containers via the same path. The global jarvis hostfile (`self.jarvis.hostfile`) lives in `~/.ppi-jarvis/` which is node-local and invisible to containers and remote nodes.
 
 ```python
-# custom_mode.py
-from jarvis_cd.core.pkg import Application
+# Correct — uses the pipeline hostfile from shared_dir
+Exec(cmd, MpiExecInfo(hostfile=self.hostfile, ...)).run()
 
-class IorCustomMode(Application):
-    """Custom deployment mode"""
-
-    def _configure(self, **kwargs):
-        super()._configure(**kwargs)
-        # Custom configuration logic
-
-    def start(self):
-        # Custom start logic
-        pass
+# Wrong — global hostfile, not visible inside containers or on remote nodes
+Exec(cmd, MpiExecInfo(hostfile=self.jarvis.hostfile, ...)).run()
 ```
 
-2. **Update the router's configuration menu** to include the new choice:
+## Wrapper Packages (No Build Required)
+
+Some packages are wrappers around software that is installed by another package in the pipeline. These packages don't need their own container image or spack spec — they rely on binaries and libraries provided by a companion package.
+
+**Examples:**
+- A runtime package (`wrp_runtime`) installs the full application + benchmarks
+- An interceptor/adapter package (`wrp_adapter`) provides LD_PRELOAD libraries but doesn't require any additional installation — the libraries are already in the runtime's container image
+
+**How to implement:**
+
+Return `None` from `_build_phase()` and `_build_deploy_phase()` (the default). The package is silently skipped during container and spack builds. Omit the `install` key (or leave it empty) in the pipeline YAML.
 
 ```python
-# pkg.py
-def _configure_menu(self):
-    base_menu = super()._configure_menu()
+class WrpAdapter(Interceptor):
+    """Interceptor that wraps a library installed by wrp_runtime."""
 
-    # Add new deployment mode to choices
-    for item in base_menu:
-        if item['name'] == 'deploy_mode':
-            item['choices'] = ['default', 'container', 'custom_mode']
-            break
+    def _configure_menu(self):
+        return [
+            {'name': 'library_path', 'msg': 'Path to interceptor library',
+             'type': str, 'default': '/usr/lib/libwrp_adapter.so'},
+        ]
 
-    # ... rest of menu ...
-    return base_menu + ior_menu
+    # No _build_phase or _build_deploy_phase override needed.
+    # The base class returns None — the package is skipped during builds.
+
+    def modify_env(self):
+        self.prepend_env('LD_PRELOAD', self.config['library_path'])
 ```
-
-3. **Use it in pipeline YAML**:
 
 ```yaml
+name: iowarp_pipeline
+install_manager: container
+container_engine: docker
+container_base: ubuntu:24.04
+
 pkgs:
-  - pkg_type: builtin.ior
-    deploy_mode: custom_mode  # Routes to IorCustomMode class
+  - pkg_type: iowarp.wrp_runtime      # Builds the container image
+    pkg_name: runtime
+    install: iowarp                    # Spack spec (when using spack)
+
+interceptors:
+  - pkg_type: iowarp.wrp_adapter      # No build — uses runtime's image
+    pkg_name: adapter
+    # No install key needed
 ```
 
-### Benefits of Multi-Implementation Pattern
+Both `None` and `('', suffix)` return values from build methods are treated as "no build needed" and silently skipped — this is not an error.
 
-1. **Single Package Interface**: Users interact with one package regardless of deployment mode
-2. **No Code Duplication**: Configuration menu defined once in router class
-3. **Easy Maintenance**: Update deployment logic without changing package interface
-4. **Flexible Deployment**: Mix deployment modes within single pipeline
-5. **Container Support**: Seamless integration with containerized deployments
+## Spack Support
 
-### Migration from Single-Implementation Packages
+When the pipeline uses `install_manager: spack`, Jarvis installs packages via Spack instead of building containers. Packages support this by including an `install` key in their pipeline YAML config.
 
-To migrate an existing package to multi-implementation:
+### How Spack Mode Works
 
-1. **Create router class** in `pkg.py`:
-   ```python
-   from jarvis_cd.core.route_pkg import RouteApp
+1. The pipeline collects `install` specs from all packages
+2. Runs `spack install <all_specs>` to build dependencies
+3. Runs `spack load <all_specs>` and captures the resulting environment
+4. Merges spack env (PATH, LD_LIBRARY_PATH, etc.) into the pipeline environment
+5. All packages run bare-metal (`deploy_mode = 'default'`)
 
-   class MyPackage(RouteApp):
-       def _configure_menu(self):
-           base_menu = super()._configure_menu()
-           # Move configuration menu here
-           return base_menu + my_menu
-   ```
+### The `install` Key
 
-2. **Move existing implementation** to `default.py`:
-   ```python
-   from jarvis_cd.core.pkg import Application
+The `install` key is automatically available on all packages via the common config menu. It specifies the Spack spec string:
 
-   class MyPackageDefault(Application):
-       # Move existing lifecycle methods here
-       def _configure(self, **kwargs):
-           super()._configure(**kwargs)
-           # Existing configuration logic
+```yaml
+name: my_spack_pipeline
+install_manager: spack
 
-       def start(self):
-           # Existing start logic
-           pass
-   ```
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior_benchmark
+    install: ior              # Spack spec
+    nprocs: 4
+    block: 1G
+    out: /tmp/ior_test.bin
 
-3. **Add container implementation** (optional) in `container.py`:
-   ```python
-   from jarvis_cd.core.container_pkg import ContainerApplication
+  - pkg_type: builtin.lammps
+    pkg_name: lammps_sim
+    install: lammps+kokkos    # Spack spec with variant
+    nprocs: 8
+    script: /path/to/in.lj
+```
 
-   class MyPackageContainer(ContainerApplication):
-       def augment_container(self) -> str:
-           return """# Dockerfile commands"""
-   ```
+Packages without an `install` key are skipped during spack installation but still participate in the pipeline.
 
-4. **Update `__init__.py`**:
-   ```python
-   from .pkg import MyPackage
-   __all__ = ['MyPackage']
-   ```
+### Package Developer Notes
+
+- No code changes are needed to support spack — the `install` key is in the common menu
+- When `install_manager: spack`, your package's `_build_phase()` returns `None` (since `deploy_mode = 'default'`)
+- Your package's `start()` method runs the bare-metal path, using binaries that spack placed in PATH
+- Document the recommended spack spec in your package's README
 
 ## Traditional Package Types (Legacy)
 
@@ -1086,6 +1104,38 @@ def status(self) -> str:
     # Check if process is running, files exist, etc.
     return "running" | "stopped" | "error" | "unknown"
 ```
+
+#### `_get_stat(self, stat_dict)`
+**Purpose**: Collect statistics after the package has run
+**Called**: By `PipelineTest` after each pipeline run to aggregate results
+**Notes**: Only implement this if your package is used in pipeline tests. Prefix all keys with `self.pkg_id` to avoid conflicts between packages.
+
+```python
+def _get_stat(self, stat_dict):
+    """
+    Populate stat_dict with metrics from this run.
+
+    :param stat_dict: Dictionary to populate with statistics.
+    :return: None
+    """
+    # Example: parse stdout for a throughput value
+    output = self.exec.stdout.get('localhost', '')
+    match = re.search(r'Bandwidth:\s+([0-9.]+)\s+MB/s', output)
+    if match:
+        stat_dict[f'{self.pkg_id}.bandwidth_mb_s'] = float(match.group(1))
+
+    # Always record runtime
+    stat_dict[f'{self.pkg_id}.runtime'] = self.start_time
+```
+
+**Key naming conventions**:
+- `f'{self.pkg_id}.bandwidth_mb_s'` — I/O bandwidth in MB/s
+- `f'{self.pkg_id}.iops'` — I/O operations per second
+- `f'{self.pkg_id}.throughput'` — operations per second
+- `f'{self.pkg_id}.latency_avg'` — average latency in ms
+- `f'{self.pkg_id}.runtime'` — total execution time in seconds
+
+See [pipeline_tests.md](pipeline_tests.md#custom-statistics) for full details and more examples.
 
 ## Environment Variables
 
