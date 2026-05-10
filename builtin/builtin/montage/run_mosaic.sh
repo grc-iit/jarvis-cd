@@ -33,18 +33,29 @@ if [ ! -s "$HDR" ] || [ -z "$(ls -A "$RAW_DIR" 2>/dev/null)" ]; then
     echo "Benchmark region not pre-staged; fetching M17 J-band at runtime..."
     mkdir -p "$RAW_DIR"
     cd "$(dirname "$HDR")"
-    # Montage's libwww URL parser does not understand `user:pass@` auth
-    # in $http_proxy / $https_proxy and dies with "Illegal port number
-    # in URL". Run Montage tools with proxy disabled — the IRSA mirror
-    # is on the public internet and direct egress is the common case.
-    # For sites behind an authenticated proxy, mount/copy the FITS dir
-    # in via $RAW_DIR (arg 1) and skip this fetch entirely.
+    # Montage's homegrown HTTP fetcher (svc/svc.c) can't parse
+    # `user:pass@host:port` proxy URLs and dies with "Illegal port
+    # number in URL". Strip $http_proxy/$https_proxy from mHdr +
+    # mArchiveList (their queries usually go direct) and replace
+    # mArchiveExec with a curl loop — libcurl handles authenticated
+    # proxies, so the FITS pulls work behind a squid with creds.
     env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
         mHdr "M17" 0.2 "$(basename "$HDR")"
     env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
         mArchiveList 2mass J "M17" 0.2 0.2 remote.tbl
-    if ! env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-            timeout 600 mArchiveExec -p "$RAW_DIR" remote.tbl; then
+    fetched=0
+    while read -r url; do
+        fname=$(basename "$url")
+        [ -z "$fname" ] && continue
+        [ -f "$RAW_DIR/$fname" ] && fetched=$((fetched+1)) && continue
+        if timeout 180 curl -fsSL -o "$RAW_DIR/$fname" "$url"; then
+            fetched=$((fetched+1))
+        else
+            rm -f "$RAW_DIR/$fname"
+            echo "WARN: failed to fetch $url" >&2
+        fi
+    done < <(grep -Ev '^[\\|]' remote.tbl | grep -oE 'https?://[^[:space:]]+')
+    if [ "$fetched" -eq 0 ]; then
         echo "ERROR: cannot fetch 2MASS benchmark images (IRSA archive unreachable)" >&2
         echo "       supply raw FITS dir + region.hdr as arg 1 and 2 to /opt/run_mosaic.sh" >&2
         exit 1

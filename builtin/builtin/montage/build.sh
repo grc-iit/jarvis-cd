@@ -51,18 +51,36 @@ export PATH=/opt/Montage/bin:${PATH}
 CTX=$(pwd)
 mkdir -p /opt/montage-bench/raw_images
 cd /opt/montage-bench
-# Run Montage tools without the build-host's $http_proxy / $https_proxy.
-# When a proxy URL contains `user:pass@host:port`, libwww (which Montage
-# uses) dies with "Illegal port number in URL" before any HTTP traffic
-# fires. Strip the proxy here; if the build host needs a proxy to reach
-# IRSA, pre-stage raw images outside of jarvis and mount them in.
+# Strip $http_proxy/$https_proxy from Montage's own tools (mHdr,
+# mArchiveList, mArchiveExec) — Montage's homegrown HTTP fetcher in
+# svc/svc.c can't parse `user:pass@host:port` proxy URLs and dies with
+# "Illegal port number in URL" before any byte goes out. Run them with
+# the proxy unset; mHdr/mArchiveList only hit IRSA metadata which is
+# usually reachable direct, and we replace mArchiveExec with a curl
+# loop below (curl handles authenticated proxies fine via libcurl).
 (
     env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
         mHdr "M17" 0.2 region.hdr \
     && env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
         mArchiveList 2mass J "M17" 0.2 0.2 remote.tbl \
-    && env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-        timeout 600 mArchiveExec -p raw_images remote.tbl
+    && timeout 600 bash -c '
+        # remote.tbl is an IPAC ASCII table — `\`-prefixed metadata
+        # and `|`-prefixed header rows; data rows are whitespace
+        # separated and contain at least one http(s) URL each.
+        any=0
+        while read -r url; do
+            fname=$(basename "$url")
+            [ -z "$fname" ] && continue
+            [ -f "raw_images/$fname" ] && continue
+            if curl -fsSL --max-time 180 -o "raw_images/$fname" "$url"; then
+                any=1
+            else
+                rm -f "raw_images/$fname"
+                echo "WARN: failed to fetch $url" >&2
+            fi
+        done < <(grep -Ev "^[\\\\|]" remote.tbl | grep -oE "https?://[^[:space:]]+")
+        [ "$any" = 1 ]
+    '
 ) || echo "WARN: 2MASS pre-staging skipped (proxy/network issue); deploy image still usable" >&2
 cd "$CTX"
 
