@@ -397,6 +397,16 @@ class Jarvis:
         """Get the shared directory for a specific pipeline"""
         return Path(self.shared_dir) / pipeline_name
 
+    def get_containers_dir(self) -> Path:
+        """Centralized SIF cache shared by every pipeline.
+
+        Apptainer SIFs are content-addressable by deploy image name, so
+        storing them under ``<shared_dir>/containers`` lets multiple
+        pipelines reuse the same image without rebuilding or
+        re-pulling.
+        """
+        return Path(self.shared_dir) / 'containers'
+
     def get_pipeline_private_dir(self, pipeline_name: str) -> Path:
         """Get the private directory for a specific pipeline"""
         return Path(self.private_dir) / pipeline_name

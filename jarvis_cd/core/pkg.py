@@ -832,20 +832,27 @@ class Pkg:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _image_exists(engine, image_name, shared_dir=None):
+    def _image_exists(engine, image_name, sif_dir=None, shared_dir=None):
         """
         Check whether a container image already exists locally.
 
         :param engine: 'docker', 'podman', or 'apptainer'
         :param image_name: Image name to check
-        :param shared_dir: Shared directory (needed for apptainer .sif check)
+        :param sif_dir: Directory holding apptainer .sif files. The
+                        canonical location is ``$SHARED_DIR/containers``
+                        (``Jarvis.get_containers_dir()``). Pass that in.
+        :param shared_dir: Deprecated alias for ``sif_dir`` kept for
+                           callers that still pass the per-pipeline
+                           shared directory. Will be removed once
+                           callers are migrated.
         :return: True if the image exists
         """
         if engine == 'apptainer':
             from pathlib import Path
-            if not shared_dir:
+            sif_root = sif_dir or shared_dir
+            if not sif_root:
                 return False
-            sif = Path(shared_dir) / f'{image_name}.sif'
+            sif = Path(sif_root) / f'{image_name}.sif'
             return sif.exists()
         # docker / podman
         from jarvis_cd.shell import Exec, LocalExecInfo
