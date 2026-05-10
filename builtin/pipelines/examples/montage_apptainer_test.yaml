@@ -1,0 +1,18 @@
+# Pipeline: Montage Apptainer Test
+# Purpose: Test Montage astronomical image mosaic using Apptainer
+# Requirements: Docker (for build phase) + Apptainer (for runtime)
+
+name: montage_apptainer_test
+install_manager: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+pkgs:
+  - pkg_type: builtin.montage
+    pkg_name: montage_apptainer
+    nprocs: 1
+    ppn: 1
+    region: M17
+    band: j
+    out: $HOME/jarvis-runs/montage

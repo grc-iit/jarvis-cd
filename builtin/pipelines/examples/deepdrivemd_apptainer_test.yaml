@@ -1,0 +1,17 @@
+# Pipeline: DeepDriveMD Apptainer Test
+# Purpose: Test DeepDriveMD AI-driven molecular dynamics using Apptainer
+# Requirements: Docker (for build phase) + Apptainer (for runtime)
+
+name: deepdrivemd_apptainer_test
+install_manager: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+pkgs:
+  - pkg_type: builtin.deepdrivemd
+    pkg_name: deepdrivemd_apptainer
+    nprocs: 1
+    ppn: 1
+    iterations: 2
+    out: $HOME/jarvis-runs/deepdrivemd

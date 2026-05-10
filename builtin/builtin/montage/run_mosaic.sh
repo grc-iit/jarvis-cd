@@ -33,9 +33,18 @@ if [ ! -s "$HDR" ] || [ -z "$(ls -A "$RAW_DIR" 2>/dev/null)" ]; then
     echo "Benchmark region not pre-staged; fetching M17 J-band at runtime..."
     mkdir -p "$RAW_DIR"
     cd "$(dirname "$HDR")"
-    mHdr "M17" 0.2 "$(basename "$HDR")"
-    mArchiveList 2mass J "M17" 0.2 0.2 remote.tbl
-    if ! timeout 600 mArchiveExec -p "$RAW_DIR" remote.tbl; then
+    # Montage's libwww URL parser does not understand `user:pass@` auth
+    # in $http_proxy / $https_proxy and dies with "Illegal port number
+    # in URL". Run Montage tools with proxy disabled — the IRSA mirror
+    # is on the public internet and direct egress is the common case.
+    # For sites behind an authenticated proxy, mount/copy the FITS dir
+    # in via $RAW_DIR (arg 1) and skip this fetch entirely.
+    env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+        mHdr "M17" 0.2 "$(basename "$HDR")"
+    env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+        mArchiveList 2mass J "M17" 0.2 0.2 remote.tbl
+    if ! env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+            timeout 600 mArchiveExec -p "$RAW_DIR" remote.tbl; then
         echo "ERROR: cannot fetch 2MASS benchmark images (IRSA archive unreachable)" >&2
         echo "       supply raw FITS dir + region.hdr as arg 1 and 2 to /opt/run_mosaic.sh" >&2
         exit 1

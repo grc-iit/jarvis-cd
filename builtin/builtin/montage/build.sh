@@ -42,15 +42,28 @@ export PATH=/opt/Montage/bin:${PATH}
 # via HTTP; a single slow IRSA/2MASS mirror will stall the container build
 # indefinitely. Cap with `timeout` (10 min) and treat failure as non-fatal
 # — the deploy image is still functional without the pre-staged region.
+#
+# Both mArchiveList and mArchiveExec are best-effort: an authenticated
+# http_proxy env var (e.g. squid with credentials) makes Montage's
+# libwww URL parser emit "Illegal port number in URL" and exit non-zero.
+# Wrap in subshell with `|| true` so the build doesn't abort under
+# `set -e` when only the optional benchmark fetch is broken.
 CTX=$(pwd)
 mkdir -p /opt/montage-bench/raw_images
 cd /opt/montage-bench
-mHdr "M17" 0.2 region.hdr
-mArchiveList 2mass J "M17" 0.2 0.2 remote.tbl
-
-if ! timeout 600 mArchiveExec -p raw_images remote.tbl; then
-    echo "WARN: mArchiveExec failed or timed out (10 min cap); skipping benchmark pre-staging (deploy image still usable)" >&2
-fi
+# Run Montage tools without the build-host's $http_proxy / $https_proxy.
+# When a proxy URL contains `user:pass@host:port`, libwww (which Montage
+# uses) dies with "Illegal port number in URL" before any HTTP traffic
+# fires. Strip the proxy here; if the build host needs a proxy to reach
+# IRSA, pre-stage raw images outside of jarvis and mount them in.
+(
+    env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+        mHdr "M17" 0.2 region.hdr \
+    && env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+        mArchiveList 2mass J "M17" 0.2 0.2 remote.tbl \
+    && env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+        timeout 600 mArchiveExec -p raw_images remote.tbl
+) || echo "WARN: 2MASS pre-staging skipped (proxy/network issue); deploy image still usable" >&2
 cd "$CTX"
 
 # Pipeline driver — inlined as base64 by pkg._build_phase. jarvis's

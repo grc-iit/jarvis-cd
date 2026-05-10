@@ -23,9 +23,15 @@ export PATH=/opt/conda/bin:${PATH}
 
 # Snakemake 9. The old bare-metal pin (9.18.2 + python=3.10) no longer
 # resolves: 9.18.2 was yanked, and snakemake 9 requires python>=3.11.
-# Let conda pick the newest 9.x so the smoke test stays current. conda
-# sometimes logs PackagesNotFoundError but still exits 0, so verify.
-conda create -p /opt/rnaseq-env -c conda-forge -c bioconda -y \
+# Let mamba pick the newest 9.x so the smoke test stays current.
+#
+# Use mamba, not conda. conda 26.x's libmamba-solver opens a sqlite
+# shards-cache under /root/.cache that intermittently throws
+# `sqlite3.OperationalError: database is locked` inside the build
+# container, aborting `conda create`. mamba ships in miniforge and
+# avoids that code path. It still occasionally logs
+# PackagesNotFoundError but exits 0, so verify.
+mamba create -p /opt/rnaseq-env -c conda-forge -c bioconda -y \
         python=3.12 'snakemake>=9,<10'
 test -x /opt/rnaseq-env/bin/snakemake \
     || { echo "ERROR: /opt/rnaseq-env did not install snakemake"; exit 1; }

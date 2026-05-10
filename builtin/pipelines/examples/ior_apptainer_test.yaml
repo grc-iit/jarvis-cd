@@ -12,6 +12,18 @@ container_engine: apptainer
 container_base: ubuntu:24.04
 
 pkgs:
+  # HDF5 + ADIOS2 must precede IOR: they deposit libhdf5*.so* and
+  # libadios2*.so* into the build container's /usr/local/lib so IOR's
+  # Dockerfile.deploy COPY of those globs finds them at deploy time.
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
+    parallel: true
+  - pkg_type: builtin.adios2
+    pkg_name: adios2
+    use_hdf5: true
+    use_mpi: true
+    use_fortran: false
+    use_python: false
   - pkg_type: builtin.ior
     pkg_name: ior_apptainer
     nprocs: 4

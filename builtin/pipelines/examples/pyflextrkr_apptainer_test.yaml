@@ -1,0 +1,16 @@
+# Pipeline: PyFLEXTRKR Apptainer Test
+# Purpose: Test PyFLEXTRKR cloud/storm tracking using Apptainer
+# Requirements: Docker (for build phase) + Apptainer (for runtime)
+
+name: pyflextrkr_apptainer_test
+install_manager: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+pkgs:
+  - pkg_type: builtin.pyflextrkr
+    pkg_name: pyflextrkr_apptainer
+    nprocs: 1
+    ppn: 1
+    demo: mcs_tbpf

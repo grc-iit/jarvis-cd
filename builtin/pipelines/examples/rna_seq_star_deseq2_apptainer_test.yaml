@@ -1,0 +1,16 @@
+# Pipeline: RNA-Seq STAR DESeq2 Apptainer Test
+# Purpose: Test RNA-Seq STAR alignment and DESeq2 analysis using Apptainer
+# Requirements: Docker (for build phase) + Apptainer (for runtime)
+
+name: rna_seq_star_deseq2_apptainer_test
+install_manager: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+pkgs:
+  - pkg_type: builtin.rna_seq_star_deseq2
+    pkg_name: rna_seq_star_deseq2_apptainer
+    nprocs: 1
+    cores: 4
+    out: $HOME/jarvis-runs/rna_seq_star_deseq2
