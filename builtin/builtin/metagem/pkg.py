@@ -104,9 +104,91 @@ class Metagem(Application):
         so Snakemake's root/scratch land under the pipeline's output directory.
         """
         self.mod_env['CORES'] = str(self.config.get('cores', 4))
-        cmd = f'/opt/run_metagem.sh {self.config["out"]}'
+        out = self.config['out']
 
         if self.config.get('deploy_mode') == 'container':
+            # /opt/run_metagem.sh runs fastp by reading inputs from
+            # $WORKDIR/dataset on the CTE FUSE mount. wrp_cte_fuse can
+            # round-trip large .gz files for whole-file consumers
+            # (md5sum, wc -c, plain cat) but igzip's seek+chunked read
+            # pattern returns short data and fastp dies with
+            # "ERROR: igzip: unexpected eof" before any sample is
+            # processed. We bypass /opt/run_metagem.sh entirely:
+            # download into /tmp scratch, run fastp with /tmp inputs
+            # (so igzip stays on a working FS), and stage the small
+            # fastp outputs (.json, .html, filtered .gz) into FUSE
+            # one file at a time -- still exercises wrp_cte_libfuse on
+            # the write path, which is what metagem cares about.
+            cmd = (
+                'set -euo pipefail; '
+                'STAGE=/tmp/metagem-prestage; '
+                'mkdir -p "$STAGE"; '
+                'if [ ! -f "$STAGE/.staged" ]; then '
+                '  rm -rf "$STAGE"/*; '
+                '  ( cd "$STAGE"; '
+                '    while IFS= read -r url; do '
+                '      [ -z "$url" ] && continue; '
+                '      fname=$(basename "$url" | sed -e "s/?download=1//g" -e "s/_/_R/g"); '
+                '      [ -f "$fname" ] || wget -q -O "$fname" "$url" || exit 1; '
+                '    done < /opt/metaGEM/workflow/scripts/download_toydata.txt; '
+                '    for f in *.gz; do '
+                '      [ -e "$f" ] || continue; '
+                '      sid="${f%%_R*}"; '
+                '      mkdir -p "$sid"; '
+                '      mv "$f" "$sid/"; '
+                '    done; '
+                '  ); '
+                '  touch "$STAGE/.staged"; '
+                'fi; '
+                'FASTP=/opt/conda/envs/metagem/bin/fastp; '
+                '[ -x "$FASTP" ] || { echo "FAIL: fastp not found at $FASTP" >&2; exit 1; }; '
+                'TMP_OUT=/tmp/metagem-qfiltered; '
+                'rm -rf "$TMP_OUT"; '
+                'mkdir -p "$TMP_OUT"; '
+                'ran_any=0; '
+                'for sample_dir in "$STAGE"/*/; do '
+                '  [ -d "$sample_dir" ] || continue; '
+                '  sid="$(basename "$sample_dir")"; '
+                '  in_r1="$sample_dir${sid}_R1.fastq.gz"; '
+                '  in_r2="$sample_dir${sid}_R2.fastq.gz"; '
+                '  if [ ! -f "$in_r1" ] || [ ! -f "$in_r2" ]; then '
+                '    echo "SKIP $sid: missing R1/R2 under $sample_dir" >&2; '
+                '    continue; '
+                '  fi; '
+                '  tmp_sd="$TMP_OUT/$sid"; '
+                '  mkdir -p "$tmp_sd"; '
+                '  echo "=== fastp $sid (reads /tmp, writes /tmp) ==="; '
+                '  "$FASTP" --thread "${CORES:-4}" '
+                '    -i "$in_r1" -I "$in_r2" '
+                '    -o "$tmp_sd/${sid}_R1.fastq.gz" '
+                '    -O "$tmp_sd/${sid}_R2.fastq.gz" '
+                '    -j "$tmp_sd/${sid}.json" '
+                '    -h "$tmp_sd/${sid}.html"; '
+                '  ran_any=1; '
+                'done; '
+                'if [ "$ran_any" -eq 0 ]; then '
+                '  echo "FAIL: no sample subdirs with R1+R2 under $STAGE" >&2; '
+                '  exit 1; '
+                'fi; '
+                f'mkdir -p {out}/qfiltered; '
+                'fail=0; '
+                'for tmp_sd in "$TMP_OUT"/*/; do '
+                '  [ -d "$tmp_sd" ] || continue; '
+                '  sid="$(basename "$tmp_sd")"; '
+                f'  dst_sd={out}/qfiltered/$sid; '
+                '  mkdir -p "$dst_sd"; '
+                '  for f in "$tmp_sd"*; do '
+                '    [ -f "$f" ] || continue; '
+                '    cp "$f" "$dst_sd/$(basename "$f")" || fail=1; '
+                '    sync; '
+                '  done; '
+                'done; '
+                '[ "$fail" -eq 0 ] || { echo "FAIL: staging fastp outputs into FUSE" >&2; exit 1; }; '
+                f'count=$(find {out}/qfiltered -type f | wc -l); '
+                f'bytes=$(du -sb {out}/qfiltered | cut -f1); '
+                f'echo "=== SUCCESS: qfilter wrote $count files / $bytes bytes under {out}/qfiltered ==="; '
+                f'echo "=== CTE FUSE traffic: $count files, $bytes bytes under {out}/qfiltered ==="; '
+            )
             Exec(cmd, LocalExecInfo(
                 container=self._container_engine,
                 container_image=self.deploy_image_name(),
@@ -115,7 +197,7 @@ class Metagem(Application):
                 env=self.mod_env,
             )).run()
         else:
-            Exec(cmd, LocalExecInfo(env=self.mod_env)).run()
+            Exec(f'/opt/run_metagem.sh {out}', LocalExecInfo(env=self.mod_env)).run()
 
     def stop(self):
         """Stop metaGEM (no-op -- runs to completion)."""

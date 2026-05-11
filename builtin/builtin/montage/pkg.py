@@ -49,10 +49,29 @@ class Montage(Application):
                 'default': 'j',
             },
             {
+                'name': 'size',
+                'msg': ('Region size in degrees (square box centered on '
+                        'the region). 0.2° produces tens of MB; 1.0° a '
+                        'few GB; 2.0° tens of GB. Triggers runtime fetch '
+                        'from 2MASS/IRSA when != 0.2 (the default that '
+                        'the SIF pre-stages at build time).'),
+                'type': float,
+                'default': 0.2,
+            },
+            {
+                'name': 'scratch_dir',
+                'msg': ('Scratch dir inside the container for Montage '
+                        'intermediates (projected/diffs/corrected). '
+                        'Default ~/montage-scratch — keep off /tmp '
+                        'because intermediates can be tens of GB.'),
+                'type': str,
+                'default': '${HOME}/montage-scratch',
+            },
+            {
                 'name': 'out',
                 'msg': 'Output directory for mosaic results',
                 'type': str,
-                'default': '/tmp/montage_out',
+                'default': '${HOME}/montage_out',
             },
             {
                 'name': 'base_image',
@@ -107,8 +126,22 @@ class Montage(Application):
         deploy_mode == 'container') triggers build_phase / build_deploy_phase.
 
         In default mode, also creates the output directory on all nodes.
+        Always propagates MONTAGE_* env vars so the run_mosaic.sh inside
+        the SIF picks up region/band/size/scratch_dir/out overrides
+        without rebuilding the image.
         """
         super()._configure(**kwargs)
+
+        # Propagate config knobs to run_mosaic.sh via env vars (it reads
+        # MONTAGE_REGION / MONTAGE_BAND / MONTAGE_SIZE / MONTAGE_OUT /
+        # MONTAGE_SCRATCH_DIR; see updated run_mosaic.sh).
+        self.setenv('MONTAGE_REGION', str(self.config.get('region', 'M17')))
+        self.setenv('MONTAGE_BAND', str(self.config.get('band', 'j')).upper())
+        self.setenv('MONTAGE_SIZE', str(self.config.get('size', 0.2)))
+        if self.config.get('out'):
+            self.setenv('MONTAGE_OUT', str(self.config['out']))
+        if self.config.get('scratch_dir'):
+            self.setenv('MONTAGE_SCRATCH_DIR', str(self.config['scratch_dir']))
 
         if self.config.get('deploy_mode') == 'default':
             if self.config['out']:

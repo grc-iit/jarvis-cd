@@ -57,6 +57,14 @@ class Pyflextrkr(Application):
                 'default': 'mcs_tbpf',
             },
             {
+                'name': 'out',
+                'msg': 'Container path to stage final results into '
+                       '(post-run cp from /output/pyflextrkr-data). '
+                       'Leave blank to keep results in the container only.',
+                'type': str,
+                'default': '',
+            },
+            {
                 'name': 'nprocs',
                 'msg': 'Number of MPI processes (container multinode mode)',
                 'type': int,
@@ -400,7 +408,25 @@ class Pyflextrkr(Application):
                     env=self.mod_env,
                 )).run()
             else:
+                # run_demo.sh writes everything (input download, tar
+                # extract, outputs) under /output/pyflextrkr-data inside
+                # the container's writable layer. Routing /output to the
+                # CTE FUSE mount breaks the tar extract (wrp_cte_fuse
+                # returns ENOSYS on rename(2)). Run on the container's
+                # native /output, then post-stage to FUSE if `out` is
+                # configured -- cp into FUSE is a plain write, supported.
+                stage_target = self.config.get('out', '').strip()
                 cmd = '/opt/run_demo.sh'
+                if stage_target:
+                    # cp -r (NOT -a): wrp_cte_fuse returns ENOSYS on
+                    # chmod/chown/utimes, so attribute preservation
+                    # spams warnings and makes cp exit non-zero. -r
+                    # alone is the supported "plain write" path.
+                    cmd = (
+                        f'{cmd} && '
+                        f'mkdir -p {stage_target} && '
+                        f'cp -r /output/pyflextrkr-data/. {stage_target}/'
+                    )
                 Exec(cmd, LocalExecInfo(
                     container=self._container_engine,
                     container_image=self.deploy_image_name(),

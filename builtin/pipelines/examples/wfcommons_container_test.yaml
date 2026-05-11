@@ -1,0 +1,20 @@
+# Pipeline: WfCommons Container Test
+# Purpose: Generate a synthetic Montage workflow with wfcommons,
+#          translate it via WfBench, and execute its tasks inside a
+#          docker container.
+# Requirements: Docker installed.
+
+name: wfcommons_container_test
+install_manager: container
+
+container_engine: docker
+container_base: ubuntu:24.04
+
+pkgs:
+  - pkg_type: builtin.wfcommons
+    pkg_name: wfcommons_container
+    recipe: montage
+    num_tasks: 100
+    cpu_work: 10
+    data_footprint: '0'
+    out: $HOME/jarvis-runs/wfcommons

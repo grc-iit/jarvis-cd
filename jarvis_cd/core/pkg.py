@@ -740,10 +740,15 @@ class Pkg:
 
     @property
     def _container_engine(self) -> str:
-        """Return the pipeline's container engine when running in container mode,
-        so that Exec/MpiExecInfo wraps commands in docker/podman exec."""
+        """Return the pipeline's container engine when *this* package is
+        running in container mode, so Exec/MpiExecInfo wraps commands in
+        docker/podman/apptainer exec. Per-package: a pipeline can mix
+        a containerized workload with host-side helpers (e.g. wrp_runtime,
+        wrp_cte_libfuse running on the host while the workload runs in
+        the SIF).
+        """
         if hasattr(self, 'pipeline') and self.pipeline:
-            if self.pipeline._has_containerized_packages():
+            if self.config.get('deploy_mode') == 'container':
                 return getattr(self.pipeline, 'container_engine', 'none')
         return 'none'
 

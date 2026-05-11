@@ -1,0 +1,70 @@
+# IOR apptainer + slurm on ares
+#
+# Parallel to builtin/pipelines/ares/ior_container_test.yaml but driven by
+# Ramble instead of Jarvis. Reuses the SIF produced by the Jarvis pipeline:
+#
+#   ~/.jarvis/shared/ior_ares_container_test/ior_ares_container_test.sif
+#
+# If the SIF exists at {container_path} the apptainer modifier skips the
+# pull, so {container_uri} is only consulted as a fallback.
+
+ramble:
+  variants:
+    workflow_manager: slurm
+  modifiers:
+    - name: apptainer
+  env_vars:
+    set:
+      # Match the jarvis ior_container_test.yaml container_env so MPI picks
+      # the ares management NIC instead of guessing.
+      OMPI_MCA_btl_tcp_if_include: eno1
+      OMPI_MCA_oob_tcp_if_include: eno1
+  variables:
+    # --- Container wiring -------------------------------------------------
+    container_name: ior_ares_container_test
+    container_dir: /home/llogan/.jarvis/shared/ior_ares_container_test
+    # Fallback URI used only if the local SIF is missing. Replace with a
+    # public IOR container image if you want Ramble to pull instead of
+    # reusing the Jarvis-built SIF.
+    container_uri: docker://ghcr.io/grc-iit/ior:latest
+    # Bind the experiment dir into the container so IOR can write testFile
+    # and Ramble can parse the log after the job exits.
+    container_mounts: "{experiment_run_dir}:{experiment_run_dir}"
+    # --- Job shape --------------------------------------------------------
+    # ares-comp-25..28 -> 4 nodes, 1 rank/node matches the jarvis config's
+    # nprocs=2 ppn=1 on 2 nodes; here we scale to 4 nodes for a bigger test.
+    n_nodes: 4
+    processes_per_node: 1
+    n_ranks: 4
+    gpus_per_node: 0
+    # Leave blank to submit to the cluster default partition; set if ares
+    # needs an explicit one (e.g. "compute").
+    slurm_partition: ""
+    # --- Submission glue --------------------------------------------------
+    batch_submit: "sbatch {slurm_experiment_sbatch}"
+    mpi_command: "srun -n {n_ranks}"
+
+  applications:
+    ior:
+      workloads:
+        multi-file:
+          experiments:
+            ares_4node_posix:
+              variables:
+                transfer-size: 1m
+                block-size: 16m
+                segment-count: 16
+                iterations: 1
+                # File-per-process, matching fpp:false -> single shared
+                # file per rank in jarvis. Flip to "" for a single shared
+                # file across ranks.
+                file_args: "-F"
+                additional_args: "-C -e"
+                target_directory: "/tmp/ior_ares_test"
+
+  # No spack environment is needed: the SIF ships IOR + MPI. Declaring an
+  # empty software section keeps ramble from complaining about missing
+  # package_manager defaults.
+  software:
+    packages: {}
+    environments: {}
