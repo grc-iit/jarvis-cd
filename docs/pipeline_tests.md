@@ -90,6 +90,33 @@ The directory where results are stored. You can use environment variables:
 - `${CONFIG_DIR}` - Pipeline's config directory
 - `${HOME}` - User's home directory
 
+### scheduler (optional)
+
+A top-level `scheduler:` block runs the whole test inside a single
+batch allocation (one job, every variable combination + repeat
+executed sequentially). See [scheduler.md](scheduler.md) for the full
+key reference.
+
+```yaml
+scheduler:
+  name: slurm
+  nodes: 2
+  ntasks_per_node: 4
+  partition: cpu
+  time: "01:00:00"
+
+config:
+  name: my_test
+  pkgs: [...]
+
+vars: {...}
+loop: [...]
+```
+
+Submit with `jarvis ppl submit path/to/test.yaml`. To submit one job
+per iteration instead, move the `scheduler:` block inside `config:` so
+each generated child pipeline owns its own submission script.
+
 ## Example Files
 
 ### Basic Example

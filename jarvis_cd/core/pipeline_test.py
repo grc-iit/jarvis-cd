@@ -65,6 +65,11 @@ class PipelineTest:
         self.output = None
         self.combinations = []  # Generated test combinations
         self.results = []  # Collected results
+        # Top-level scheduler block (one job wraps the whole test run).
+        # A scheduler block nested inside ``config:`` is treated as
+        # per-iteration submission and handled by Pipeline directly.
+        self.scheduler = None
+        self.source_path = None  # Path the test YAML was loaded from
 
     @staticmethod
     def _parse_csv_value(value_str):
@@ -240,6 +245,8 @@ class PipelineTest:
         self.loop = test_def.get('loop', [])
         self.repeat = test_def.get('repeat', 1)
         self.output = test_def.get('output', None)
+        self.scheduler = test_def.get('scheduler', None)
+        self.source_path = str(pipeline_file.absolute())
 
         # Expand output path with environment variables
         if self.output:
@@ -460,6 +467,61 @@ class PipelineTest:
         successful = sum(1 for r in self.results if r.get('status') == 'success')
         failed = len(self.results) - successful
         logger.info(f"Summary: {successful} successful, {failed} failed")
+
+    def submit(self, submit: bool = True) -> Path:
+        """Generate a job script that runs the whole test inside one batch
+        allocation.
+
+        The script:
+          1. Builds the hostfile from the allocation
+             (``scontrol show hostnames $SLURM_JOB_NODELIST``)
+          2. Runs ``jarvis ppl run yaml <test_file>`` so each iteration
+             reuses the same allocation.
+
+        Per-iteration submission (one job per combination) is achieved
+        by placing the scheduler block inside ``config:`` instead — that
+        is handled by ``Pipeline.submit()``.
+
+        :param submit: when True, exec ``sbatch`` after writing the
+            script; when False, only write it and return the path.
+        :return: Path to the generated job script.
+        """
+        if not self.scheduler:
+            raise ValueError(
+                "Pipeline test has no top-level scheduler block. Add "
+                "`scheduler:` to the test YAML or place one inside "
+                "`config:` for per-iteration submission.")
+        if not self.source_path:
+            raise ValueError(
+                "Pipeline test has no source path — call load() first.")
+
+        from jarvis_cd.core.config import Jarvis
+        from jarvis_cd.core.scheduler import make_scheduler
+
+        jarvis = Jarvis.get_instance()
+        # Drop the script under the pipeline's shared dir (named after
+        # the test) so it sits next to the hostfile and per-iteration
+        # results.
+        shared_dir = Path(jarvis.get_pipeline_shared_dir(self.name))
+        shared_dir.mkdir(parents=True, exist_ok=True)
+
+        sched = make_scheduler(self.scheduler, shared_dir,
+                               pipeline_yaml=self.source_path,
+                               pipeline_name=self.name)
+        script_path = sched.write_script()
+        logger.pipeline(f"Wrote scheduler script: {script_path}")
+        logger.pipeline(f"Hostfile (built at job start): {sched.hostfile}")
+
+        if submit:
+            from jarvis_cd.shell import Exec, LocalExecInfo
+            cmd = ' '.join(sched.submit_command())
+            logger.pipeline(f"Submitting: {cmd}")
+            result = Exec(cmd, LocalExecInfo()).run()
+            exit_code = result.exit_code.get('localhost', 1)
+            if exit_code != 0:
+                raise RuntimeError(
+                    f"Scheduler submission failed (exit {exit_code}): {cmd}")
+        return script_path
 
     def _run_single(self, config: Dict[str, Any], variables: Dict[str, Any], repeat_idx: int) -> Dict[str, Any]:
         """

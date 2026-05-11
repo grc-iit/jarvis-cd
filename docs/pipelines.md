@@ -280,6 +280,31 @@ pkgs:
 
 Packages without an `install` key (or with an empty string) are skipped during spack installation.
 
+### Scheduler Configuration
+
+Pipelines can be submitted to a batch resource manager (SLURM today) by
+adding a top-level `scheduler:` key. The job script that
+`jarvis ppl submit` writes builds a hostfile from the allocation and
+then runs the pipeline. See [scheduler.md](scheduler.md) for the full
+key reference.
+
+```yaml
+name: my_pipeline
+
+scheduler:
+  name: slurm
+  job_name: my_pipeline
+  nodes: 2
+  ntasks_per_node: 4
+  partition: cpu
+  time: "00:30:00"
+  # hostfile defaults to ${SHARED_DIR}/hostfile.txt
+```
+
+When `scheduler:` is set, `self.hostfile` is automatically bound to
+`scheduler.hostfile` so every package in the pipeline reads from the
+file the job script populates inside the allocation.
+
 ### Container Configuration
 
 Pipelines can be configured to run packages inside Docker or Podman containers. Set `install_manager: container` and provide container configuration. Containers act as SSH compute nodes — the host-side jarvis orchestrates everything by exec-ing commands into the running containers via `docker exec` and MPI over SSH. No jarvis installation is needed inside the containers.
@@ -819,6 +844,24 @@ jarvis ppl kill
 
 # Clean all pipeline data
 jarvis ppl clean
+```
+
+#### Submit Pipeline to a Batch Scheduler
+
+When the pipeline YAML carries a `scheduler:` block (see
+[scheduler.md](scheduler.md)), `jarvis ppl submit` writes a job script
+into the pipeline's shared directory and (by default) submits it via
+the scheduler's command — `sbatch` for SLURM.
+
+```bash
+# Submit the current pipeline
+jarvis ppl submit
+
+# Submit a specific YAML (pipeline or pipeline test)
+jarvis ppl submit path/to/pipeline.yaml
+
+# Only write the script, do not submit
+jarvis ppl submit +no_submit
 ```
 
 ### Pipeline Information and Status

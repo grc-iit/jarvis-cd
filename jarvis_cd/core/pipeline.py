@@ -51,6 +51,11 @@ class Pipeline:
         # Hostfile parameter (None means use global jarvis hostfile)
         self.hostfile = None
 
+        # Scheduler spec from pipeline YAML (None means no batch submission).
+        # When set, ``submit()`` writes a job script under shared_dir that
+        # builds the hostfile from the allocation and runs the pipeline.
+        self.scheduler = None
+
         # Load existing pipeline if name is provided
         if name:
             self.load()
@@ -65,6 +70,80 @@ class Pipeline:
         if self.hostfile:
             return self.hostfile
         return self.jarvis.hostfile
+
+    def _scheduler_hostfile_path(self) -> str:
+        """Resolve the hostfile path used by the scheduler block.
+
+        Defaults to ``<pipeline shared_dir>/hostfile.txt`` when the
+        scheduler block does not name one explicitly. Environment
+        variables in the user-supplied value are expanded.
+        """
+        shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
+        spec_path = (self.scheduler or {}).get('hostfile')
+        if spec_path:
+            return os.path.expandvars(str(spec_path))
+        return str(Path(shared_dir) / 'hostfile.txt')
+
+    def _apply_scheduler_hostfile(self):
+        """Bind ``self.hostfile`` to the scheduler-owned hostfile path.
+
+        The job script writes the hostfile at submit-time, so it may not
+        exist yet — load with ``load_path=False`` and only resolve hosts
+        on demand. This guarantees every package that consults
+        ``self.hostfile`` (or ``get_hostfile()``) sees the same path the
+        scheduler will populate inside the allocation.
+        """
+        path = self._scheduler_hostfile_path()
+        if not self.scheduler:
+            return
+        self.scheduler['hostfile'] = path
+        try:
+            self.hostfile = Hostfile(path=path, load_path=Path(path).exists(),
+                                     find_ips=False)
+        except FileNotFoundError:
+            self.hostfile = Hostfile(path=path, load_path=False,
+                                     find_ips=False)
+
+    def submit(self, submit: bool = True) -> Path:
+        """Write the scheduler job script and (optionally) submit it.
+
+        :param submit: when True, exec the scheduler's submit command
+            (e.g. ``sbatch``); when False, only write the script and
+            return its path so the caller can inspect it.
+        :return: Path to the generated job script.
+        """
+        if not self.scheduler:
+            raise ValueError(
+                "Pipeline has no scheduler block. Add `scheduler:` to the "
+                "pipeline YAML before calling submit().")
+        if not self.name:
+            raise ValueError("Pipeline name not set; cannot submit job.")
+
+        from jarvis_cd.core.scheduler import make_scheduler
+        shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
+        shared_dir.mkdir(parents=True, exist_ok=True)
+
+        # Prefer the YAML path the pipeline was loaded from so the job
+        # script re-loads exactly what the user submitted. Falls back to
+        # ``jarvis ppl run`` against the saved current pipeline.
+        pipeline_yaml = self.last_loaded_file
+        sched = make_scheduler(self.scheduler, shared_dir,
+                               pipeline_yaml=pipeline_yaml,
+                               pipeline_name=self.name)
+        script_path = sched.write_script()
+        logger.pipeline(f"Wrote scheduler script: {script_path}")
+        logger.pipeline(f"Hostfile (built at job start): {sched.hostfile}")
+
+        if submit:
+            from jarvis_cd.shell import Exec, LocalExecInfo
+            cmd = ' '.join(sched.submit_command())
+            logger.pipeline(f"Submitting: {cmd}")
+            result = Exec(cmd, LocalExecInfo()).run()
+            exit_code = result.exit_code.get('localhost', 1)
+            if exit_code != 0:
+                raise RuntimeError(
+                    f"Scheduler submission failed (exit {exit_code}): {cmd}")
+        return script_path
 
     def _hostfile_is_local_only(self, hf) -> bool:
         """True when every host in the hostfile is this machine (or hostfile
@@ -97,8 +176,10 @@ class Pipeline:
 
     def _propagate_deploy_mode(self):
         """
-        Derive deploy_mode from install_manager and set it on all packages
-        and interceptors.  deploy_mode is pipeline-level, not per-package.
+        Derive a default deploy_mode from install_manager. Packages and
+        interceptors that don't set ``deploy_mode`` explicitly inherit
+        it; a YAML-level override stays in effect (e.g. a host-side
+        FUSE/runtime alongside containerized workload pkgs).
         """
         if self.install_manager == 'container':
             deploy_mode = 'container'
@@ -108,9 +189,11 @@ class Pipeline:
             deploy_mode = 'default'
 
         for pkg_def in self.packages:
-            pkg_def.setdefault('config', {})['deploy_mode'] = deploy_mode
+            cfg = pkg_def.setdefault('config', {})
+            cfg.setdefault('deploy_mode', deploy_mode)
         for idef in self.interceptors.values():
-            idef.setdefault('config', {})['deploy_mode'] = deploy_mode
+            cfg = idef.setdefault('config', {})
+            cfg.setdefault('deploy_mode', deploy_mode)
 
     def _install_spack_packages(self):
         """
@@ -265,20 +348,30 @@ class Pipeline:
         if self.install_manager:
             pipeline_config['install_manager'] = self.install_manager
 
+        # Persist scheduler block so reloads (and ``ppl print``) round-trip
+        if self.scheduler:
+            pipeline_config['scheduler'] = self.scheduler
+
         # Add hostfile parameter. The effective hostfile (pipeline override
         # if set, else the global jarvis hostfile) is always persisted to
         # <shared_dir>/hostfile so container mode can read it at the same
         # path the bind-mount exposes — no /tmp passthrough or external
         # bind required.
-        effective_hostfile = self.hostfile or self.jarvis.hostfile
-        if effective_hostfile and effective_hostfile.path:
-            shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
-            shared_dir.mkdir(parents=True, exist_ok=True)
-            hostfile_shared_path = str(shared_dir / 'hostfile')
-            effective_hostfile.save(hostfile_shared_path)
-            pipeline_config['hostfile'] = hostfile_shared_path
-        else:
+        # When a scheduler block is configured, the job script writes the
+        # hostfile from the allocation at run time; we must not preempt it
+        # with a stub here. The scheduler block carries the path itself.
+        if self.scheduler:
             pipeline_config['hostfile'] = None
+        else:
+            effective_hostfile = self.hostfile or self.jarvis.hostfile
+            if effective_hostfile and effective_hostfile.path:
+                shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
+                shared_dir.mkdir(parents=True, exist_ok=True)
+                hostfile_shared_path = str(shared_dir / 'hostfile')
+                effective_hostfile.save(hostfile_shared_path)
+                pipeline_config['hostfile'] = hostfile_shared_path
+            else:
+                pipeline_config['hostfile'] = None
 
         # Convert packages to script format (pkg_type + config parameters)
         for pkg in self.packages:
@@ -903,6 +996,16 @@ class Pipeline:
         else:
             self.hostfile = None
 
+        # Load scheduler spec (mirrors _load_from_file). The hostfile
+        # override is re-applied so reloading a saved pipeline keeps the
+        # same scheduler-aware hostfile path.
+        scheduler_spec = pipeline_config.get('scheduler')
+        if scheduler_spec:
+            self.scheduler = self._expand_env_in_config(dict(scheduler_spec))
+            self._apply_scheduler_hostfile()
+        else:
+            self.scheduler = None
+
         # Initialize packages and interceptors
         self.packages = []
         self.interceptors = {}
@@ -1035,6 +1138,17 @@ class Pipeline:
             self.hostfile = Hostfile(path=os.path.expandvars(hostfile_path))
         else:
             self.hostfile = None
+
+        # Parse the scheduler block (if present). The scheduler owns the
+        # hostfile path — point self.hostfile at the file the generated
+        # job script will write so every package in the pipeline sees
+        # the same allocation-derived hosts.
+        scheduler_spec = pipeline_def.get('scheduler')
+        if scheduler_spec:
+            self.scheduler = self._expand_env_in_config(dict(scheduler_spec))
+            self._apply_scheduler_hostfile()
+        else:
+            self.scheduler = None
 
         # Process interceptors
         interceptors_list = pipeline_def.get('interceptors', [])
@@ -2240,7 +2354,17 @@ class Pipeline:
             # (mirrors docker compose up -d).
             shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
             private_dir = self.jarvis.get_pipeline_private_dir(self.name)
-            sif_path = self.jarvis.get_containers_dir() / f'{self.name}.sif'
+            # Resolve the SIF: when YAML supplies `container_image`, treat
+            # it as the SIF basename (or absolute path) so a pipeline can
+            # reuse another pipeline's prebuilt SIF instead of building
+            # its own. Default to <pipeline_name>.sif in the centralized
+            # containers dir for normal "build my own" pipelines.
+            sif_ref = self.container_image or self.name
+            sif_candidate = Path(sif_ref)
+            if sif_candidate.is_absolute() and sif_candidate.exists():
+                sif_path = sif_candidate
+            else:
+                sif_path = self.jarvis.get_containers_dir() / f'{sif_ref}.sif'
             instance_name = self.name
             ssh_port = self.container_ssh_port
 

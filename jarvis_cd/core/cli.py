@@ -170,6 +170,28 @@ class JarvisCLI(ArgParse):
             }
         ])
         
+        self.add_cmd('ppl submit',
+                     msg="Generate (and optionally submit) a scheduler "
+                         "job script for the current pipeline or a YAML "
+                         "test file")
+        self.add_args([
+            {
+                'name': 'pipeline_file',
+                'msg': 'Optional pipeline / test YAML to submit (defaults '
+                       'to the current pipeline)',
+                'type': str,
+                'pos': True,
+                'required': False,
+            },
+            {
+                'name': 'no_submit',
+                'msg': 'Only write the job script, do not run sbatch',
+                'type': bool,
+                'default': False,
+                'prefix': '+',
+            },
+        ])
+
         self.add_cmd('ppl update', msg="Update current pipeline")
         self.add_args([
             {
@@ -1008,6 +1030,38 @@ class JarvisCLI(ArgParse):
 
             self.current_pipeline.run()
         
+    def ppl_submit(self):
+        """Generate (and optionally submit) a scheduler job script.
+
+        Resolves a target Pipeline / PipelineTest in this order:
+
+        1. ``pipeline_file`` arg, auto-detected as a test or pipeline
+        2. the currently-loaded test (set by a prior ``ppl load``)
+        3. the current pipeline
+        """
+        self._ensure_initialized()
+        pipeline_file = self.kwargs.get('pipeline_file')
+        submit = not self.kwargs.get('no_submit', False)
+
+        if pipeline_file:
+            is_test, obj = load_yaml_auto(pipeline_file)
+            obj.submit(submit=submit)
+            return
+
+        if getattr(self, '_current_test', None) is not None:
+            self._current_test.submit(submit=submit)
+            return
+
+        if not self.current_pipeline:
+            current_name = self.jarvis_config.get_current_pipeline()
+            if current_name:
+                self.current_pipeline = Pipeline(current_name)
+            else:
+                raise ValueError(
+                    "No pipeline to submit. Pass a YAML path or load a "
+                    "pipeline first.")
+        self.current_pipeline.submit(submit=submit)
+
     def ppl_start(self):
         """Start current pipeline"""
         self._ensure_initialized()
