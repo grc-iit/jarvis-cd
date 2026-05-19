@@ -52,6 +52,7 @@ pkgs:
 |--------------------|-------------------------|-------------------------------------|
 | `name`             | (selects backend)       | Required: `slurm`                   |
 | `hostfile`         | (used by Jarvis)        | Defaults to `${SHARED_DIR}/hostfile.txt` |
+| `suffix`           | (used by Jarvis)        | Appended to every hostname pulled from the allocation, e.g. `-40g` to target a 40GbE NIC |
 | `job_name`         | `--job-name`            |                                     |
 | `nodes`            | `--nodes`               |                                     |
 | `ntasks`           | `--ntasks`              |                                     |
@@ -80,11 +81,32 @@ Unknown keys are passed straight through as `--<key with underscores
 replaced by dashes>=<value>`, so most SBATCH flags can be expressed
 without an explicit mapping.
 
+### Hostname suffix
+
+`suffix:` is appended to every hostname `scontrol show hostnames`
+emits before the hostfile is written. Use this when SLURM resolves
+nodes by their management hostname but you want the pipeline to
+reach them over a different NIC.
+
+```yaml
+scheduler:
+  name: slurm
+  nodes: 4
+  partition: compute
+  suffix: "-40g"        # ares-comp-3 -> ares-comp-3-40g
+```
+
 ## Pipeline Test YAML
 
-A `scheduler:` block at the **top level** of a pipeline test wraps the
-whole test (every variable combination + repeat) in a single batch
-allocation:
+A pipeline test can drive the scheduler in two modes; which one
+applies is decided by whether `vars:` contains any `scheduler.*`
+entries.
+
+### Mode A — single-job wrapper
+
+No `scheduler.*` vars. A `scheduler:` block at the **top level** of
+the test wraps the whole test (every variable combination + repeat)
+in a single batch allocation:
 
 ```yaml
 scheduler:
@@ -107,9 +129,47 @@ loop:
 repeat: 2
 ```
 
-To submit **one job per iteration** instead, move the `scheduler:`
-block inside `config:` so each generated child pipeline owns its own
-submission script.
+Submit with `jarvis ppl submit path/to/test.yaml`.
+
+### Mode B — per-iteration template (`scheduler.*` vars)
+
+Any `scheduler.<key>` entry in `vars:` switches the test into
+per-iteration submission. The top-level `scheduler:` block becomes a
+template; each iteration's effective scheduler is
+
+```
+top-level scheduler  ⊕  config.scheduler (if any)  ⊕  scheduler.* vars
+```
+
+Each iteration is submitted on its own via `sbatch --wait`, so the
+test runner blocks on each job before moving on. This is the natural
+way to sweep node counts (or partitions, time limits, ...) for
+scaling experiments.
+
+```yaml
+scheduler:
+  name: slurm
+  partition: compute
+  time: "00:30:00"
+  ntasks_per_node: 16
+
+config:
+  name: ior_scaling
+  pkgs:
+    - pkg_type: builtin.ior
+      pkg_name: ior
+      block: 1G
+
+vars:
+  scheduler.nodes: [1, 2, 4, 8, 16]
+  ior.nprocs:     [16, 32, 64, 128, 256]
+loop:
+  - [scheduler.nodes, ior.nprocs]
+```
+
+Run with `jarvis ppl run yaml path/to/test.yaml`. `jarvis ppl submit`
+is rejected in this mode, since wrapping a per-iteration template in
+a single job would freeze the swept values.
 
 ## CLI
 
@@ -125,6 +185,41 @@ jarvis ppl submit path/to/pipeline.yaml +no_submit
 ```
 
 The generated script is written to `<pipeline_shared_dir>/submit.slurm`.
+
+## Multi-node SSH inside an allocation
+
+Once the job is running, packages reach the other allocated nodes over
+SSH/PSSH (e.g. apptainer instance start is fanned to every host, MPI
+bootstraps remote ranks). Inside a SLURM allocation those ssh hops to
+allocated peers are adopted automatically by `pam_slurm_adopt`, so no
+extra SSH keys are needed.
+
+If the workload runs from a conda environment, pair the scheduler with
+a pipeline-level `ssh_cmd` launcher override so the host `ssh` does not
+inherit the conda `LD_LIBRARY_PATH` (an OpenSSL ABI mismatch otherwise
+makes `ssh` exit 255):
+
+```yaml
+ssh_cmd:  "env -u LD_LIBRARY_PATH ssh"
+pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+
+scheduler:
+  name: slurm
+  nodes: 4
+  partition: compute
+  time: "00:30:00"
+
+pkgs:
+  - pkg_type: builtin.ior
+    nprocs: 96
+    ppn: 24
+```
+
+`ssh_cmd` is also forwarded to the MPI bootstrap agent (OpenMPI
+`--mca plm_rsh_agent`, MPICH/Hydra `-bootstrap-exec`) so multi-node
+MPI ranks spawn through the wrapped ssh too. See
+[shell.md → Launcher Overrides](shell.md#launcher-overrides) for the
+full mechanism. In a pipeline test, put these keys inside `config:`.
 
 ## How the hostfile flows
 

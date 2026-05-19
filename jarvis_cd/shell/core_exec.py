@@ -141,19 +141,7 @@ class LocalExec(CoreExec):
             for key, value in self.exec_info.env.items():
                 env[key] = str(value)
         else:
-            env = os.environ.copy() if isinstance(os.environ, dict) else dict(os.environ)
-
-        # ssh/pssh: drop LD_LIBRARY_PATH from the LOCAL subprocess env
-        # so the system /usr/bin/ssh links against system libcrypto. If
-        # we inherit a conda env's LD_LIBRARY_PATH (typical on this
-        # host: iowarp's libcrypto.so.3 is ABI 3.0.x, system ssh wants
-        # 3.6.x), ssh exits 255 with "OpenSSL version mismatch" before
-        # ever forwarding the remote command. The remote env is set
-        # via the inline `KEY="..." cmd` prefix the SshExec class
-        # builds — that's unaffected.
-        cmd_head = self.cmd.lstrip().split(None, 1)
-        if cmd_head and cmd_head[0] in ("ssh", "pssh", "/usr/bin/ssh"):
-            env.pop("LD_LIBRARY_PATH", None)
+            env = os.environ
 
         # Prepare stdin
         stdin_pipe = subprocess.PIPE if self.exec_info.stdin else None

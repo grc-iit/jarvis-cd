@@ -52,8 +52,15 @@ class SshExec(LocalExec):
         :param exec_info: SSH execution information
         :return: Complete SSH command string
         """
-        ssh_parts = ['ssh']
-        
+        # The base SSH launcher can be overridden at the pipeline-YAML
+        # level via the top-level ``ssh_cmd`` key — useful e.g. to wrap
+        # ssh in ``env -u LD_LIBRARY_PATH`` so a conda env's libcrypto
+        # doesn't get loaded into the host's openssh.
+        if exec_info.ssh_cmd:
+            ssh_parts = exec_info.ssh_cmd.split()
+        else:
+            ssh_parts = ['ssh']
+
         # SSH options
         if not exec_info.strict_ssh:
             ssh_parts.extend([
@@ -189,7 +196,10 @@ class PsshExec(CoreExec):
                 hide_output=self.exec_info.hide_output,
                 exec_async=True,  # Always async for parallel execution
                 strict_ssh=self.exec_info.strict_ssh,
-                timeout=self.exec_info.timeout
+                timeout=self.exec_info.timeout,
+                # Forward the pipeline-level ssh launcher override down
+                # to each per-host SshExec.
+                ssh_cmd=self.exec_info.ssh_cmd,
             )
             
             # Start SSH execution in a thread

@@ -1,0 +1,40 @@
+# Pipeline: DeepDriveMD, Apptainer + sbatch on Ares, 4-node allocation
+# Note: RADICAL Pilot is configured for local.localhost in the template,
+# so workload runs on the head allocation node. The 4-node spec matches
+# the project deployment convention and gives RADICAL headroom for
+# future multi-host configs. iter=1, num_tasks=16, MD_BYTES=1 GiB ->
+# 16 GiB MD writes + ml read-back ~32 GiB; expected wall ~5-7 min.
+
+name: deepdrivemd_apptainer_test
+install_manager: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+container_binds:
+  - ${HOME}/jarvis-bench-scripts/ddmd_run_io_only.sh:/opt/run_ddmd.sh
+  - ${HOME}/jarvis-runs:${HOME}/jarvis-runs
+
+env:
+  DDMD_MD_BYTES: "1073741824"
+  DDMD_MD_BS:    "8388608"
+
+scheduler:
+  name: slurm
+  job_name: deepdrivemd_ares_apptainer
+  nodes: 4
+  ntasks_per_node: 24
+  partition: compute
+  time: "00:30:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+
+pkgs:
+  - pkg_type: builtin.deepdrivemd
+    pkg_name: deepdrivemd_apptainer
+    nprocs: 16
+    ppn: 16
+    iterations: 1
+    num_tasks: 20
+    replicates: 1
+    out: ${HOME}/jarvis-runs/deepdrivemd

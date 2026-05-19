@@ -27,7 +27,29 @@ class ExecInfo:
     parameters such as the path to key-pairs, the hosts to run the program
     on, number of processes, etc.
     """
-    
+
+    # Pipeline-level launcher overrides. Pipelines that declare top-level
+    # ``ssh_cmd: "env -u LD_LIBRARY_PATH ssh"`` (or ``mpi_cmd`` / ``pssh_cmd``)
+    # populate these class attributes during load. New ExecInfo instances
+    # then inherit those defaults unless the constructor explicitly overrides.
+    # See ``Pipeline._apply_launcher_overrides``.
+    _default_ssh_cmd = None
+    _default_pssh_cmd = None
+    _default_mpi_cmd = None
+
+    @classmethod
+    def set_launcher_defaults(cls, ssh_cmd=None, pssh_cmd=None, mpi_cmd=None):
+        """Wire pipeline-YAML-level launcher overrides into every subsequent
+        ExecInfo. Pass ``None`` to leave a slot unchanged. Pass an empty
+        string ``""`` to explicitly clear back to the default ("ssh" / etc.).
+        """
+        if ssh_cmd is not None:
+            cls._default_ssh_cmd = ssh_cmd or None
+        if pssh_cmd is not None:
+            cls._default_pssh_cmd = pssh_cmd or None
+        if mpi_cmd is not None:
+            cls._default_mpi_cmd = mpi_cmd or None
+
     def __init__(self, exec_type=ExecType.LOCAL, nprocs=None, ppn=None,
                  user=None, pkey=None, port=None,
                  hostfile=None, env=None,
@@ -38,6 +60,7 @@ class ExecInfo:
                  container='none', gpu=False, container_image=None,
                  shared_dir=None, private_dir=None, bind_mounts=None,
                  dry_run=False,
+                 ssh_cmd=None, pssh_cmd=None, mpi_cmd=None,
                  **kwargs):
         """
         Initialize execution information.
@@ -107,6 +130,18 @@ class ExecInfo:
         self.bind_mounts = bind_mounts or []
         self.dry_run = dry_run
 
+        # Launcher overrides. None means "use the built-in default"
+        # (``ssh`` / ``pssh`` / ``mpiexec``). Set per-instance via kwargs
+        # or globally via ``ExecInfo.set_launcher_defaults`` (the pipeline
+        # loader calls that after reading top-level ssh_cmd/pssh_cmd/
+        # mpi_cmd from YAML).
+        self.ssh_cmd = (ssh_cmd if ssh_cmd is not None
+                        else ExecInfo._default_ssh_cmd)
+        self.pssh_cmd = (pssh_cmd if pssh_cmd is not None
+                         else ExecInfo._default_pssh_cmd)
+        self.mpi_cmd = (mpi_cmd if mpi_cmd is not None
+                        else ExecInfo._default_mpi_cmd)
+
         # Basic environment for process execution (without LD_PRELOAD)
         # This is used for launching MPI itself, not the MPI processes
         self.basic_env = self.env.copy()
@@ -128,7 +163,8 @@ class ExecInfo:
                      'exec_async', 'stdin', 'strict_ssh', 'timeout',
                      'container', 'gpu', 'container_image',
                      'shared_dir', 'private_dir', 'bind_mounts',
-                     'dry_run']:
+                     'dry_run',
+                     'ssh_cmd', 'pssh_cmd', 'mpi_cmd']:
             current_attrs[attr] = getattr(self, attr)
 
         # Update with new values

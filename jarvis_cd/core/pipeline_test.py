@@ -343,7 +343,13 @@ class PipelineTest:
         """
         Apply variable values to a pipeline configuration.
 
-        Variable names are in the format: pkg_name.var_name
+        Variable names are in one of two formats:
+          - ``pkg_name.var_name`` — set ``var_name`` on the matching package.
+          - ``scheduler.var_name`` — set ``var_name`` on the scheduler block
+            attached to this iteration's config. The block is seeded with
+            the test's top-level ``scheduler:`` (if any) so it acts as a
+            template, then any nested ``config.scheduler`` overrides it,
+            then the ``scheduler.X`` variable values override that.
 
         :param base_config: Base pipeline configuration
         :param variables: Variable values to apply
@@ -351,7 +357,21 @@ class PipelineTest:
         """
         config = copy.deepcopy(base_config)
 
-        for var_spec, value in variables.items():
+        scheduler_vars = {k.split('.', 1)[1]: v
+                          for k, v in variables.items()
+                          if k.split('.', 1)[0] == 'scheduler'}
+        pkg_vars = {k: v for k, v in variables.items()
+                    if k.split('.', 1)[0] != 'scheduler'}
+
+        if scheduler_vars or self.scheduler:
+            merged = copy.deepcopy(self.scheduler) if self.scheduler else {}
+            existing = config.get('scheduler') or {}
+            merged.update(existing)
+            merged.update(scheduler_vars)
+            if merged:
+                config['scheduler'] = merged
+
+        for var_spec, value in pkg_vars.items():
             parts = var_spec.split('.', 1)
             if len(parts) != 2:
                 raise ValueError(f"Invalid variable format '{var_spec}'. Expected: pkg_name.var_name")
@@ -495,6 +515,22 @@ class PipelineTest:
             raise ValueError(
                 "Pipeline test has no source path — call load() first.")
 
+        # When the test varies scheduler params via ``scheduler.X`` vars,
+        # the top-level scheduler is a per-iteration template — not a
+        # wrapper around the whole test. Wrapping would freeze the
+        # template values, defeating the point. Direct the user to
+        # ``jarvis ppl run`` instead, which submits each iteration as
+        # its own job.
+        has_sched_vars = any(
+            str(k).split('.', 1)[0] == 'scheduler' for k in (self.vars or {}))
+        if has_sched_vars:
+            raise ValueError(
+                "Pipeline test has `scheduler.*` variables, so the "
+                "top-level scheduler is treated as a per-iteration "
+                "template, not a single-job wrapper. Run the test with "
+                "`jarvis ppl run yaml <file>` to submit one job per "
+                "iteration.")
+
         from jarvis_cd.core.config import Jarvis
         from jarvis_cd.core.scheduler import make_scheduler
 
@@ -556,9 +592,19 @@ class PipelineTest:
             pipeline.load('yaml', temp_yaml)
             pipeline.configure_all_packages()
 
-            # Run the pipeline
-            pipeline.start()
-            pipeline.stop()
+            # If this iteration has a scheduler block (either from a
+            # nested config.scheduler or from a top-level scheduler
+            # template + scheduler.X vars), submit it as its own job and
+            # block until it finishes via ``sbatch --wait``. Otherwise
+            # run the pipeline in-process.
+            if pipeline.scheduler:
+                logger.pipeline(
+                    f"Submitting iteration as scheduler job "
+                    f"({pipeline.scheduler.get('name')})")
+                pipeline.submit(submit=True, wait=True)
+            else:
+                pipeline.start()
+                pipeline.stop()
 
             end_time = time.time()
             result['runtime'] = end_time - start_time

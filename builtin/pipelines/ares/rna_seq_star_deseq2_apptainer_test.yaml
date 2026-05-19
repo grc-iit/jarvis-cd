@@ -1,0 +1,37 @@
+# Pipeline: RNA-Seq STAR + DESeq2, Apptainer + sbatch on Ares, 4-node
+# Single-host execution (snakemake is not multi-host), 4-node SLURM
+# allocation reserves the resources. cores=16 lets snakemake-internal
+# threading saturate. replicates=1 since one full pass is already
+# ~9 min wall on the bundled ngs-test-data.
+
+name: rna_seq_star_deseq2_apptainer_test
+install_manager: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+container_binds:
+  - ${HOME}/jarvis-bench-scripts/rna_seq_io_only.sh:/opt/run_rnaseq.sh
+  - ${HOME}/jarvis-runs:${HOME}/jarvis-runs
+
+env:
+  RNASEQ_BAM_GB: "5"
+  RNASEQ_TSV_MB: "64"
+
+scheduler:
+  name: slurm
+  job_name: rna_seq_ares_apptainer
+  nodes: 4
+  ntasks_per_node: 24
+  partition: compute
+  time: "00:30:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+
+pkgs:
+  - pkg_type: builtin.rna_seq_star_deseq2
+    pkg_name: rna_seq_star_deseq2_apptainer
+    nprocs: 1
+    cores: 16
+    replicates: 1
+    out: ${HOME}/jarvis-runs/rna_seq_star_deseq2

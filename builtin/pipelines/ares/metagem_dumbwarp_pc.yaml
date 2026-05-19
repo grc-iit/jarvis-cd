@@ -1,0 +1,60 @@
+name: metagem_dumbwarp_pc
+
+install_manager: container
+container_engine: apptainer
+container_image: metagem_apptainer_test
+
+container_binds:
+  - /mnt/common/llogan/jarvis-cd/builtin/builtin/metagem/run_metagem.sh:/opt/run_metagem.sh:ro
+  - ${HOME}/jarvis-bench-cache/metagem-stage:/tmp/metagem-cache:ro
+  - ${HOME}/jarvis-runs:${HOME}/jarvis-runs
+  - ${HOME}/dumbwarp_metagem_4n:${HOME}/dumbwarp_metagem_4n
+  - ${HOME}/dumbwarp_metagem_4n:/mnt/dumbwarp
+
+env:
+  TMPDIR: "/home/llogan/iowarp_prte_tmp"
+  METAGEM_STAGE_DIR: /tmp/metagem-cache
+
+ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+mpi_cmd: 'mpiexec --mca btl_tcp_if_include enp47s0np0 --mca oob_tcp_if_include eno1 --prtemca prte_if_include eno1 --prtemca prte_tmpdir_base /home/llogan/iowarp_prte_tmp'
+
+scheduler:
+  name: slurm
+  job_name: dumbwarp_metagem_4n_full
+  nodes: 4
+  ntasks_per_node: 24
+  mem: 20G
+  partition: compute
+  time: "00:25:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+  suffix: "-40g"
+  pre_cmds:
+    - 'source /etc/profile.d/lmod.sh 2>/dev/null || source /etc/profile.d/modules.sh'
+    - 'module load gcc/11.4.0/openmpi/5.0.5-x2kvx5l'
+    - 'mkdir -p /home/llogan/iowarp_prte_tmp'
+    - 'for n in $(scontrol show hostnames "$SLURM_JOB_NODELIST"); do env -u LD_LIBRARY_PATH ssh -o BatchMode=yes -o StrictHostKeyChecking=no "$n" "pkill -9 dumbwarpd 2>/dev/null; fusermount3 -u /home/llogan/dumbwarp_metagem_4n 2>/dev/null; umount -l /home/llogan/dumbwarp_metagem_4n 2>/dev/null; rm -f /tmp/dumbwarp_*.csv /tmp/dumbwarp_*.log 2>/dev/null; mkdir -p /home/llogan/dumbwarp_metagem_4n; true" & done; wait'
+
+pkgs:
+  - pkg_type: jarvis_dumbwarp.dumbwarp
+    pkg_name: dumbwarp
+    deploy_mode: default
+    mountpoint: ${HOME}/dumbwarp_metagem_4n
+    bin_dir: /mnt/common/llogan/dumbwarp/build
+    bind_addr: enp47s0np0
+    port: 18123
+    thallium_proto: "ofi+tcp;ofi_rxm"
+    page_size: 65536
+    consumer_ttl: 120
+    compress: none
+    sleep: 4
+
+  - pkg_type: builtin.metagem
+    pkg_name: metagem
+    nprocs: 1
+    cores: 16
+    real_workflow: true
+    sample_replicates: 8
+    parallel_reps: 4
+    omp_threads: 4
+    out: /mnt/dumbwarp/metagem

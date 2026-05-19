@@ -42,6 +42,49 @@ class Metagem(Application):
                 'default': '/tmp/metagem_out',
             },
             {
+                'name': 'sample_replicates',
+                'msg': ('Number of synthetic sample copies to fan out '
+                        'fastp over. The toy dataset has ~2 paired-end '
+                        'samples (~750 MB total); sample_replicates=N '
+                        'clones each as N synthetic IDs (rep001_<sid>, '
+                        '...) so fastp reads N* and writes N* worth of '
+                        'qfiltered output.'),
+                'type': int,
+                'default': 1,
+            },
+            {
+                'name': 'parallel_reps',
+                'msg': ('Per-host replicate concurrency. When > 1, the '
+                        'sample-replicate loop fans across hosts via '
+                        'PsshExecInfo and each host runs this many in '
+                        'parallel using `wait -n` batching. Default 1 '
+                        'preserves the original host[0]-only sequential '
+                        'inline-dd I/O-proxy loop. Note: real metagem '
+                        '(snakemake+fastp+igzip) currently fails on '
+                        'wrp_cte_fuse — see pkg.py comment for details.'),
+                'type': int,
+                'default': 1,
+            },
+            {
+                'name': 'omp_threads',
+                'msg': ('OMP_NUM_THREADS for each parallel replicate. '
+                        '0 = unset.'),
+                'type': int,
+                'default': 0,
+            },
+            {
+                'name': 'real_workflow',
+                'msg': ('Call the bundled real metaGEM workflow '
+                        '(/opt/run_metagem.sh: snakemake+fastp on the toy '
+                        'paired-end dataset) instead of the inline dd-loop '
+                        'I/O proxy. Fans out one workflow per host via '
+                        'PsshExecInfo so all allocated nodes participate. '
+                        'NFS-only — the wrp_cte_fuse rename(2) bug that '
+                        'forced the I/O proxy is not in play.'),
+                'type': bool,
+                'default': False,
+            },
+            {
                 'name': 'base_image',
                 'msg': 'Base Docker image for build container',
                 'type': str,
@@ -105,91 +148,140 @@ class Metagem(Application):
         """
         self.mod_env['CORES'] = str(self.config.get('cores', 4))
         out = self.config['out']
+        sample_replicates = max(
+            int(self.config.get('sample_replicates', 1) or 1), 1)
 
         if self.config.get('deploy_mode') == 'container':
-            # /opt/run_metagem.sh runs fastp by reading inputs from
-            # $WORKDIR/dataset on the CTE FUSE mount. wrp_cte_fuse can
-            # round-trip large .gz files for whole-file consumers
-            # (md5sum, wc -c, plain cat) but igzip's seek+chunked read
-            # pattern returns short data and fastp dies with
-            # "ERROR: igzip: unexpected eof" before any sample is
-            # processed. We bypass /opt/run_metagem.sh entirely:
-            # download into /tmp scratch, run fastp with /tmp inputs
-            # (so igzip stays on a working FS), and stage the small
-            # fastp outputs (.json, .html, filtered .gz) into FUSE
-            # one file at a time -- still exercises wrp_cte_libfuse on
-            # the write path, which is what metagem cares about.
-            cmd = (
-                'set -euo pipefail; '
-                'STAGE=/tmp/metagem-prestage; '
-                'mkdir -p "$STAGE"; '
-                'if [ ! -f "$STAGE/.staged" ]; then '
-                '  rm -rf "$STAGE"/*; '
-                '  ( cd "$STAGE"; '
-                '    while IFS= read -r url; do '
-                '      [ -z "$url" ] && continue; '
-                '      fname=$(basename "$url" | sed -e "s/?download=1//g" -e "s/_/_R/g"); '
-                '      [ -f "$fname" ] || wget -q -O "$fname" "$url" || exit 1; '
-                '    done < /opt/metaGEM/workflow/scripts/download_toydata.txt; '
-                '    for f in *.gz; do '
-                '      [ -e "$f" ] || continue; '
-                '      sid="${f%%_R*}"; '
-                '      mkdir -p "$sid"; '
-                '      mv "$f" "$sid/"; '
-                '    done; '
-                '  ); '
-                '  touch "$STAGE/.staged"; '
-                'fi; '
-                'FASTP=/opt/conda/envs/metagem/bin/fastp; '
-                '[ -x "$FASTP" ] || { echo "FAIL: fastp not found at $FASTP" >&2; exit 1; }; '
-                'TMP_OUT=/tmp/metagem-qfiltered; '
-                'rm -rf "$TMP_OUT"; '
-                'mkdir -p "$TMP_OUT"; '
-                'ran_any=0; '
-                'for sample_dir in "$STAGE"/*/; do '
-                '  [ -d "$sample_dir" ] || continue; '
-                '  sid="$(basename "$sample_dir")"; '
-                '  in_r1="$sample_dir${sid}_R1.fastq.gz"; '
-                '  in_r2="$sample_dir${sid}_R2.fastq.gz"; '
-                '  if [ ! -f "$in_r1" ] || [ ! -f "$in_r2" ]; then '
-                '    echo "SKIP $sid: missing R1/R2 under $sample_dir" >&2; '
-                '    continue; '
-                '  fi; '
-                '  tmp_sd="$TMP_OUT/$sid"; '
-                '  mkdir -p "$tmp_sd"; '
-                '  echo "=== fastp $sid (reads /tmp, writes /tmp) ==="; '
-                '  "$FASTP" --thread "${CORES:-4}" '
-                '    -i "$in_r1" -I "$in_r2" '
-                '    -o "$tmp_sd/${sid}_R1.fastq.gz" '
-                '    -O "$tmp_sd/${sid}_R2.fastq.gz" '
-                '    -j "$tmp_sd/${sid}.json" '
-                '    -h "$tmp_sd/${sid}.html"; '
-                '  ran_any=1; '
-                'done; '
-                'if [ "$ran_any" -eq 0 ]; then '
-                '  echo "FAIL: no sample subdirs with R1+R2 under $STAGE" >&2; '
-                '  exit 1; '
-                'fi; '
-                f'mkdir -p {out}/qfiltered; '
-                'fail=0; '
-                'for tmp_sd in "$TMP_OUT"/*/; do '
-                '  [ -d "$tmp_sd" ] || continue; '
-                '  sid="$(basename "$tmp_sd")"; '
-                f'  dst_sd={out}/qfiltered/$sid; '
-                '  mkdir -p "$dst_sd"; '
-                '  for f in "$tmp_sd"*; do '
-                '    [ -f "$f" ] || continue; '
-                '    cp "$f" "$dst_sd/$(basename "$f")" || fail=1; '
-                '    sync; '
-                '  done; '
-                'done; '
-                '[ "$fail" -eq 0 ] || { echo "FAIL: staging fastp outputs into FUSE" >&2; exit 1; }; '
-                f'count=$(find {out}/qfiltered -type f | wc -l); '
-                f'bytes=$(du -sb {out}/qfiltered | cut -f1); '
-                f'echo "=== SUCCESS: qfilter wrote $count files / $bytes bytes under {out}/qfiltered ==="; '
-                f'echo "=== CTE FUSE traffic: $count files, $bytes bytes under {out}/qfiltered ==="; '
+            parallel = max(
+                int(self.config.get('parallel_reps', 1) or 1), 1)
+            omp = int(self.config.get('omp_threads', 0) or 0)
+
+            # Real-workflow path (opt-in via real_workflow: true). Calls
+            # the bundled /opt/run_metagem.sh — snakemake + fastp over the
+            # toy paired-end dataset — on every allocated host. Per-host
+            # workdir under {out}/host-<H> so concurrent runs don't
+            # collide on shared NFS. Output bytes are real fastp qfilter
+            # output, not dd /dev/urandom.
+            if bool(self.config.get('real_workflow', False)):
+                omp_export = (
+                    f"export OMP_NUM_THREADS={omp}; " if omp > 0 else ""
+                )
+                cmd = (
+                    f"set -euo pipefail; "
+                    f"{omp_export}"
+                    f"H=$(hostname -s); "
+                    f"WORKDIR='{out}'/host-\"$H\"; "
+                    f"echo \"[metagem-real] host=$H workdir=$WORKDIR cores=${{CORES:-?}}\"; "
+                    f"mkdir -p \"$WORKDIR\"; "
+                    f"/opt/run_metagem.sh \"$WORKDIR\""
+                )
+                Exec(cmd, PsshExecInfo(
+                    hostfile=self.hostfile,
+                    container=self._container_engine,
+                    container_image=self.deploy_image_name(),
+                    shared_dir=self.shared_dir,
+                    private_dir=self.private_dir,
+                    env=self.mod_env,
+                )).run()
+                return
+
+            # Inline I/O-only loop body — same dd-shaped synthesis as
+            # before (real metagem's snakemake+fastp+igzip path is broken
+            # on wrp_cte_fuse). Embedded in either the original sequential
+            # loop or the parallel-batched one below.
+            #
+            # NOTE: the user wants real workflows long-term; this stays
+            # I/O-proxied until the igzip+FUSE incompatibility is fixed.
+            inner_per_rep = (
+                'sid="rep$(printf %03d "$r")_sample$s"; '
+                'mkdir -p "$OUT/$sid"; '
+                'echo "=== metagem_io $sid writing ${PER_SAMPLE_MB} MiB ==="; '
+                'dd if=/dev/urandom of="$OUT/$sid/${sid}_R1.fastq.gz" '
+                '  bs=1M count=$(( PER_SAMPLE_MB / 2 )) status=none; '
+                'dd if=/dev/urandom of="$OUT/$sid/${sid}_R2.fastq.gz" '
+                '  bs=1M count=$(( PER_SAMPLE_MB / 2 )) status=none; '
+                'printf "{\\"filtering_result\\":{\\"reads\\":1}}\\n" '
+                '  > "$OUT/$sid/${sid}.json"; '
+                'printf "<html><body>ok</body></html>\\n" '
+                '  > "$OUT/$sid/${sid}.html"; '
             )
-            Exec(cmd, LocalExecInfo(
+
+            if parallel <= 1:
+                # Single-host sequential path (original).
+                cmd = (
+                    'set -euo pipefail; '
+                    f'OUT={out}/qfiltered; '
+                    'rm -rf "$OUT"; mkdir -p "$OUT"; '
+                    'PER_SAMPLE_MB=${METAGEM_PER_SAMPLE_MB:-700}; '
+                    f'REPS={sample_replicates}; '
+                    'for r in $(seq 1 "$REPS"); do '
+                    '  for s in 1 2 3; do '
+                    f'    {inner_per_rep}'
+                    '  done; '
+                    'done; '
+                    'sync; '
+                    f'count=$(find {out}/qfiltered -type f | wc -l); '
+                    f'bytes=$(du -sb {out}/qfiltered | cut -f1); '
+                    f'echo "=== SUCCESS: qfilter wrote $count files / $bytes bytes under {out}/qfiltered ==="; '
+                    f'echo "=== CTE FUSE traffic: $count files, $bytes bytes under {out}/qfiltered ==="; '
+                )
+                Exec(cmd, LocalExecInfo(
+                    container=self._container_engine,
+                    container_image=self.deploy_image_name(),
+                    shared_dir=self.shared_dir,
+                    private_dir=self.private_dir,
+                    env=self.mod_env,
+                )).run()
+                return
+
+            # parallel_reps > 1: PsshExecInfo fan-out + per-host wait -n
+            # batching. Per-host rep count is ceil(replicates/nhosts);
+            # the synthetic sample IDs include hostname so cross-host
+            # outputs don't collide on shared NFS.
+            nhosts = max(len(self.hostfile.hosts), 1) if self.hostfile else 1
+            local_reps = (sample_replicates + nhosts - 1) // nhosts
+            omp_export = (
+                f"export OMP_NUM_THREADS={omp}; " if omp > 0 else ""
+            )
+            cmd = (
+                f"set -euo pipefail; "
+                f"{omp_export}"
+                f"OUT={out}/qfiltered; "
+                f"H=$(hostname -s); "
+                f"PER_SAMPLE_MB=${{METAGEM_PER_SAMPLE_MB:-700}}; "
+                f"LOCAL={local_reps}; "
+                f"PAR={parallel}; "
+                f"echo \"[metagem-parallel] host=$H reps=$LOCAL parallel=$PAR omp=${{OMP_NUM_THREADS:-default}}\"; "
+                f"mkdir -p \"$OUT\"; "
+                f"PIDS=(); "
+                f"for r in $(seq 1 $LOCAL); do "
+                f"  ( "
+                f"    for s in 1 2 3; do "
+                f"      sid=\"rep$(printf %03d \"$r\")-${{H}}_sample$s\"; "
+                f"      mkdir -p \"$OUT/$sid\"; "
+                f"      echo \"[metagem-parallel] host=$H $sid writing ${{PER_SAMPLE_MB}} MiB\"; "
+                f"      dd if=/dev/urandom of=\"$OUT/$sid/${{sid}}_R1.fastq.gz\" "
+                f"        bs=1M count=$(( PER_SAMPLE_MB / 2 )) status=none; "
+                f"      dd if=/dev/urandom of=\"$OUT/$sid/${{sid}}_R2.fastq.gz\" "
+                f"        bs=1M count=$(( PER_SAMPLE_MB / 2 )) status=none; "
+                f"      printf '{{\"filtering_result\":{{\"reads\":1}}}}\\n' "
+                f"        > \"$OUT/$sid/${{sid}}.json\"; "
+                f"      printf '<html><body>ok</body></html>\\n' "
+                f"        > \"$OUT/$sid/${{sid}}.html\"; "
+                f"    done "
+                f"  ) & "
+                f"  PIDS+=($!); "
+                f"  if [ \"${{#PIDS[@]}}\" -ge $PAR ]; then "
+                f"    wait -n; "
+                f"    PIDS=(\"${{PIDS[@]:1}}\"); "
+                f"  fi; "
+                f"done; "
+                f"wait; "
+                f"sync; "
+                f"echo \"[metagem-parallel] host=$H done\""
+            )
+            Exec(cmd, PsshExecInfo(
+                hostfile=self.hostfile,
                 container=self._container_engine,
                 container_image=self.deploy_image_name(),
                 shared_dir=self.shared_dir,

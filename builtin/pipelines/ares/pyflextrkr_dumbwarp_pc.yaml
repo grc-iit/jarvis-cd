@@ -1,0 +1,69 @@
+name: pyflextrkr_dumbwarp_pc
+
+install_manager: container
+container_engine: apptainer
+container_image: pyflextrkr_apptainer_test
+
+container_binds:
+  - ${HOME}/jarvis-runs:${HOME}/jarvis-runs
+  - ${HOME}/dumbwarp_pyflextrkr_4n:${HOME}/dumbwarp_pyflextrkr_4n
+  - ${HOME}/dumbwarp_pyflextrkr_4n:/mnt/dumbwarp
+
+ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+mpi_cmd: 'mpiexec --mca btl_tcp_if_include enp47s0np0 --mca oob_tcp_if_include eno1 --prtemca prte_if_include eno1 --prtemca prte_tmpdir_base /home/llogan/iowarp_prte_tmp'
+
+env:
+  TMPDIR: "/home/llogan/iowarp_prte_tmp"
+  PYF_TRACK_FRAMES: "8"
+  PYF_TRACK_MB: "512"
+  PYF_MCS_FRAMES: "8"
+  PYF_MCS_MB: "1024"
+  PYF_STATS_FILES: "8"
+  PYF_STATS_MB: "1024"
+
+scheduler:
+  name: slurm
+  job_name: dumbwarp_pyflextrkr_4n_full
+  nodes: 4
+  ntasks_per_node: 24
+  mem: 20G
+  partition: compute
+  time: "00:30:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+  suffix: "-40g"
+  pre_cmds:
+    - 'source /etc/profile.d/lmod.sh 2>/dev/null || source /etc/profile.d/modules.sh'
+    - 'module load gcc/11.4.0/openmpi/5.0.5-x2kvx5l'
+    - 'mkdir -p /home/llogan/iowarp_prte_tmp'
+    - 'for n in $(scontrol show hostnames "$SLURM_JOB_NODELIST"); do env -u LD_LIBRARY_PATH ssh -o BatchMode=yes -o StrictHostKeyChecking=no "$n" "pkill -9 dumbwarpd 2>/dev/null; fusermount3 -u /home/llogan/dumbwarp_pyflextrkr_4n 2>/dev/null; umount -l /home/llogan/dumbwarp_pyflextrkr_4n 2>/dev/null; rm -f /tmp/dumbwarp_*.csv /tmp/dumbwarp_*.log 2>/dev/null; mkdir -p /home/llogan/dumbwarp_pyflextrkr_4n; true" & done; wait'
+
+pkgs:
+  - pkg_type: jarvis_dumbwarp.dumbwarp
+    pkg_name: dumbwarp
+    deploy_mode: default
+    mountpoint: ${HOME}/dumbwarp_pyflextrkr_4n
+    bin_dir: /mnt/common/llogan/dumbwarp/build
+    bind_addr: enp47s0np0
+    port: 18123
+    thallium_proto: "ofi+tcp;ofi_rxm"
+    page_size: 65536
+    consumer_ttl: 120
+    compress: none
+    sleep: 4
+
+  - pkg_type: builtin.pyflextrkr
+    pkg_name: pyflextrkr
+    nprocs: 1
+    ppn: 1
+    demo: mcs_imerg
+    replicates: 8
+    parallel_reps: 2
+    omp_threads: 4
+    # *** Demo runs DIRECTLY on the dumbwarp mount — every cloudid /
+    # *** tracksingle / trackstats stage reads the previous stage's
+    # *** NetCDF outputs through dumbwarp instead of container-local
+    # *** /output. This is what makes the consumer/hit-rate metric
+    # *** meaningful for pyflextrkr.
+    data_root: /mnt/dumbwarp/pyflextrkr-data
+    out: /mnt/dumbwarp/pyflextrkr

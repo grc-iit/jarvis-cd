@@ -1,0 +1,51 @@
+# Pipeline: Montage REAL workflow, producer-consumer over storage,
+# Apptainer + sbatch on Ares, 4 nodes.
+#
+# Binds the host's run_mosaic.sh (which writes ALL 10 stages' intermediate
+# *.tbl/*.fits into $OUT rather than detouring through /tmp/montage-scratch
+# and copying once at the end). This restores the upstream Montage
+# producer-consumer pattern: each stage's output gets read by the next
+# stage through the user's storage. The /tmp detour was added to dodge
+# wrp_cte_fuse's ENOSYS-on-rename(2); dumbwarp/NFS implement rename
+# correctly and don't need it.
+#
+# Sizing: mosaic_replicates=192, parallel_reps=8, omp_threads=3 →
+# 48 mosaics/host, 6 batches of 8 concurrent mosaics. Per mosaic ~24 MiB
+# of intermediate + final FITS spread across 10 stages. Per-host I/O
+# traffic ~1.2 GiB but now split into many small read-after-write events.
+# Expected wall ~4-5 min.
+
+name: montage_real_nfs
+install_manager: container
+ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+container_binds:
+  - /mnt/common/llogan/jarvis-cd/builtin/builtin/montage/run_mosaic.sh:/opt/run_mosaic.sh:ro
+  - ${HOME}/real-data:${HOME}/real-data
+
+scheduler:
+  name: slurm
+  job_name: montage_real_nfs
+  nodes: 4
+  ntasks_per_node: 24
+  partition: compute
+  time: "00:06:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+
+pkgs:
+  - pkg_type: builtin.montage
+    pkg_name: montage_real_nfs
+    nprocs: 4
+    ppn: 1
+    region: M17
+    band: j
+    size: 0.2
+    mosaic_replicates: 192
+    parallel_reps: 8
+    omp_threads: 3
+    out: ${HOME}/real-data/montage

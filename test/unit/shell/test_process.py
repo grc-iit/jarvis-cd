@@ -18,25 +18,15 @@ from jarvis_cd.shell.exec_info import LocalExecInfo
 class TestKill(unittest.TestCase):
     """Tests for Kill class"""
 
-    def test_kill_with_partial(self):
-        """Test kill command construction with partial matching"""
-        # Just test command construction, don't run it
-        kill = Kill('nonexistent_test_process_xyz', partial=True)
+    def test_kill_uses_exact_basename_match(self):
+        """Kill should pkill -9 -x against the executable name."""
+        kill = Kill('nonexistent_test_process_xyz')
         cmd = kill.cmd
         self.assertIn('pkill', cmd)
         self.assertIn('-9', cmd)
-        self.assertIn('-f', cmd)
-        self.assertIn('nonexistent_test_process_xyz', cmd)
-
-    def test_kill_without_partial(self):
-        """Test kill command construction without partial matching"""
-        # Just test command construction, don't run it
-        kill = Kill('nonexistent_test_process_abc', partial=False)
-        cmd = kill.cmd
-        self.assertIn('pkill', cmd)
-        self.assertIn('-9', cmd)
+        self.assertIn('-x', cmd)
         self.assertNotIn('-f', cmd)
-        self.assertIn('nonexistent_test_process_abc', cmd)
+        self.assertIn('nonexistent_test_process_xyz', cmd)
 
     def test_kill_with_exec_info(self):
         """Test kill with custom exec info"""

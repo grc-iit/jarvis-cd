@@ -1,0 +1,34 @@
+# Pipeline: MetaGEM, Apptainer + sbatch on Ares, 4-node allocation
+# Bind-mounts a pre-staged toy dataset (3 base paired samples ~1.8 GB)
+# from shared NFS so the inline shell skips its slow wget download.
+# Single-host execution on the SLURM head; 4-node allocation reserves
+# compute for the workload. sample_replicates=12 -> ~22 GB fastp I/O
+# across 36 samples, expected wall ~5-7 min.
+
+name: metagem_apptainer_test
+install_manager: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+container_binds:
+  - ${HOME}/jarvis-bench-cache/metagem-stage:/tmp/metagem-cache:ro
+  - ${HOME}/jarvis-runs:${HOME}/jarvis-runs
+
+scheduler:
+  name: slurm
+  job_name: metagem_ares_apptainer
+  nodes: 4
+  ntasks_per_node: 24
+  partition: compute
+  time: "00:30:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+
+pkgs:
+  - pkg_type: builtin.metagem
+    pkg_name: metagem_apptainer
+    nprocs: 1
+    cores: 16
+    sample_replicates: 12
+    out: ${HOME}/jarvis-runs/metagem

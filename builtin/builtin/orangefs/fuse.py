@@ -42,7 +42,7 @@ class OrangefsFuse:
                                 env=self.env))
         self.log(f"Unmounting {self.config['mount']} on each client", Color.YELLOW)
 
-        Kill('.*pvfs2-client.*', PsshExecInfo(hosts=self.client_hosts,
+        Kill('pvfs2-client', PsshExecInfo(hosts=self.client_hosts,
                                         env=self.env))
         Kill('pvfs2-server',
              PsshExecInfo(hosts=self.server_hosts,

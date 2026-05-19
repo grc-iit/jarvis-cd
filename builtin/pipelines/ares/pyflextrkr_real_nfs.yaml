@@ -1,0 +1,40 @@
+# Pipeline: PyFLEXTRKR REAL workflow, Apptainer + sbatch on Ares, 4 nodes.
+# Drops the pyflextrkr_io_only.sh bind so the container's /opt/run_demo.sh
+# runs the actual run_demo_tests.py harness (idealized MCS demo).
+#
+# Sizing: demo=mcs_tbpf (idealized, no network download), replicates=96,
+# parallel_reps=6, omp_threads=4 → 24 reps/host, 4 batches of 6 demos.
+# Each rep writes NetCDF feature/mask/stats files (~30-60 MiB). Per-host
+# ~1 GiB; ~4 GiB across 4 nodes. Expected wall ~3-4 min.
+
+name: pyflextrkr_real_nfs
+install_manager: container
+ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+container_binds:
+  - ${HOME}/real-data:${HOME}/real-data
+
+scheduler:
+  name: slurm
+  job_name: pyflextrkr_real_nfs
+  nodes: 4
+  ntasks_per_node: 24
+  partition: compute
+  time: "00:06:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+
+pkgs:
+  - pkg_type: builtin.pyflextrkr
+    pkg_name: pyflextrkr_real_nfs
+    nprocs: 1
+    ppn: 1
+    demo: mcs_tbpf
+    replicates: 3
+    parallel_reps: 1
+    omp_threads: 0
+    out: ${HOME}/real-data/pyflextrkr

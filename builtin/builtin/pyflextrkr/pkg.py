@@ -3,7 +3,7 @@ This module provides classes and methods to launch the PyFLEXTRKR application.
 PyFLEXTRKR is an atmospheric feature tracking framework.
 """
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo
+from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
 import os
 import time
@@ -53,7 +53,12 @@ class Pyflextrkr(Application):
                 'name': 'demo',
                 'msg': 'Demo to run in container mode',
                 'type': str,
-                'choices': ['mcs_tbpf', 'mcs_tbpf_multinode'],
+                'choices': ['mcs_tbpf', 'mcs_tbpf_multinode',
+                            'mcs_imerg', 'mcs_imerg_mcsmip',
+                            'mcs_wrf_tbpf', 'mcs_model25km',
+                            'mcs_wrf_tbradar', 'mcs_gridrad',
+                            'mcs_himawari', 'cell_nexrad', 'cell_csapr',
+                            'generic_tracking'],
                 'default': 'mcs_tbpf',
             },
             {
@@ -75,6 +80,48 @@ class Pyflextrkr(Application):
                 'msg': 'Processes per node',
                 'type': int,
                 'default': 1,
+            },
+            {
+                'name': 'data_root',
+                'msg': ('Container path where the demo writes its '
+                        'tar-extracted inputs, per-stage intermediates '
+                        '(features, tracks, MCS tracks), and final '
+                        'stats. Default /output/pyflextrkr-data keeps '
+                        'everything on the container\'s writable layer; '
+                        'point at a FUSE mount (e.g. '
+                        '/mnt/dumbwarp/pyflextrkr-data) to route every '
+                        'stage R/W through that adapter.'),
+                'type': str,
+                'default': '/output/pyflextrkr-data',
+            },
+            {
+                'name': 'replicates',
+                'msg': ('Run the chosen demo this many times back-to-back '
+                        'in one container exec, each into '
+                        'rep_NNN-<demo> under the data root. Use this to '
+                        'amplify total I/O when one pass through the '
+                        'sample dataset is too small.'),
+                'type': int,
+                'default': 1,
+            },
+            {
+                'name': 'parallel_reps',
+                'msg': ('Per-host replicate concurrency for the single-'
+                        'node demo path. When > 1, the replicates loop '
+                        'fans across hosts via PsshExecInfo and each host '
+                        'runs this many in parallel using `wait -n` '
+                        'batching. The mcs_tbpf_multinode path uses '
+                        'MpiExecInfo and ignores this knob (MPI handles '
+                        'cross-rank parallelism).'),
+                'type': int,
+                'default': 1,
+            },
+            {
+                'name': 'omp_threads',
+                'msg': ('OMP_NUM_THREADS for each parallel replicate. '
+                        '0 = unset (Dask local-cluster auto-detects).'),
+                'type': int,
+                'default': 0,
             },
             {
                 'name': 'conda_env',
@@ -394,6 +441,8 @@ class Pyflextrkr(Application):
         """
         if self.config.get('deploy_mode') == 'container':
             demo = self.config.get('demo', 'mcs_tbpf')
+            replicates = max(
+                int(self.config.get('replicates', 1) or 1), 1)
             if demo == 'mcs_tbpf_multinode':
                 cmd = '/opt/run_demo_multinode.sh'
                 Exec(cmd, MpiExecInfo(
@@ -416,18 +465,114 @@ class Pyflextrkr(Application):
                 # native /output, then post-stage to FUSE if `out` is
                 # configured -- cp into FUSE is a plain write, supported.
                 stage_target = self.config.get('out', '').strip()
-                cmd = '/opt/run_demo.sh'
-                if stage_target:
-                    # cp -r (NOT -a): wrp_cte_fuse returns ENOSYS on
-                    # chmod/chown/utimes, so attribute preservation
-                    # spams warnings and makes cp exit non-zero. -r
-                    # alone is the supported "plain write" path.
-                    cmd = (
-                        f'{cmd} && '
-                        f'mkdir -p {stage_target} && '
-                        f'cp -r /output/pyflextrkr-data/. {stage_target}/'
+                # The PyFLEXTRKR demo runner uses the demo NAME as the
+                # input selector. We expose `demo` here so the YAML knob
+                # actually flows to the container script -- previously
+                # pkg.py ignored it for the single-node path. Map short
+                # names to actual run_demo_tests.py demos.
+                _DEMO_ALIASES = {
+                    'mcs_tbpf': 'demo_mcs_tbpf_idealized',
+                    'mcs_tbpf_multinode': 'demo_mcs_tbpf_idealized',
+                    'mcs_imerg': 'demo_mcs_imerg',
+                    'mcs_imerg_mcsmip': 'demo_mcs_imerg_mcsmip',
+                    'mcs_wrf_tbpf': 'demo_mcs_wrf_tbpf',
+                    'mcs_model25km': 'demo_mcs_model25km',
+                    'mcs_wrf_tbradar': 'demo_mcs_wrf_tbradar',
+                    'mcs_gridrad': 'demo_mcs_gridrad',
+                    'mcs_himawari': 'demo_mcs_himawari',
+                    'cell_nexrad': 'demo_cell_nexrad',
+                    'cell_csapr': 'demo_cell_csapr',
+                    'generic_tracking': 'demo_generic_tracking',
+                }
+                demo_arg = _DEMO_ALIASES.get(str(demo), str(demo))
+                parallel = max(
+                    int(self.config.get('parallel_reps', 1) or 1), 1)
+                omp = int(self.config.get('omp_threads', 0) or 0)
+
+                # `data_root` (default /output/pyflextrkr-data) is where
+                # the demo runner downloads inputs, extracts tarballs,
+                # writes intermediate features/tracks, and the final
+                # mcs_stats. Point it at a FUSE mount (e.g.
+                # /mnt/dumbwarp/pyflextrkr-data) to route every R/W of
+                # the multi-stage pipeline through that adapter.
+                data_root = (self.config.get('data_root')
+                             or '/output/pyflextrkr-data').rstrip('/')
+                if parallel <= 1:
+                    # Single-host sequential path (original).
+                    if replicates == 1:
+                        cmd = (f"/opt/run_demo.sh '{demo_arg}' "
+                               f"{data_root}")
+                    else:
+                        cmd = (
+                            "set -e; "
+                            f"for i in $(seq 1 {replicates}); do "
+                            f"  rep=$(printf 'rep_%03d' \"$i\"); "
+                            f"  echo \"=== pyflextrkr replicate $rep ($i/{replicates}) ===\"; "
+                            f"  /opt/run_demo.sh '{demo_arg}' "
+                            f"    \"{data_root}-$rep\" || exit 1; "
+                            f"done"
+                        )
+                    if stage_target:
+                        cmd = (
+                            f'{cmd} && '
+                            f'mkdir -p {stage_target} && '
+                            f'cp -r {data_root}*/. {stage_target}/'
+                        )
+                    Exec(cmd, LocalExecInfo(
+                        container=self._container_engine,
+                        container_image=self.deploy_image_name(),
+                        shared_dir=self.shared_dir,
+                        private_dir=self.private_dir,
+                        env=self.mod_env,
+                    )).run()
+                    return
+
+                # parallel_reps > 1: PsshExecInfo fan-out + per-host
+                # wait -n batching. Each rep gets its own
+                # /output/pyflextrkr-data-<rep> so concurrent demo
+                # invocations on the same host don't collide on extracts
+                # or output writes. Per-rep stage to FUSE happens after
+                # the per-host all-reps wait.
+                nhosts = (max(len(self.hostfile.hosts), 1)
+                          if self.hostfile else 1)
+                local_reps = (replicates + nhosts - 1) // nhosts
+                omp_export = (
+                    f"export OMP_NUM_THREADS={omp}; " if omp > 0 else ""
+                )
+                stage_block = ""
+                if stage_target and stage_target != data_root:
+                    stage_block = (
+                        f"&& mkdir -p {stage_target}/$rep "
+                        f"&& cp -r {data_root}-$rep/. "
+                        f"{stage_target}/$rep/"
                     )
-                Exec(cmd, LocalExecInfo(
+                cmd = (
+                    f"set -e; "
+                    f"{omp_export}"
+                    f"LOCAL={local_reps}; "
+                    f"PAR={parallel}; "
+                    f"H=$(hostname -s); "
+                    f"echo \"[pyflextrkr-parallel] host=$H reps=$LOCAL parallel=$PAR omp=${{OMP_NUM_THREADS:-default}}\"; "
+                    f"PIDS=(); "
+                    f"for i in $(seq 1 $LOCAL); do "
+                    f"  ( "
+                    f"    rep=$(printf 'rep_%03d-%s' \"$i\" \"$H\"); "
+                    f"    /opt/run_demo.sh '{demo_arg}' "
+                    f"      \"{data_root}-$rep\" "
+                    f"      {stage_block} "
+                    f"      && echo \"[pyflextrkr-parallel] host=$H $rep DONE\" "
+                    f"      || {{ echo \"[pyflextrkr-parallel] host=$H $rep FAILED\" >&2; exit 1; }} "
+                    f"  ) & "
+                    f"  PIDS+=($!); "
+                    f"  if [ \"${{#PIDS[@]}}\" -ge $PAR ]; then "
+                    f"    wait -n; "
+                    f"    PIDS=(\"${{PIDS[@]:1}}\"); "
+                    f"  fi; "
+                    f"done; "
+                    f"wait"
+                )
+                Exec(cmd, PsshExecInfo(
+                    hostfile=self.hostfile,
                     container=self._container_engine,
                     container_image=self.deploy_image_name(),
                     shared_dir=self.shared_dir,

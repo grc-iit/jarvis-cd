@@ -89,8 +89,13 @@ class Scheduler:
         path.chmod(0o755)
         return path
 
-    def submit_command(self) -> List[str]:
-        """Argv used to submit the rendered script."""
+    def submit_command(self, wait: bool = False) -> List[str]:
+        """Argv used to submit the rendered script.
+
+        :param wait: when True, ask the scheduler to block until the job
+            finishes (e.g. ``sbatch --wait``). Backends that have no
+            equivalent ignore the flag.
+        """
         raise NotImplementedError
 
     def _pipeline_invocation(self) -> str:
@@ -118,7 +123,7 @@ class SlurmScheduler(Scheduler):
     #: can pass arbitrary SBATCH flags from YAML without us hard-coding
     #: every one.
     _STRUCTURAL_KEYS = {
-        'name', 'hostfile', 'sbatch_args', 'pre_cmds', 'post_cmds',
+        'name', 'hostfile', 'suffix', 'sbatch_args', 'pre_cmds', 'post_cmds',
     }
 
     #: explicit short-key -> SBATCH long-flag map. Anything not in here
@@ -173,10 +178,20 @@ class SlurmScheduler(Scheduler):
 
         # Build hostfile from the allocation. scontrol expands the
         # compact nodelist into one host per line; that's exactly what
-        # jarvis.util.hostfile.Hostfile consumes.
+        # jarvis.util.hostfile.Hostfile consumes. When `suffix:` is set,
+        # append it to each hostname — used to redirect traffic onto a
+        # secondary NIC (e.g. `ares-comp-1` -> `ares-comp-1-40g` for the
+        # 40GbE interface).
+        suffix = self.spec.get('suffix')
+        if suffix:
+            hostnames_cmd = (
+                f"scontrol show hostnames \"$SLURM_JOB_NODELIST\" "
+                f"| awk -v s={shlex.quote(str(suffix))} '{{print $0 s}}'")
+        else:
+            hostnames_cmd = 'scontrol show hostnames "$SLURM_JOB_NODELIST"'
         hostfile_block = (
             f'mkdir -p "$(dirname {hostfile})"\n'
-            f'scontrol show hostnames "$SLURM_JOB_NODELIST" > {hostfile}\n'
+            f'{hostnames_cmd} > {hostfile}\n'
             f'echo "Wrote hostfile: {hostfile}"\n'
             f'cat {hostfile}\n'
         )
@@ -201,8 +216,12 @@ class SlurmScheduler(Scheduler):
         )
         return script
 
-    def submit_command(self) -> List[str]:
-        return ["sbatch", str(self.script_path)]
+    def submit_command(self, wait: bool = False) -> List[str]:
+        cmd = ["sbatch"]
+        if wait:
+            cmd.append("--wait")
+        cmd.append(str(self.script_path))
+        return cmd
 
 
 _SCHEDULERS: Dict[str, type] = {

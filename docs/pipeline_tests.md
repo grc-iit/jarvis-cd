@@ -5,13 +5,17 @@ Pipeline tests are used to run experiment sets using a grid search. They allow y
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [YAML Format](#yaml-format)
-3. [Example Files](#example-files)
-4. [Variables and Loop](#variables-and-loop)
-5. [Output and Statistics](#output-and-statistics)
-6. [CLI Commands](#cli-commands)
-7. [Resume and Progress](#resume-and-progress)
-8. [Custom Statistics](#custom-statistics)
+2. [Multiple Pipelines in a Single YAML File](#multiple-pipelines-in-a-single-yaml-file)
+3. [YAML Format](#yaml-format)
+4. [Example Files](#example-files)
+5. [Variables and Loop](#variables-and-loop)
+   - [Scheduler Variables](#scheduler-variables)
+6. [Launcher Overrides](#launcher-overrides)
+7. [Output and Statistics](#output-and-statistics)
+8. [CLI Commands](#cli-commands)
+9. [Resume and Progress](#resume-and-progress)
+10. [Custom Statistics](#custom-statistics)
+11. [Scheduling](#scheduling)
 
 ## Overview
 
@@ -21,6 +25,51 @@ A pipeline test consists of:
 - A **loop** section defining how variables are iterated
 - A **repeat** count for running each configuration multiple times
 - An **output** directory for storing results
+
+## Multiple Pipelines in a Single YAML File
+
+A pipeline test **is** the mechanism for expressing many pipelines in
+one file. A single test YAML contains one `config:` skeleton plus a
+`vars:`/`loop:` grid; loading it expands that grid into one distinct
+pipeline per `(combination × repeat)`.
+
+Each generated pipeline is materialized independently at run time:
+
+- It is renamed `"{test_name}_run{N}"` (`N` is the global run index,
+  starting at 1), so every iteration is a separate Jarvis pipeline
+  with its own name and config/shared/private directories — they do
+  not collide.
+- Its config is `config:` with that combination's variable values
+  patched in (`pkg_name.var_name` onto the matching package;
+  `scheduler.var_name` onto the scheduler block — see
+  [Scheduler Variables](#scheduler-variables)).
+- It is written to a temporary YAML, loaded as an ordinary pipeline,
+  then either run in-process (`start()` → `stop()`) or, if it has a
+  scheduler block, submitted as its own batch job and waited on.
+
+So a 5×4 grid with `repeat: 3` is "60 pipelines in one YAML file":
+
+```yaml
+config:
+  name: ior_sweep            # pipelines: ior_sweep_run1 .. ior_sweep_run60
+  pkgs:
+    - pkg_type: builtin.ior
+      pkg_name: ior
+vars:
+  ior.nprocs: [1, 2, 4, 8, 16]
+  ior.block:  [512M, 1G, 2G, 4G]
+loop:
+  - [ior.nprocs]
+  - [ior.block]
+repeat: 3
+output: "${HOME}/ior_results"
+```
+
+Detection is automatic (see [Auto-Detection](#auto-detection)): a file
+with a `config:` section plus any of `vars`/`loop`/`repeat`/`output`
+is a multi-pipeline test; a file with top-level `name`/`pkgs` is a
+single regular pipeline. The same `jarvis ppl load|run|submit yaml
+<file>` commands work for both.
 
 ## YAML Format
 
@@ -92,10 +141,13 @@ The directory where results are stored. You can use environment variables:
 
 ### scheduler (optional)
 
-A top-level `scheduler:` block runs the whole test inside a single
-batch allocation (one job, every variable combination + repeat
-executed sequentially). See [scheduler.md](scheduler.md) for the full
-key reference.
+A top-level `scheduler:` block plays one of two roles depending on
+whether the `vars:` section contains any `scheduler.*` entries. See
+[scheduler.md](scheduler.md) for the full scheduler key reference.
+
+**Mode A — single-job wrapper (no `scheduler.*` vars):**
+the whole test runs inside one allocation; every variable combination
+and repeat executes sequentially in that one job.
 
 ```yaml
 scheduler:
@@ -113,9 +165,16 @@ vars: {...}
 loop: [...]
 ```
 
-Submit with `jarvis ppl submit path/to/test.yaml`. To submit one job
-per iteration instead, move the `scheduler:` block inside `config:` so
-each generated child pipeline owns its own submission script.
+Submit with `jarvis ppl submit path/to/test.yaml`.
+
+**Mode B — per-iteration template (`scheduler.*` vars present):**
+the top-level scheduler becomes a set of *defaults* that every
+iteration's scheduler inherits, and each iteration is submitted as its
+own job via `sbatch --wait` (so the test runner blocks on each job
+before moving on). See [Scheduler Variables](#scheduler-variables).
+
+In Mode B, `jarvis ppl submit` is rejected; use `jarvis ppl run` so
+each iteration submits independently.
 
 ## Example Files
 
@@ -216,9 +275,13 @@ The resulting test cases are:
 
 ### Variable Naming
 
-Variables use the format `pkg_name.var_name`:
-- `pkg_name` must match the `pkg_name` field of a package in the config
-- `var_name` is any configuration parameter that package accepts
+Variables use one of two prefixes:
+
+- `pkg_name.var_name` — set `var_name` on the matching package.
+  - `pkg_name` must match the `pkg_name` field of a package in the config
+  - `var_name` is any configuration parameter that package accepts
+- `scheduler.var_name` — set `var_name` on this iteration's scheduler
+  block. See [Scheduler Variables](#scheduler-variables) below.
 
 ### Loop Groups
 
@@ -252,6 +315,91 @@ loop:
 ```
 
 Total combinations: 3 x 2 x 2 = 12
+
+### Scheduler Variables
+
+Variables prefixed with `scheduler.` are applied to this iteration's
+scheduler block instead of a package. This is the right way to sweep
+node counts, partitions, time limits, or anything else the scheduler
+understands (see [scheduler.md](scheduler.md) for the SLURM key list).
+
+The effective scheduler for each iteration is built by merging, in
+order:
+
+1. The test's top-level `scheduler:` block (defaults / template).
+2. Any `scheduler:` block nested inside `config:` (per-test override).
+3. The `scheduler.*` values from this combination's `vars:`.
+
+When the merged block exists, the iteration is submitted as its own
+job via `sbatch --wait`; the test runner blocks on each job before
+collecting stats and moving on.
+
+#### Example: Scaling Sweep
+
+```yaml
+scheduler:
+  name: slurm
+  partition: compute
+  time: "00:30:00"
+  ntasks_per_node: 16
+  output: ${HOME}/logs/scaling.%j.out
+  error:  ${HOME}/logs/scaling.%j.err
+
+config:
+  name: ior_scaling
+  pkgs:
+    - pkg_type: builtin.ior
+      pkg_name: ior
+      block: 1G
+      xfer: 1M
+
+vars:
+  scheduler.nodes: [1, 2, 4, 8, 16]
+  ior.nprocs:     [16, 32, 64, 128, 256]
+
+loop:
+  - [scheduler.nodes, ior.nprocs]   # zipped: nodes * 16 procs
+
+repeat: 3
+output: "${HOME}/ior_scaling_results"
+```
+
+This sweeps a 5-point scaling curve. Each iteration submits its own
+SLURM job with the matching `--nodes=...`, inheriting `partition`,
+`time`, `ntasks_per_node`, etc. from the top-level template.
+
+## Launcher Overrides
+
+The `config:` block is loaded as an ordinary pipeline, so it accepts
+the same top-level launcher-override keys a regular pipeline does —
+`ssh_cmd`, `pssh_cmd`, and `mpi_cmd`. Place them **inside `config:`**
+(not at the test's top level), and every iteration generated from the
+test inherits them:
+
+```yaml
+config:
+  name: ior_sweep
+  ssh_cmd:  "env -u LD_LIBRARY_PATH ssh"   # host openssh, not conda's
+  pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+  mpi_cmd:  "mpiexec"
+  pkgs:
+    - pkg_type: builtin.ior
+      pkg_name: ior
+
+vars:
+  ior.nprocs: [1, 2, 4, 8, 16]
+loop:
+  - [ior.nprocs]
+repeat: 3
+output: "${HOME}/ior_results"
+```
+
+These swap the SSH / parallel-SSH / MPI launchers without modifying
+any package. The canonical use is `env -u LD_LIBRARY_PATH ssh`, which
+keeps a conda environment's `libcrypto` out of the host `ssh` (an ABI
+mismatch otherwise makes `ssh` exit 255 before forwarding the remote
+command). See [shell.md → Launcher Overrides](shell.md#launcher-overrides)
+for the full mechanism and the per-MPI-backend bootstrap forwarding.
 
 ## Output and Statistics
 
@@ -462,3 +610,56 @@ class Ycsb(Application):
 | Runtime | `pkg.runtime` | Execution time (seconds) |
 | Memory | `pkg.memory_peak` | Peak memory usage (MB) |
 | Error Rate | `pkg.error_rate` | Percentage of failures |
+
+## Scheduling
+
+Pipeline tests integrate with the batch scheduler (SLURM today) in two
+mutually exclusive modes, selected automatically by whether `vars:`
+contains any `scheduler.*` entries. Both are introduced under
+[scheduler (optional)](#scheduler-optional) above; this section
+summarizes them and points at the full reference.
+
+### Mode A — one job wraps the whole test
+
+No `scheduler.*` vars. A top-level `scheduler:` block wraps **every**
+combination and repeat in a single allocation. The generated job
+script builds a hostfile from the allocation, then runs
+`jarvis ppl run yaml <test>` once so all iterations reuse the same
+nodes sequentially.
+
+```bash
+jarvis ppl submit path/to/test.yaml          # writes + sbatch
+jarvis ppl submit path/to/test.yaml +no_submit   # script only
+```
+
+The script is written to `<test_shared_dir>/submit.slurm`.
+
+### Mode B — one job per iteration
+
+Any `scheduler.<key>` entry in `vars:` flips the test into
+per-iteration submission. The effective scheduler for each iteration is
+merged in order:
+
+```
+top-level scheduler  ⊕  config.scheduler (if any)  ⊕  scheduler.* vars
+```
+
+Each iteration is submitted on its own via `sbatch --wait`, so the
+test runner **blocks** on each job (capturing its runtime/stats)
+before moving to the next. Run these with `jarvis ppl run yaml
+<test>`; `jarvis ppl submit` is rejected in this mode because wrapping
+a per-iteration template in one job would freeze the swept values.
+
+This is the natural way to drive scaling sweeps (node count,
+partition, time limit, ...) — see
+[Scheduler Variables](#scheduler-variables) for a worked scaling
+example.
+
+### Reference
+
+See **[scheduler.md](scheduler.md)** for: the full SLURM key table
+(`nodes`, `ntasks_per_node`, `partition`, `time`, `gres`, ...),
+pass-through of arbitrary `--flag=value` directives, `pre_cmds` /
+`post_cmds` hooks, the hostname `suffix:` (secondary-NIC) feature, and
+how the allocation-built hostfile flows back into every package via
+`self.hostfile`.

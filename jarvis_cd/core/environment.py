@@ -23,6 +23,14 @@ class EnvironmentManager:
         'CPLUS_INCLUDE_PATH',
         'INCLUDE_PATH',
         
+        # User identity — chimaera and other tools namespace their
+        # per-user SHM / runtime state under $USER (e.g.,
+        # /tmp/chimaera_${USER}/). Mismatched USER between the runtime
+        # daemon and a client process produces silent shm_open
+        # failures.
+        'USER',
+        'HOME',
+
         # Library paths
         'LD_LIBRARY_PATH',
         'LIBRARY_PATH',
@@ -290,15 +298,15 @@ class EnvironmentManager:
     def _capture_current_environment(self) -> Dict[str, str]:
         """
         Capture current environment variables that are commonly used in builds.
-        
+
         :return: Dictionary of environment variables
         """
         captured = {}
-        
+
         for var_name in self.COMMON_ENV_VARS:
             if var_name in os.environ:
                 captured[var_name] = os.environ[var_name]
-                
+
         return captured
         
     def capture_spack_environment(self, spack_specs: List[str]) -> Dict[str, str]:

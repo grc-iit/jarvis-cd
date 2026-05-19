@@ -1,0 +1,60 @@
+name: rna_seq_dumbwarp_pc
+
+install_manager: container
+container_engine: apptainer
+container_image: rna_seq_star_deseq2_apptainer_test
+
+container_binds:
+  - /mnt/common/llogan/jarvis-cd/builtin/builtin/rna_seq_star_deseq2/run_rnaseq.sh:/opt/run_rnaseq.sh:ro
+  - ${HOME}/.ppi-jarvis/shared/rna_seq_star_deseq2_real_nfs/overlay/upper/opt/conda/envs/rnaseq-tools:/opt/conda/envs/rnaseq-tools:ro
+  - ${HOME}/jarvis-runs:${HOME}/jarvis-runs
+  - ${HOME}/dumbwarp_rna_seq_4n:${HOME}/dumbwarp_rna_seq_4n
+  - ${HOME}/dumbwarp_rna_seq_4n:/mnt/dumbwarp
+
+ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+mpi_cmd: 'mpiexec --mca btl_tcp_if_include enp47s0np0 --mca oob_tcp_if_include eno1 --prtemca prte_if_include eno1 --prtemca prte_tmpdir_base /home/llogan/iowarp_prte_tmp'
+
+env:
+  TMPDIR: "/home/llogan/iowarp_prte_tmp"
+
+scheduler:
+  name: slurm
+  job_name: dumbwarp_rna_seq_4n_full
+  nodes: 4
+  ntasks_per_node: 24
+  mem: 20G
+  partition: compute
+  time: "00:30:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+  suffix: "-40g"
+  pre_cmds:
+    - 'source /etc/profile.d/lmod.sh 2>/dev/null || source /etc/profile.d/modules.sh'
+    - 'module load gcc/11.4.0/openmpi/5.0.5-x2kvx5l'
+    - 'mkdir -p /home/llogan/iowarp_prte_tmp'
+    - 'for n in $(scontrol show hostnames "$SLURM_JOB_NODELIST"); do env -u LD_LIBRARY_PATH ssh -o BatchMode=yes -o StrictHostKeyChecking=no "$n" "pkill -9 dumbwarpd 2>/dev/null; fusermount3 -u /home/llogan/dumbwarp_rna_seq_4n 2>/dev/null; umount -l /home/llogan/dumbwarp_rna_seq_4n 2>/dev/null; rm -rf /tmp/rnaseq-scratch-* 2>/dev/null; rm -f /tmp/dumbwarp_*.csv /tmp/dumbwarp_*.log 2>/dev/null; mkdir -p /home/llogan/dumbwarp_rna_seq_4n; true" & done; wait'
+
+pkgs:
+  - pkg_type: jarvis_dumbwarp.dumbwarp
+    pkg_name: dumbwarp
+    deploy_mode: default
+    mountpoint: ${HOME}/dumbwarp_rna_seq_4n
+    bin_dir: /mnt/common/llogan/dumbwarp/build
+    bind_addr: enp47s0np0
+    port: 18123
+    thallium_proto: "ofi+tcp;ofi_rxm"
+    page_size: 65536
+    consumer_ttl: 120
+    compress: none
+    sleep: 4
+
+  - pkg_type: builtin.rna_seq_star_deseq2
+    pkg_name: rna_seq
+    nprocs: 1
+    ppn: 1
+    replicates: 8
+    parallel_reps: 2
+    omp_threads: 4
+    cores: 16
+    out: /mnt/dumbwarp/rna_seq
+    parallel_scratch_root: /mnt/dumbwarp/scratch

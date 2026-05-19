@@ -8,22 +8,23 @@ from .exec_info import ExecInfo, LocalExecInfo
 
 class Kill(Exec):
     """
-    Kill all processes which match the name regex.
+    Kill all processes whose process name exactly matches an executable.
     """
-    
-    def __init__(self, cmd: str, exec_info: ExecInfo = None, partial: bool = True):
+
+    def __init__(self, executable: str, exec_info: ExecInfo = None):
         """
-        Kill all processes which match the name regex.
-        
-        :param cmd: A regex for the command to kill
+        Kill all processes whose process name (comm) exactly equals
+        ``executable``. Uses ``pkill -9 -x <executable>``, which matches
+        the basename only — pass the executable name, not a command line
+        or regex.
+
+        :param executable: Executable name to kill (e.g. ``redis-server``)
         :param exec_info: Info needed to execute the command
-        :param partial: If True, use partial matching (-f flag)
         """
         if exec_info is None:
             exec_info = LocalExecInfo()
-            
-        partial_flag = "-f" if partial else ""
-        kill_cmd = f"pkill -9 {partial_flag} '{cmd}'"
+
+        kill_cmd = f"pkill -9 -x '{executable}'"
         super().__init__(kill_cmd, exec_info)
 
 

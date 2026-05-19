@@ -48,6 +48,12 @@ class Pipeline:
         # Install manager: None (legacy default), 'container', or 'spack'
         self.install_manager = None
 
+        # Launcher overrides (set from YAML top-level keys ``ssh_cmd``,
+        # ``pssh_cmd``, ``mpi_cmd``). None = built-in defaults.
+        self.ssh_cmd = None
+        self.pssh_cmd = None
+        self.mpi_cmd = None
+
         # Hostfile parameter (None means use global jarvis hostfile)
         self.hostfile = None
 
@@ -104,12 +110,15 @@ class Pipeline:
             self.hostfile = Hostfile(path=path, load_path=False,
                                      find_ips=False)
 
-    def submit(self, submit: bool = True) -> Path:
+    def submit(self, submit: bool = True, wait: bool = False) -> Path:
         """Write the scheduler job script and (optionally) submit it.
 
         :param submit: when True, exec the scheduler's submit command
             (e.g. ``sbatch``); when False, only write the script and
             return its path so the caller can inspect it.
+        :param wait: when True (and submit is True), ask the scheduler
+            to block until the job finishes. SLURM maps this to
+            ``sbatch --wait``; backends without an equivalent ignore it.
         :return: Path to the generated job script.
         """
         if not self.scheduler:
@@ -136,7 +145,7 @@ class Pipeline:
 
         if submit:
             from jarvis_cd.shell import Exec, LocalExecInfo
-            cmd = ' '.join(sched.submit_command())
+            cmd = ' '.join(sched.submit_command(wait=wait))
             logger.pipeline(f"Submitting: {cmd}")
             result = Exec(cmd, LocalExecInfo()).run()
             exit_code = result.exit_code.get('localhost', 1)
@@ -173,6 +182,25 @@ class Pipeline:
             if pkg_def.get('config', {}).get('deploy_mode') == 'container':
                 return True
         return False
+
+    def _apply_launcher_overrides(self):
+        """
+        Push pipeline-YAML-level ``ssh_cmd``/``pssh_cmd``/``mpi_cmd``
+        into ExecInfo's class-level defaults so every subsequent
+        SshExecInfo / PsshExecInfo / MpiExecInfo created by any package
+        inherits the override automatically.
+
+        Used to swap launchers without modifying packages — e.g.
+        ``ssh_cmd: "env -u LD_LIBRARY_PATH ssh"`` keeps a conda env's
+        libcrypto from being loaded into the host openssh, which
+        otherwise aborts with an OpenSSL version mismatch.
+        """
+        from ..shell.exec_info import ExecInfo
+        ExecInfo.set_launcher_defaults(
+            ssh_cmd=self.ssh_cmd,
+            pssh_cmd=self.pssh_cmd,
+            mpi_cmd=self.mpi_cmd,
+        )
 
     def _propagate_deploy_mode(self):
         """
@@ -347,6 +375,16 @@ class Pipeline:
         # Add install manager
         if self.install_manager:
             pipeline_config['install_manager'] = self.install_manager
+
+        # Persist launcher overrides so reloads round-trip and
+        # downstream `ppl run` invocations see the same launcher even
+        # without re-reading the original YAML.
+        if self.ssh_cmd:
+            pipeline_config['ssh_cmd'] = self.ssh_cmd
+        if self.pssh_cmd:
+            pipeline_config['pssh_cmd'] = self.pssh_cmd
+        if self.mpi_cmd:
+            pipeline_config['mpi_cmd'] = self.mpi_cmd
 
         # Persist scheduler block so reloads (and ``ppl print``) round-trip
         if self.scheduler:
@@ -984,7 +1022,18 @@ class Pipeline:
         self.container_host_path = pipeline_config.get('container_host_path', '')
         self.container_workspace = pipeline_config.get('container_workspace', '')
         self.container_caps = pipeline_config.get('container_caps', [])
-        self.container_binds = pipeline_config.get('container_binds', [])
+        self.container_binds = Pipeline._expand_env_in_config(
+            pipeline_config.get('container_binds', []) or [])
+
+        # Launcher overrides (top-level YAML keys). None = use built-in
+        # defaults (ssh / pssh / mpiexec). Typical override pattern:
+        #   ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+        # Wrapping ssh in env -u keeps a conda env's libcrypto out of
+        # the host openssh, which otherwise dies on an ABI mismatch.
+        self.ssh_cmd = pipeline_config.get('ssh_cmd', None)
+        self.pssh_cmd = pipeline_config.get('pssh_cmd', None)
+        self.mpi_cmd = pipeline_config.get('mpi_cmd', None)
+        self._apply_launcher_overrides()
 
         # Load install manager
         self.install_manager = pipeline_config.get('install_manager', None)
@@ -1127,7 +1176,33 @@ class Pipeline:
         # the workload needs (e.g., SYS_ADMIN + /dev/fuse for FUSE mounts)
         # has to be declared at the pipeline level here.
         self.container_caps = pipeline_def.get('container_caps', [])
-        self.container_binds = pipeline_def.get('container_binds', [])
+        self.container_binds = Pipeline._expand_env_in_config(
+            pipeline_def.get('container_binds', []) or [])
+
+        # Optional per-host /tmp redirect for the apptainer instance.
+        # When a pipeline workload hardcodes scratch dirs under /tmp
+        # (snakemake, biobb's /tmp/biobb-scratch, etc.), the default
+        # `--no-mount tmp` + shared NFS overlay layout means every host's
+        # apptainer instance shares the same /tmp on NFS — parallel reps
+        # across hosts collide on mkdir / rm / rename of the same paths.
+        # Setting `tmp_bind_root: /mnt/nvme/$USER` (or any per-host path)
+        # binds <root>/<pipeline_name>/tmp into the container at /tmp,
+        # giving each host its own /tmp on node-local NVMe/tmpfs. The
+        # caller must mkdir <root>/<pipeline_name>/tmp on every host
+        # (use a pre_cmd, since the path is per-host and may not exist
+        # yet on first run).
+        tmp_bind_root_raw = pipeline_def.get('tmp_bind_root', None)
+        self.tmp_bind_root = (
+            os.path.expandvars(tmp_bind_root_raw)
+            if tmp_bind_root_raw else None
+        )
+
+        # Launcher overrides (top-level YAML keys). None = use built-in
+        # defaults (ssh / pssh / mpiexec). See _apply_launcher_overrides.
+        self.ssh_cmd = pipeline_def.get('ssh_cmd', None)
+        self.pssh_cmd = pipeline_def.get('pssh_cmd', None)
+        self.mpi_cmd = pipeline_def.get('mpi_cmd', None)
+        self._apply_launcher_overrides()
 
         # Load install manager
         self.install_manager = pipeline_def.get('install_manager', None)
@@ -2401,20 +2476,57 @@ class Pipeline:
             overlay_flag = f'--overlay {overlay_dir} '
             no_mount_flag = '--no-mount tmp '
 
+            # When tmp_bind_root is set in the pipeline YAML, replace the
+            # overlay-backed /tmp with a per-host bind mount so workloads
+            # that hardcode /tmp scratch dirs don't collide across hosts.
+            # See pipeline-load comment for rationale.
+            tmp_bind_flag = ''
+            if self.tmp_bind_root:
+                tmp_bind_path = f"{self.tmp_bind_root}/{self.name}/tmp"
+                tmp_bind_flag = f'--bind {tmp_bind_path}:/tmp '
+                no_mount_flag = ''
+
             start_cmd = (
                 f"apptainer instance start {nv_flag}{cap_flag}{bind_flags}"
-                f"{no_mount_flag}{overlay_flag}{sif_path} {instance_name}"
+                f"{tmp_bind_flag}{no_mount_flag}{overlay_flag}{sif_path} {instance_name}"
                 f" && apptainer exec {nv_flag}instance://{instance_name}"
                 f" /usr/sbin/sshd -p {ssh_port}"
                 f" -o StrictModes=no -o UsePAM=no"
             )
 
+            # Fan apptainer instance start across every host in the
+            # hostfile via PsshExecInfo, matching the symmetric
+            # stop/kill paths below. Required for any package that uses
+            # PsshExecInfo with container=apptainer — that path wraps as
+            # `apptainer exec instance://...` on each remote host, which
+            # only works if an instance is actually running there. The
+            # earlier "head-only" behavior silently restricted workload
+            # parallelism to host[0] even on multi-node SLURM allocations.
+            #
+            # Within a SLURM allocation, ssh hops to allocated peers are
+            # adopted by pam_slurm_adopt automatically; the pipeline's
+            # own ssh_cmd override (e.g. env -u LD_LIBRARY_PATH ssh)
+            # neutralizes the conda libcrypto/OpenSSL mismatch.
             hostfile = self.get_hostfile()
             if self._hostfile_is_local_only(hostfile):
                 logger.info("Hostfile is local-only, deploying to localhost directly")
                 exec_info = LocalExecInfo()
             else:
+                logger.info(
+                    f"Hostfile has {len(hostfile)} hosts; starting "
+                    "apptainer instance on every host via PsshExecInfo")
                 exec_info = PsshExecInfo(hostfile=hostfile)
+
+            # Per-host bind source for tmp_bind_root must exist on every
+            # node before the apptainer instance start tries to mount it,
+            # otherwise apptainer aborts with "mount source X doesn't
+            # exist". Fan a mkdir to all hosts via the same exec_info.
+            if self.tmp_bind_root:
+                tmp_mkdir = f"mkdir -p {self.tmp_bind_root}/{self.name}/tmp"
+                logger.info(
+                    f"tmp_bind_root set; ensuring {self.tmp_bind_root}/"
+                    f"{self.name}/tmp exists on every host")
+                Exec(tmp_mkdir, exec_info).run()
 
             Exec(start_cmd, exec_info).run()
             logger.success("Apptainer instances started (SSH ready)")
