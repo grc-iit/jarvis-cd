@@ -1,6 +1,6 @@
 name: rna_seq_dumbwarp_pc
 
-install_manager: container
+base_deploy_mode: container
 container_engine: apptainer
 container_image: rna_seq_star_deseq2_apptainer_test
 

@@ -12,7 +12,7 @@
 # and STAR alignment).
 
 name: rna_seq_star_deseq2_real_nfs
-install_manager: container
+base_deploy_mode: container
 ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
 pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
 

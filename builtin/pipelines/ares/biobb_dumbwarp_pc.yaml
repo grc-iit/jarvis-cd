@@ -4,7 +4,7 @@
 # output — proper producer-consumer pipeline visible in file_report.
 name: biobb_dumbwarp_pc
 
-install_manager: container
+base_deploy_mode: container
 container_engine: apptainer
 container_image: biobb_wf_md_setup_apptainer_test
 

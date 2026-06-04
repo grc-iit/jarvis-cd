@@ -7,7 +7,7 @@
 #   jarvis ppl run
 
 name: ior_ares_multi_node
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: ubuntu:24.04

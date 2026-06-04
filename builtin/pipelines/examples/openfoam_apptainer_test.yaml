@@ -8,7 +8,7 @@
 # Python bindings are off because openfoam-dev doesn't need them.
 
 name: openfoam_apptainer_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: apptainer
 container_base: sci-hpc-base

@@ -3,12 +3,13 @@
 # Requirements: Spack installed and in PATH (or SPACK_ROOT set)
 
 name: lammps_spack_test
-install_manager: spack
+base_deploy_mode: spack
 
 pkgs:
   - pkg_type: builtin.lammps
     pkg_name: lammps_spack
-    install: lammps
+    install_method: spack
+    install_query: lammps
     nprocs: 4
     ppn: 4
     script: /opt/lammps/bench/in.lj

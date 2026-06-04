@@ -8,7 +8,7 @@
 #   bin/jarvis ppl run
 
 name: lammps_local_single_node
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: ubuntu:24.04

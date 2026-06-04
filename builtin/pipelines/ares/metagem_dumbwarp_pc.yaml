@@ -1,6 +1,6 @@
 name: metagem_dumbwarp_pc
 
-install_manager: container
+base_deploy_mode: container
 container_engine: apptainer
 container_image: metagem_apptainer_test
 

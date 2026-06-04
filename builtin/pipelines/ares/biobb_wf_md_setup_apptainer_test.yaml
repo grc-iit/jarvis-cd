@@ -5,7 +5,7 @@
 # ~80 GiB written. Expected wall ~4-5 min (NFS-bound, 100-200 MB/s/node).
 
 name: biobb_wf_md_setup_apptainer_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: apptainer
 container_base: ubuntu:24.04

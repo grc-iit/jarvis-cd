@@ -6,7 +6,7 @@
 # Deploy phase: ior_apptainer_test.sif — copies ior binary, converted from Docker image
 
 name: ior_apptainer_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: apptainer
 container_base: ubuntu:24.04

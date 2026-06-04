@@ -5,7 +5,7 @@
 # ~9 min wall on the bundled ngs-test-data.
 
 name: rna_seq_star_deseq2_apptainer_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: apptainer
 container_base: ubuntu:24.04

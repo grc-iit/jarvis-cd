@@ -10,7 +10,7 @@
 #   jarvis ppl run
 
 name: lammps_delta_single_node
-install_manager: container
+base_deploy_mode: container
 
 container_engine: apptainer
 container_base: nvidia/cuda:12.8.0-devel-ubuntu24.04

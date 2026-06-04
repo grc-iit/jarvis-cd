@@ -187,8 +187,24 @@ class Pkg:
         # Add common parameters that all packages should have
         common_menu = [
             {
+                'name': 'install_method',
+                'msg': "Installer to use for this package "
+                       "('pip', 'conda', 'spack', 'container'). Empty "
+                       "string defers to the pipeline's base_deploy_mode.",
+                'type': str,
+                'default': '',
+            },
+            {
+                'name': 'install_query',
+                'msg': 'Package spec consumed by the installer (e.g. spack '
+                       'spec, pip requirement, conda package name).',
+                'type': str,
+                'default': '',
+            },
+            {
                 'name': 'install',
-                'msg': 'Spack spec for this package (used with install_manager: spack)',
+                'msg': 'Deprecated alias for install_query. Prefer '
+                       'install_query.',
                 'type': str,
                 'default': '',
             },

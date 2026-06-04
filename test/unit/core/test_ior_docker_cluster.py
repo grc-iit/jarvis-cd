@@ -173,11 +173,11 @@ class TestIorDockerCluster(unittest.TestCase):
             len(self.DOCKER_HOSTS),
         )
 
-    def test_ior_container_install_manager(self):
-        """Pipeline should use install_manager=container for containerized deployment."""
+    def test_ior_container_base_deploy_mode(self):
+        """Pipeline should use base_deploy_mode=container for containerized deployment."""
         pipeline = Pipeline()
         pipeline.create('docker_cluster_mode')
-        pipeline.install_manager = 'container'
+        pipeline.base_deploy_mode = 'container'
         pipeline.container_engine = 'docker'
         pipeline.container_base = 'ubuntu:24.04'
 
@@ -194,7 +194,7 @@ class TestIorDockerCluster(unittest.TestCase):
 
         # Verify container-related pipeline settings persisted
         pipeline2 = Pipeline('docker_cluster_mode')
-        self.assertEqual(pipeline2.install_manager, 'container')
+        self.assertEqual(pipeline2.base_deploy_mode, 'container')
         self.assertEqual(pipeline2.container_engine, 'docker')
         self.assertEqual(pipeline2.container_base, 'ubuntu:24.04')
 

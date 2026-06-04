@@ -5,7 +5,7 @@
 # Expected Runtime: 5-10 minutes (first run builds the image from source)
 
 name: ycsbc_local_test
-install_manager: container
+base_deploy_mode: container
 
 # Container configuration — YCSB-cpp is built from source, no spack needed.
 container_engine: docker

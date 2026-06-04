@@ -13,7 +13,7 @@
 
 name: montage_dumbwarp_pc
 
-install_manager: container
+base_deploy_mode: container
 container_engine: apptainer
 container_image: montage_apptainer_test
 

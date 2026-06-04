@@ -10,7 +10,7 @@
 #                   under a minute thereafter.
 
 name: gadget2_local_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: ubuntu:22.04

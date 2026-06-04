@@ -1,5 +1,5 @@
 name: redis_container_test
-install_manager: container
+base_deploy_mode: container
 container_engine: docker
 container_base: ubuntu:24.04
 pkgs:

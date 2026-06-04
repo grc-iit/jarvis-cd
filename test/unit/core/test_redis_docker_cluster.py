@@ -113,7 +113,7 @@ class TestRedisDockerCluster(unittest.TestCase):
         """Create a pipeline with Redis + redis-benchmark and the Docker hostfile."""
         pipeline = Pipeline()
         pipeline.create(name)
-        pipeline.install_manager = 'container'
+        pipeline.base_deploy_mode = 'container'
         pipeline.container_engine = 'docker'
         pipeline.container_base = 'ubuntu:24.04'
 
@@ -270,14 +270,14 @@ class TestRedisDockerCluster(unittest.TestCase):
         target_host = hf.hosts[pkg.config['node']]
         self.assertEqual(target_host, 'redis-node-01')
 
-    def test_install_manager_container(self):
-        """Pipeline should have install_manager=container."""
+    def test_base_deploy_mode_container(self):
+        """Pipeline should have base_deploy_mode=container."""
         pipeline = self._create_redis_pipeline('redis_deploy')
-        self.assertEqual(pipeline.install_manager, 'container')
+        self.assertEqual(pipeline.base_deploy_mode, 'container')
 
         # Reload and verify persistence
         pipeline2 = Pipeline('redis_deploy')
-        self.assertEqual(pipeline2.install_manager, 'container')
+        self.assertEqual(pipeline2.base_deploy_mode, 'container')
 
 
 if __name__ == '__main__':

@@ -30,16 +30,16 @@ benchmark, and execute the tasks locally in topological order.
 
 ## Deployment modes
 
-- **`install_manager: container`** — builds a python venv with `wfcommons[bench]`
+- **`base_deploy_mode: container`** — builds a python venv with `wfcommons[bench]`
   inside the build container and ships it via the deploy image.
-- **`install_manager: default`** — creates a venv at `venv:` on the local host
+- **`base_deploy_mode: default`** — creates a venv at `venv:` on the local host
   and `pip install`s wfcommons there (idempotent).
 
 ## Example
 
 ```yaml
 name: wfcommons_container_test
-install_manager: container
+base_deploy_mode: container
 container_engine: docker
 container_base: ubuntu:24.04
 

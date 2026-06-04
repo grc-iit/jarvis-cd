@@ -5,7 +5,7 @@
 # data read + per-rank NetCDF feature/mask writes.
 
 name: pyflextrkr_apptainer_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: apptainer
 container_base: ubuntu:24.04

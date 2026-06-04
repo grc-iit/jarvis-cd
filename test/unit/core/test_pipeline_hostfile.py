@@ -119,7 +119,7 @@ def test_pipeline_hostfile_container_path(jarvis_env):
     # Create containerized pipeline
     pipeline = Pipeline()
     pipeline.create("test_container_pipeline")
-    pipeline.install_manager = "container"
+    pipeline.base_deploy_mode = "container"
     pipeline.container_engine = "docker"
     pipeline.hostfile = Hostfile(path=str(hostfile_path))
     pipeline.save()

@@ -12,7 +12,7 @@
 # skips PSSH, so no sshd on :22 is required.
 
 name: vpic_local_single_node
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: ubuntu:24.04

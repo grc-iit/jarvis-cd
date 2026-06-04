@@ -44,9 +44,15 @@ class Pipeline:
         self.container_env = {}  # Environment variables injected into containers
         self.container_host_path = ""  # Docker host path prefix for DinD remapping
         self.container_workspace = ""  # Container workspace root for DinD remapping
+        self.container_caps = []  # Apptainer --add-caps (e.g. SYS_ADMIN)
+        self.container_binds = []  # Pipeline-level bind mounts (host:container)
+        self.container_gpu = False  # --nv / GPU passthrough
+        self.tmp_bind_root = None  # Per-host /tmp redirect root (apptainer)
 
-        # Install manager: None (legacy default), 'container', or 'spack'
-        self.install_manager = None
+        # Default deploy_mode propagated to packages that don't set
+        # their own. None means no default ('default' deploy_mode).
+        # Per-package install_method (not this field) selects the Installer.
+        self.base_deploy_mode = None
 
         # Launcher overrides (set from YAML top-level keys ``ssh_cmd``,
         # ``pssh_cmd``, ``mpi_cmd``). None = built-in defaults.
@@ -204,15 +210,13 @@ class Pipeline:
 
     def _propagate_deploy_mode(self):
         """
-        Derive a default deploy_mode from install_manager. Packages and
-        interceptors that don't set ``deploy_mode`` explicitly inherit
-        it; a YAML-level override stays in effect (e.g. a host-side
-        FUSE/runtime alongside containerized workload pkgs).
+        Propagate ``base_deploy_mode`` to every package/interceptor that
+        doesn't set ``deploy_mode`` explicitly. YAML-level overrides win
+        (e.g. a host-side FUSE/runtime alongside containerized workload
+        pkgs).
         """
-        if self.install_manager == 'container':
+        if self.base_deploy_mode == 'container':
             deploy_mode = 'container'
-        elif self.install_manager == 'spack':
-            deploy_mode = 'default'
         else:
             deploy_mode = 'default'
 
@@ -222,60 +226,6 @@ class Pipeline:
         for idef in self.interceptors.values():
             cfg = idef.setdefault('config', {})
             cfg.setdefault('deploy_mode', deploy_mode)
-
-    def _install_spack_packages(self):
-        """
-        Install packages via spack and capture the resulting environment.
-
-        1. Collect 'install' specs from all packages
-        2. Run 'spack install <specs>'
-        3. Run 'spack load <specs>' in a subprocess and capture env
-        4. Merge spack environment into pipeline environment
-        """
-        from jarvis_cd.shell import Exec, LocalExecInfo
-        from jarvis_cd.core.environment import EnvironmentManager
-
-        # Collect spack specs from all packages
-        spack_specs = []
-        for pkg_def in self.packages:
-            install_spec = pkg_def.get('config', {}).get('install', '')
-            if install_spec:
-                spack_specs.append(install_spec)
-
-        if not spack_specs:
-            print("No spack install specs found in packages, skipping spack install")
-            return
-
-        specs_str = ' '.join(spack_specs)
-
-        # Build spack command prefix (source setup-env.sh if SPACK_ROOT is set)
-        import os
-        spack_root = os.environ.get('SPACK_ROOT', '')
-        if spack_root:
-            spack_prefix = f'. {spack_root}/share/spack/setup-env.sh && '
-        else:
-            spack_prefix = ''
-
-        # Step 1: spack install
-        print(f"Installing spack packages: {specs_str}")
-        install_cmd = f'bash -c "{spack_prefix}spack install {specs_str}"'
-        result = Exec(install_cmd, LocalExecInfo()).run()
-        exit_code = result.exit_code.get('localhost', 1)
-        if exit_code != 0:
-            raise RuntimeError(
-                f"spack install failed (exit code {exit_code}). "
-                f"Specs: {specs_str}"
-            )
-        print("Spack install complete")
-
-        # Step 2: spack load + capture environment
-        print(f"Loading spack packages and capturing environment...")
-        env_manager = EnvironmentManager(self.jarvis)
-        spack_env = env_manager.capture_spack_environment(spack_specs)
-
-        # Step 3: Merge spack environment into pipeline environment
-        self.env.update(spack_env)
-        print(f"Spack environment merged ({len(spack_env)} variables updated)")
 
     def create(self, pipeline_name: str):
         """
@@ -372,9 +322,9 @@ class Pipeline:
         if self.container_binds:
             pipeline_config['container_binds'] = self.container_binds
 
-        # Add install manager
-        if self.install_manager:
-            pipeline_config['install_manager'] = self.install_manager
+        # Add base_deploy_mode (default deploy_mode propagated to pkgs).
+        if self.base_deploy_mode:
+            pipeline_config['base_deploy_mode'] = self.base_deploy_mode
 
         # Persist launcher overrides so reloads round-trip and
         # downstream `ppl run` invocations see the same launcher even
@@ -1035,8 +985,17 @@ class Pipeline:
         self.mpi_cmd = pipeline_config.get('mpi_cmd', None)
         self._apply_launcher_overrides()
 
-        # Load install manager
-        self.install_manager = pipeline_config.get('install_manager', None)
+        # Load base_deploy_mode. The legacy ``install_manager`` key is
+        # still read once with a deprecation warning so saved pipelines
+        # from before the rename keep loading.
+        self.base_deploy_mode = pipeline_config.get('base_deploy_mode', None)
+        if self.base_deploy_mode is None and 'install_manager' in pipeline_config:
+            self.base_deploy_mode = pipeline_config['install_manager']
+            print(
+                "Warning: 'install_manager' is deprecated; "
+                "rename to 'base_deploy_mode' (per-package "
+                "'install_method' now selects the installer)."
+            )
 
         # Load hostfile parameter (None means use global jarvis hostfile)
         hostfile_path = pipeline_config.get('hostfile')
@@ -1204,8 +1163,17 @@ class Pipeline:
         self.mpi_cmd = pipeline_def.get('mpi_cmd', None)
         self._apply_launcher_overrides()
 
-        # Load install manager
-        self.install_manager = pipeline_def.get('install_manager', None)
+        # Load base_deploy_mode. The legacy ``install_manager`` key is
+        # still read once with a deprecation warning so existing YAMLs
+        # keep loading after the rename.
+        self.base_deploy_mode = pipeline_def.get('base_deploy_mode', None)
+        if self.base_deploy_mode is None and 'install_manager' in pipeline_def:
+            self.base_deploy_mode = pipeline_def['install_manager']
+            print(
+                "Warning: 'install_manager' is deprecated; "
+                "rename to 'base_deploy_mode' (per-package "
+                "'install_method' now selects the installer)."
+            )
 
         # Load hostfile parameter (None means use global jarvis hostfile)
         hostfile_path = pipeline_def.get('hostfile')
@@ -1241,39 +1209,17 @@ class Pipeline:
         # Validate that interceptor and package IDs are unique
         self._validate_unique_ids()
 
-        # Derive deploy_mode from install_manager and propagate to all packages
+        # Propagate base_deploy_mode -> per-package deploy_mode
         self._propagate_deploy_mode()
 
-        # Install phase: spack or container based on install_manager
-        if self.install_manager == 'spack':
-            self._install_spack_packages()
-        elif self.install_manager == 'container':
-            if self.container_uri:
-                # Prebuilt deploy container takes priority — skip per-package
-                # build and deploy phases entirely.
-                if not self._ensure_container_uri_available():
-                    raise RuntimeError(
-                        f"container_uri '{self.container_uri}' is not available "
-                        f"locally and could not be pulled with engine "
-                        f"'{self.container_engine}'."
-                    )
-                self.container_image = self.container_uri
-                print(f"Using prebuilt deploy container: {self.container_uri}")
-            elif not self.container_image:
-                self._build_pipeline_container()
-                self.container_image = self.name
+        # Install phase: dispatch to per-installer plans based on each
+        # package's install_method (falling back to base_deploy_mode for
+        # YAMLs that don't set install_method explicitly).
+        from jarvis_cd.core.installer import Installer
+        Installer.install_all(self)
 
         # Save pipeline configuration and environment
         self.save()
-
-        # Generate container compose file if this is a containerized pipeline
-        if self.install_manager == 'container' and self.is_containerized():
-            print(f"Generating container configuration files...")
-            self._generate_pipeline_container_yaml()
-            # Apptainer runs commands directly via 'apptainer exec .sif';
-            # it has no compose file or long-running container daemons.
-            if self.container_engine != 'apptainer':
-                self._generate_pipeline_compose_file()
 
         # Set as current pipeline
         self.jarvis.set_current_pipeline(self.name)
@@ -1587,631 +1533,6 @@ class Pipeline:
 
             except Exception as e:
                 logger.error(f"Error applying interceptor '{interceptor_name}': {e}")
-
-    def _ensure_container_uri_available(self) -> bool:
-        """
-        Make container_uri usable as the deploy image for this pipeline.
-
-        Checks whether the URI is already present locally; if not, attempts
-        to pull/import it. For docker/podman this runs `<engine> pull`;
-        for apptainer it pulls the URI into
-        ``<containers_dir>/<name>.sif`` (centralized cache) so downstream
-        apptainer exec/instance commands find it at the same path as a
-        built SIF.
-
-        :return: True if the image is available after this call, else False.
-        """
-        from jarvis_cd.shell import Exec, LocalExecInfo
-        from jarvis_cd.core.pkg import Pkg
-
-        if self.container_engine == 'apptainer':
-            containers_dir = self.jarvis.get_containers_dir()
-            sif_path = containers_dir / f'{self.name}.sif'
-            if sif_path.exists():
-                return True
-            containers_dir.mkdir(parents=True, exist_ok=True)
-            print(f"Pulling apptainer image {self.container_uri} -> {sif_path}")
-            pull_cmd = f"apptainer pull {sif_path} {self.container_uri}"
-            result = Exec(pull_cmd, LocalExecInfo()).run()
-            return result.exit_code.get('localhost', 1) == 0
-
-        engine = self.container_engine
-        if Pkg._image_exists(engine, self.container_uri):
-            return True
-        print(f"Pulling container image: {self.container_uri}")
-        result = Exec(f"{engine} pull {self.container_uri}",
-                      LocalExecInfo()).run()
-        return result.exit_code.get('localhost', 1) == 0
-
-    def _build_pipeline_container(self):
-        """
-        Build pipeline container images using a single long-running build
-        container.
-
-        Flow:
-        1. Check if the deploy image already exists (skip if cached).
-        2. Start a build container from container_base.
-        3. For each package, exec its build.sh script inside the container.
-        4. Commit the build container as a build image.
-        5. Build deploy image(s) from Dockerfile.deploy (copies from build image).
-        6. Stop and remove the build container.
-        """
-        from jarvis_cd.shell import Exec, LocalExecInfo
-        from jarvis_cd.core.pkg import Pkg
-
-        deploy_image_name = self.name
-        pipeline_shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
-        pipeline_shared_dir.mkdir(parents=True, exist_ok=True)
-        containers_dir = self.jarvis.get_containers_dir()
-        containers_dir.mkdir(parents=True, exist_ok=True)
-
-        # Check if deploy image already exists — skip build if cached.
-        # SIFs live in the centralized containers_dir so the cache hit
-        # also covers other pipelines that share the same deploy image.
-        all_cached = all(
-            pkg_def.get('config', {}).get('container_cache', True)
-            for pkg_def in self.packages
-        )
-        if all_cached and Pkg._image_exists(
-                self.container_engine, deploy_image_name,
-                sif_dir=str(containers_dir)):
-            print(f"Deploy image '{deploy_image_name}' already exists, skipping build")
-            return
-
-        # Apptainer is built natively from a .def file — no docker/podman
-        # intermediate, even when one is installed. The user picked
-        # apptainer to stay off docker (rootless HPC, no daemon, NFS-
-        # friendly storage); silently routing the build through docker
-        # defeats that and previously filled the OS disk with images
-        # destined to be thrown away after sif conversion.
-        if self.container_engine == 'apptainer':
-            self._build_apptainer_native(
-                deploy_image_name, pipeline_shared_dir, containers_dir)
-            return
-
-        # docker/podman pipelines use that engine for both build and deploy.
-        build_engine = self.container_engine
-
-        # -----------------------------------------------------------------
-        # Phase 1: Build — run each package's build.sh in a single container
-        # -----------------------------------------------------------------
-        build_container_name = f'jarvis-build-{self.name}'
-        build_image_name = f'jarvis-build-{self.name}'
-        base_image = self.container_base
-
-        print(f"Starting build container from {base_image}...")
-        start_cmd = (
-            f"{build_engine} run -d --name {build_container_name} "
-            f"--network=host {base_image} sleep infinity"
-        )
-        result = Exec(start_cmd, LocalExecInfo()).run()
-        if result.exit_code.get('localhost', 1) != 0:
-            raise RuntimeError(
-                f"Failed to start build container '{build_container_name}'"
-            )
-
-        try:
-            has_build_content = False
-            for pkg_def in self.packages:
-                pkg_instance = self._load_package_instance(pkg_def, self.env)
-                pkg_instance.config['deploy_mode'] = pkg_def.get(
-                    'config', {}).get('deploy_mode', 'default')
-
-                build_result = pkg_instance._build_phase()
-                if not build_result:
-                    continue
-                script_content, build_suffix = build_result
-                if not script_content:
-                    continue
-
-                pkg_instance._build_suffix = build_suffix
-                pkg_name_raw = pkg_def['pkg_type'].split('.')[-1].replace('_', '-')
-                pkg_deploy_name = f'jarvis-deploy-{pkg_name_raw}'
-                if build_suffix:
-                    pkg_deploy_name = f'{pkg_deploy_name}-{build_suffix}'
-                use_cache = pkg_def.get('config', {}).get('container_cache', True)
-
-                # If a cached deploy image exists for this package, inject
-                # its artifacts into the build container instead of rebuilding.
-                # This makes Library packages (hdf5, adios2, etc.) available
-                # to later packages without re-compiling them.
-                if use_cache and Pkg._image_exists(build_engine, pkg_deploy_name):
-                    print(f"Injecting cached '{pkg_deploy_name}' into build container...")
-                    temp_name = f'jarvis-inject-{pkg_name_raw}'
-                    Exec(f"{build_engine} rm -f {temp_name}",
-                         LocalExecInfo(hide_output=True)).run()
-                    result = Exec(
-                        f"{build_engine} create --name {temp_name} {pkg_deploy_name}",
-                        LocalExecInfo(hide_output=True)).run()
-                    if result.exit_code.get('localhost', 1) != 0:
-                        raise RuntimeError(
-                            f"Failed to create inject container from '{pkg_deploy_name}'"
-                        )
-                    # docker/podman `cp` does not support
-                    # container:src -> container:dest directly
-                    # ("copying between containers is not supported"). Stream
-                    # a tar archive out of the source container's src path to
-                    # a temp file, then extract it into the build container.
-                    # Going through a temp file (vs a direct pipe) lets us
-                    # skip empty source dirs — podman `cp src/. -` on an
-                    # empty dir emits a stream the receiving cp rejects with
-                    # "source must be a (compressed) tar archive". Library
-                    # deploy images often have an empty /opt.
-                    for src_path in ['/usr/local', '/opt']:
-                        # Stage the tar to a file so we can test for emptiness
-                        # before piping into the destination cp, which only
-                        # extracts when reading from stdin (a regular file
-                        # arg gets copied verbatim, not extracted).
-                        # Empty source dir → podman emits a 1024-byte
-                        # all-zero tar (two 512-byte EOF blocks). Skip when
-                        # the archive holds no entries.
-                        pipe_cmd = (
-                            f"set -e; "
-                            f"tarfile=$(mktemp /tmp/jarvis-inject-XXXXXX.tar); "
-                            f"trap 'rm -f \"$tarfile\"' EXIT; "
-                            f"{build_engine} cp {temp_name}:{src_path}/. - "
-                            f"  > \"$tarfile\" 2>/dev/null; "
-                            f"if [ \"$(tar tf \"$tarfile\" 2>/dev/null "
-                            f"          | wc -l)\" -eq 0 ]; then "
-                            f"  exit 0; "
-                            f"fi; "
-                            f"cat \"$tarfile\" | {build_engine} cp - "
-                            f"{build_container_name}:{src_path}"
-                        )
-                        result = Exec(pipe_cmd,
-                                      LocalExecInfo(hide_output=True)).run()
-                        if result.exit_code.get('localhost', 1) != 0:
-                            raise RuntimeError(
-                                f"Failed to inject '{pkg_deploy_name}' "
-                                f"({src_path}) into build container"
-                            )
-                    Exec(f"{build_engine} rm {temp_name}",
-                         LocalExecInfo(hide_output=True)).run()
-                    Exec(f"{build_engine} exec {build_container_name} ldconfig",
-                         LocalExecInfo(hide_output=True)).run()
-                    has_build_content = True
-                    continue
-
-                has_build_content = True
-                pkg_name = pkg_def['pkg_name']
-
-                # Write build script to shared dir
-                script_path = pipeline_shared_dir / f'build-{pkg_name}.sh'
-                with open(script_path, 'w') as f:
-                    f.write(script_content)
-
-                # Stage the package context: build.sh plus any auxiliary
-                # files in pkg_dir (patches, run scripts, config templates,
-                # test datasets, etc.) that the build needs. Jarvis used to
-                # only copy the build script, forcing every package that
-                # referenced aux files to embed them as base64 heredocs.
-                # We now copy everything relevant into /tmp/pkg-ctx-{pkg_name}/
-                # in the build container and run build.sh with that dir as
-                # the working directory, so `COPY file .` style references
-                # from upstream Dockerfiles translate to bare filenames in
-                # build.sh.
-                pkg_ctx_dir = f'/tmp/pkg-ctx-{pkg_name}'
-                Exec(
-                    f"{build_engine} exec {build_container_name} "
-                    f"mkdir -p {pkg_ctx_dir}",
-                    LocalExecInfo(hide_output=True),
-                ).run()
-                cp_cmd = (
-                    f"{build_engine} cp {script_path} "
-                    f"{build_container_name}:{pkg_ctx_dir}/build.sh"
-                )
-                Exec(cp_cmd, LocalExecInfo()).run()
-                # Copy aux files from pkg_dir (skipping Python sources,
-                # build.sh, Dockerfile.deploy, and docs — the build only
-                # needs data/patches/scripts/templates).
-                pkg_dir = Path(pkg_instance.pkg_dir) if pkg_instance.pkg_dir else None
-                if pkg_dir and pkg_dir.is_dir():
-                    skip = {
-                        'pkg.py', '__pycache__', '__init__.py',
-                        'build.sh', 'Dockerfile.deploy',
-                        'README.md', 'README.MD',
-                        'INSTALL.md', 'INSTALL.MD',
-                        'USE.md', 'USE.MD',
-                    }
-                    for entry in sorted(pkg_dir.iterdir()):
-                        if entry.name in skip:
-                            continue
-                        if entry.suffix in ('.pyc', '.pyo'):
-                            continue
-                        cp_entry = (
-                            f"{build_engine} cp {entry} "
-                            f"{build_container_name}:{pkg_ctx_dir}/"
-                        )
-                        Exec(cp_entry, LocalExecInfo(hide_output=True)).run()
-
-                # Execute build script inside the container with the
-                # pkg context as the working directory.
-                print(f"Building {pkg_name} in container...")
-                exec_cmd = (
-                    f"{build_engine} exec -w {pkg_ctx_dir} "
-                    f"{build_container_name} "
-                    f"bash {pkg_ctx_dir}/build.sh"
-                )
-                result = Exec(exec_cmd, LocalExecInfo()).run()
-                if result.exit_code.get('localhost', 1) != 0:
-                    raise RuntimeError(
-                        f"Build script failed for '{pkg_name}'. "
-                        f"Script: {script_path}"
-                    )
-                print(f"Build complete: {pkg_name}")
-
-            # Commit the build container as an image
-            if has_build_content:
-                print(f"Committing build container as {build_image_name}...")
-                commit_cmd = (
-                    f"{build_engine} commit {build_container_name} {build_image_name}"
-                )
-                result = Exec(commit_cmd, LocalExecInfo()).run()
-                if result.exit_code.get('localhost', 1) != 0:
-                    raise RuntimeError(
-                        f"Failed to commit build container as '{build_image_name}'"
-                    )
-        finally:
-            # Always stop and remove the build container
-            Exec(f"{build_engine} rm -f {build_container_name}",
-                 LocalExecInfo(hide_output=True)).run()
-
-        # -----------------------------------------------------------------
-        # Phase 2: Deploy — build deploy image(s) from Dockerfile.deploy
-        # -----------------------------------------------------------------
-
-        per_pkg_deploy_images = []
-
-        # Library pkgs (Hdf5, Adios2, CompressLibs, …) exist to supply
-        # /usr/local artifacts to later pkgs' build containers via Phase-1
-        # injection. We still build their per-pkg deploy image here so
-        # that cache is populated for future pipeline loads, but we skip
-        # them in the merge: their /usr/local has already been COPY'd into
-        # the consuming app pkg's builder stage, so including them here
-        # again would just set a narrower apt base (e.g. hdf5's minimal
-        # Dockerfile.deploy, which lacks liburing/libfuse3/etc.) as the
-        # merge base and mask the app pkg's richer runtime deps.
-        from jarvis_cd.core.pkg import Library
-
-        for pkg_def in self.packages:
-            pkg_instance = self._load_package_instance(pkg_def, self.env)
-            pkg_instance.config['deploy_mode'] = pkg_def.get(
-                'config', {}).get('deploy_mode', 'default')
-            # Re-derive the build suffix from _build_phase so the
-            # per-pkg deploy image name matches Phase-1's cache-lookup
-            # (jarvis-deploy-<pkg>-<build_suffix>) instead of losing
-            # the suffix when _build_suffix is reset for Dockerfile
-            # template substitution below.
-            build_result = pkg_instance._build_phase()
-            build_suffix = build_result[1] if build_result and len(build_result) > 1 else ''
-            # Point ##BUILD_IMAGE## at the committed build image
-            pkg_instance._build_suffix = ''
-
-            deploy_result = pkg_instance._build_deploy_phase()
-            if not deploy_result:
-                continue
-            deploy_content, deploy_suffix = deploy_result
-            if not deploy_content:
-                continue
-
-            # Prefer the build suffix (matches Phase-1 cache key) over the
-            # deploy-phase suffix, which is reset to '' above to simplify
-            # BUILD_IMAGE template substitution.
-            effective_suffix = build_suffix or deploy_suffix
-
-            # Per-package deploy image name — stable, reusable across pipelines
-            pkg_name = pkg_def['pkg_type'].split('.')[-1].replace('_', '-')
-            pkg_deploy_name = f'jarvis-deploy-{pkg_name}'
-            if effective_suffix:
-                pkg_deploy_name = f'{pkg_deploy_name}-{effective_suffix}'
-
-            # Replace ##BUILD_IMAGE## references with the committed image name
-            deploy_content = deploy_content.replace(
-                pkg_instance.build_image_name(), build_image_name)
-
-            # Check if this per-package deploy image is already cached
-            use_cache = pkg_def.get('config', {}).get('container_cache', True)
-            if use_cache and Pkg._image_exists(build_engine, pkg_deploy_name):
-                print(f"Deploy image '{pkg_deploy_name}' cached, skipping build")
-            else:
-                deploy_df_path = pipeline_shared_dir / f'deploy-{pkg_name}.Dockerfile'
-                with open(deploy_df_path, 'w') as f:
-                    f.write(deploy_content)
-                print(f"Building per-package deploy image: {pkg_deploy_name}")
-                build_cmd = (
-                    f"{build_engine} build --network=host -t {pkg_deploy_name} "
-                    f"-f {deploy_df_path} {pipeline_shared_dir}"
-                )
-                result = Exec(build_cmd, LocalExecInfo()).run()
-                if result.exit_code.get('localhost', 1) != 0:
-                    raise RuntimeError(
-                        f"Failed to build deploy image '{pkg_deploy_name}'"
-                    )
-
-            # Only non-Library pkgs participate in the final pipeline merge.
-            if not isinstance(pkg_instance, Library):
-                per_pkg_deploy_images.append(pkg_deploy_name)
-
-        if not per_pkg_deploy_images:
-            print("Warning: No deploy Dockerfile content from any package")
-            return
-
-        # Merge per-package deploy images into a single pipeline image
-        if len(per_pkg_deploy_images) == 1:
-            # Single package — just tag it as the pipeline image
-            tag_cmd = f"{build_engine} tag {per_pkg_deploy_images[0]} {deploy_image_name}"
-            Exec(tag_cmd, LocalExecInfo()).run()
-        else:
-            # Multiple packages — overlay files from all per-package images.
-            # Also pull /usr/lib/x86_64-linux-gnu so apt-installed runtime
-            # shared libs (e.g. libgomp1 for LAMMPS OpenMP) follow their
-            # binaries into the merged image. All deploy bases derive from
-            # the same distro, so the overlay is a compatible superset.
-            lines = [f"FROM {per_pkg_deploy_images[0]}"]
-            for img in per_pkg_deploy_images[1:]:
-                lines.append(f"COPY --from={img} /usr/local /usr/local")
-                lines.append(f"COPY --from={img} /usr/lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu")
-                lines.append(f"COPY --from={img} /opt /opt")
-            lines.append("RUN ldconfig")
-            lines.append('CMD ["/bin/bash"]')
-            deploy_dockerfile = "\n".join(lines)
-
-            deploy_dockerfile_path = pipeline_shared_dir / 'deploy.Dockerfile'
-            with open(deploy_dockerfile_path, 'w') as f:
-                f.write(deploy_dockerfile)
-
-            print(f"Building merged deploy image: {deploy_image_name}")
-            deploy_cmd = (
-                f"{build_engine} build --network=host -t {deploy_image_name} "
-                f"-f {deploy_dockerfile_path} {pipeline_shared_dir}"
-            )
-            result = Exec(deploy_cmd, LocalExecInfo()).run()
-            if result.exit_code.get('localhost', 1) != 0:
-                raise RuntimeError(
-                    f"Failed to build deploy image '{deploy_image_name}'"
-                )
-
-        # Convert to SIF for apptainer
-        if self.container_engine == 'apptainer':
-            sif_path = containers_dir / f'{deploy_image_name}.sif'
-            print(f"Converting to Apptainer SIF: {sif_path}")
-            from jarvis_cd.shell.container_compose_exec import ApptainerBuildExec
-            ApptainerBuildExec(
-                deploy_image_name, str(sif_path),
-                LocalExecInfo(), source='docker-daemon'
-            ).run()
-            print(f"Apptainer SIF ready: {sif_path}")
-        else:
-            print(f"Deploy image ready: {deploy_image_name}")
-
-        # Clean up the committed build image (deploy has everything)
-        Exec(f"{build_engine} rmi {build_image_name}",
-             LocalExecInfo(hide_output=True)).run()
-
-    @staticmethod
-    def _dockerfile_deploy_to_post(dockerfile: str):
-        """Translate a single-stage view of a Dockerfile.deploy into bash
-        for an Apptainer ``%post``.
-
-        Handles:
-          - line continuations (``\\`` at EOL)
-          - ``RUN ...`` → run as bash
-          - ``ENV K=V`` / ``ENV K V`` → emitted as %environment lines
-          - ``WORKDIR p`` → ``mkdir -p p && cd p``
-
-        Drops (single-rootfs already covers them):
-          - ``FROM`` (Bootstrap handled it)
-          - ``COPY --from=...`` / ``COPY ...``
-          - ``CMD`` / ``ENTRYPOINT`` / ``EXPOSE`` / ``LABEL`` / ``ARG`` /
-            ``USER`` / ``HEALTHCHECK`` / ``SHELL`` / ``VOLUME`` /
-            ``ONBUILD`` / ``STOPSIGNAL``
-
-        Token replacements like ``##DEPLOY_BASE##`` and
-        ``##BUILD_IMAGE##`` are dropped since the def has a single
-        Bootstrap.
-
-        :return: (post_script, env_lines)
-        """
-        # Stitch line continuations.
-        physical = dockerfile.splitlines()
-        logical = []
-        buf = ''
-        for line in physical:
-            if line.rstrip().endswith('\\'):
-                buf += line.rstrip()[:-1]
-                continue
-            buf += line
-            logical.append(buf)
-            buf = ''
-        if buf:
-            logical.append(buf)
-
-        post_lines = []
-        env_lines = []
-        DROP = {'FROM', 'COPY', 'CMD', 'ENTRYPOINT', 'EXPOSE', 'LABEL',
-                'ARG', 'USER', 'HEALTHCHECK', 'SHELL', 'VOLUME',
-                'ONBUILD', 'STOPSIGNAL'}
-        for line in logical:
-            stripped = line.strip()
-            if not stripped or stripped.startswith('#'):
-                continue
-            head, _, rest = stripped.partition(' ')
-            head_upper = head.upper()
-            if head_upper in DROP:
-                continue
-            if head_upper == 'RUN':
-                post_lines.append(rest)
-            elif head_upper == 'WORKDIR':
-                post_lines.append(f'mkdir -p {rest} && cd {rest}')
-            elif head_upper == 'ENV':
-                # ENV K=V [K2=V2 …]  OR  ENV K V V V
-                if '=' in rest:
-                    for tok in rest.split():
-                        if '=' in tok:
-                            k, _, v = tok.partition('=')
-                            env_lines.append(f'export {k}={v}')
-                else:
-                    k, _, v = rest.partition(' ')
-                    env_lines.append(f'export {k}={v}')
-            # everything else is unsupported / drop
-        return '\n'.join(post_lines), env_lines
-
-    def _build_apptainer_native(self, deploy_image_name, pipeline_shared_dir,
-                                containers_dir):
-        """
-        Build a .sif directly with ``apptainer build`` — no docker/podman
-        intermediate. Generates an Apptainer definition file that embeds
-        each package's build.sh and the runtime portion of its
-        Dockerfile.deploy in %post.
-
-        The .def file stays in the per-pipeline shared directory because
-        it is generated from this pipeline's package set; the resulting
-        .sif lands in the centralized containers_dir so it can be
-        reused by other pipelines that load the same deploy image name.
-        """
-        from jarvis_cd.shell import Exec, LocalExecInfo
-
-        base_image = self.container_base
-        def_path = pipeline_shared_dir / f'{deploy_image_name}.def'
-        sif_path = containers_dir / f'{deploy_image_name}.sif'
-
-        # Collect build scripts + deploy-runtime fragments + aux files
-        # from all packages.
-        #
-        # In docker, build.sh runs in a multi-stage `builder` image with
-        # the package directory's aux files (templates, patches, run
-        # scripts, …) staged into CWD via `docker cp`, and
-        # Dockerfile.deploy starts FROM a clean base, apt-installs
-        # runtime libs, and COPYs artifacts. Apptainer collapses both
-        # into a single root: aux files come in via %files (apptainer's
-        # equivalent of COPY), build.sh runs in %post with a per-package
-        # context dir as cwd, then the deploy Dockerfile's RUN/ENV
-        # directives are translated into bash so the runtime layer (apt
-        # installs, ssh-keygen, …) also makes it into the SIF. COPY
-        # --from=builder lines drop because everything already lives in
-        # this single rootfs.
-        AUX_SKIP = {
-            'pkg.py', '__pycache__', '__init__.py',
-            'build.sh', 'Dockerfile.deploy',
-            'README.md', 'README.MD',
-            'INSTALL.md', 'INSTALL.MD',
-            'USE.md', 'USE.MD',
-        }
-        build_scripts = []
-        deploy_runtime = []
-        files_lines = []          # %files entries (host -> container path)
-        cleanup_dirs = []
-        env_paths = []
-        env_extra = []
-        for pkg_def in self.packages:
-            pkg_instance = self._load_package_instance(pkg_def, self.env)
-            pkg_instance.config['deploy_mode'] = pkg_def.get(
-                'config', {}).get('deploy_mode', 'default')
-            pkg_name = pkg_def['pkg_name']
-
-            build_result = pkg_instance._build_phase()
-            if build_result:
-                script_content, _ = build_result
-                if script_content:
-                    # Write build.sh into the per-pipeline shared dir,
-                    # then stage it (and the package's aux files) into
-                    # /tmp/pkg-ctx-<pkg_name> inside the container at
-                    # build time.
-                    script_path = pipeline_shared_dir / f'build-{pkg_name}.sh'
-                    with open(script_path, 'w') as f:
-                        f.write(script_content)
-                    # /opt instead of /tmp because apptainer's build
-                    # remounts /tmp between %files and %post, so
-                    # anything %files put in /tmp disappears before
-                    # %post can read it.
-                    pkg_ctx_dir = f'/opt/pkg-ctx-{pkg_name}'
-                    files_lines.append(
-                        f'{script_path} {pkg_ctx_dir}/build.sh')
-                    pkg_dir = (Path(pkg_instance.pkg_dir)
-                               if pkg_instance.pkg_dir else None)
-                    if pkg_dir and pkg_dir.is_dir():
-                        for entry in sorted(pkg_dir.iterdir()):
-                            if entry.name in AUX_SKIP:
-                                continue
-                            if entry.suffix in ('.pyc', '.pyo'):
-                                continue
-                            files_lines.append(
-                                f'{entry} {pkg_ctx_dir}/{entry.name}')
-                    build_scripts.append(
-                        f'# --- Build: {pkg_name} ---')
-                    build_scripts.append(f'cd {pkg_ctx_dir}')
-                    build_scripts.append(f'bash {pkg_ctx_dir}/build.sh')
-                    cleanup_dirs.append(pkg_ctx_dir)
-
-            deploy_result = pkg_instance._build_deploy_phase()
-            if deploy_result:
-                df_content, _ = deploy_result
-                if df_content:
-                    runtime_sh, env_lines = self._dockerfile_deploy_to_post(
-                        df_content)
-                    if runtime_sh.strip():
-                        deploy_runtime.append(
-                            f'# --- Deploy runtime: {pkg_name} ---')
-                        deploy_runtime.append(runtime_sh)
-                    env_extra.extend(env_lines)
-
-            # Collect install paths for %environment
-            pkg_short = pkg_def['pkg_type'].split('.')[-1]
-            env_paths.append(f'/opt/{pkg_short}/install/bin')
-
-        if not build_scripts and not deploy_runtime:
-            print("Warning: No build scripts from any package")
-            return
-
-        # Generate .def file
-        env_path_str = ':'.join(env_paths + ['$PATH'])
-        env_ld_str = ':'.join(
-            f'/opt/{p["pkg_type"].split(".")[-1]}/install/lib'
-            for p in self.packages) + ':$LD_LIBRARY_PATH'
-
-        def_content = f"Bootstrap: docker\nFrom: {base_image}\n\n"
-        if files_lines:
-            def_content += "%files\n"
-            for line in files_lines:
-                def_content += f"    {line}\n"
-            def_content += "\n"
-        def_content += "%post\n"
-        # Non-interactive apt + a writable lib dir for `ldconfig` calls
-        # that several Dockerfile.deploys do.
-        def_content += "export DEBIAN_FRONTEND=noninteractive\n"
-        # Forward outbound-proxy env from the build host so package
-        # build.sh's apt-get / git clone / curl reach external mirrors
-        # on HPC nodes that require an explicit proxy (e.g. Aurora).
-        for var in ('http_proxy', 'https_proxy', 'HTTP_PROXY',
-                    'HTTPS_PROXY', 'no_proxy', 'NO_PROXY'):
-            val = os.environ.get(var)
-            if val:
-                def_content += f"export {var}={val}\n"
-        def_content += '\n'.join(build_scripts)
-        if deploy_runtime:
-            def_content += "\n\n# === Deploy runtime layer ===\n"
-            def_content += '\n'.join(deploy_runtime)
-        if cleanup_dirs:
-            def_content += "\n\n# Drop per-package staging dirs from the SIF.\n"
-            for d in cleanup_dirs:
-                def_content += f"rm -rf {d}\n"
-        def_content += "\n\n%environment\n"
-        def_content += f"export PATH={env_path_str}\n"
-        def_content += f"export LD_LIBRARY_PATH={env_ld_str}\n"
-        for line in env_extra:
-            def_content += f"{line}\n"
-
-        with open(def_path, 'w') as f:
-            f.write(def_content)
-
-        print(f"Building Apptainer SIF from definition: {def_path}")
-        build_cmd = f"apptainer build --fakeroot {sif_path} {def_path}"
-        result = Exec(build_cmd, LocalExecInfo()).run()
-        if result.exit_code.get('localhost', 1) != 0:
-            raise RuntimeError(
-                f"Apptainer build failed. Definition: {def_path}"
-            )
-        print(f"Apptainer SIF ready: {sif_path}")
 
     def _generate_pipeline_container_yaml(self):
         """

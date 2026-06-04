@@ -11,7 +11,7 @@
 # Expected wall ~4-5 min; output ~few GB per host.
 
 name: deepdrivemd_real_nfs
-install_manager: container
+base_deploy_mode: container
 ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
 pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
 

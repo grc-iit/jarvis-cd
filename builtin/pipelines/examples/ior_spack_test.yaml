@@ -3,12 +3,13 @@
 # Requirements: Spack installed and in PATH (or SPACK_ROOT set)
 
 name: ior_spack_test
-install_manager: spack
+base_deploy_mode: spack
 
 pkgs:
   - pkg_type: builtin.ior
     pkg_name: ior_spack
-    install: ior
+    install_method: spack
+    install_query: ior
     nprocs: 2
     ppn: 2
     block: 32m

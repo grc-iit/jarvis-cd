@@ -3,7 +3,7 @@
 # Requirements: NVIDIA GPU, sci-hpc-base image built locally
 
 name: warpx_apptainer_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: apptainer
 container_base: sci-hpc-base

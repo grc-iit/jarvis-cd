@@ -9,7 +9,7 @@
 # ~3-5 GiB; ~12-20 GiB across the 4 nodes. Target wall ~4 min.
 
 name: biobb_wf_md_setup_real_nfs
-install_manager: container
+base_deploy_mode: container
 ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
 pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
 

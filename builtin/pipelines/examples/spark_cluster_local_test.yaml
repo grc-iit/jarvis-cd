@@ -5,7 +5,7 @@
 # Expected Runtime: 3-5 minutes on first run (Spark tarball download dominates).
 
 name: spark_cluster_local_test
-install_manager: container
+base_deploy_mode: container
 
 # Container configuration — Spark is fetched as a prebuilt tarball, no spack.
 container_engine: docker

@@ -7,7 +7,7 @@
 # link the ADIOS2 Fortran module.
 
 name: wrf_container_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: sci-hpc-base

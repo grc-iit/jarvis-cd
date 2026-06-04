@@ -303,14 +303,14 @@ The class name must be the PascalCase of the package directory name (e.g., direc
 
 ## Container Support
 
-Container support is built into `Application`. The pipeline's `install_manager: container` setting enables containerized deployment for all packages. Any package can support container deployment by:
+Container support is built into `Application`. The pipeline's `base_deploy_mode: container` setting enables containerized deployment for all packages. Any package can support container deployment by:
 
 1. Providing a `build.sh` script (shell commands to compile software) in the package directory
 2. Providing a `Dockerfile.deploy` template (lean runtime image) in the package directory
 3. Overriding `_build_phase()` and `_build_deploy_phase()` to return template content
 4. Branching on `self.config.get('deploy_mode') == 'container'` in `start()`
 
-Note: `deploy_mode` is set automatically by the pipeline based on `install_manager`. Packages do **not** include `deploy_mode` in their `_configure_menu()`.
+Note: `deploy_mode` is set automatically by the pipeline based on `base_deploy_mode`. Packages do **not** include `deploy_mode` in their `_configure_menu()`.
 
 ### How Container Builds Work
 
@@ -542,7 +542,7 @@ Both are aliases for `_read_template()`.
 
 ```yaml
 name: ior_apptainer_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: apptainer          # docker | podman | apptainer
 container_base: ubuntu:24.04         # base image for the build container
@@ -633,7 +633,7 @@ class WrpAdapter(Interceptor):
 
 ```yaml
 name: iowarp_pipeline
-install_manager: container
+base_deploy_mode: container
 container_engine: docker
 container_base: ubuntu:24.04
 
@@ -652,7 +652,7 @@ Both `None` and `('', suffix)` return values from build methods are treated as "
 
 ## Spack Support
 
-When the pipeline uses `install_manager: spack`, Jarvis installs packages via Spack instead of building containers. Packages support this by including an `install` key in their pipeline YAML config.
+When the pipeline uses `base_deploy_mode: spack`, Jarvis installs packages via Spack instead of building containers. Packages support this by including an `install` key in their pipeline YAML config.
 
 ### How Spack Mode Works
 
@@ -668,7 +668,7 @@ The `install` key is automatically available on all packages via the common conf
 
 ```yaml
 name: my_spack_pipeline
-install_manager: spack
+base_deploy_mode: spack
 
 pkgs:
   - pkg_type: builtin.ior
@@ -690,7 +690,7 @@ Packages without an `install` key are skipped during spack installation but stil
 ### Package Developer Notes
 
 - No code changes are needed to support spack — the `install` key is in the common menu
-- When `install_manager: spack`, your package's `_build_phase()` returns `None` (since `deploy_mode = 'default'`)
+- When `base_deploy_mode: spack`, your package's `_build_phase()` returns `None` (since `deploy_mode = 'default'`)
 - Your package's `start()` method runs the bare-metal path, using binaries that spack placed in PATH
 - Document the recommended spack spec in your package's README
 

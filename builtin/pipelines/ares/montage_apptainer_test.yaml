@@ -5,7 +5,7 @@
 # ~2.9 GB FITS. Expected wall ~3-4 min.
 
 name: montage_apptainer_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: apptainer
 container_base: ubuntu:24.04

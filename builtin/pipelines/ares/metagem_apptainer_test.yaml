@@ -6,7 +6,7 @@
 # across 36 samples, expected wall ~5-7 min.
 
 name: metagem_apptainer_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: apptainer
 container_base: ubuntu:24.04
