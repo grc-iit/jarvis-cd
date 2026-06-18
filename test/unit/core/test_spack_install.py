@@ -1,10 +1,10 @@
 """
-Tests for spack install_manager integration.
+Tests for spack base_deploy_mode integration.
 Verifies that:
-  - install_manager is parsed from pipeline config
-  - deploy_mode is derived from install_manager and propagated
+  - base_deploy_mode is parsed from pipeline config
+  - deploy_mode is derived from base_deploy_mode and propagated
   - Spack spec collection works correctly
-  - Backwards compatibility: no install_manager = default behavior
+  - Backwards compatibility: no base_deploy_mode = default behavior
 """
 import unittest
 import sys
@@ -71,33 +71,33 @@ class TestInstallManagerBase(unittest.TestCase):
 
 
 class TestInstallManagerParsing(TestInstallManagerBase):
-    """Test that install_manager is parsed and persisted correctly."""
+    """Test that base_deploy_mode is parsed and persisted correctly."""
 
-    def test_default_install_manager_is_none(self):
+    def test_default_base_deploy_mode_is_none(self):
         pipeline = Pipeline()
         pipeline.create('test_default')
-        self.assertIsNone(pipeline.install_manager)
+        self.assertIsNone(pipeline.base_deploy_mode)
 
-    def test_container_install_manager(self):
+    def test_container_base_deploy_mode(self):
         pipeline = Pipeline()
         pipeline.create('test_container')
-        pipeline.install_manager = 'container'
+        pipeline.base_deploy_mode = 'container'
         pipeline.save()
 
         pipeline2 = Pipeline('test_container')
-        self.assertEqual(pipeline2.install_manager, 'container')
+        self.assertEqual(pipeline2.base_deploy_mode, 'container')
 
-    def test_spack_install_manager(self):
+    def test_spack_base_deploy_mode(self):
         pipeline = Pipeline()
         pipeline.create('test_spack')
-        pipeline.install_manager = 'spack'
+        pipeline.base_deploy_mode = 'spack'
         pipeline.save()
 
         pipeline2 = Pipeline('test_spack')
-        self.assertEqual(pipeline2.install_manager, 'spack')
+        self.assertEqual(pipeline2.base_deploy_mode, 'spack')
 
-    def test_no_install_manager_not_saved(self):
-        """When install_manager is None, it should not appear in saved config."""
+    def test_no_base_deploy_mode_not_saved(self):
+        """When base_deploy_mode is None, it should not appear in saved config."""
         pipeline = Pipeline()
         pipeline.create('test_none')
         pipeline.save()
@@ -106,16 +106,16 @@ class TestInstallManagerParsing(TestInstallManagerBase):
         config_file = self.jarvis.get_pipeline_dir('test_none') / 'pipeline.yaml'
         with open(config_file, 'r') as f:
             config = yaml.safe_load(f)
-        self.assertNotIn('install_manager', config)
+        self.assertNotIn('base_deploy_mode', config)
 
 
 class TestDeployModePropagation(TestInstallManagerBase):
-    """Test that deploy_mode is derived from install_manager."""
+    """Test that deploy_mode is derived from base_deploy_mode."""
 
     def test_container_sets_deploy_mode_container(self):
         pipeline = Pipeline()
         pipeline.create('test_prop_cont')
-        pipeline.install_manager = 'container'
+        pipeline.base_deploy_mode = 'container'
 
         pkg_def = self._make_pkg_def('test_prop_cont', 'builtin.ior', 'ior', {
             'nprocs': 1, 'ppn': 1, 'block': '32m', 'xfer': '1m',
@@ -130,7 +130,7 @@ class TestDeployModePropagation(TestInstallManagerBase):
     def test_spack_sets_deploy_mode_default(self):
         pipeline = Pipeline()
         pipeline.create('test_prop_spack')
-        pipeline.install_manager = 'spack'
+        pipeline.base_deploy_mode = 'spack'
 
         pkg_def = self._make_pkg_def('test_prop_spack', 'builtin.ior', 'ior', {
             'nprocs': 1, 'ppn': 1, 'block': '32m', 'xfer': '1m',
@@ -142,7 +142,7 @@ class TestDeployModePropagation(TestInstallManagerBase):
 
         self.assertEqual(pkg_def['config']['deploy_mode'], 'default')
 
-    def test_no_install_manager_sets_deploy_mode_default(self):
+    def test_no_base_deploy_mode_sets_deploy_mode_default(self):
         pipeline = Pipeline()
         pipeline.create('test_prop_none')
 
@@ -159,7 +159,7 @@ class TestDeployModePropagation(TestInstallManagerBase):
     def test_propagates_to_interceptors(self):
         pipeline = Pipeline()
         pipeline.create('test_prop_intc')
-        pipeline.install_manager = 'container'
+        pipeline.base_deploy_mode = 'container'
 
         interceptor_def = self._make_pkg_def('test_prop_intc', 'builtin.darshan',
                                              'darshan', {})
@@ -171,7 +171,7 @@ class TestDeployModePropagation(TestInstallManagerBase):
     def test_propagates_to_multiple_packages(self):
         pipeline = Pipeline()
         pipeline.create('test_prop_multi')
-        pipeline.install_manager = 'container'
+        pipeline.base_deploy_mode = 'container'
 
         ior_def = self._make_pkg_def('test_prop_multi', 'builtin.ior', 'ior', {
             'nprocs': 1, 'ppn': 1, 'block': '32m', 'xfer': '1m',
@@ -194,7 +194,7 @@ class TestSpackSpecCollection(TestInstallManagerBase):
     def test_collect_specs(self):
         pipeline = Pipeline()
         pipeline.create('test_specs')
-        pipeline.install_manager = 'spack'
+        pipeline.base_deploy_mode = 'spack'
 
         ior_def = self._make_pkg_def('test_specs', 'builtin.ior', 'ior', {
             'install': 'ior',
@@ -223,7 +223,7 @@ class TestSpackSpecCollection(TestInstallManagerBase):
     def test_skip_empty_install(self):
         pipeline = Pipeline()
         pipeline.create('test_skip')
-        pipeline.install_manager = 'spack'
+        pipeline.base_deploy_mode = 'spack'
 
         pkg_def = self._make_pkg_def('test_skip', 'builtin.ior', 'ior', {
             'install': '',
@@ -243,13 +243,13 @@ class TestSpackSpecCollection(TestInstallManagerBase):
 
 
 class TestHasContainerizedPackages(TestInstallManagerBase):
-    """Test _has_containerized_packages with install_manager."""
+    """Test _has_containerized_packages with base_deploy_mode."""
 
     def test_spack_returns_false(self):
-        """When install_manager is spack, _has_containerized_packages should be False."""
+        """When base_deploy_mode is spack, _has_containerized_packages should be False."""
         pipeline = Pipeline()
         pipeline.create('test_hcp_spack')
-        pipeline.install_manager = 'spack'
+        pipeline.base_deploy_mode = 'spack'
 
         pkg_def = self._make_pkg_def('test_hcp_spack', 'builtin.ior', 'ior', {
             'install': 'ior', 'nprocs': 1, 'ppn': 1, 'block': '32m',
@@ -263,10 +263,10 @@ class TestHasContainerizedPackages(TestInstallManagerBase):
         self.assertFalse(pipeline._has_containerized_packages())
 
     def test_container_returns_true(self):
-        """When install_manager is container, _has_containerized_packages should be True."""
+        """When base_deploy_mode is container, _has_containerized_packages should be True."""
         pipeline = Pipeline()
         pipeline.create('test_hcp_cont')
-        pipeline.install_manager = 'container'
+        pipeline.base_deploy_mode = 'container'
 
         pkg_def = self._make_pkg_def('test_hcp_cont', 'builtin.ior', 'ior', {
             'nprocs': 1, 'ppn': 1, 'block': '32m', 'xfer': '1m',
@@ -279,7 +279,7 @@ class TestHasContainerizedPackages(TestInstallManagerBase):
         self.assertTrue(pipeline._has_containerized_packages())
 
     def test_none_returns_false(self):
-        """When no install_manager, default deploy_mode=default means no containers."""
+        """When no base_deploy_mode, default deploy_mode=default means no containers."""
         pipeline = Pipeline()
         pipeline.create('test_hcp_none')
 

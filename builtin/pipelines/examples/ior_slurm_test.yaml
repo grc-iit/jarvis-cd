@@ -1,0 +1,45 @@
+# Pipeline Test: IOR grid search submitted as a single SLURM job.
+#
+# A top-level `scheduler:` block wraps the whole test in one batch
+# allocation; every iteration shares the hostfile that the job script
+# builds at startup. Place a `scheduler:` block inside `config:` instead
+# to submit one job per iteration.
+#
+# Usage:
+#   jarvis ppl submit builtin/pipelines/examples/ior_slurm_test.yaml
+#   # or write the script without submitting:
+#   jarvis ppl submit builtin/pipelines/examples/ior_slurm_test.yaml +no_submit
+
+scheduler:
+  name: slurm
+  job_name: ior_slurm_test
+  nodes: 2
+  ntasks_per_node: 4
+  partition: cpu
+  time: "01:00:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+
+config:
+  name: ior_slurm_test
+  pkgs:
+    - pkg_type: builtin.ior
+      pkg_name: ior_app
+      ppn: 4
+      nprocs: 8
+      api: posix
+      out: ${HOME}/ior_slurm_test.bin
+      write: true
+      read: true
+
+vars:
+  ior_app.xfer: ["64K", "1M"]
+  ior_app.block: ["256M", "1G"]
+
+loop:
+  - [ior_app.xfer]
+  - [ior_app.block]
+
+repeat: 2
+
+output: ${HOME}/jarvis_ior_slurm_test_results

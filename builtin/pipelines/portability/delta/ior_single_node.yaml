@@ -10,7 +10,7 @@
 #   jarvis ppl run
 
 name: ior_delta_single_node
-install_manager: container
+base_deploy_mode: container
 
 container_engine: apptainer
 container_base: ubuntu:24.04

@@ -67,7 +67,7 @@ class ContainerBaremetalTestBase(unittest.TestCase):
                          container_base='ubuntu:24.04'):
         pipeline = Pipeline()
         pipeline.create(name)
-        pipeline.install_manager = install_manager
+        pipeline.base_deploy_mode = install_manager
         pipeline.container_engine = container_engine
         pipeline.container_base = container_base
         pipeline.save()

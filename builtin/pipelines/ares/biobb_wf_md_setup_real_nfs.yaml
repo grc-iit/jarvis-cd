@@ -1,0 +1,41 @@
+# Pipeline: biobb MD setup REAL workflow, Apptainer + sbatch on Ares, 4 nodes.
+# Drops the biobb_io_only.sh bind so the container's /opt/run_batch.sh runs
+# the actual lysozyme (1AKI) GROMACS pipeline via /opt/run_md_setup.py.
+# Outputs go to ${HOME}/real-data/biobb_wf_md_setup (NFS).
+#
+# Sizing: replicates=192, parallel_reps=8, omp_threads=3 → 48 reps/host,
+# 6 batches of 8 concurrent GROMACS pipelines per node. Each rep produces
+# ~50-100 MiB of GROMACS .gro/.zip/.pdb outputs. Expected per-host writes
+# ~3-5 GiB; ~12-20 GiB across the 4 nodes. Target wall ~4 min.
+
+name: biobb_wf_md_setup_real_nfs
+base_deploy_mode: container
+ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+container_binds:
+  - /mnt/common/llogan/jarvis-cd/builtin/builtin/biobb_wf_md_setup/run_batch.sh:/opt/run_batch.sh:ro
+  - ${HOME}/real-data:${HOME}/real-data
+
+scheduler:
+  name: slurm
+  job_name: biobb_real_nfs
+  nodes: 4
+  ntasks_per_node: 24
+  partition: compute
+  time: "00:06:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+
+pkgs:
+  - pkg_type: builtin.biobb_wf_md_setup
+    pkg_name: biobb_wf_md_setup_real_nfs
+    nprocs: 4
+    ppn: 1
+    replicates: 192
+    parallel_reps: 8
+    omp_threads: 3
+    out: ${HOME}/real-data/biobb_wf_md_setup

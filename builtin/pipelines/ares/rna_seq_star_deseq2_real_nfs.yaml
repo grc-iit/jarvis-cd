@@ -1,0 +1,43 @@
+# Pipeline: RNA-Seq STAR + DESeq2 REAL workflow, Apptainer + sbatch on Ares,
+# 4 nodes. Drops the rna_seq_io_only.sh bind so the container's
+# /opt/run_rnaseq.sh runs the real snakemake DAG (cutadapt → STAR index →
+# STAR align → featureCounts → DESeq2; gene_2_symbol is intentionally
+# skipped — Ensembl BioMart is flaky over our proxy).
+#
+# Sizing: replicates=4, parallel_reps=1, cores=20 → 1 snakemake run per
+# host (4 concurrent across the allocation), each over the bundled
+# ngs-test-data S. cerevisiae samples. Per host: STAR index + per-sample
+# BAMs + featureCounts + DESeq2 TSVs (~2-3 GiB). Total ~8-12 GiB.
+# Expected wall ~5-7 min (the rate-limiting steps are STAR index build
+# and STAR alignment).
+
+name: rna_seq_star_deseq2_real_nfs
+base_deploy_mode: container
+ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+container_binds:
+  - /mnt/common/llogan/jarvis-cd/builtin/builtin/rna_seq_star_deseq2/run_rnaseq.sh:/opt/run_rnaseq.sh:ro
+  - ${HOME}/real-data:${HOME}/real-data
+
+scheduler:
+  name: slurm
+  job_name: rnaseq_real_nfs
+  nodes: 4
+  ntasks_per_node: 24
+  partition: compute
+  time: "00:06:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+
+pkgs:
+  - pkg_type: builtin.rna_seq_star_deseq2
+    pkg_name: rna_seq_star_deseq2_real_nfs
+    nprocs: 1
+    cores: 20
+    replicates: 1
+    parallel_reps: 1
+    out: ${HOME}/real-data/rna_seq_star_deseq2

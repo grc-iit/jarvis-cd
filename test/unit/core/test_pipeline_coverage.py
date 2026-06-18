@@ -229,14 +229,14 @@ class TestPipelineCoverage(unittest.TestCase):
         pipeline2 = Pipeline('ce_test')
         self.assertEqual(pipeline2.container_engine, 'podman')
 
-    def test_save_load_install_manager(self):
-        """install_manager='container' is persisted across save/load cycles."""
+    def test_save_load_base_deploy_mode(self):
+        """base_deploy_mode='container' is persisted across save/load cycles."""
         pipeline = self._make_pipeline('im_test')
-        pipeline.install_manager = 'container'
+        pipeline.base_deploy_mode = 'container'
         pipeline.save()
 
         pipeline2 = Pipeline('im_test')
-        self.assertEqual(pipeline2.install_manager, 'container')
+        self.assertEqual(pipeline2.base_deploy_mode, 'container')
 
     def test_save_load_container_base(self):
         """container_base is persisted across save/load cycles."""

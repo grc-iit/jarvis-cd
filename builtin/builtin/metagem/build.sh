@@ -25,17 +25,23 @@ export PATH=/opt/conda/bin:${PATH}
 
 # ---- Snakemake 9 + fastp envs --------------------------------------------------
 # snakemake=9.18.2 was yanked from conda-forge/bioconda, and snakemake 9
-# requires python>=3.11. Let conda pick the newest 9.x on python 3.12 so
-# the build stays current. Verify after since conda sometimes logs
-# PackagesNotFoundError but still exits 0.
-conda create -p /opt/metagem-env -c conda-forge -c bioconda -y \
+# requires python>=3.11. Let mamba pick the newest 9.x on python 3.12 so
+# the build stays current. Verify after since solvers sometimes log
+# PackagesNotFoundError but still exit 0.
+#
+# Use mamba, not conda. conda 26.x's libmamba-solver opens a sqlite
+# shards-cache under /root/.cache that intermittently throws
+# `sqlite3.OperationalError: database is locked` inside the build
+# container, aborting `conda create`. mamba ships in miniforge and
+# avoids that code path.
+mamba create -p /opt/metagem-env -c conda-forge -c bioconda -y \
         python=3.12 'snakemake>=9,<10'
 test -x /opt/metagem-env/bin/snakemake \
     || { echo "ERROR: /opt/metagem-env did not install snakemake"; exit 1; }
 # fastp=0.23 no longer resolves on current bioconda/conda-forge: every
 # 0.23.x pins libdeflate <1.26, but conda-forge has moved to 1.26+. Let
-# conda pick the newest fastp; bioconda has 0.24+ that allows libdeflate 1.26.
-conda create -n metagem -c bioconda -c conda-forge -y fastp
+# mamba pick the newest fastp; bioconda has 0.24+ that allows libdeflate 1.26.
+mamba create -n metagem -c bioconda -c conda-forge -y fastp
 test -x /opt/conda/envs/metagem/bin/fastp \
     || { echo "ERROR: metagem env did not install fastp"; exit 1; }
 conda clean -afy

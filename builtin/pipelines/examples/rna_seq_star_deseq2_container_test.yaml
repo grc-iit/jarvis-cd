@@ -3,7 +3,7 @@
 # Requirements: Docker installed
 
 name: rna_seq_star_deseq2_container_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 # ubuntu:24.04 matches Dockerfile.deploy's DEPLOY_BASE. sci-hpc-base was

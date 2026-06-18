@@ -10,6 +10,7 @@ See the [official repo](https://github.com/FlexTRKR/PyFLEXTRKR) for more detail.
 5. [Pyflextrkr on Node Local Storage](#5-pyflextrkr-on-node-local-storage)
 6. [Pyflextrkr + Hermes on Node Local Storage](#6-pyflextrkr--hermes-on-node-local-storage)
 7. [Pyflextrkr + Hermes with Multinodes Slurm (TODO)](#7-pyflextrkr--hermes-on-multinodes-slurm-todo)
+8. [I/O & compute tuning (container mode)](#8-io--compute-tuning-container-mode)
 
 
 
@@ -484,3 +485,74 @@ OSError: Unable to synchronously open file (file signature not found)
 
 
 
+
+
+
+# 8. I/O & compute tuning (container mode)
+
+This section covers the container-mode YAML knobs added on top of the
+upstream PyFLEXTRKR demos. The container ships PyFLEXTRKR at
+`/opt/PyFLEXTRKR` plus the wrapper scripts `/opt/run_demo.sh` and
+`/opt/run_demo_multinode.sh`. `pkg.py` aliases short demo names
+(`mcs_imerg`, `mcs_wrf_tbpf`, …) to the upstream
+`demo_mcs_imerg`/`demo_mcs_wrf_tbpf`/etc.
+
+## 8.1 Native workflow parameters
+
+| Parameter | Default | Effect on I/O | Effect on compute |
+|---|---|---|---|
+| `demo` | `mcs_tbpf` | selects the demo dataset — `mcs_tbpf_idealized` is ~few MB, `mcs_imerg` ~600 MB, `mcs_wrf_tbpf` multi-GB, `mcs_imerg_mcsmip` largest (global IMERG) | bigger demo → more frames to track |
+| `replicates` | `1` | loops the demo N times under unique data roots | linear |
+| `nprocs` / `ppn` | `1` / `1` | only relevant in `mcs_tbpf_multinode` (Dask-MPI runner) | mpi worker count |
+| `out` | `''` | when set, post-run `cp -r /output/pyflextrkr-data*/.` into this host-bound path | n/a |
+
+**Compute-dominated stages**: `idclouds_tbpf` (per-frame feature
+detection, numpy ops), `tracksingle_drift` (cross-frame association),
+`mapfeature_func` (final MCS map writes). NetCDF reads/writes dominate
+the front and back of the workflow; the middle is compute.
+
+## 8.2 I/O-only benchmark mode (bind-mount override)
+
+```yaml
+container_binds:
+  - ${HOME}/jarvis-bench-scripts/pyflextrkr_io_only.sh:/opt/run_demo.sh
+env:
+  PYF_TRACK_FRAMES: "8"
+  PYF_TRACK_MB:     "512"   # cloudid_*.nc per-frame size
+  PYF_MCS_FRAMES:   "8"
+  PYF_MCS_MB:       "1024"  # mcstrack_*.nc per-frame size
+  PYF_STATS_FILES:  "8"
+  PYF_STATS_MB:     "1024"  # mcs_tracks_*.nc per-stats-file size
+```
+
+Writes the same `mcs_tbpf/<subdir>/tracking/`,
+`mcs_tbpf/<subdir>/mcstracking/`, and `mcs_tbpf/<subdir>/stats/`
+layout that the real demo runner produces, but uses `dd
+if=/dev/urandom` instead of feature tracking.
+
+### Per-run budget
+
+= TRACK_FRAMES × TRACK_MB + MCS_FRAMES × MCS_MB + STATS_FILES × STATS_MB
+
+Default = 8 × 512 + 8 × 1024 + 8 × 1024 = 20,480 MiB ≈ **20 GiB**.
+
+## 8.3 Tuning matrix
+
+| Goal | Knob | Rule of thumb |
+|---|---|---|
+| **More I/O total (I/O-only)** | bump any of the `PYF_*_FRAMES` or `PYF_*_MB` knobs | linear |
+| **Fewer/bigger files** | drop `*_FRAMES`, bump `*_MB` | reduces dd/open overhead |
+| **More I/O (native)** | switch `demo` to a heavier dataset (`mcs_wrf_tbpf`, `mcs_imerg_mcsmip`) | demo-dependent |
+| **Less tracking compute** | use I/O-only bind-mount | wall drops 5-10× |
+| **Distributed dask-MPI tracking** | `demo: mcs_tbpf_multinode` + bump `nprocs`/`ppn` | shifts compute to MPI ranks |
+
+## 8.4 Measured calibration (ares, 4-node SLURM, NFS-backed overlay)
+
+| Variant | demo | per-run config | Wall | I/O |
+|---|---|---|---|---|
+| Native | `mcs_imerg` | 1 rep | 662 s (11 m) | ~600 MB NetCDF |
+| Native | `mcs_wrf_tbpf` | 1 rep (cancelled) | 26+ min | runaway |
+| I/O-proxy (small files) | `mcs_imerg` | 64+48+8 files | 461 s (7.7 m) | 19.6 GB |
+| **I/O-proxy (big files)** | `mcs_imerg` | **8+8+8 files, 0.5/1/1 GiB** | **200 s (3.3 m)** | **21.5 GB** ✓ |
+
+YAML lives at `builtin/pipelines/ares/pyflextrkr_apptainer_test.yaml`.

@@ -1,0 +1,42 @@
+# Pipeline: PyFLEXTRKR, Apptainer + sbatch on Ares, 4 nodes
+# Multi-host via the mcs_tbpf_multinode demo (Dask-MPI on
+# /opt/run_demo_multinode.sh). 4 nodes * 24 ranks = 96 MPI procs
+# distributed across the allocation. Per pass: ~few MB of idealized
+# data read + per-rank NetCDF feature/mask writes.
+
+name: pyflextrkr_apptainer_test
+base_deploy_mode: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+container_binds:
+  - ${HOME}/jarvis-bench-scripts/pyflextrkr_io_only.sh:/opt/run_demo.sh
+  - ${HOME}/jarvis-runs:${HOME}/jarvis-runs
+
+env:
+  PYF_TRACK_FRAMES: "8"
+  PYF_TRACK_MB: "512"
+  PYF_MCS_FRAMES: "8"
+  PYF_MCS_MB: "1024"
+  PYF_STATS_FILES: "8"
+  PYF_STATS_MB: "1024"
+
+scheduler:
+  name: slurm
+  job_name: pyflextrkr_ares_apptainer
+  nodes: 4
+  ntasks_per_node: 24
+  partition: compute
+  time: "00:30:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+
+pkgs:
+  - pkg_type: builtin.pyflextrkr
+    pkg_name: pyflextrkr_apptainer
+    nprocs: 1
+    ppn: 1
+    demo: mcs_imerg
+    replicates: 1
+    out: ${HOME}/jarvis-runs/pyflextrkr

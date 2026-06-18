@@ -8,13 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         openssh-server openssh-client \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-# NOTE: rabbitmq-server is NOT installed here. Jarvis's pipeline-merge
-# step (pipeline.py::_build_pipeline_container) only copies /opt,
-# /usr/local, and /usr/lib/x86_64-linux-gnu from per-package deploy
-# images into the merged pipeline image — apt packages in /usr/sbin,
-# /etc, /usr/lib/rabbitmq, and /usr/lib/erlang would be dropped. We
-# install rabbitmq-server at runtime in run_ddmd.sh instead (the merged
-# container has network_mode: host and keeps apt usable).
+# RabbitMQ + Erlang are extracted by build.sh via `dpkg-deb -x` (no
+# postinst). Adding `rabbitmq-server` to the apt list above breaks the
+# apptainer-native build path, which uses --fakeroot apt and can't run
+# the rabbitmq postinst's chown to system users (`rabbitmq`, `_apt`)
+# without subuid mappings. The dpkg-deb extraction in build.sh
+# sidesteps that and run_ddmd.sh starts the broker directly.
 
 COPY --from=builder /opt/ddmd-env              /opt/ddmd-env
 COPY --from=builder /opt/DeepDriveMD           /opt/DeepDriveMD

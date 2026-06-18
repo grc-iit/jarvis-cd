@@ -29,6 +29,14 @@ class LocalMpiExec(LocalExec):
         self.hostfile = exec_info.hostfile or Hostfile(hosts=['localhost'])
         self.mpi_env = exec_info.env
         self.ssh_port = exec_info.port if exec_info.port else None
+        # Pipeline-YAML-level override for the MPI launcher. Defaults
+        # to None -> subclass picks "mpiexec".
+        self.mpi_cmd = getattr(exec_info, 'mpi_cmd', None)
+        # Pipeline-YAML-level override for the rsh agent that OpenMPI's
+        # prted / MPICH's hydra_pmi_proxy use to spawn remote ranks.
+        # Same use case as ssh_cmd (wrap ssh in env -u LD_LIBRARY_PATH
+        # so the host openssh links the right libcrypto).
+        self.ssh_cmd = getattr(exec_info, 'ssh_cmd', None)
 
         # Process command format
         if isinstance(cmd, str):
@@ -101,9 +109,13 @@ class OpenMpiExec(LocalMpiExec):
 
     def mpicmd(self) -> str:
         """Build OpenMPI command"""
-        params = ['mpiexec']
+        params = self.mpi_cmd.split() if self.mpi_cmd else ['mpiexec']
         params.append('--oversubscribe')
         params.append('--allow-run-as-root')  # For docker
+        # Forward the pipeline-level ssh_cmd to OpenMPI's rsh agent
+        # so prted spawns remote daemons via the wrapped ssh.
+        if self.ssh_cmd:
+            params.append(f'--mca plm_rsh_agent "{self.ssh_cmd}"')
 
         # Derive --prefix from PATH so remote nodes can find prted
         env_path = self.mpi_env.get('PATH', '')
@@ -165,7 +177,12 @@ class MpichExec(LocalMpiExec):
 
     def mpicmd(self) -> str:
         """Build MPICH command"""
-        params = ['mpiexec']
+        params = self.mpi_cmd.split() if self.mpi_cmd else ['mpiexec']
+
+        # Forward the pipeline-level ssh_cmd as the bootstrap exec
+        # for MPICH/hydra (default is ssh).
+        if self.ssh_cmd:
+            params.append(f'-bootstrap-exec "{self.ssh_cmd}"')
 
         # Set SSH port if explicitly specified (SSH config will be used otherwise)
         if self.ssh_port and self.ssh_port != 22:
@@ -223,7 +240,7 @@ class CrayMpichExec(LocalMpiExec):
 
     def mpicmd(self) -> str:
         """Build Cray MPICH command"""
-        params = ['mpiexec']
+        params = self.mpi_cmd.split() if self.mpi_cmd else ['mpiexec']
 
         if self.ppn is not None:
             params.append(f'--ppn {self.ppn}')

@@ -187,8 +187,24 @@ class Pkg:
         # Add common parameters that all packages should have
         common_menu = [
             {
+                'name': 'install_method',
+                'msg': "Installer to use for this package "
+                       "('pip', 'conda', 'spack', 'container'). Empty "
+                       "string defers to the pipeline's base_deploy_mode.",
+                'type': str,
+                'default': '',
+            },
+            {
+                'name': 'install_query',
+                'msg': 'Package spec consumed by the installer (e.g. spack '
+                       'spec, pip requirement, conda package name).',
+                'type': str,
+                'default': '',
+            },
+            {
                 'name': 'install',
-                'msg': 'Spack spec for this package (used with install_manager: spack)',
+                'msg': 'Deprecated alias for install_query. Prefer '
+                       'install_query.',
                 'type': str,
                 'default': '',
             },
@@ -740,10 +756,15 @@ class Pkg:
 
     @property
     def _container_engine(self) -> str:
-        """Return the pipeline's container engine when running in container mode,
-        so that Exec/MpiExecInfo wraps commands in docker/podman exec."""
+        """Return the pipeline's container engine when *this* package is
+        running in container mode, so Exec/MpiExecInfo wraps commands in
+        docker/podman/apptainer exec. Per-package: a pipeline can mix
+        a containerized workload with host-side helpers (e.g. wrp_runtime,
+        wrp_cte_libfuse running on the host while the workload runs in
+        the SIF).
+        """
         if hasattr(self, 'pipeline') and self.pipeline:
-            if self.pipeline._has_containerized_packages():
+            if self.config.get('deploy_mode') == 'container':
                 return getattr(self.pipeline, 'container_engine', 'none')
         return 'none'
 
@@ -832,20 +853,27 @@ class Pkg:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _image_exists(engine, image_name, shared_dir=None):
+    def _image_exists(engine, image_name, sif_dir=None, shared_dir=None):
         """
         Check whether a container image already exists locally.
 
         :param engine: 'docker', 'podman', or 'apptainer'
         :param image_name: Image name to check
-        :param shared_dir: Shared directory (needed for apptainer .sif check)
+        :param sif_dir: Directory holding apptainer .sif files. The
+                        canonical location is ``$SHARED_DIR/containers``
+                        (``Jarvis.get_containers_dir()``). Pass that in.
+        :param shared_dir: Deprecated alias for ``sif_dir`` kept for
+                           callers that still pass the per-pipeline
+                           shared directory. Will be removed once
+                           callers are migrated.
         :return: True if the image exists
         """
         if engine == 'apptainer':
             from pathlib import Path
-            if not shared_dir:
+            sif_root = sif_dir or shared_dir
+            if not sif_root:
                 return False
-            sif = Path(shared_dir) / f'{image_name}.sif'
+            sif = Path(sif_root) / f'{image_name}.sif'
             return sif.exists()
         # docker / podman
         from jarvis_cd.shell import Exec, LocalExecInfo

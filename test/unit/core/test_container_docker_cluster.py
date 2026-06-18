@@ -73,7 +73,7 @@ class DockerClusterTestBase(unittest.TestCase):
                                  container_image='test:latest'):
         pipeline = Pipeline()
         pipeline.create(name)
-        pipeline.install_manager = install_manager
+        pipeline.base_deploy_mode = install_manager
         pipeline.container_engine = container_engine
         pipeline.container_base = container_base
         pipeline.container_image = container_image

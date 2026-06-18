@@ -3,7 +3,7 @@
 # Hosts: ares-comp-25 through ares-comp-28 (4 nodes, 1 process per node)
 
 name: ior_ares_container_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: ubuntu:24.04

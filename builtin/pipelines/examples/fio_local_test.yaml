@@ -5,7 +5,7 @@
 # Expected Runtime: 1-2 minutes (image builds fast; FIO is just an apt install).
 
 name: fio_local_test
-install_manager: container
+base_deploy_mode: container
 
 # Container configuration — FIO installed via apt, no spack or source build.
 container_engine: docker

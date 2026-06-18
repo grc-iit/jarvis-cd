@@ -380,6 +380,76 @@ class TestPipelineTestVariableApplication(unittest.TestCase):
 
         self.assertEqual(result['pkgs'][0]['nprocs'], 8)
 
+    def test_apply_scheduler_var_merges_with_top_level(self):
+        """`scheduler.X` vars merge onto the top-level scheduler template."""
+        test = PipelineTest()
+        test.scheduler = {
+            'name': 'slurm',
+            'partition': 'compute',
+            'time': '00:30:00',
+            'nodes': 1,
+        }
+        base_config = {
+            'name': 'test',
+            'pkgs': [{'pkg_type': 'builtin.ior', 'pkg_name': 'ior'}],
+        }
+        variables = {'scheduler.nodes': 8, 'ior.nprocs': 64}
+
+        result = test._apply_variables(base_config, variables)
+
+        # Var overrides template; other template keys carry through;
+        # package var still applied alongside scheduler var.
+        self.assertEqual(result['scheduler']['nodes'], 8)
+        self.assertEqual(result['scheduler']['name'], 'slurm')
+        self.assertEqual(result['scheduler']['partition'], 'compute')
+        self.assertEqual(result['scheduler']['time'], '00:30:00')
+        self.assertEqual(result['pkgs'][0]['nprocs'], 64)
+
+    def test_apply_scheduler_var_overrides_nested_config_scheduler(self):
+        """scheduler.X has higher precedence than config.scheduler."""
+        test = PipelineTest()
+        test.scheduler = {'name': 'slurm', 'partition': 'compute'}
+        base_config = {
+            'name': 'test',
+            'scheduler': {'nodes': 2, 'time': '01:00:00'},
+            'pkgs': [{'pkg_type': 'builtin.ior', 'pkg_name': 'ior'}],
+        }
+        variables = {'scheduler.nodes': 16}
+
+        result = test._apply_variables(base_config, variables)
+
+        # Precedence: top-level (template) < config.scheduler < scheduler.X
+        self.assertEqual(result['scheduler']['nodes'], 16)
+        self.assertEqual(result['scheduler']['time'], '01:00:00')
+        self.assertEqual(result['scheduler']['partition'], 'compute')
+        self.assertEqual(result['scheduler']['name'], 'slurm')
+
+    def test_apply_scheduler_var_without_template(self):
+        """`scheduler.X` works even with no top-level scheduler template."""
+        test = PipelineTest()
+        base_config = {
+            'name': 'test',
+            'pkgs': [{'pkg_type': 'builtin.ior', 'pkg_name': 'ior'}],
+        }
+        variables = {'scheduler.nodes': 4}
+
+        result = test._apply_variables(base_config, variables)
+
+        self.assertEqual(result['scheduler'], {'nodes': 4})
+
+    def test_apply_top_level_scheduler_propagates_with_no_vars(self):
+        """Top-level scheduler propagates to config even when no vars touch it."""
+        test = PipelineTest()
+        test.scheduler = {'name': 'slurm', 'nodes': 2}
+        base_config = {
+            'name': 'test',
+            'pkgs': [{'pkg_type': 'builtin.ior', 'pkg_name': 'ior'}],
+        }
+
+        result = test._apply_variables(base_config, {})
+
+        self.assertEqual(result['scheduler'], {'name': 'slurm', 'nodes': 2})
+
 
 class TestPipelineTestLoading(unittest.TestCase):
     """Tests for loading pipeline test from YAML file."""

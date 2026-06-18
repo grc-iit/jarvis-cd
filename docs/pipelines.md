@@ -228,7 +228,7 @@ name: my_pipeline
 
 ### Install Manager
 
-The `install_manager` field determines how packages are installed and deployed. It is a **pipeline-level** setting that applies to all packages uniformly.
+The `base_deploy_mode` field determines how packages are installed and deployed. It is a **pipeline-level** setting that applies to all packages uniformly.
 
 | Value | Description |
 |-------|-------------|
@@ -236,18 +236,18 @@ The `install_manager` field determines how packages are installed and deployed. 
 | `spack` | Install packages via Spack, then run bare-metal |
 | *(absent)* | Legacy default — packages run bare-metal with no auto-installation |
 
-`deploy_mode` is derived automatically from `install_manager` and set on all packages:
-- `install_manager: container` → `deploy_mode = 'container'`
-- `install_manager: spack` → `deploy_mode = 'default'`
-- No `install_manager` → `deploy_mode = 'default'`
+`deploy_mode` is derived automatically from `base_deploy_mode` and set on all packages:
+- `base_deploy_mode: container` → `deploy_mode = 'container'`
+- `base_deploy_mode: spack` → `deploy_mode = 'default'`
+- No `base_deploy_mode` → `deploy_mode = 'default'`
 
 ### Spack Configuration
 
-When `install_manager: spack`, Jarvis collects the `install` key from each package and runs `spack install` followed by `spack load` to capture the environment.
+When `base_deploy_mode: spack`, Jarvis collects the `install` key from each package and runs `spack install` followed by `spack load` to capture the environment.
 
 ```yaml
 name: ior_spack_test
-install_manager: spack
+base_deploy_mode: spack
 
 pkgs:
   - pkg_type: builtin.ior
@@ -280,15 +280,40 @@ pkgs:
 
 Packages without an `install` key (or with an empty string) are skipped during spack installation.
 
+### Scheduler Configuration
+
+Pipelines can be submitted to a batch resource manager (SLURM today) by
+adding a top-level `scheduler:` key. The job script that
+`jarvis ppl submit` writes builds a hostfile from the allocation and
+then runs the pipeline. See [scheduler.md](scheduler.md) for the full
+key reference.
+
+```yaml
+name: my_pipeline
+
+scheduler:
+  name: slurm
+  job_name: my_pipeline
+  nodes: 2
+  ntasks_per_node: 4
+  partition: cpu
+  time: "00:30:00"
+  # hostfile defaults to ${SHARED_DIR}/hostfile.txt
+```
+
+When `scheduler:` is set, `self.hostfile` is automatically bound to
+`scheduler.hostfile` so every package in the pipeline reads from the
+file the job script populates inside the allocation.
+
 ### Container Configuration
 
-Pipelines can be configured to run packages inside Docker or Podman containers. Set `install_manager: container` and provide container configuration. Containers act as SSH compute nodes — the host-side jarvis orchestrates everything by exec-ing commands into the running containers via `docker exec` and MPI over SSH. No jarvis installation is needed inside the containers.
+Pipelines can be configured to run packages inside Docker or Podman containers. Set `base_deploy_mode: container` and provide container configuration. Containers act as SSH compute nodes — the host-side jarvis orchestrates everything by exec-ing commands into the running containers via `docker exec` and MPI over SSH. No jarvis installation is needed inside the containers.
 
 #### Container Pipeline Parameters
 
 ```yaml
 name: my_containerized_pipeline
-install_manager: container
+base_deploy_mode: container
 
 # Container configuration
 container_engine: docker                            # Container engine: docker or podman (default: podman)
@@ -320,7 +345,7 @@ pkgs:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `install_manager` | string | *(absent)* | Set to `container` to enable containerized deployment |
+| `base_deploy_mode` | string | *(absent)* | Set to `container` to enable containerized deployment |
 | `container_engine` | string | `"podman"` | Container engine: `docker` or `podman` |
 | `container_base` | string | `"iowarp/iowarp-build:latest"` | Base Docker image for package builds |
 | `container_ssh_port` | int | `2222` | SSH port for MPI communication between containers |
@@ -393,7 +418,7 @@ This is necessary because containers using `network_mode: host` see all host net
 
 ```yaml
 name: ior_ares_container_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: ubuntu:24.04
@@ -420,7 +445,7 @@ pkgs:
 
 ```yaml
 name: redis_container_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: ubuntu:24.04
@@ -446,7 +471,7 @@ pkgs:
 
 ```yaml
 name: lammps_container_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: ubuntu:24.04
@@ -567,7 +592,7 @@ The `container_extensions` parameter allows you to extend the generated Docker C
 6. **Complete GPU Configuration Example**:
    ```yaml
    name: gpu_pipeline
-   install_manager: container
+   base_deploy_mode: container
    container_engine: docker
    container_base: docker.io/nvidia/cuda:12.0-base
 
@@ -620,7 +645,7 @@ This creates a **path mismatch problem**: the devcontainer sees the workspace at
 
 ```yaml
 name: my_devcontainer_pipeline
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: ubuntu:24.04
@@ -819,6 +844,24 @@ jarvis ppl kill
 
 # Clean all pipeline data
 jarvis ppl clean
+```
+
+#### Submit Pipeline to a Batch Scheduler
+
+When the pipeline YAML carries a `scheduler:` block (see
+[scheduler.md](scheduler.md)), `jarvis ppl submit` writes a job script
+into the pipeline's shared directory and (by default) submits it via
+the scheduler's command — `sbatch` for SLURM.
+
+```bash
+# Submit the current pipeline
+jarvis ppl submit
+
+# Submit a specific YAML (pipeline or pipeline test)
+jarvis ppl submit path/to/pipeline.yaml
+
+# Only write the script, do not submit
+jarvis ppl submit +no_submit
 ```
 
 ### Pipeline Information and Status

@@ -3,7 +3,7 @@
 # Requirements: Docker installed, sci-hpc-base image built locally
 
 name: pyflextrkr_container_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 # ubuntu:24.04 runs as root (iowarp/iowarp-build runs as uid 1001 and

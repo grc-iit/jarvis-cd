@@ -3,7 +3,7 @@
 # Requirements: NVIDIA GPU, sci-hpc-base image built locally
 
 name: vpic_container_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: sci-hpc-base

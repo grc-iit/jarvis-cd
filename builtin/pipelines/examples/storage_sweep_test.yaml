@@ -1,0 +1,92 @@
+# Pipeline Test Example: Storage Parameter Sweeps (IOR + Redis)
+#
+# A single pipeline-test *suite*: one file that runs two independent
+# experiments back-to-back with one command.
+#
+#   jarvis ppl run yaml storage_sweep_test.yaml
+#
+# Each entry under `experiments:` is a full pipeline test (config / vars /
+# loop / repeat / output). They run in order, each deploying its own
+# pipeline and sweeping its own parameters in a grid.
+#
+# Both experiments run in Docker containers (base_deploy_mode: container),
+# so no host install of IOR or Redis is required — Jarvis builds the images.
+# Requirements: Docker installed and running.
+#
+# Both experiments sweep two dimensions: I/O size and parallelism
+# (processes for IOR, threads for Redis). Each run stays well under 1 GB of
+# I/O, so this is cheap to run as a demo.
+
+name: storage_sweeps
+
+experiments:
+  # ------------------------------------------------------------------
+  # Experiment 1: IOR sweep over I/O size x number of processes.
+  # Writes under $HOME/ior_test. Each run writes block(64m) * nprocs;
+  # the largest (nprocs=4) generates 256 MiB. Runs reuse one output
+  # file, so on-disk usage never exceeds a single run.
+  # ------------------------------------------------------------------
+  - config:
+      name: ior_sweep
+      base_deploy_mode: container
+      container_engine: docker
+      container_base: ubuntu:24.04
+      # Bind-mount the output dir into the container so IOR's data file and
+      # log land on the host (only shared/private dirs are mounted by
+      # default). The log must be host-visible for bandwidth stats to parse.
+      container_binds:
+        - ${HOME}/ior_test
+      pkgs:
+        - pkg_type: builtin.ior
+          pkg_name: ior
+          api: posix
+          block: 64m            # data written per process
+          xfer: 1m              # overridden by the sweep below
+          nprocs: 1             # overridden by the sweep below
+          ppn: 4                # max procs per node (>= largest nprocs)
+          write: true
+          read: false
+          out: ${HOME}/ior_test/data.bin
+          log: ${HOME}/ior_test/ior.log
+    vars:
+      ior.xfer: ["256k", "1m", "4m"]    # I/O size
+      ior.nprocs: [1, 2, 4]             # number of processes
+    loop:
+      - [ior.xfer]
+      - [ior.nprocs]
+    repeat: 1
+    output: ${HOME}/ior_test/results
+
+  # ------------------------------------------------------------------
+  # Experiment 2: Redis sweep over request size x number of threads.
+  # Starts a Redis server, then drives it with redis-benchmark. Total
+  # data moved per run ~= count * req_size; the largest (4096 B) moves
+  # ~400 MB. Throughput (requests/sec) is parsed into the results CSV.
+  # ------------------------------------------------------------------
+  - config:
+      name: redis_sweep
+      base_deploy_mode: container
+      container_engine: docker
+      container_base: ubuntu:24.04
+      pkgs:
+        - pkg_type: builtin.redis
+          pkg_name: redis
+          port: 6379
+          sleep: 2
+        - pkg_type: builtin.redis-benchmark
+          pkg_name: redis_bench
+          port: 6379
+          count: 100000
+          write: true
+          read: true
+          pipeline: 16
+          req_size: 64          # overridden by the sweep below
+          nthreads: 1           # overridden by the sweep below
+    vars:
+      redis_bench.req_size: [64, 1024, 4096]   # I/O size (bytes)
+      redis_bench.nthreads: [1, 2, 4]          # number of threads
+    loop:
+      - [redis_bench.req_size]
+      - [redis_bench.nthreads]
+    repeat: 1
+    output: ${HOME}/redis_test/results

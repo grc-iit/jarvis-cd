@@ -5,13 +5,20 @@ Pipeline tests are used to run experiment sets using a grid search. They allow y
 ## Table of Contents
 
 1. [Overview](#overview)
-2. [YAML Format](#yaml-format)
-3. [Example Files](#example-files)
-4. [Variables and Loop](#variables-and-loop)
-5. [Output and Statistics](#output-and-statistics)
-6. [CLI Commands](#cli-commands)
-7. [Resume and Progress](#resume-and-progress)
-8. [Custom Statistics](#custom-statistics)
+2. [Multiple Pipelines in a Single YAML File](#multiple-pipelines-in-a-single-yaml-file)
+3. [Multiple Experiments (Suite)](#multiple-experiments-suite)
+4. [YAML Format](#yaml-format)
+5. [Installers](#installers)
+6. [Example Files](#example-files)
+7. [Variables and Loop](#variables-and-loop)
+   - [Scheduler Variables](#scheduler-variables)
+8. [Launcher Overrides](#launcher-overrides)
+9. [Output and Statistics](#output-and-statistics)
+10. [CLI Commands](#cli-commands)
+11. [Resume and Progress](#resume-and-progress)
+12. [Custom Statistics](#custom-statistics)
+13. [Scheduling](#scheduling)
+14. [Combined Example: SLURM + Spack + Multiple Experiments](#combined-example-slurm--spack--multiple-experiments)
 
 ## Overview
 
@@ -21,6 +28,115 @@ A pipeline test consists of:
 - A **loop** section defining how variables are iterated
 - A **repeat** count for running each configuration multiple times
 - An **output** directory for storing results
+
+## Multiple Pipelines in a Single YAML File
+
+A pipeline test **is** the mechanism for expressing many pipelines in
+one file. A single test YAML contains one `config:` skeleton plus a
+`vars:`/`loop:` grid; loading it expands that grid into one distinct
+pipeline per `(combination × repeat)`.
+
+Each generated pipeline is materialized independently at run time:
+
+- It is renamed `"{test_name}_run{N}"` (`N` is the global run index,
+  starting at 1), so every iteration is a separate Jarvis pipeline
+  with its own name and config/shared/private directories — they do
+  not collide.
+- Its config is `config:` with that combination's variable values
+  patched in (`pkg_name.var_name` onto the matching package;
+  `scheduler.var_name` onto the scheduler block — see
+  [Scheduler Variables](#scheduler-variables)).
+- It is written to a temporary YAML, loaded as an ordinary pipeline,
+  then either run in-process (`start()` → `stop()`) or, if it has a
+  scheduler block, submitted as its own batch job and waited on.
+
+So a 5×4 grid with `repeat: 3` is "60 pipelines in one YAML file":
+
+```yaml
+config:
+  name: ior_sweep            # pipelines: ior_sweep_run1 .. ior_sweep_run60
+  pkgs:
+    - pkg_type: builtin.ior
+      pkg_name: ior
+vars:
+  ior.nprocs: [1, 2, 4, 8, 16]
+  ior.block:  [512M, 1G, 2G, 4G]
+loop:
+  - [ior.nprocs]
+  - [ior.block]
+repeat: 3
+output: "${HOME}/ior_results"
+```
+
+Detection is automatic (see [Auto-Detection](#auto-detection)): a file
+with a `config:` section plus any of `vars`/`loop`/`repeat`/`output`
+is a multi-pipeline test; a file with top-level `name`/`pkgs` is a
+single regular pipeline. The same `jarvis ppl load|run|submit yaml
+<file>` commands work for both.
+
+## Multiple Experiments (Suite)
+
+The `vars:`/`loop:` grid above expands **one** `config:` skeleton into
+many runs — every run is the *same* pipeline with different parameter
+values. When you instead want several **distinct** configurations in one
+file — different packages, different sweeps, even different installers or
+schedulers — list them under a top-level `experiments:` key. This makes
+the file a **suite**: one `jarvis ppl run yaml <file>` runs each
+experiment's full grid in order.
+
+```yaml
+name: storage_sweeps          # suite name (optional)
+
+experiments:
+  - config:                   # experiment 1 — its own packages + sweep
+      name: ior_sweep
+      pkgs:
+        - pkg_type: builtin.ior
+          pkg_name: ior
+    vars:
+      ior.xfer:   ["256k", "1m", "4m"]
+      ior.nprocs: [1, 2, 4]
+    loop:
+      - [ior.xfer]
+      - [ior.nprocs]
+    output: ${HOME}/ior_test/results
+
+  - config:                   # experiment 2 — a completely different pipeline
+      name: redis_sweep
+      pkgs:
+        - pkg_type: builtin.redis
+          pkg_name: redis
+        - pkg_type: builtin.redis-benchmark
+          pkg_name: redis_bench
+    vars:
+      redis_bench.req_size: [64, 1024, 4096]
+      redis_bench.nthreads: [1, 2, 4]
+    loop:
+      - [redis_bench.req_size]
+      - [redis_bench.nthreads]
+    output: ${HOME}/redis_test/results
+```
+
+Key points:
+
+- **Each entry is a full pipeline test.** An experiment accepts every
+  key a standalone test does — `config`, `vars`, `loop`, `repeat`,
+  `output`, and a nested `scheduler:` (see
+  [Scheduling](#scheduling)). They run sequentially in listed order.
+- **Independent outputs.** Give each experiment its own `output:`
+  directory so their `results.csv` files don't overwrite each other.
+- **Detection.** A file containing `experiments:` is always a suite. As
+  with single tests, `jarvis ppl load|run yaml <file>` auto-detects it
+  (`jarvis ppl load` prints the experiment count and total runs).
+- **Grid vs. suite.** Use `vars`/`loop` to sweep one experiment; use
+  `experiments:` to combine several experiments. The two compose — every
+  experiment in a suite has its own grid.
+
+A runnable example lives at
+[`builtin/pipelines/examples/storage_sweep_test.yaml`](../builtin/pipelines/examples/storage_sweep_test.yaml)
+(IOR + Redis sweeps in Docker). For a suite that also adds Spack and
+SLURM, see
+[Combined Example](#combined-example-slurm--spack--multiple-experiments).
 
 ## YAML Format
 
@@ -89,6 +205,100 @@ The directory where results are stored. You can use environment variables:
 - `${PRIVATE_DIR}` - Pipeline's private directory
 - `${CONFIG_DIR}` - Pipeline's config directory
 - `${HOME}` - User's home directory
+
+### scheduler (optional)
+
+A top-level `scheduler:` block plays one of two roles depending on
+whether the `vars:` section contains any `scheduler.*` entries. See
+[scheduler.md](scheduler.md) for the full scheduler key reference.
+
+**Mode A — single-job wrapper (no `scheduler.*` vars):**
+the whole test runs inside one allocation; every variable combination
+and repeat executes sequentially in that one job.
+
+```yaml
+scheduler:
+  name: slurm
+  nodes: 2
+  ntasks_per_node: 4
+  partition: cpu
+  time: "01:00:00"
+
+config:
+  name: my_test
+  pkgs: [...]
+
+vars: {...}
+loop: [...]
+```
+
+Submit with `jarvis ppl submit path/to/test.yaml`.
+
+**Mode B — per-iteration template (`scheduler.*` vars present):**
+the top-level scheduler becomes a set of *defaults* that every
+iteration's scheduler inherits, and each iteration is submitted as its
+own job via `sbatch --wait` (so the test runner blocks on each job
+before moving on). See [Scheduler Variables](#scheduler-variables).
+
+In Mode B, `jarvis ppl submit` is rejected; use `jarvis ppl run` so
+each iteration submits independently.
+
+## Installers
+
+Before a pipeline runs, Jarvis can **install** the software each package
+needs. Because the `config:` block is an ordinary pipeline definition,
+the same installer keys apply inside a pipeline test, and they are picked
+up for every iteration the test generates.
+
+An installer is selected per package, in this order:
+
+1. The package's explicit **`install_method`** — one of `pip`, `conda`,
+   `spack`, or `container`.
+2. Otherwise the pipeline-level **`base_deploy_mode`** — when it is
+   `container` or `spack`, it doubles as the default install method for
+   every package that doesn't set its own.
+3. Otherwise no installer runs (the binary is assumed already on `PATH`).
+
+The thing to install is named by **`install_query`** (the legacy alias
+`install` also works). Its meaning depends on the method:
+
+| `install_method` | `install_query` is …                    | Action |
+|------------------|------------------------------------------|--------|
+| `spack`          | a Spack spec, e.g. `ior@3.3.0 +hdf5`     | `spack install <spec>`, then load its env into the run |
+| `pip`            | one or more pip requirement specs        | `python3 -m pip install <specs>` |
+| `conda`          | conda package specs                      | `conda install <specs>` |
+| `container`      | (n/a — built from the package Dockerfiles) | builds/pulls the deploy image |
+
+Packages sharing an installer are batched into a single command, so a
+suite that spack-installs `ior` in several experiments builds it once
+(Spack is idempotent on subsequent specs).
+
+### Spack example
+
+```yaml
+config:
+  name: ior_spack
+  base_deploy_mode: spack          # default installer for the whole pipeline
+  pkgs:
+    - pkg_type: builtin.ior
+      pkg_name: ior
+      install_method: spack        # explicit; redundant with base_deploy_mode
+      install_query: "ior +hdf5"   # the Spack spec to build + load
+      api: posix
+      block: 32m
+      xfer: 1m
+
+vars:
+  ior.xfer: ["256k", "1m", "4m"]
+loop:
+  - [ior.xfer]
+output: ${HOME}/ior_spack_results
+```
+
+Spack is discovered via `SPACK_ROOT` (its `setup-env.sh` is sourced
+before `spack install`). After installation, the environment produced by
+`spack load` is merged into the run so the freshly built binaries are on
+`PATH`/`LD_LIBRARY_PATH`.
 
 ## Example Files
 
@@ -189,9 +399,13 @@ The resulting test cases are:
 
 ### Variable Naming
 
-Variables use the format `pkg_name.var_name`:
-- `pkg_name` must match the `pkg_name` field of a package in the config
-- `var_name` is any configuration parameter that package accepts
+Variables use one of two prefixes:
+
+- `pkg_name.var_name` — set `var_name` on the matching package.
+  - `pkg_name` must match the `pkg_name` field of a package in the config
+  - `var_name` is any configuration parameter that package accepts
+- `scheduler.var_name` — set `var_name` on this iteration's scheduler
+  block. See [Scheduler Variables](#scheduler-variables) below.
 
 ### Loop Groups
 
@@ -225,6 +439,91 @@ loop:
 ```
 
 Total combinations: 3 x 2 x 2 = 12
+
+### Scheduler Variables
+
+Variables prefixed with `scheduler.` are applied to this iteration's
+scheduler block instead of a package. This is the right way to sweep
+node counts, partitions, time limits, or anything else the scheduler
+understands (see [scheduler.md](scheduler.md) for the SLURM key list).
+
+The effective scheduler for each iteration is built by merging, in
+order:
+
+1. The test's top-level `scheduler:` block (defaults / template).
+2. Any `scheduler:` block nested inside `config:` (per-test override).
+3. The `scheduler.*` values from this combination's `vars:`.
+
+When the merged block exists, the iteration is submitted as its own
+job via `sbatch --wait`; the test runner blocks on each job before
+collecting stats and moving on.
+
+#### Example: Scaling Sweep
+
+```yaml
+scheduler:
+  name: slurm
+  partition: compute
+  time: "00:30:00"
+  ntasks_per_node: 16
+  output: ${HOME}/logs/scaling.%j.out
+  error:  ${HOME}/logs/scaling.%j.err
+
+config:
+  name: ior_scaling
+  pkgs:
+    - pkg_type: builtin.ior
+      pkg_name: ior
+      block: 1G
+      xfer: 1M
+
+vars:
+  scheduler.nodes: [1, 2, 4, 8, 16]
+  ior.nprocs:     [16, 32, 64, 128, 256]
+
+loop:
+  - [scheduler.nodes, ior.nprocs]   # zipped: nodes * 16 procs
+
+repeat: 3
+output: "${HOME}/ior_scaling_results"
+```
+
+This sweeps a 5-point scaling curve. Each iteration submits its own
+SLURM job with the matching `--nodes=...`, inheriting `partition`,
+`time`, `ntasks_per_node`, etc. from the top-level template.
+
+## Launcher Overrides
+
+The `config:` block is loaded as an ordinary pipeline, so it accepts
+the same top-level launcher-override keys a regular pipeline does —
+`ssh_cmd`, `pssh_cmd`, and `mpi_cmd`. Place them **inside `config:`**
+(not at the test's top level), and every iteration generated from the
+test inherits them:
+
+```yaml
+config:
+  name: ior_sweep
+  ssh_cmd:  "env -u LD_LIBRARY_PATH ssh"   # host openssh, not conda's
+  pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+  mpi_cmd:  "mpiexec"
+  pkgs:
+    - pkg_type: builtin.ior
+      pkg_name: ior
+
+vars:
+  ior.nprocs: [1, 2, 4, 8, 16]
+loop:
+  - [ior.nprocs]
+repeat: 3
+output: "${HOME}/ior_results"
+```
+
+These swap the SSH / parallel-SSH / MPI launchers without modifying
+any package. The canonical use is `env -u LD_LIBRARY_PATH ssh`, which
+keeps a conda environment's `libcrypto` out of the host `ssh` (an ABI
+mismatch otherwise makes `ssh` exit 255 before forwarding the remote
+command). See [shell.md → Launcher Overrides](shell.md#launcher-overrides)
+for the full mechanism and the per-MPI-backend bootstrap forwarding.
 
 ## Output and Statistics
 
@@ -435,3 +734,151 @@ class Ycsb(Application):
 | Runtime | `pkg.runtime` | Execution time (seconds) |
 | Memory | `pkg.memory_peak` | Peak memory usage (MB) |
 | Error Rate | `pkg.error_rate` | Percentage of failures |
+
+## Scheduling
+
+Pipeline tests integrate with the batch scheduler (SLURM today) in two
+mutually exclusive modes, selected automatically by whether `vars:`
+contains any `scheduler.*` entries. Both are introduced under
+[scheduler (optional)](#scheduler-optional) above; this section
+summarizes them and points at the full reference.
+
+### Mode A — one job wraps the whole test
+
+No `scheduler.*` vars. A top-level `scheduler:` block wraps **every**
+combination and repeat in a single allocation. The generated job
+script builds a hostfile from the allocation, then runs
+`jarvis ppl run yaml <test>` once so all iterations reuse the same
+nodes sequentially.
+
+```bash
+jarvis ppl submit path/to/test.yaml          # writes + sbatch
+jarvis ppl submit path/to/test.yaml +no_submit   # script only
+```
+
+The script is written to `<test_shared_dir>/submit.slurm`.
+
+### Mode B — one job per iteration
+
+Any `scheduler.<key>` entry in `vars:` flips the test into
+per-iteration submission. The effective scheduler for each iteration is
+merged in order:
+
+```
+top-level scheduler  ⊕  config.scheduler (if any)  ⊕  scheduler.* vars
+```
+
+Each iteration is submitted on its own via `sbatch --wait`, so the
+test runner **blocks** on each job (capturing its runtime/stats)
+before moving to the next. Run these with `jarvis ppl run yaml
+<test>`; `jarvis ppl submit` is rejected in this mode because wrapping
+a per-iteration template in one job would freeze the swept values.
+
+This is the natural way to drive scaling sweeps (node count,
+partition, time limit, ...) — see
+[Scheduler Variables](#scheduler-variables) for a worked scaling
+example.
+
+### Reference
+
+See **[scheduler.md](scheduler.md)** for: the full SLURM key table
+(`nodes`, `ntasks_per_node`, `partition`, `time`, `gres`, ...),
+pass-through of arbitrary `--flag=value` directives, `pre_cmds` /
+`post_cmds` hooks, the hostname `suffix:` (secondary-NIC) feature, and
+how the allocation-built hostfile flows back into every package via
+`self.hostfile`.
+
+## Combined Example: SLURM + Spack + Multiple Experiments
+
+The three features above compose. This suite runs **two experiments**
+([Multiple Experiments](#multiple-experiments-suite)), each installing
+its software with **Spack** ([Installers](#installers)) and submitting
+every iteration as its own **SLURM** job ([Scheduling](#scheduling)).
+The full file is
+[`builtin/pipelines/examples/ior_spack_slurm_suite.yaml`](../builtin/pipelines/examples/ior_spack_slurm_suite.yaml).
+
+```yaml
+name: ior_spack_slurm_suite
+
+experiments:
+  # Experiment 1: IOR over the POSIX API
+  - config:
+      name: ior_posix
+      base_deploy_mode: spack            # Spack installer for all pkgs
+      scheduler:                         # nested -> one SLURM job per iteration
+        name: slurm
+        job_name: ior_posix
+        nodes: 2
+        ntasks_per_node: 8
+        partition: cpu
+        time: "00:30:00"
+      pkgs:
+        - pkg_type: builtin.ior
+          pkg_name: ior
+          install_method: spack
+          install_query: ior             # the Spack spec
+          api: posix
+          ppn: 8
+          block: 512m
+          out: ${HOME}/ior_spack_test/posix.bin
+          log: ${HOME}/ior_spack_test/posix.log
+          write: true
+          read: true
+    vars:
+      ior.xfer:   ["1m", "4m"]           # I/O size
+      ior.nprocs: [8, 16]                # number of MPI processes
+    loop:
+      - [ior.xfer]
+      - [ior.nprocs]
+    output: ${HOME}/ior_spack_test/posix_results
+
+  # Experiment 2: IOR over the MPI-IO API (same spack-built binary)
+  - config:
+      name: ior_mpiio
+      base_deploy_mode: spack
+      scheduler:
+        name: slurm
+        job_name: ior_mpiio
+        nodes: 2
+        ntasks_per_node: 8
+        partition: cpu
+        time: "00:30:00"
+      pkgs:
+        - pkg_type: builtin.ior
+          pkg_name: ior
+          install_method: spack
+          install_query: ior
+          api: mpiio
+          ppn: 8
+          block: 512m
+          out: ${HOME}/ior_spack_test/mpiio.bin
+          log: ${HOME}/ior_spack_test/mpiio.log
+          write: true
+          read: true
+    vars:
+      ior.xfer:   ["1m", "4m"]
+      ior.nprocs: [8, 16]
+    loop:
+      - [ior.xfer]
+      - [ior.nprocs]
+    output: ${HOME}/ior_spack_test/mpiio_results
+```
+
+```bash
+jarvis ppl run yaml builtin/pipelines/examples/ior_spack_slurm_suite.yaml
+```
+
+How the pieces interact:
+
+- **Suite** → the two experiments run in order; each writes its own
+  `results.csv` under its `output:` directory.
+- **Spack** → before each experiment's pipeline deploys, Jarvis runs
+  `spack install ior` and loads its environment. The install is
+  idempotent, so the second experiment reuses the first's build.
+- **SLURM** → because the `scheduler:` block is **nested inside
+  `config:`**, every iteration is submitted as its own job with
+  `sbatch --wait`; the runner blocks on each job, records its
+  runtime/stats, then continues. (A nested `config.scheduler` is the
+  per-iteration form — see [Scheduling](#scheduling). A suite does not
+  wrap all experiments in one allocation; scheduling is expressed
+  per experiment.)

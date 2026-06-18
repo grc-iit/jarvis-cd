@@ -9,8 +9,9 @@ This guide documents the shell execution system in `jarvis_cd.shell`, which prov
 3. [Factory Pattern](#factory-pattern)
 4. [Core Classes](#core-classes)
 5. [Process Utilities](#process-utilities)
-6. [Usage Examples](#usage-examples)
-7. [Best Practices](#best-practices)
+6. [Launcher Overrides](#launcher-overrides)
+7. [Usage Examples](#usage-examples)
+8. [Best Practices](#best-practices)
 
 ## Overview
 
@@ -233,20 +234,19 @@ for hostname in hostfile.hosts:
 
 ### Kill
 
-Terminate processes by name pattern.
+Terminate processes whose process name (comm) exactly matches the
+given executable. Backed by ``pkill -9 -x``, so pass the executable
+basename — not a command line or regex.
 
 ```python
 from jarvis_cd.shell.process import Kill
 from jarvis_cd.shell import LocalExecInfo, PsshExecInfo
 
 # Kill local processes
-Kill('python.*my_script', LocalExecInfo()).run()
+Kill('my_application', LocalExecInfo()).run()
 
 # Kill processes on remote hosts
-Kill('my_application', PsshExecInfo(hostfile=hostfile)).run()
-
-# Exact name matching (partial=False)
-Kill('nginx', LocalExecInfo(), partial=False).run()
+Kill('redis-server', PsshExecInfo(hostfile=hostfile)).run()
 ```
 
 ### KillAll
@@ -347,6 +347,83 @@ from jarvis_cd.shell.process import Echo
 from jarvis_cd.shell import LocalExecInfo
 
 Echo("Processing complete", LocalExecInfo()).run()
+```
+
+## Launcher Overrides
+
+By default the shell system spawns remote work with the stock
+launchers: `ssh` for `SshExec`, per-host `ssh` for `PsshExec`, and
+`mpiexec` for `MpiExec`. A pipeline can swap any of these out **without
+touching package code** by declaring top-level keys in its YAML:
+
+```yaml
+name: my_pipeline
+
+# Wrap ssh so a conda env's libcrypto is not dragged into the host
+# openssh (which otherwise aborts with an OpenSSL ABI mismatch).
+ssh_cmd:  "env -u LD_LIBRARY_PATH ssh"
+pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+mpi_cmd:  "mpiexec"
+
+pkgs:
+  - pkg_type: builtin.ior
+    nprocs: 8
+    ppn: 4
+```
+
+### How it works
+
+`Pipeline._apply_launcher_overrides()` runs at load time and calls
+`ExecInfo.set_launcher_defaults(ssh_cmd=..., pssh_cmd=..., mpi_cmd=...)`.
+That writes the values into class-level defaults on `ExecInfo`, so
+**every** `SshExecInfo` / `PsshExecInfo` / `MpiExecInfo` constructed
+afterward by any package inherits the override automatically. A
+constructor argument still wins per-instance:
+
+```python
+# Inherits the pipeline-level ssh_cmd default
+SshExecInfo(hostfile=hostfile)
+
+# Explicitly overrides it for this one call
+SshExecInfo(hostfile=hostfile, ssh_cmd="ssh")
+```
+
+The overrides round-trip: they are persisted into the saved
+`pipeline.yaml`, so a later `jarvis ppl run` against a loaded pipeline
+(no original YAML re-read) still sees the same launcher.
+
+| Key        | Affects            | Effect |
+|------------|--------------------|--------|
+| `ssh_cmd`  | `SshExec`          | Replaces the `ssh` argv head. `PsshExec` forwards it to each per-host `SshExec`. |
+| `pssh_cmd` | `PsshExec`         | Parallel-SSH launcher override slot (defaulted into every `PsshExecInfo`). |
+| `mpi_cmd`  | `MpiExec`          | Replaces `mpiexec` for OpenMPI / MPICH / Cray MPICH backends. |
+
+When `ssh_cmd` is set and an MPI job is multi-node, it is also
+forwarded to the MPI bootstrap agent so remote ranks spawn through the
+wrapped ssh:
+
+- **OpenMPI**: `--mca plm_rsh_agent "<ssh_cmd>"`
+- **MPICH / Hydra**: `-bootstrap-exec "<ssh_cmd>"`
+
+Pass an empty string (`ssh_cmd: ""`) to explicitly reset a slot back
+to the built-in default.
+
+### In pipeline tests
+
+A pipeline test's `config:` block is loaded as an ordinary pipeline,
+so put launcher overrides **inside `config:`**, not at the test's top
+level:
+
+```yaml
+config:
+  name: my_test
+  ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+  pkgs:
+    - pkg_type: builtin.ior
+vars:
+  ior.nprocs: [1, 2, 4]
+loop:
+  - [ior.nprocs]
 ```
 
 ## Usage Examples

@@ -26,7 +26,7 @@ Create a file called `my_ior_test.yaml`:
 
 ```yaml
 name: my_ior_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: ubuntu:24.04
@@ -70,7 +70,7 @@ The most common option for workstations and cloud environments.
 
 ```yaml
 name: ior_docker_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: ubuntu:24.04
@@ -96,7 +96,7 @@ A rootless, daemonless alternative to Docker. Preferred on systems where users d
 
 ```yaml
 name: ior_podman_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: podman
 container_base: docker.io/ubuntu:24.04
@@ -128,7 +128,7 @@ The standard on HPC clusters where Docker is not available. Apptainer converts D
 
 ```yaml
 name: ior_apptainer_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: apptainer
 container_base: ubuntu:24.04
@@ -177,9 +177,9 @@ Every pipeline YAML has this structure:
 name: my_pipeline
 
 # Install manager (required for containerized): 'container' or 'spack'
-install_manager: container
+base_deploy_mode: container
 
-# Container settings (when install_manager: container)
+# Container settings (when base_deploy_mode: container)
 container_engine: docker          # docker, podman, or apptainer
 container_base: ubuntu:24.04     # base image for the build phase
 
@@ -200,7 +200,7 @@ interceptors:
 | Field | Description |
 |---|---|
 | `name` | Pipeline identifier |
-| `install_manager` | `container` (Docker/Podman/Apptainer), `spack`, or omit for bare-metal |
+| `base_deploy_mode` | `container` (Docker/Podman/Apptainer), `spack`, or omit for bare-metal |
 | `container_engine` | `docker`, `podman`, or `apptainer` |
 | `container_base` | Base image for the build phase (e.g., `ubuntu:24.04`, `sci-hpc-base`) |
 | `pkgs` | List of packages to run |
@@ -230,7 +230,7 @@ For running across multiple nodes, add a hostfile and set `container_env` to con
 
 ```yaml
 name: ior_cluster_test
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: ubuntu:24.04

@@ -8,7 +8,7 @@
 # Expected Runtime: ~3-5 minutes on first run (image build); seconds thereafter.
 
 name: arldm_local_test
-install_manager: container
+base_deploy_mode: container
 
 # Container build — ARLDM source cloned from upstream, no spack, no PyTorch
 # (full training image is downstream — see container.py docstring).

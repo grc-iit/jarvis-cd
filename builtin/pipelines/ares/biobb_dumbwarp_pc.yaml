@@ -1,0 +1,76 @@
+# dumbwarp + biobb_wf_md_setup, 4 nodes, **scratch routed through dumbwarp**.
+# GROMACS/biobb intermediate .gro / .top / .mdp / .tpr / .xtc files all
+# traverse the FUSE adapter, with each step reading the previous step's
+# output — proper producer-consumer pipeline visible in file_report.
+name: biobb_dumbwarp_pc
+
+base_deploy_mode: container
+container_engine: apptainer
+container_image: biobb_wf_md_setup_apptainer_test
+
+container_binds:
+  - /mnt/common/llogan/jarvis-cd/builtin/builtin/biobb_wf_md_setup/run_batch.sh:/opt/run_batch.sh:ro
+  - ${HOME}/jarvis-runs:${HOME}/jarvis-runs
+  - ${HOME}/dumbwarp_biobb_4n:${HOME}/dumbwarp_biobb_4n
+  - ${HOME}/dumbwarp_biobb_4n:/mnt/dumbwarp
+  - ${HOME}/jarvis-bench-scripts/biobb_md_extend.sh:/opt/biobb_md_extend.sh
+
+ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+mpi_cmd: 'mpiexec --mca btl_tcp_if_include enp47s0np0 --mca oob_tcp_if_include eno1 --prtemca prte_if_include eno1 --prtemca prte_tmpdir_base /home/llogan/iowarp_prte_tmp'
+
+env:
+  TMPDIR: "/home/llogan/iowarp_prte_tmp"
+  BIOBB_FIX_MB: "32"
+  BIOBB_P2G_MB: "128"
+  BIOBB_EDIT_MB: "128"
+  BIOBB_SOLV_MB: "700"
+  BIOBB_TOP_MB: "16"
+
+scheduler:
+  name: slurm
+  job_name: dumbwarp_biobb_4n_full
+  nodes: 4
+  ntasks_per_node: 24
+  mem: 20G
+  partition: compute
+  time: "00:25:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+  suffix: "-40g"
+  pre_cmds:
+    - 'source /etc/profile.d/lmod.sh 2>/dev/null || source /etc/profile.d/modules.sh'
+    - 'module load gcc/11.4.0/openmpi/5.0.5-x2kvx5l'
+    - 'mkdir -p /home/llogan/iowarp_prte_tmp'
+    # `env -u LD_LIBRARY_PATH` is critical — slurm propagates the conda
+    # env's LD_LIBRARY_PATH and /usr/bin/ssh then loads conda's libcrypto
+    # ("OpenSSL version mismatch. Built against 30000020, you have
+    # 30600020") and silently fails, so the fan-out never reaches peers
+    # and apptainer's --bind blows up on a missing mountpoint dir.
+    - 'for n in $(scontrol show hostnames "$SLURM_JOB_NODELIST"); do env -u LD_LIBRARY_PATH ssh -o BatchMode=yes -o StrictHostKeyChecking=no "$n" "pkill -9 dumbwarpd 2>/dev/null; fusermount3 -u /home/llogan/dumbwarp_biobb_4n 2>/dev/null; umount -l /home/llogan/dumbwarp_biobb_4n 2>/dev/null; rm -rf /dev/shm/biobb-scratch-* 2>/dev/null; rm -f /tmp/dumbwarp_*.csv /tmp/dumbwarp_*.log 2>/dev/null; mkdir -p /home/llogan/dumbwarp_biobb_4n; true" & done; wait'
+
+pkgs:
+  - pkg_type: jarvis_dumbwarp.dumbwarp
+    pkg_name: dumbwarp
+    deploy_mode: default
+    mountpoint: ${HOME}/dumbwarp_biobb_4n
+    bin_dir: /mnt/common/llogan/dumbwarp/build
+    bind_addr: enp47s0np0
+    port: 18123
+    thallium_proto: "ofi+tcp;ofi_rxm"
+    page_size: 65536
+    consumer_ttl: 120
+    compress: none
+    sleep: 4
+
+  - pkg_type: builtin.biobb_wf_md_setup
+    pkg_name: biobb
+    nprocs: 4
+    ppn: 1
+    replicates: 16
+    parallel_reps: 2
+    omp_threads: 4
+    md_steps: 1000
+    md_nstxout: 2
+    out: /mnt/dumbwarp/biobb_wf_md_setup
+    # Scratch on dumbwarp → every GROMACS step reads prior step's output.
+    parallel_scratch_root: /mnt/dumbwarp/scratch

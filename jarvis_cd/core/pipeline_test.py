@@ -28,6 +28,11 @@ def is_pipeline_test(yaml_data: Dict[str, Any]) -> bool:
     :param yaml_data: Parsed YAML data
     :return: True if this is a pipeline test, False if regular pipeline
     """
+    # A suite runs several experiments (each its own pipeline test) from
+    # one file with a single `jarvis ppl run yaml` command.
+    if 'experiments' in yaml_data:
+        return True
+
     # Check for pipeline test structure
     has_config = 'config' in yaml_data
     has_test_fields = any(key in yaml_data for key in ['vars', 'loop', 'repeat', 'output'])
@@ -65,6 +70,11 @@ class PipelineTest:
         self.output = None
         self.combinations = []  # Generated test combinations
         self.results = []  # Collected results
+        # Top-level scheduler block (one job wraps the whole test run).
+        # A scheduler block nested inside ``config:`` is treated as
+        # per-iteration submission and handled by Pipeline directly.
+        self.scheduler = None
+        self.source_path = None  # Path the test YAML was loaded from
 
     @staticmethod
     def _parse_csv_value(value_str):
@@ -229,17 +239,36 @@ class PipelineTest:
         with open(pipeline_file, 'r') as f:
             test_def = yaml.safe_load(f)
 
+        self.load_def(test_def,
+                      source_path=str(pipeline_file.absolute()),
+                      default_name=pipeline_file.stem)
+
+    def load_def(self, test_def: Dict[str, Any],
+                 source_path: Optional[str] = None,
+                 default_name: Optional[str] = None):
+        """
+        Load pipeline test from an already-parsed definition dict.
+
+        Shared by :meth:`load` (single-file tests) and
+        :class:`PipelineTestSuite` (one experiment entry per sub-test).
+
+        :param test_def: Parsed pipeline-test definition
+        :param source_path: Path the definition came from (for scheduler submit)
+        :param default_name: Name to use when ``config`` omits ``name``
+        """
         # Validate structure
         if 'config' not in test_def:
             raise ValueError("Pipeline test must have a 'config' section containing the pipeline definition")
 
         # Load test components
         self.config = test_def['config']
-        self.name = self.config.get('name', pipeline_file.stem)
+        self.name = self.config.get('name', default_name)
         self.vars = test_def.get('vars', {})
         self.loop = test_def.get('loop', [])
         self.repeat = test_def.get('repeat', 1)
         self.output = test_def.get('output', None)
+        self.scheduler = test_def.get('scheduler', None)
+        self.source_path = source_path
 
         # Expand output path with environment variables
         if self.output:
@@ -336,7 +365,13 @@ class PipelineTest:
         """
         Apply variable values to a pipeline configuration.
 
-        Variable names are in the format: pkg_name.var_name
+        Variable names are in one of two formats:
+          - ``pkg_name.var_name`` — set ``var_name`` on the matching package.
+          - ``scheduler.var_name`` — set ``var_name`` on the scheduler block
+            attached to this iteration's config. The block is seeded with
+            the test's top-level ``scheduler:`` (if any) so it acts as a
+            template, then any nested ``config.scheduler`` overrides it,
+            then the ``scheduler.X`` variable values override that.
 
         :param base_config: Base pipeline configuration
         :param variables: Variable values to apply
@@ -344,7 +379,21 @@ class PipelineTest:
         """
         config = copy.deepcopy(base_config)
 
-        for var_spec, value in variables.items():
+        scheduler_vars = {k.split('.', 1)[1]: v
+                          for k, v in variables.items()
+                          if k.split('.', 1)[0] == 'scheduler'}
+        pkg_vars = {k: v for k, v in variables.items()
+                    if k.split('.', 1)[0] != 'scheduler'}
+
+        if scheduler_vars or self.scheduler:
+            merged = copy.deepcopy(self.scheduler) if self.scheduler else {}
+            existing = config.get('scheduler') or {}
+            merged.update(existing)
+            merged.update(scheduler_vars)
+            if merged:
+                config['scheduler'] = merged
+
+        for var_spec, value in pkg_vars.items():
             parts = var_spec.split('.', 1)
             if len(parts) != 2:
                 raise ValueError(f"Invalid variable format '{var_spec}'. Expected: pkg_name.var_name")
@@ -464,6 +513,77 @@ class PipelineTest:
         failed = len(self.results) - successful
         logger.info(f"Summary: {successful} successful, {failed} failed")
 
+    def submit(self, submit: bool = True) -> Path:
+        """Generate a job script that runs the whole test inside one batch
+        allocation.
+
+        The script:
+          1. Builds the hostfile from the allocation
+             (``scontrol show hostnames $SLURM_JOB_NODELIST``)
+          2. Runs ``jarvis ppl run yaml <test_file>`` so each iteration
+             reuses the same allocation.
+
+        Per-iteration submission (one job per combination) is achieved
+        by placing the scheduler block inside ``config:`` instead — that
+        is handled by ``Pipeline.submit()``.
+
+        :param submit: when True, exec ``sbatch`` after writing the
+            script; when False, only write it and return the path.
+        :return: Path to the generated job script.
+        """
+        if not self.scheduler:
+            raise ValueError(
+                "Pipeline test has no top-level scheduler block. Add "
+                "`scheduler:` to the test YAML or place one inside "
+                "`config:` for per-iteration submission.")
+        if not self.source_path:
+            raise ValueError(
+                "Pipeline test has no source path — call load() first.")
+
+        # When the test varies scheduler params via ``scheduler.X`` vars,
+        # the top-level scheduler is a per-iteration template — not a
+        # wrapper around the whole test. Wrapping would freeze the
+        # template values, defeating the point. Direct the user to
+        # ``jarvis ppl run`` instead, which submits each iteration as
+        # its own job.
+        has_sched_vars = any(
+            str(k).split('.', 1)[0] == 'scheduler' for k in (self.vars or {}))
+        if has_sched_vars:
+            raise ValueError(
+                "Pipeline test has `scheduler.*` variables, so the "
+                "top-level scheduler is treated as a per-iteration "
+                "template, not a single-job wrapper. Run the test with "
+                "`jarvis ppl run yaml <file>` to submit one job per "
+                "iteration.")
+
+        from jarvis_cd.core.config import Jarvis
+        from jarvis_cd.core.scheduler import make_scheduler
+
+        jarvis = Jarvis.get_instance()
+        # Drop the script under the pipeline's shared dir (named after
+        # the test) so it sits next to the hostfile and per-iteration
+        # results.
+        shared_dir = Path(jarvis.get_pipeline_shared_dir(self.name))
+        shared_dir.mkdir(parents=True, exist_ok=True)
+
+        sched = make_scheduler(self.scheduler, shared_dir,
+                               pipeline_yaml=self.source_path,
+                               pipeline_name=self.name)
+        script_path = sched.write_script()
+        logger.pipeline(f"Wrote scheduler script: {script_path}")
+        logger.pipeline(f"Hostfile (built at job start): {sched.hostfile}")
+
+        if submit:
+            from jarvis_cd.shell import Exec, LocalExecInfo
+            cmd = ' '.join(sched.submit_command())
+            logger.pipeline(f"Submitting: {cmd}")
+            result = Exec(cmd, LocalExecInfo()).run()
+            exit_code = result.exit_code.get('localhost', 1)
+            if exit_code != 0:
+                raise RuntimeError(
+                    f"Scheduler submission failed (exit {exit_code}): {cmd}")
+        return script_path
+
     def _run_plots(self, pipeline=None):
         """
         Call _plot on packages that define it.
@@ -550,9 +670,19 @@ class PipelineTest:
             pipeline.load('yaml', temp_yaml)
             pipeline.configure_all_packages()
 
-            # Run the pipeline
-            pipeline.start()
-            pipeline.stop()
+            # If this iteration has a scheduler block (either from a
+            # nested config.scheduler or from a top-level scheduler
+            # template + scheduler.X vars), submit it as its own job and
+            # block until it finishes via ``sbatch --wait``. Otherwise
+            # run the pipeline in-process.
+            if pipeline.scheduler:
+                logger.pipeline(
+                    f"Submitting iteration as scheduler job "
+                    f"({pipeline.scheduler.get('name')})")
+                pipeline.submit(submit=True, wait=True)
+            else:
+                pipeline.start()
+                pipeline.stop()
 
             end_time = time.time()
             result['runtime'] = end_time - start_time
@@ -609,6 +739,86 @@ class PipelineTest:
         logger.info(f"Full results written to: {yaml_path}")
 
 
+class PipelineTestSuite:
+    """
+    A suite of pipeline tests run sequentially from a single YAML file.
+
+    The file lists experiments under an ``experiments:`` key; each entry is
+    a full pipeline-test definition (``config``/``vars``/``loop``/``repeat``/
+    ``output``). One ``jarvis ppl run yaml <file>`` runs them all in order.
+
+    Example::
+
+        name: storage_sweeps
+        experiments:
+          - config: {...}      # experiment 1 (e.g. IOR sweep)
+            vars: {...}
+          - config: {...}      # experiment 2 (e.g. Redis sweep)
+            vars: {...}
+    """
+
+    def __init__(self):
+        self.name = None
+        self.experiments: List[PipelineTest] = []
+        self.source_path = None
+
+    def load(self, pipeline_file: str):
+        """Load the suite from a YAML file."""
+        pipeline_file = Path(pipeline_file)
+        if not pipeline_file.exists():
+            raise FileNotFoundError(f"Pipeline test file not found: {pipeline_file}")
+
+        with open(pipeline_file, 'r') as f:
+            suite_def = yaml.safe_load(f)
+
+        experiments = suite_def.get('experiments')
+        if not isinstance(experiments, list) or not experiments:
+            raise ValueError(
+                "A pipeline test suite must have a non-empty 'experiments' list")
+
+        self.name = suite_def.get('name', pipeline_file.stem)
+        self.source_path = str(pipeline_file.absolute())
+
+        for idx, exp_def in enumerate(experiments):
+            test = PipelineTest()
+            test.load_def(exp_def,
+                          source_path=self.source_path,
+                          default_name=f"{self.name}_exp{idx + 1}")
+            self.experiments.append(test)
+
+        logger.pipeline(f"Loaded pipeline test suite: {self.name}")
+        logger.info(f"  Experiments: {len(self.experiments)}")
+        for test in self.experiments:
+            logger.info(f"    - {test.name}: "
+                        f"{len(test.combinations) * test.repeat} runs")
+
+    @property
+    def total_runs(self) -> int:
+        return sum(len(t.combinations) * t.repeat for t in self.experiments)
+
+    def run(self):
+        """Run each experiment in order."""
+        logger.pipeline(f"Starting pipeline test suite: {self.name}")
+        logger.info(f"  Experiments: {len(self.experiments)}, "
+                    f"total runs: {self.total_runs}")
+        for idx, test in enumerate(self.experiments):
+            logger.print(
+                Color.CYAN,
+                f"=== BEGIN Experiment {idx + 1}/{len(self.experiments)}: "
+                f"{test.name} ===")
+            test.run()
+            logger.print(
+                Color.CYAN,
+                f"=== END Experiment {idx + 1}/{len(self.experiments)}: "
+                f"{test.name} ===")
+        logger.success(f"Pipeline test suite completed: {self.name}")
+
+    def submit(self, submit: bool = True):
+        """Submit each experiment as its own scheduler job."""
+        for test in self.experiments:
+            test.submit(submit=submit)
+
+
 def load_yaml_auto(pipeline_file: str) -> Tuple[bool, Any]:
     """
     Load a YAML file and determine if it's a pipeline test or regular pipeline.
@@ -627,6 +837,11 @@ def load_yaml_auto(pipeline_file: str) -> Tuple[bool, Any]:
         yaml_data = yaml.safe_load(f)
 
     if is_pipeline_test(yaml_data):
+        # A suite (multiple experiments) vs. a single pipeline test
+        if 'experiments' in yaml_data:
+            suite = PipelineTestSuite()
+            suite.load(str(pipeline_file))
+            return True, suite
         # Load as pipeline test
         test = PipelineTest()
         test.load(str(pipeline_file))

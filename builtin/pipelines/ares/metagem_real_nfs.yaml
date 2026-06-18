@@ -1,0 +1,44 @@
+# Pipeline: metaGEM REAL workflow, Apptainer + sbatch on Ares, 4 nodes.
+# Sets real_workflow=true so metagem/pkg.py invokes /opt/run_metagem.sh
+# (snakemake + fastp on the toy paired-end dataset) on every host instead
+# of the inline dd /dev/urandom proxy. Bind-mounts the pre-staged toy
+# dataset so the inline shell skips its wget. NFS-only, so the
+# wrp_cte_fuse rename(2) bug doesn't apply.
+#
+# Sizing: 1 run per host × 4 hosts. Each run reads ~1.8 GiB of paired-end
+# FASTQs and writes fastp qfilter outputs (~1.5 GiB/host). cores=16 lets
+# fastp/snakemake parallelise within each host. Expected wall ~3-4 min.
+
+name: metagem_real_nfs
+base_deploy_mode: container
+ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+container_binds:
+  - /mnt/common/llogan/jarvis-cd/builtin/builtin/metagem/run_metagem.sh:/opt/run_metagem.sh:ro
+  - ${HOME}/jarvis-bench-cache/metagem-stage:/tmp/metagem-cache:ro
+  - ${HOME}/real-data:${HOME}/real-data
+
+env:
+  METAGEM_STAGE_DIR: /tmp/metagem-cache
+
+scheduler:
+  name: slurm
+  job_name: metagem_real_nfs
+  nodes: 4
+  ntasks_per_node: 24
+  partition: compute
+  time: "00:06:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+
+pkgs:
+  - pkg_type: builtin.metagem
+    pkg_name: metagem_real_nfs
+    nprocs: 1
+    cores: 16
+    real_workflow: true
+    out: ${HOME}/real-data/metagem

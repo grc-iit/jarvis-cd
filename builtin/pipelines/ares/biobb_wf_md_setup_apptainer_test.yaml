@@ -1,0 +1,40 @@
+# Pipeline: biobb MD setup, Apptainer + sbatch on Ares, 4 nodes
+# Each of the 4 nodes runs the 20-rep loop in parallel via PsshExecInfo.
+# Outputs are host-tagged (rep_NNN-<hostname>/) to avoid NFS collisions.
+# Per-host budget: 20 reps × ~1020 MiB = ~20 GiB. Total across 4 nodes:
+# ~80 GiB written. Expected wall ~4-5 min (NFS-bound, 100-200 MB/s/node).
+
+name: biobb_wf_md_setup_apptainer_test
+base_deploy_mode: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+container_binds:
+  - ${HOME}/jarvis-bench-scripts/biobb_io_only.sh:/opt/run_batch.sh
+  - ${HOME}/jarvis-runs:${HOME}/jarvis-runs
+
+env:
+  BIOBB_FIX_MB: "32"
+  BIOBB_P2G_MB: "128"
+  BIOBB_EDIT_MB: "128"
+  BIOBB_SOLV_MB: "700"
+  BIOBB_TOP_MB: "16"
+
+scheduler:
+  name: slurm
+  job_name: biobb_ares_apptainer
+  nodes: 4
+  ntasks_per_node: 24
+  partition: compute
+  time: "00:30:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+
+pkgs:
+  - pkg_type: builtin.biobb_wf_md_setup
+    pkg_name: biobb_wf_md_setup_apptainer
+    nprocs: 4
+    ppn: 1
+    replicates: 20
+    out: ${HOME}/jarvis-runs/biobb_wf_md_setup

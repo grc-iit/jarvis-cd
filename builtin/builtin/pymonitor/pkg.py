@@ -88,7 +88,7 @@ class Pymonitor(Service):
 
         :return: None
         """
-        Kill('.*pymonitor.*', PsshExecInfo(env=self.env)).run()
+        Kill('pymonitor', PsshExecInfo(env=self.env)).run()
 
     def status(self):
         pass

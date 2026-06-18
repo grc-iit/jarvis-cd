@@ -1,0 +1,16 @@
+# Pipeline: MetaGEM Apptainer Test
+# Purpose: Test MetaGEM metagenomics workflow using Apptainer
+# Requirements: Docker (for build phase) + Apptainer (for runtime)
+
+name: metagem_apptainer_test
+base_deploy_mode: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+pkgs:
+  - pkg_type: builtin.metagem
+    pkg_name: metagem_apptainer
+    nprocs: 1
+    cores: 4
+    out: $HOME/jarvis-runs/metagem

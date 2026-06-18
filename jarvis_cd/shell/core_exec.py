@@ -142,7 +142,7 @@ class LocalExec(CoreExec):
                 env[key] = str(value)
         else:
             env = os.environ
-        
+
         # Prepare stdin
         stdin_pipe = subprocess.PIPE if self.exec_info.stdin else None
         

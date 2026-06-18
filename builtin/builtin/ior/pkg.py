@@ -4,11 +4,12 @@ Ior is a benchmark tool for measuring the performance of I/O systems.
 It is a simple tool that can be used to measure the performance of a file system.
 It is mainly targeted for HPC systems and parallel I/O.
 """
+import os
+import pathlib
+import re
 from jarvis_cd.core.pkg import Application
 from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo, Rm, Mkdir
 from jarvis_cd.shell.process import GdbServer
-import os
-import pathlib
 
 
 class Ior(Application):
@@ -145,6 +146,12 @@ class Ior(Application):
         """
         super()._configure(**kwargs)
 
+        # Default the log path to <shared_dir>/ior.log so _get_stat has
+        # something to parse even when the YAML omits `log:`. Users who
+        # set `log:` explicitly keep their override.
+        if not self.config.get('log'):
+            self.config['log'] = str(pathlib.Path(self.shared_dir) / 'ior.log')
+
         if self.config.get('deploy_mode') == 'default':
             self.config['api'] = self.config['api'].upper()
 
@@ -213,14 +220,79 @@ class Ior(Application):
            PsshExecInfo(env=self.env,
                         hostfile=self.hostfile)).run()
 
-    def _get_stat(self, stat_dict):
-        """
-        Get statistics from the application.
+    # ------------------------------------------------------------------
+    # Output parsing
+    # ------------------------------------------------------------------
 
-        :param stat_dict: A dictionary of statistics.
-        :return: None
+    # Captures "Max Write: 269.97 MiB/sec (283.08 MB/sec)" — the trailing
+    # MB/sec figure in parens is decimal-megabytes (1e6 bytes/sec); IOR
+    # also prints binary MiB/sec (2^20 bytes/sec). We expose both.
+    _MAX_RE = re.compile(
+        r'^Max\s+(?P<op>Write|Read):\s+'
+        r'(?P<mib>[0-9.]+)\s+MiB/sec\s+'
+        r'\((?P<mb>[0-9.]+)\s+MB/sec\)',
+        re.MULTILINE,
+    )
+
+    # Captures the per-operation summary row at the end of an IOR run.
+    # The columns in IOR 3.3.0 are: Operation Max(MiB) Min(MiB) Mean(MiB)
+    # StdDev Max(OPs) Min(OPs) Mean(OPs) StdDev Mean(s) ... — we keep
+    # the MiB stats (first four numeric columns after the op name).
+    _SUMMARY_RE = re.compile(
+        r'^(?P<op>write|read)\s+'
+        r'(?P<max>[0-9.]+)\s+'
+        r'(?P<min>[0-9.]+)\s+'
+        r'(?P<mean>[0-9.]+)\s+'
+        r'(?P<stddev>[0-9.]+)\s+',
+        re.MULTILINE,
+    )
+
+    def parse_log(self, text: str) -> dict:
+        """Extract bandwidth stats from raw IOR log text.
+
+        Returns a dict keyed by ``{pkg_id}.<op>_<stat>`` (e.g.
+        ``ior_smoke.write_max_mibs``). Both the binary (MiB/sec) and
+        decimal (MB/sec) maxes are recorded; the summary block fills
+        in mean/min/stddev when present. The function never raises —
+        unparseable text simply yields an empty dict.
         """
-        stat_dict[f'{self.pkg_id}.runtime'] = self.start_time
+        stats: dict = {}
+        prefix = self.pkg_id
+
+        for m in self._MAX_RE.finditer(text):
+            op = m.group('op').lower()
+            stats[f'{prefix}.{op}_max_mibs'] = float(m.group('mib'))
+            stats[f'{prefix}.{op}_max_mbs'] = float(m.group('mb'))
+
+        for m in self._SUMMARY_RE.finditer(text):
+            op = m.group('op')
+            stats[f'{prefix}.{op}_max_mibs'] = float(m.group('max'))
+            stats[f'{prefix}.{op}_min_mibs'] = float(m.group('min'))
+            stats[f'{prefix}.{op}_mean_mibs'] = float(m.group('mean'))
+            stats[f'{prefix}.{op}_stddev_mibs'] = float(m.group('stddev'))
+
+        return stats
+
+    def _get_stat(self, stat_dict):
+        """Populate ``stat_dict`` with bandwidths parsed from the IOR log.
+
+        Reads ``self.config['log']`` (defaulted to ``<shared_dir>/ior.log``
+        by ``_configure``) and adds Max/Min/Mean/StdDev MiB/sec entries
+        per operation. Missing or unparseable log → only runtime is set.
+        """
+        stat_dict[f'{self.pkg_id}.runtime'] = getattr(self, 'start_time', None)
+
+        log_path = self.config.get('log')
+        if not log_path or not os.path.isfile(log_path):
+            return
+
+        try:
+            with open(log_path, 'r') as f:
+                text = f.read()
+        except OSError:
+            return
+
+        stat_dict.update(self.parse_log(text))
 
     def log(self, message):
         """Simple logging method."""

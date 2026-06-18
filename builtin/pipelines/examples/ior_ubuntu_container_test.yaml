@@ -4,7 +4,7 @@
 # Expected Runtime: 2-5 minutes
 
 name: ior_ubuntu_container_test
-install_manager: container
+base_deploy_mode: container
 
 # Auto-build environment from current shell
 # No env field - will capture current environment automatically

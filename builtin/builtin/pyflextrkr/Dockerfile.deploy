@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libhdf5-103-1t64 libnetcdf19t64 libgeos-c1t64 \
         openmpi-bin libopenmpi3t64 \
         openssh-server openssh-client \
-        ca-certificates curl \
+        ca-certificates curl wget \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /opt/pyflextrkr-env        /opt/pyflextrkr-env

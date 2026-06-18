@@ -52,20 +52,23 @@ class TestPrepareContainerApptainer(unittest.TestCase):
         return make_exec(info)
 
     def test_apptainer_wraps_with_apptainer_exec(self):
-        """container='apptainer', container_image='myimg', shared_dir set →
-        wrapped cmd contains 'apptainer exec' and 'myimg.sif'."""
+        """container='apptainer' → wrapped cmd execs into the running
+        instance: contains 'apptainer exec' and 'instance://myimg' (the
+        container_image doubles as the instance name)."""
         exec_obj = self._make_apptainer_exec(
             container_image='myimg', shared_dir='/shared')
         wrapped_cmd, _ = exec_obj._prepare_container('echo hello')
         self.assertIn('apptainer exec', wrapped_cmd)
-        self.assertIn('myimg.sif', wrapped_cmd)
+        self.assertIn('instance://myimg', wrapped_cmd)
 
-    def test_apptainer_wraps_with_shared_dir_path(self):
-        """When shared_dir is set, SIF path is resolved from the parent of shared_dir."""
+    def test_apptainer_uses_instance_name_not_sif_path(self):
+        """The wrapped command targets the long-running instance by name
+        (instance://<image>); shared_dir no longer injects a .sif path."""
         exec_obj = self._make_apptainer_exec(
             container_image='myimg', shared_dir='/shared/mypkg')
         wrapped_cmd, _ = exec_obj._prepare_container('echo hello')
-        self.assertIn('/shared/myimg.sif', wrapped_cmd)
+        self.assertIn('instance://myimg', wrapped_cmd)
+        self.assertNotIn('.sif', wrapped_cmd)
 
     def test_apptainer_passes_env_vars(self):
         """container='apptainer', env={'MY_VAR': 'val'} → wrapped cmd contains
@@ -89,8 +92,9 @@ class TestPrepareContainerApptainer(unittest.TestCase):
         _, returned_info = exec_obj._prepare_container('echo hello')
         self.assertEqual(returned_info.env, {})
 
-    def test_apptainer_gpu_flag(self):
-        """When gpu=True, '--nv' appears in the wrapped command."""
+    def test_apptainer_gpu_flag_not_forwarded(self):
+        """--nv is applied at `apptainer instance start` time, not on exec,
+        so it is deliberately NOT forwarded into the wrapped exec command."""
         info = ExecInfo(
             exec_type=ExecType.LOCAL,
             container='apptainer',
@@ -99,7 +103,8 @@ class TestPrepareContainerApptainer(unittest.TestCase):
         )
         exec_obj = make_exec(info)
         wrapped_cmd, _ = exec_obj._prepare_container('echo hello')
-        self.assertIn('--nv', wrapped_cmd)
+        self.assertNotIn('--nv', wrapped_cmd)
+        self.assertIn('instance://gpuimg', wrapped_cmd)
 
     def test_apptainer_no_gpu_flag_when_false(self):
         """When gpu=False, '--nv' does NOT appear."""
@@ -107,11 +112,13 @@ class TestPrepareContainerApptainer(unittest.TestCase):
         wrapped_cmd, _ = exec_obj._prepare_container('echo hello')
         self.assertNotIn('--nv', wrapped_cmd)
 
-    def test_apptainer_bind_mounts(self):
-        """bind_mounts entries appear as '--bind ...' in the wrapped command."""
+    def test_apptainer_bind_mounts_not_forwarded(self):
+        """Bind mounts are applied at instance-start time and are silently
+        ignored on a running instance, so they are NOT forwarded on exec."""
         exec_obj = self._make_apptainer_exec(bind_mounts=['/host/path:/container/path'])
         wrapped_cmd, _ = exec_obj._prepare_container('echo hello')
-        self.assertIn('--bind /host/path:/container/path', wrapped_cmd)
+        self.assertNotIn('--bind', wrapped_cmd)
+        self.assertIn('instance://myimg', wrapped_cmd)
 
 
 class TestPrepareContainerDocker(unittest.TestCase):

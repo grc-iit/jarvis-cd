@@ -5,7 +5,7 @@
 # Expected Runtime: 10-15 minutes on first run (CM1 is compiled from source in-image).
 
 name: cm1_local_test
-install_manager: container
+base_deploy_mode: container
 
 # Container configuration — CM1 built from upstream tarball with apt deps, no spack.
 container_engine: docker

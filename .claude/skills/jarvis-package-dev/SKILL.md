@@ -49,7 +49,7 @@ All packages ultimately inherit from `Pkg`. Choose the most specific base class:
 | `Library` | Build-only packages that supply artifacts to later packages (hdf5, adios2) | `_build_phase`, `_build_deploy_phase`; skipped from final pipeline merge |
 | `SimplePackage` (legacy) | Packages needing per-package interceptor list | `_process_interceptors()` in `start` |
 
-Container support is built into `Application`. Do **not** add a `deploy_mode` config entry — the pipeline sets it automatically based on `install_manager`.
+Container support is built into `Application`. Do **not** add a `deploy_mode` config entry — the pipeline sets it automatically based on `base_deploy_mode`.
 
 ```python
 from jarvis_cd.core.pkg import Application  # or Service / Interceptor / Library
@@ -152,7 +152,7 @@ Use `self.copy_template_file(src, dst, replacements={'VAR': value})` to render `
 
 ## 7. Container Support (Applications Only)
 
-Container mode is enabled at the pipeline level via `install_manager: container`. To make a package containerizable:
+Container mode is enabled at the pipeline level via `base_deploy_mode: container`. To make a package containerizable:
 
 1. Write `build.sh` with the commands that install and compile the software. Use `##VAR##` placeholders.
 2. Write `Dockerfile.deploy` template — multi-stage using `##BUILD_IMAGE##` and `##DEPLOY_BASE##`.
@@ -302,7 +302,7 @@ For an interceptor to work in container mode, the `.so` must be present inside t
 
 ## 9. Spack Support
 
-When `install_manager: spack`, Jarvis:
+When `base_deploy_mode: spack`, Jarvis:
 1. Collects `install:` specs from every package.
 2. Runs `spack install` then `spack load` and merges the resulting env.
 3. Calls `start()` with `deploy_mode == 'default'` on every package.
@@ -323,7 +323,7 @@ No code changes needed — the `install` key is in the common menu. Document the
 2. **`_configure` does setup, `start` does execution.** Environment variables, directory creation, config file generation, and validation belong in `_configure` — not in `start`. `start` may be called multiple times after `stop`.
 3. **Always use `self.hostfile` in Exec calls**, never `self.jarvis.hostfile`. The former is in `shared_dir` and visible to containers and remote nodes.
 4. **Use Jarvis execution classes**, not `subprocess.run` or `os.system`. The framework handles env propagation, remote execution, MPI wrapping, and container wrapping.
-5. **Do not add `deploy_mode` to `_configure_menu`.** The pipeline sets it automatically from `install_manager`.
+5. **Do not add `deploy_mode` to `_configure_menu`.** The pipeline sets it automatically from `base_deploy_mode`.
 6. **Set env in `_configure`, not `start`.** Only `_configure` env mutations propagate to later packages.
 7. **Branch on `deploy_mode == 'container'`** for any container-aware code. `deploy_mode == 'default'` means bare-metal / Spack.
 8. **Class name must match directory name in PascalCase.** Loader will hard-fail otherwise.

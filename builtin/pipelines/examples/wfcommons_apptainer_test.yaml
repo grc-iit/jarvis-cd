@@ -1,0 +1,22 @@
+# Pipeline: WfCommons Apptainer Test
+# Purpose: Generate a synthetic scientific workflow with wfcommons,
+#          translate it via WfBench, and execute its tasks inside an
+#          apptainer SIF. Native apptainer build (no docker intermediate).
+# Requirements: apptainer installed.
+
+name: wfcommons_apptainer_test
+base_deploy_mode: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+pkgs:
+  - pkg_type: builtin.wfcommons
+    pkg_name: wfcommons_apptainer
+    recipe: montage
+    num_tasks: 100
+    cpu_work: 10
+    data_footprint: '0'
+    nprocs: 1
+    ppn: 1
+    out: $HOME/jarvis-runs/wfcommons

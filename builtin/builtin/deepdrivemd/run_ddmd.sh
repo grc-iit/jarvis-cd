@@ -37,10 +37,22 @@ if [ ! -x /usr/sbin/rabbitmq-server ]; then
     rm -rf /var/lib/apt/lists/*
 fi
 if ! pgrep -x beam.smp >/dev/null 2>&1; then
-    /usr/sbin/rabbitmq-server -detached
-    # Wait for the broker to be reachable (rabbitmqctl returns 0 once up).
+    # Apptainer note: `rabbitmq-server -detached` does not return inside
+    # an apptainer instance. The double-fork pattern relies on the parent
+    # shell exiting once rabbitmq's launcher script (which waits on
+    # beam.smp) has handed off — but apptainer's PID 1 (`appinit`) does
+    # not reap that wrapper chain, so the parent shell stays in `wait`
+    # and run_ddmd.sh blocks forever on this line. Launching the broker
+    # with `nohup ... &` and `disown` gives the same daemonized broker
+    # without depending on PID-1's reaping behavior.
+    nohup /usr/sbin/rabbitmq-server >/tmp/rabbitmq-server.log 2>&1 &
+    disown
+    # Wait for the broker to be reachable. Newer rabbitmqctl versions
+    # split the old `status` into multiple sub-commands; `await_startup`
+    # is the canonical readiness probe and exits 0 once the broker is
+    # accepting connections.
     for _ in $(seq 1 60); do
-        /usr/sbin/rabbitmqctl status >/dev/null 2>&1 && break
+        /usr/sbin/rabbitmqctl await_startup >/dev/null 2>&1 && break
         sleep 1
     done
 fi
@@ -64,6 +76,17 @@ export RADICAL_BASE="$WORKDIR"
 # radical-pilot-worker, etc.) via PATH lookup. jarvis's docker-exec env
 # does not include /opt/ddmd-env/bin or /usr/sbin, so prepend both.
 export PATH="/opt/ddmd-env/bin:/usr/sbin:${PATH}"
+
+# The host's $HOME may have a miniconda install; with apptainer's
+# auto-bind it shows up as /home/$USER/miniconda3 inside the instance
+# and radical.pilot's bootstrap auto-detects "anaconda mode" from any
+# leftover CONDA_* env vars and then tries to source `conda` from a
+# binary that isn't compatible with the container userspace. Strip the
+# leak so radical.pilot uses the SIF's /opt/ddmd-env (pinned in the
+# resource_local.json patch from build.sh).
+unset CONDA_DEFAULT_ENV CONDA_EXE CONDA_PREFIX CONDA_PROMPT_MODIFIER \
+      CONDA_PYTHON_EXE CONDA_SHLVL CONDA_PREFIX_1 CONDA_PREFIX_2 \
+      _CE_CONDA _CE_M
 
 /opt/ddmd-env/bin/python3 -m deepdrivemd.deepdrivemd -c "$CFG"
 

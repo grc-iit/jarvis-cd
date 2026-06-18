@@ -23,18 +23,28 @@ export PATH=/opt/conda/bin:${PATH}
 
 # Conda env with Python 3.11 + GROMACS + biobb packages. gromacs=2026
 # was the old bare-metal pin but not all conda-forge channels carry it;
-# leave unpinned so conda picks the newest available. conda occasionally
-# logs PackagesNotFoundError but exits 0, so verify afterwards.
-conda create -p /opt/biobb-env -c conda-forge -c bioconda -y \
-        python=3.11 gromacs
+# leave unpinned so the solver picks the newest available.
+#
+# Use mamba, not conda. conda 26.x's libmamba-solver opens a sqlite
+# shards-cache under /root/.cache that intermittently throws
+# `sqlite3.OperationalError: database is locked` inside the build
+# container, aborting `conda create`. mamba ships in miniforge and
+# avoids that code path. It still occasionally logs
+# PackagesNotFoundError but exits 0, so verify.
+mamba create -p /opt/biobb-env -c conda-forge -c bioconda -y \
+        python=3.11 pip gromacs
 test -x /opt/biobb-env/bin/gmx \
     || { echo "ERROR: /opt/biobb-env did not install gromacs"; exit 1; }
+test -x /opt/biobb-env/bin/pip \
+    || { echo "ERROR: /opt/biobb-env did not install pip"; exit 1; }
 
-/opt/conda/bin/conda run -p /opt/biobb-env \
-    pip install --no-cache-dir \
+# Use the env's pip directly so packages land in /opt/biobb-env, not base
+# /opt/conda. `conda run -p ENV pip install` falls back to base pip when
+# the env has no pip of its own.
+/opt/biobb-env/bin/pip install --no-cache-dir \
         biobb_common biobb_model biobb_gromacs biobb_io
-/opt/conda/bin/conda run -p /opt/biobb-env \
-    python -c "import biobb_common, biobb_model, biobb_gromacs, biobb_io"
+/opt/biobb-env/bin/python -c \
+    "import biobb_common, biobb_model, biobb_gromacs, biobb_io"
 conda clean -afy
 
 # Bundle a small benchmark (1AKI lysozyme PDB) for offline self-test.

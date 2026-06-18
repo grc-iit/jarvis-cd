@@ -1,0 +1,46 @@
+# Pipeline: DeepDriveMD REAL workflow, Apptainer + sbatch on Ares, 4 nodes.
+# Drops the ddmd_run_io_only.sh bind so the container's /opt/run_ddmd.sh
+# runs the actual RADICAL-Pilot / EnTK DDMD pipeline (with rabbitmq-server
+# started inside the SIF). RADICAL is pinned to local.localhost so each
+# host runs its own DDMD instance independently.
+#
+# Sizing: replicates=4, parallel_reps=1, iterations=1, num_tasks=20 →
+# one DDMD instance per host (1 rep × 4 hosts). RabbitMQ startup adds
+# ~30-60s/host; the iter=1/num_tasks=20 pipeline then runs the four
+# stages (MD/aggregate/train/agent) producing real OpenMM trajectories.
+# Expected wall ~4-5 min; output ~few GB per host.
+
+name: deepdrivemd_real_nfs
+base_deploy_mode: container
+ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+container_binds:
+  - ${HOME}/real-data:${HOME}/real-data
+
+env:
+  DDMD_CTE_OUT: /home/llogan/real-data/deepdrivemd/ddmd_tasks
+
+scheduler:
+  name: slurm
+  job_name: ddmd_real_nfs
+  nodes: 4
+  ntasks_per_node: 24
+  partition: compute
+  time: "00:06:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+
+pkgs:
+  - pkg_type: builtin.deepdrivemd
+    pkg_name: deepdrivemd_real_nfs
+    nprocs: 4
+    ppn: 1
+    iterations: 1
+    num_tasks: 20
+    replicates: 1
+    parallel_reps: 1
+    out: ${HOME}/real-data/deepdrivemd

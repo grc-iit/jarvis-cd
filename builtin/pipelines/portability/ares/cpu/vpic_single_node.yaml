@@ -4,7 +4,7 @@
 # No builtin.hdf5 dep — VPIC-Kokkos doesn't use HDF5.
 
 name: vpic_ares_single_node
-install_manager: container
+base_deploy_mode: container
 
 container_engine: docker
 container_base: ubuntu:24.04

@@ -1,0 +1,40 @@
+# Pipeline: Montage, Apptainer + sbatch on Ares, 4 nodes
+# Each of the 4 nodes runs the mosaic_replicates loop in parallel via
+# PsshExecInfo. Outputs are host-tagged (host-<name>/rep_NNN/) to avoid
+# NFS collisions. Per-host: 30 reps × ~24 MB = ~720 MB; 4 nodes total
+# ~2.9 GB FITS. Expected wall ~3-4 min.
+
+name: montage_apptainer_test
+base_deploy_mode: container
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+container_binds:
+  - ${HOME}/jarvis-bench-scripts/montage_io_only.sh:/opt/run_mosaic.sh
+  - ${HOME}/jarvis-runs:${HOME}/jarvis-runs
+
+env:
+  MONTAGE_N_TILES: "20"
+  MONTAGE_TILE_MB: "512"
+  MONTAGE_MOSAIC_MB: "512"
+
+scheduler:
+  name: slurm
+  job_name: montage_ares_apptainer
+  nodes: 4
+  ntasks_per_node: 24
+  partition: compute
+  time: "00:30:00"
+  output: slurm-%j.out
+  error: slurm-%j.err
+
+pkgs:
+  - pkg_type: builtin.montage
+    pkg_name: montage_apptainer
+    nprocs: 4
+    ppn: 1
+    region: M17
+    band: j
+    mosaic_replicates: 1
+    out: ${HOME}/jarvis-runs/montage
