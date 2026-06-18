@@ -1135,13 +1135,18 @@ class JarvisCLI(ArgParse):
             is_test, obj = load_yaml_auto(pipeline_file)
 
             if is_test:
-                # Pipeline test - store for later run
+                # Pipeline test (or suite of tests) - store for later run
                 self._current_test = obj
                 self.current_pipeline = None
-                print(f"Loaded pipeline test: {obj.name}")
-                print(f"  Total combinations: {len(obj.combinations)}")
-                print(f"  Repeat count: {obj.repeat}")
-                print(f"  Total runs: {len(obj.combinations) * obj.repeat}")
+                if hasattr(obj, 'experiments'):
+                    print(f"Loaded pipeline test suite: {obj.name}")
+                    print(f"  Experiments: {len(obj.experiments)}")
+                    print(f"  Total runs: {obj.total_runs}")
+                else:
+                    print(f"Loaded pipeline test: {obj.name}")
+                    print(f"  Total combinations: {len(obj.combinations)}")
+                    print(f"  Repeat count: {obj.repeat}")
+                    print(f"  Total runs: {len(obj.combinations) * obj.repeat}")
                 print("Run with 'jarvis ppl run' to execute the test")
             else:
                 # Regular pipeline

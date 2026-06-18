@@ -574,40 +574,44 @@ class ContainerInstaller(Installer):
             print("ContainerInstaller: no deploy Dockerfile content from any package")
             return
 
-        if len(per_pkg_deploy_images) == 1:
-            tag_cmd = (
-                f"{build_engine} tag {per_pkg_deploy_images[0]} "
-                f"{deploy_image_name}"
+        # Always build a final image that ends in a fresh `ldconfig`, even
+        # for the single-package case. Merely tagging the per-package image
+        # is not enough: a package's own Dockerfile.deploy may COPY shared
+        # libraries (e.g. libhdf5*.so* for IOR) into /usr/local/lib whose
+        # `RUN ldconfig` layer can be served stale from Docker's build cache,
+        # leaving the libs present on disk but absent from /etc/ld.so.cache
+        # — so the binary aborts at runtime with "cannot open shared object
+        # file". Re-running ldconfig here (with --no-cache on this short
+        # final stage) guarantees the cache reflects the libraries actually
+        # present in the merged image.
+        lines = [f"FROM {per_pkg_deploy_images[0]}"]
+        for img in per_pkg_deploy_images[1:]:
+            lines.append(f"COPY --from={img} /usr/local /usr/local")
+            lines.append(
+                f"COPY --from={img} /usr/lib/x86_64-linux-gnu "
+                f"/usr/lib/x86_64-linux-gnu"
             )
-            Exec(tag_cmd, LocalExecInfo()).run()
-        else:
-            lines = [f"FROM {per_pkg_deploy_images[0]}"]
-            for img in per_pkg_deploy_images[1:]:
-                lines.append(f"COPY --from={img} /usr/local /usr/local")
-                lines.append(
-                    f"COPY --from={img} /usr/lib/x86_64-linux-gnu "
-                    f"/usr/lib/x86_64-linux-gnu"
-                )
-                lines.append(f"COPY --from={img} /opt /opt")
-            lines.append("RUN ldconfig")
-            lines.append('CMD ["/bin/bash"]')
-            deploy_dockerfile = "\n".join(lines)
+            lines.append(f"COPY --from={img} /opt /opt")
+        lines.append("RUN ldconfig")
+        lines.append('CMD ["/bin/bash"]')
+        deploy_dockerfile = "\n".join(lines)
 
-            deploy_dockerfile_path = pipeline_shared_dir / 'deploy.Dockerfile'
-            with open(deploy_dockerfile_path, 'w') as f:
-                f.write(deploy_dockerfile)
+        deploy_dockerfile_path = pipeline_shared_dir / 'deploy.Dockerfile'
+        with open(deploy_dockerfile_path, 'w') as f:
+            f.write(deploy_dockerfile)
 
-            print(f"ContainerInstaller: building merged deploy image: "
-                  f"{deploy_image_name}")
-            deploy_cmd = (
-                f"{build_engine} build --network=host -t {deploy_image_name} "
-                f"-f {deploy_dockerfile_path} {pipeline_shared_dir}"
+        print(f"ContainerInstaller: building merged deploy image: "
+              f"{deploy_image_name}")
+        deploy_cmd = (
+            f"{build_engine} build --no-cache --network=host "
+            f"-t {deploy_image_name} "
+            f"-f {deploy_dockerfile_path} {pipeline_shared_dir}"
+        )
+        result = Exec(deploy_cmd, LocalExecInfo()).run()
+        if result.exit_code.get('localhost', 1) != 0:
+            raise RuntimeError(
+                f"Failed to build deploy image '{deploy_image_name}'"
             )
-            result = Exec(deploy_cmd, LocalExecInfo()).run()
-            if result.exit_code.get('localhost', 1) != 0:
-                raise RuntimeError(
-                    f"Failed to build deploy image '{deploy_image_name}'"
-                )
 
         if ppl.container_engine == 'apptainer':
             sif_path = containers_dir / f'{deploy_image_name}.sif'

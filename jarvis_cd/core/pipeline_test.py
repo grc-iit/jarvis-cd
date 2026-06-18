@@ -28,6 +28,11 @@ def is_pipeline_test(yaml_data: Dict[str, Any]) -> bool:
     :param yaml_data: Parsed YAML data
     :return: True if this is a pipeline test, False if regular pipeline
     """
+    # A suite runs several experiments (each its own pipeline test) from
+    # one file with a single `jarvis ppl run yaml` command.
+    if 'experiments' in yaml_data:
+        return True
+
     # Check for pipeline test structure
     has_config = 'config' in yaml_data
     has_test_fields = any(key in yaml_data for key in ['vars', 'loop', 'repeat', 'output'])
@@ -234,19 +239,36 @@ class PipelineTest:
         with open(pipeline_file, 'r') as f:
             test_def = yaml.safe_load(f)
 
+        self.load_def(test_def,
+                      source_path=str(pipeline_file.absolute()),
+                      default_name=pipeline_file.stem)
+
+    def load_def(self, test_def: Dict[str, Any],
+                 source_path: Optional[str] = None,
+                 default_name: Optional[str] = None):
+        """
+        Load pipeline test from an already-parsed definition dict.
+
+        Shared by :meth:`load` (single-file tests) and
+        :class:`PipelineTestSuite` (one experiment entry per sub-test).
+
+        :param test_def: Parsed pipeline-test definition
+        :param source_path: Path the definition came from (for scheduler submit)
+        :param default_name: Name to use when ``config`` omits ``name``
+        """
         # Validate structure
         if 'config' not in test_def:
             raise ValueError("Pipeline test must have a 'config' section containing the pipeline definition")
 
         # Load test components
         self.config = test_def['config']
-        self.name = self.config.get('name', pipeline_file.stem)
+        self.name = self.config.get('name', default_name)
         self.vars = test_def.get('vars', {})
         self.loop = test_def.get('loop', [])
         self.repeat = test_def.get('repeat', 1)
         self.output = test_def.get('output', None)
         self.scheduler = test_def.get('scheduler', None)
-        self.source_path = str(pipeline_file.absolute())
+        self.source_path = source_path
 
         # Expand output path with environment variables
         if self.output:
@@ -658,6 +680,86 @@ class PipelineTest:
         logger.info(f"Full results written to: {yaml_path}")
 
 
+class PipelineTestSuite:
+    """
+    A suite of pipeline tests run sequentially from a single YAML file.
+
+    The file lists experiments under an ``experiments:`` key; each entry is
+    a full pipeline-test definition (``config``/``vars``/``loop``/``repeat``/
+    ``output``). One ``jarvis ppl run yaml <file>`` runs them all in order.
+
+    Example::
+
+        name: storage_sweeps
+        experiments:
+          - config: {...}      # experiment 1 (e.g. IOR sweep)
+            vars: {...}
+          - config: {...}      # experiment 2 (e.g. Redis sweep)
+            vars: {...}
+    """
+
+    def __init__(self):
+        self.name = None
+        self.experiments: List[PipelineTest] = []
+        self.source_path = None
+
+    def load(self, pipeline_file: str):
+        """Load the suite from a YAML file."""
+        pipeline_file = Path(pipeline_file)
+        if not pipeline_file.exists():
+            raise FileNotFoundError(f"Pipeline test file not found: {pipeline_file}")
+
+        with open(pipeline_file, 'r') as f:
+            suite_def = yaml.safe_load(f)
+
+        experiments = suite_def.get('experiments')
+        if not isinstance(experiments, list) or not experiments:
+            raise ValueError(
+                "A pipeline test suite must have a non-empty 'experiments' list")
+
+        self.name = suite_def.get('name', pipeline_file.stem)
+        self.source_path = str(pipeline_file.absolute())
+
+        for idx, exp_def in enumerate(experiments):
+            test = PipelineTest()
+            test.load_def(exp_def,
+                          source_path=self.source_path,
+                          default_name=f"{self.name}_exp{idx + 1}")
+            self.experiments.append(test)
+
+        logger.pipeline(f"Loaded pipeline test suite: {self.name}")
+        logger.info(f"  Experiments: {len(self.experiments)}")
+        for test in self.experiments:
+            logger.info(f"    - {test.name}: "
+                        f"{len(test.combinations) * test.repeat} runs")
+
+    @property
+    def total_runs(self) -> int:
+        return sum(len(t.combinations) * t.repeat for t in self.experiments)
+
+    def run(self):
+        """Run each experiment in order."""
+        logger.pipeline(f"Starting pipeline test suite: {self.name}")
+        logger.info(f"  Experiments: {len(self.experiments)}, "
+                    f"total runs: {self.total_runs}")
+        for idx, test in enumerate(self.experiments):
+            logger.print(
+                Color.CYAN,
+                f"=== BEGIN Experiment {idx + 1}/{len(self.experiments)}: "
+                f"{test.name} ===")
+            test.run()
+            logger.print(
+                Color.CYAN,
+                f"=== END Experiment {idx + 1}/{len(self.experiments)}: "
+                f"{test.name} ===")
+        logger.success(f"Pipeline test suite completed: {self.name}")
+
+    def submit(self, submit: bool = True):
+        """Submit each experiment as its own scheduler job."""
+        for test in self.experiments:
+            test.submit(submit=submit)
+
+
 def load_yaml_auto(pipeline_file: str) -> Tuple[bool, Any]:
     """
     Load a YAML file and determine if it's a pipeline test or regular pipeline.
@@ -676,6 +778,11 @@ def load_yaml_auto(pipeline_file: str) -> Tuple[bool, Any]:
         yaml_data = yaml.safe_load(f)
 
     if is_pipeline_test(yaml_data):
+        # A suite (multiple experiments) vs. a single pipeline test
+        if 'experiments' in yaml_data:
+            suite = PipelineTestSuite()
+            suite.load(str(pipeline_file))
+            return True, suite
         # Load as pipeline test
         test = PipelineTest()
         test.load(str(pipeline_file))
