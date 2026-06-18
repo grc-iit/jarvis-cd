@@ -503,6 +503,9 @@ class PipelineTest:
         # Write final YAML results
         self._write_yaml_results()
 
+        # Generate plots if any package defines _plot
+        self._run_plots(getattr(self, '_last_pipeline', None))
+
         logger.success(f"Pipeline test completed: {len(self.results)} runs")
 
         # Print summary
@@ -581,6 +584,59 @@ class PipelineTest:
                     f"Scheduler submission failed (exit {exit_code}): {cmd}")
         return script_path
 
+    def _run_plots(self, pipeline=None):
+        """
+        Call _plot on packages that define it.
+
+        Uses the pipeline from the last run (if provided) or creates one from
+        the base config to access package instances.  Calls
+        _plot(results_csv, output_dir) on each package that has the method.
+
+        :param pipeline: Optional Pipeline instance from the last run
+        """
+        if not self.output:
+            return
+
+        csv_path = str(Path(self.output) / 'results.csv')
+        if not os.path.exists(csv_path):
+            return
+
+        # If we have started instances from the last run, prefer those
+        instances = getattr(pipeline, '_started_instances', []) if pipeline else []
+
+        if instances:
+            for pkg_instance in instances:
+                try:
+                    if hasattr(pkg_instance, '_plot'):
+                        logger.info(f"Generating plots for {pkg_instance.pkg_id}")
+                        pkg_instance._plot(csv_path, self.output)
+                except Exception as e:
+                    logger.warning(f"Could not plot from {pkg_instance.pkg_id}: {e}")
+        else:
+            # Fallback: create a pipeline from base config to get package instances
+            try:
+                import tempfile
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+                    yaml.dump(self.config, f, default_flow_style=False)
+                    temp_yaml = f.name
+
+                fallback_pipeline = Pipeline()
+                fallback_pipeline.load('yaml', temp_yaml)
+                os.unlink(temp_yaml)
+
+                for pkg_def in fallback_pipeline.packages:
+                    try:
+                        pkg_instance = fallback_pipeline._load_package_instance(
+                            pkg_def, fallback_pipeline.env)
+                        if hasattr(pkg_instance, '_plot'):
+                            logger.info(f"Generating plots for {pkg_def.get('pkg_id', 'unknown')}")
+                            pkg_instance._plot(csv_path, self.output)
+                    except Exception as e:
+                        logger.warning(f"Could not plot from {pkg_def.get('pkg_id', 'unknown')}: {e}")
+
+            except Exception as e:
+                logger.warning(f"Plot generation failed: {e}")
+
     def _run_single(self, config: Dict[str, Any], variables: Dict[str, Any], repeat_idx: int) -> Dict[str, Any]:
         """
         Run a single pipeline configuration.
@@ -631,17 +687,20 @@ class PipelineTest:
             end_time = time.time()
             result['runtime'] = end_time - start_time
 
-            # Collect statistics from packages
+            # Collect statistics from started package instances
+            # (must use the same instances that ran start() so they have exec output)
             stat_dict = {}
-            for pkg_def in pipeline.packages:
+            for pkg_instance in getattr(pipeline, '_started_instances', []):
                 try:
-                    pkg_instance = pipeline._load_package_instance(pkg_def, pipeline.env)
                     if hasattr(pkg_instance, '_get_stat'):
                         pkg_instance._get_stat(stat_dict)
                 except Exception as e:
-                    logger.warning(f"Could not get stats from {pkg_def['pkg_id']}: {e}")
+                    logger.warning(f"Could not get stats from {pkg_instance.pkg_id}: {e}")
 
             result['stats'] = stat_dict
+
+            # Store last pipeline for _run_plots
+            self._last_pipeline = pipeline
 
         finally:
             # Clean up temporary file
