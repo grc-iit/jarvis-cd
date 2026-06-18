@@ -1,0 +1,100 @@
+# Pipeline Test Suite: Spack-installed IOR on SLURM, two experiments
+#
+# Combines three features in one file:
+#   1. Multiple experiments  -> the top-level `experiments:` list runs two
+#      independent pipeline tests back-to-back with one command.
+#   2. A Spack installer      -> each package declares `install_method: spack`
+#      and `install_query: <spec>`; Jarvis runs `spack install <spec>` and
+#      loads its environment before deploying. (`base_deploy_mode: spack`
+#      sets this as the default for every package in the experiment.)
+#   3. SLURM scheduling       -> a `scheduler:` block nested inside each
+#      experiment's `config:` submits every iteration as its own SLURM job
+#      (via `sbatch --wait`); the test runner blocks on each job, collects
+#      its stats, then moves on.
+#
+# Run it with (each iteration becomes a SLURM job):
+#   jarvis ppl run yaml ior_spack_slurm_suite.yaml
+#
+# The two experiments compare the POSIX and MPI-IO backends of IOR while
+# sweeping transfer size x process count. Spack install is idempotent, so
+# the per-job `spack install ior` is a no-op once the spec is built.
+
+name: ior_spack_slurm_suite
+
+experiments:
+  # ------------------------------------------------------------------
+  # Experiment 1: IOR over the POSIX API.
+  # ------------------------------------------------------------------
+  - config:
+      name: ior_posix
+      base_deploy_mode: spack          # default installer for all pkgs below
+      # Nested scheduler -> one SLURM job per iteration (sbatch --wait).
+      scheduler:
+        name: slurm
+        job_name: ior_posix
+        nodes: 2
+        ntasks_per_node: 8
+        partition: cpu
+        time: "00:30:00"
+        output: ${HOME}/logs/ior_posix.%j.out
+        error: ${HOME}/logs/ior_posix.%j.err
+      pkgs:
+        - pkg_type: builtin.ior
+          pkg_name: ior
+          install_method: spack        # explicit (matches base_deploy_mode)
+          install_query: ior           # the Spack spec, e.g. "ior@3.3.0 +hdf5"
+          api: posix
+          ppn: 8
+          nprocs: 16                   # overridden by the sweep below
+          block: 512m
+          xfer: 1m                     # overridden by the sweep below
+          out: ${HOME}/ior_spack_test/posix.bin
+          log: ${HOME}/ior_spack_test/posix.log
+          write: true
+          read: true
+    vars:
+      ior.xfer: ["1m", "4m"]           # I/O size
+      ior.nprocs: [8, 16]              # number of MPI processes
+    loop:
+      - [ior.xfer]
+      - [ior.nprocs]
+    repeat: 1
+    output: ${HOME}/ior_spack_test/posix_results
+
+  # ------------------------------------------------------------------
+  # Experiment 2: IOR over the MPI-IO API (same spack-built binary).
+  # ------------------------------------------------------------------
+  - config:
+      name: ior_mpiio
+      base_deploy_mode: spack
+      scheduler:
+        name: slurm
+        job_name: ior_mpiio
+        nodes: 2
+        ntasks_per_node: 8
+        partition: cpu
+        time: "00:30:00"
+        output: ${HOME}/logs/ior_mpiio.%j.out
+        error: ${HOME}/logs/ior_mpiio.%j.err
+      pkgs:
+        - pkg_type: builtin.ior
+          pkg_name: ior
+          install_method: spack
+          install_query: ior
+          api: mpiio
+          ppn: 8
+          nprocs: 16
+          block: 512m
+          xfer: 1m
+          out: ${HOME}/ior_spack_test/mpiio.bin
+          log: ${HOME}/ior_spack_test/mpiio.log
+          write: true
+          read: true
+    vars:
+      ior.xfer: ["1m", "4m"]
+      ior.nprocs: [8, 16]
+    loop:
+      - [ior.xfer]
+      - [ior.nprocs]
+    repeat: 1
+    output: ${HOME}/ior_spack_test/mpiio_results

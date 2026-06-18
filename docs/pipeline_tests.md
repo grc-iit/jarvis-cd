@@ -6,16 +6,19 @@ Pipeline tests are used to run experiment sets using a grid search. They allow y
 
 1. [Overview](#overview)
 2. [Multiple Pipelines in a Single YAML File](#multiple-pipelines-in-a-single-yaml-file)
-3. [YAML Format](#yaml-format)
-4. [Example Files](#example-files)
-5. [Variables and Loop](#variables-and-loop)
+3. [Multiple Experiments (Suite)](#multiple-experiments-suite)
+4. [YAML Format](#yaml-format)
+5. [Installers](#installers)
+6. [Example Files](#example-files)
+7. [Variables and Loop](#variables-and-loop)
    - [Scheduler Variables](#scheduler-variables)
-6. [Launcher Overrides](#launcher-overrides)
-7. [Output and Statistics](#output-and-statistics)
-8. [CLI Commands](#cli-commands)
-9. [Resume and Progress](#resume-and-progress)
-10. [Custom Statistics](#custom-statistics)
-11. [Scheduling](#scheduling)
+8. [Launcher Overrides](#launcher-overrides)
+9. [Output and Statistics](#output-and-statistics)
+10. [CLI Commands](#cli-commands)
+11. [Resume and Progress](#resume-and-progress)
+12. [Custom Statistics](#custom-statistics)
+13. [Scheduling](#scheduling)
+14. [Combined Example: SLURM + Spack + Multiple Experiments](#combined-example-slurm--spack--multiple-experiments)
 
 ## Overview
 
@@ -70,6 +73,70 @@ with a `config:` section plus any of `vars`/`loop`/`repeat`/`output`
 is a multi-pipeline test; a file with top-level `name`/`pkgs` is a
 single regular pipeline. The same `jarvis ppl load|run|submit yaml
 <file>` commands work for both.
+
+## Multiple Experiments (Suite)
+
+The `vars:`/`loop:` grid above expands **one** `config:` skeleton into
+many runs — every run is the *same* pipeline with different parameter
+values. When you instead want several **distinct** configurations in one
+file — different packages, different sweeps, even different installers or
+schedulers — list them under a top-level `experiments:` key. This makes
+the file a **suite**: one `jarvis ppl run yaml <file>` runs each
+experiment's full grid in order.
+
+```yaml
+name: storage_sweeps          # suite name (optional)
+
+experiments:
+  - config:                   # experiment 1 — its own packages + sweep
+      name: ior_sweep
+      pkgs:
+        - pkg_type: builtin.ior
+          pkg_name: ior
+    vars:
+      ior.xfer:   ["256k", "1m", "4m"]
+      ior.nprocs: [1, 2, 4]
+    loop:
+      - [ior.xfer]
+      - [ior.nprocs]
+    output: ${HOME}/ior_test/results
+
+  - config:                   # experiment 2 — a completely different pipeline
+      name: redis_sweep
+      pkgs:
+        - pkg_type: builtin.redis
+          pkg_name: redis
+        - pkg_type: builtin.redis-benchmark
+          pkg_name: redis_bench
+    vars:
+      redis_bench.req_size: [64, 1024, 4096]
+      redis_bench.nthreads: [1, 2, 4]
+    loop:
+      - [redis_bench.req_size]
+      - [redis_bench.nthreads]
+    output: ${HOME}/redis_test/results
+```
+
+Key points:
+
+- **Each entry is a full pipeline test.** An experiment accepts every
+  key a standalone test does — `config`, `vars`, `loop`, `repeat`,
+  `output`, and a nested `scheduler:` (see
+  [Scheduling](#scheduling)). They run sequentially in listed order.
+- **Independent outputs.** Give each experiment its own `output:`
+  directory so their `results.csv` files don't overwrite each other.
+- **Detection.** A file containing `experiments:` is always a suite. As
+  with single tests, `jarvis ppl load|run yaml <file>` auto-detects it
+  (`jarvis ppl load` prints the experiment count and total runs).
+- **Grid vs. suite.** Use `vars`/`loop` to sweep one experiment; use
+  `experiments:` to combine several experiments. The two compose — every
+  experiment in a suite has its own grid.
+
+A runnable example lives at
+[`builtin/pipelines/examples/storage_sweep_test.yaml`](../builtin/pipelines/examples/storage_sweep_test.yaml)
+(IOR + Redis sweeps in Docker). For a suite that also adds Spack and
+SLURM, see
+[Combined Example](#combined-example-slurm--spack--multiple-experiments).
 
 ## YAML Format
 
@@ -175,6 +242,63 @@ before moving on). See [Scheduler Variables](#scheduler-variables).
 
 In Mode B, `jarvis ppl submit` is rejected; use `jarvis ppl run` so
 each iteration submits independently.
+
+## Installers
+
+Before a pipeline runs, Jarvis can **install** the software each package
+needs. Because the `config:` block is an ordinary pipeline definition,
+the same installer keys apply inside a pipeline test, and they are picked
+up for every iteration the test generates.
+
+An installer is selected per package, in this order:
+
+1. The package's explicit **`install_method`** — one of `pip`, `conda`,
+   `spack`, or `container`.
+2. Otherwise the pipeline-level **`base_deploy_mode`** — when it is
+   `container` or `spack`, it doubles as the default install method for
+   every package that doesn't set its own.
+3. Otherwise no installer runs (the binary is assumed already on `PATH`).
+
+The thing to install is named by **`install_query`** (the legacy alias
+`install` also works). Its meaning depends on the method:
+
+| `install_method` | `install_query` is …                    | Action |
+|------------------|------------------------------------------|--------|
+| `spack`          | a Spack spec, e.g. `ior@3.3.0 +hdf5`     | `spack install <spec>`, then load its env into the run |
+| `pip`            | one or more pip requirement specs        | `python3 -m pip install <specs>` |
+| `conda`          | conda package specs                      | `conda install <specs>` |
+| `container`      | (n/a — built from the package Dockerfiles) | builds/pulls the deploy image |
+
+Packages sharing an installer are batched into a single command, so a
+suite that spack-installs `ior` in several experiments builds it once
+(Spack is idempotent on subsequent specs).
+
+### Spack example
+
+```yaml
+config:
+  name: ior_spack
+  base_deploy_mode: spack          # default installer for the whole pipeline
+  pkgs:
+    - pkg_type: builtin.ior
+      pkg_name: ior
+      install_method: spack        # explicit; redundant with base_deploy_mode
+      install_query: "ior +hdf5"   # the Spack spec to build + load
+      api: posix
+      block: 32m
+      xfer: 1m
+
+vars:
+  ior.xfer: ["256k", "1m", "4m"]
+loop:
+  - [ior.xfer]
+output: ${HOME}/ior_spack_results
+```
+
+Spack is discovered via `SPACK_ROOT` (its `setup-env.sh` is sourced
+before `spack install`). After installation, the environment produced by
+`spack load` is merged into the run so the freshly built binaries are on
+`PATH`/`LD_LIBRARY_PATH`.
 
 ## Example Files
 
@@ -663,3 +787,98 @@ pass-through of arbitrary `--flag=value` directives, `pre_cmds` /
 `post_cmds` hooks, the hostname `suffix:` (secondary-NIC) feature, and
 how the allocation-built hostfile flows back into every package via
 `self.hostfile`.
+
+## Combined Example: SLURM + Spack + Multiple Experiments
+
+The three features above compose. This suite runs **two experiments**
+([Multiple Experiments](#multiple-experiments-suite)), each installing
+its software with **Spack** ([Installers](#installers)) and submitting
+every iteration as its own **SLURM** job ([Scheduling](#scheduling)).
+The full file is
+[`builtin/pipelines/examples/ior_spack_slurm_suite.yaml`](../builtin/pipelines/examples/ior_spack_slurm_suite.yaml).
+
+```yaml
+name: ior_spack_slurm_suite
+
+experiments:
+  # Experiment 1: IOR over the POSIX API
+  - config:
+      name: ior_posix
+      base_deploy_mode: spack            # Spack installer for all pkgs
+      scheduler:                         # nested -> one SLURM job per iteration
+        name: slurm
+        job_name: ior_posix
+        nodes: 2
+        ntasks_per_node: 8
+        partition: cpu
+        time: "00:30:00"
+      pkgs:
+        - pkg_type: builtin.ior
+          pkg_name: ior
+          install_method: spack
+          install_query: ior             # the Spack spec
+          api: posix
+          ppn: 8
+          block: 512m
+          out: ${HOME}/ior_spack_test/posix.bin
+          log: ${HOME}/ior_spack_test/posix.log
+          write: true
+          read: true
+    vars:
+      ior.xfer:   ["1m", "4m"]           # I/O size
+      ior.nprocs: [8, 16]                # number of MPI processes
+    loop:
+      - [ior.xfer]
+      - [ior.nprocs]
+    output: ${HOME}/ior_spack_test/posix_results
+
+  # Experiment 2: IOR over the MPI-IO API (same spack-built binary)
+  - config:
+      name: ior_mpiio
+      base_deploy_mode: spack
+      scheduler:
+        name: slurm
+        job_name: ior_mpiio
+        nodes: 2
+        ntasks_per_node: 8
+        partition: cpu
+        time: "00:30:00"
+      pkgs:
+        - pkg_type: builtin.ior
+          pkg_name: ior
+          install_method: spack
+          install_query: ior
+          api: mpiio
+          ppn: 8
+          block: 512m
+          out: ${HOME}/ior_spack_test/mpiio.bin
+          log: ${HOME}/ior_spack_test/mpiio.log
+          write: true
+          read: true
+    vars:
+      ior.xfer:   ["1m", "4m"]
+      ior.nprocs: [8, 16]
+    loop:
+      - [ior.xfer]
+      - [ior.nprocs]
+    output: ${HOME}/ior_spack_test/mpiio_results
+```
+
+```bash
+jarvis ppl run yaml builtin/pipelines/examples/ior_spack_slurm_suite.yaml
+```
+
+How the pieces interact:
+
+- **Suite** → the two experiments run in order; each writes its own
+  `results.csv` under its `output:` directory.
+- **Spack** → before each experiment's pipeline deploys, Jarvis runs
+  `spack install ior` and loads its environment. The install is
+  idempotent, so the second experiment reuses the first's build.
+- **SLURM** → because the `scheduler:` block is **nested inside
+  `config:`**, every iteration is submitted as its own job with
+  `sbatch --wait`; the runner blocks on each job, records its
+  runtime/stats, then continues. (A nested `config.scheduler` is the
+  per-iteration form — see [Scheduling](#scheduling). A suite does not
+  wrap all experiments in one allocation; scheduling is expressed
+  per experiment.)

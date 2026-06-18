@@ -134,6 +134,15 @@ bandwidth (`ior.write_max_mibs`, …) and redis-benchmark contributes
 throughput (`redis_bench.write_rps`, `redis_bench.read_rps`). Re-running a
 test resumes from the last completed row.
 
+### Going further
+
+A test file can also combine several **experiments** (distinct pipelines)
+under an `experiments:` list, install software with **Spack** (or pip /
+conda / containers) via `install_method` + `install_query`, and submit
+each iteration as a **SLURM** job. See
+[docs/pipeline_tests.md](docs/pipeline_tests.md) and the worked
+[SLURM + Spack + multi-experiment example](builtin/pipelines/examples/ior_spack_slurm_suite.yaml).
+
 ## License
 
 BSD-3-Clause License - see [LICENSE](LICENSE) file for details.
