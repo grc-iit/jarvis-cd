@@ -4,6 +4,7 @@ Provides the consolidated Pipeline class that combines pipeline creation, loadin
 """
 
 import os
+import shlex
 import socket
 import yaml
 import copy
@@ -33,6 +34,10 @@ class Pipeline:
         self.env = {}
         self.created_at = None
         self.last_loaded_file = None
+        # Structured metadata from the most recent scheduler submission.
+        # This is populated only by the scheduler provider boundary; it is
+        # never inferred from package or application stdout.
+        self.last_submission = None
 
         # Container parameters
         self.container_image = ""  # Pre-built image to use
@@ -149,15 +154,76 @@ class Pipeline:
         logger.pipeline(f"Wrote scheduler script: {script_path}")
         logger.pipeline(f"Hostfile (built at job start): {sched.hostfile}")
 
+        self.last_submission = {
+            'schema_version': 'jarvis.scheduler.submission.v1',
+            'provider': sched.NAME,
+            'script_path': str(script_path),
+            'scheduler_job_id': None,
+            'scheduler_cluster': None,
+            'identity_source': None,
+            'state': 'scripted',
+            'submitted': False,
+            'wait': bool(wait),
+            'terminal': False,
+            # ``sbatch --wait`` reports the completed workload status through
+            # the sbatch process.  Keep that raw value while separately
+            # recording whether it is an observed terminal return code.
+            'submission_returncode': None,
+            'terminal_returncode': None,
+        }
+
         if submit:
             from jarvis_cd.shell import Exec, LocalExecInfo
-            cmd = ' '.join(sched.submit_command(wait=wait))
+            argv = sched.submit_command(wait=wait)
+            cmd = ' '.join(shlex.quote(part) for part in argv)
             logger.pipeline(f"Submitting: {cmd}")
-            result = Exec(cmd, LocalExecInfo()).run()
+            result = Exec(cmd, LocalExecInfo(hide_output=True)).run()
             exit_code = result.exit_code.get('localhost', 1)
-            if exit_code != 0:
+            self.last_submission['submission_returncode'] = exit_code
+            stdout = result.stdout.get('localhost', '')
+            try:
+                provider_metadata = sched.parse_submission_output(stdout)
+            except ValueError as exc:
+                self.last_submission['state'] = (
+                    'submission_failed' if exit_code != 0 else 'identity_failed'
+                )
+                self.save()
+                if exit_code != 0:
+                    raise RuntimeError(
+                        f"Scheduler submission failed (exit {exit_code}): {cmd}"
+                    ) from exc
                 raise RuntimeError(
-                    f"Scheduler submission failed (exit {exit_code}): {cmd}")
+                    "Scheduler accepted the submission but did not return a "
+                    "structured job identity"
+                ) from exc
+            self.last_submission.update(provider_metadata)
+            self.last_submission.update({
+                'submitted': True,
+                'terminal': bool(wait),
+                'terminal_returncode': exit_code if wait else None,
+            })
+            logger.pipeline(
+                "Scheduler job identity: "
+                f"{self.last_submission['scheduler_job_id']}"
+            )
+            if exit_code != 0:
+                self.last_submission['state'] = (
+                    'workload_failed' if wait else 'accepted_with_error'
+                )
+                self.save()
+                if wait:
+                    raise RuntimeError(
+                        "Scheduler job "
+                        f"{self.last_submission['scheduler_job_id']} was accepted, "
+                        f"but the workload failed (exit {exit_code}): {cmd}"
+                    )
+                raise RuntimeError(
+                    "Scheduler job "
+                    f"{self.last_submission['scheduler_job_id']} was accepted, "
+                    f"but the submission command returned exit {exit_code}: {cmd}"
+                )
+            self.last_submission['state'] = 'completed' if wait else 'submitted'
+        self.save()
         return script_path
 
     def _hostfile_is_local_only(self, hf) -> bool:
@@ -250,6 +316,7 @@ class Pipeline:
         self.env = {}
         self.created_at = str(Path().cwd())
         self.last_loaded_file = None
+        self.last_submission = None
 
         # Save pipeline configuration and environment
         self.save()
@@ -303,6 +370,8 @@ class Pipeline:
             pipeline_config['created_at'] = self.created_at
         if self.last_loaded_file:
             pipeline_config['last_loaded_file'] = self.last_loaded_file
+        if self.last_submission:
+            pipeline_config['last_submission'] = self.last_submission
         # Add container parameters (always save, even if empty/default)
         pipeline_config['container_image'] = self.container_image
         pipeline_config['container_uri'] = self.container_uri
@@ -966,6 +1035,7 @@ class Pipeline:
         # Extract metadata
         self.created_at = pipeline_config.get('created_at')
         self.last_loaded_file = pipeline_config.get('last_loaded_file')
+        self.last_submission = pipeline_config.get('last_submission')
 
         # Load container parameters
         self.container_image = pipeline_config.get('container_image', '')

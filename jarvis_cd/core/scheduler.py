@@ -18,6 +18,7 @@ populate.
 from __future__ import annotations
 
 import os
+import re
 import shlex
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -98,6 +99,15 @@ class Scheduler:
         """
         raise NotImplementedError
 
+    def parse_submission_output(self, stdout: str) -> Dict[str, Any]:
+        """Parse provider-owned submission output into stable metadata.
+
+        Scheduler implementations must reject output that cannot be tied to a
+        submission made by their own command.  Callers must never infer job
+        identities from arbitrary application stdout.
+        """
+        raise NotImplementedError
+
     def _pipeline_invocation(self) -> str:
         """Shell snippet that runs the pipeline once the hostfile is in
         place. Always points jarvis at the persisted YAML when one was
@@ -151,6 +161,10 @@ class SlurmScheduler(Scheduler):
         'mail_user':       '--mail-user',
         'mail_type':       '--mail-type',
     }
+
+    _PARSABLE_SUBMISSION = re.compile(
+        r"^(?P<job_id>[0-9]+)(?:;(?P<cluster>[A-Za-z0-9_.-]+))?$"
+    )
 
     def _directives(self) -> List[str]:
         lines: List[str] = []
@@ -217,11 +231,29 @@ class SlurmScheduler(Scheduler):
         return script
 
     def submit_command(self, wait: bool = False) -> List[str]:
-        cmd = ["sbatch"]
+        # ``--parsable`` is the provider boundary: stdout is a stable
+        # ``job_id[;cluster]`` record rather than human-oriented text.
+        cmd = ["sbatch", "--parsable"]
         if wait:
             cmd.append("--wait")
         cmd.append(str(self.script_path))
         return cmd
+
+    def parse_submission_output(self, stdout: str) -> Dict[str, Any]:
+        """Parse the exact record produced by ``sbatch --parsable``."""
+        value = stdout.strip()
+        match = self._PARSABLE_SUBMISSION.fullmatch(value)
+        if match is None:
+            raise ValueError(
+                "SLURM submission did not return a valid "
+                "`sbatch --parsable` job identity"
+            )
+        return {
+            'provider': self.NAME,
+            'scheduler_job_id': match.group('job_id'),
+            'scheduler_cluster': match.group('cluster'),
+            'identity_source': 'scheduler_submit_api',
+        }
 
 
 _SCHEDULERS: Dict[str, type] = {
