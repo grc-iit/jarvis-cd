@@ -39,7 +39,7 @@ requires = [
 ]
 
 [tool.setuptools]
-packages = ["jarvis_cd", "jarvis_cd.core", "jarvis_cd.shell", "jarvis_cd.util", "builtin", "builtin.builtin"]
+packages = ["jarvis_cd", "jarvis_cd.core", "jarvis_cd.progress", "jarvis_cd.shell", "jarvis_cd.util", "builtin", "builtin.builtin"]
 include-package-data = true
 
 [tool.setuptools.package-data]
@@ -49,6 +49,9 @@ builtin = ["pipelines/**/*.yaml", "pipelines/**/*.yml"]
 
 [project.scripts]
 jarvis = "jarvis_cd.core.cli:main"
+
+[project.entry-points."clio_relay.package_progress_adapters"]
+jarvis_lammps = "jarvis_cd.progress.lammps:adapter_from_package"
 
 [tool.setuptools_scm]
 version_scheme = "no-guess-dev"
