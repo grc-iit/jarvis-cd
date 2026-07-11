@@ -96,6 +96,7 @@ def test_pipeline_persists_provider_owned_submission_identity(tmp_path: Path) ->
         "submitted": True,
         "wait": False,
         "terminal": False,
+        "scheduler_stderr": None,
         "submission_returncode": 0,
         "terminal_returncode": None,
     }
@@ -198,7 +199,8 @@ def test_pipeline_records_true_submission_failure_without_job_identity(
     )
     execution = SimpleNamespace(
         exit_code={"localhost": 1},
-        stdout={"localhost": "sbatch: error: invalid account\n"},
+        stderr={"localhost": "sbatch: error: invalid account\n"},
+        stdout={"localhost": ""},
     )
     executor = Mock()
     executor.run.return_value = execution
@@ -211,13 +213,19 @@ def test_pipeline_records_true_submission_failure_without_job_identity(
 
     with patch("jarvis_cd.core.scheduler.make_scheduler", return_value=scheduler):
         with patch("jarvis_cd.shell.Exec", return_value=executor):
-            with pytest.raises(RuntimeError, match="Scheduler submission failed"):
+            with pytest.raises(
+                RuntimeError,
+                match="Scheduler submission failed.*invalid account",
+            ):
                 pipeline.submit(submit=True, wait=False)
 
     assert pipeline.last_submission["scheduler_job_id"] is None
     assert pipeline.last_submission["state"] == "submission_failed"
     assert pipeline.last_submission["submitted"] is False
     assert pipeline.last_submission["terminal"] is False
+    assert pipeline.last_submission["scheduler_stderr"] == (
+        "sbatch: error: invalid account"
+    )
     assert pipeline.last_submission["submission_returncode"] == 1
     assert pipeline.last_submission["terminal_returncode"] is None
     pipeline.save.assert_called_once_with()

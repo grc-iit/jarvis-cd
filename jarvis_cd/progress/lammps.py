@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import math
 import os
 import statistics
 from dataclasses import dataclass, field
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, cast
 
@@ -17,7 +19,8 @@ class LammpsThermoProgressAdapter:
     package_version: str = "builtin"
     run_id: str = ""
     adapter_name: str = "lammps"
-    application_profile: str | None = None
+    application_profile: str | None = "jarvis-cd.builtin.lammps"
+    log_visibility: str = "scoped_stdout"
     total_steps: float | None = None
     output_dir: Path | None = None
     warmup_samples: int = 2
@@ -32,14 +35,54 @@ class LammpsThermoProgressAdapter:
     active_run_steps: float | None = None
     active_run_start_step: float | None = None
     active_package_stdout: bool = False
-    emitted_keys: set[tuple[float, float, float, float | None]] = field(
-        default_factory=set
-    )
+    authoritative_source: str | None = None
+    stdout_fragment: str = ""
+    jarvis_stdout_fragment: str = ""
+    last_emitted_key: tuple[float, float, float, float | None] | None = None
 
     def observe_stdout(self, text: str) -> list[dict[str, object]]:
         """Extract progress from an already trusted package-owned log."""
+        return self._observe_stdout(text, finalize=False)
+
+    def finalize_stdout(self) -> list[dict[str, object]]:
+        """Flush the final package-log fragment at end of stream."""
+        return self._observe_stdout("", finalize=True)
+
+    def reset_stdout(self) -> None:
+        """Reset package-log parser state after file replacement or truncation."""
+        if self.authoritative_source not in (None, "package_log"):
+            return
+        self.authoritative_source = None
+        self.stdout_fragment = ""
+        self.active_columns = []
+        self.active_step_column = None
+        self.active_time_column = None
+        self.active_time_column_name = None
+        self.samples = []
+        self.last_step = None
+        self.completed_steps = 0.0
+        self.active_run_steps = None
+        self.active_run_start_step = None
+        self.last_emitted_key = None
+
+    def _observe_stdout(
+        self,
+        text: str,
+        *,
+        finalize: bool,
+    ) -> list[dict[str, object]]:
+        if self.authoritative_source == "jarvis_stdout":
+            if finalize:
+                self.stdout_fragment = ""
+            return []
+        if text and self.authoritative_source is None:
+            self.authoritative_source = "package_log"
         records: list[dict[str, object]] = []
-        for line in text.splitlines():
+        for line in self._complete_lines(
+            text,
+            fragment_name="stdout_fragment",
+            finalize=finalize,
+        ):
             record = self.observe_line(line)
             if record is not None:
                 records.append(record)
@@ -47,10 +90,33 @@ class LammpsThermoProgressAdapter:
 
     def observe_jarvis_stdout(self, text: str) -> list[dict[str, object]]:
         """Extract records only while JARVIS identifies ``builtin.lammps``."""
+        return self._observe_jarvis_stdout(text, finalize=False)
+
+    def finalize_jarvis_stdout(self) -> list[dict[str, object]]:
+        """Flush the final JARVIS-scoped fragment at end of stream."""
+        return self._observe_jarvis_stdout("", finalize=True)
+
+    def _observe_jarvis_stdout(
+        self,
+        text: str,
+        *,
+        finalize: bool,
+    ) -> list[dict[str, object]]:
+        if self.authoritative_source == "package_log":
+            if finalize:
+                self.jarvis_stdout_fragment = ""
+                self.active_package_stdout = False
+            return []
         records: list[dict[str, object]] = []
-        for line in text.splitlines():
+        for line in self._complete_lines(
+            text,
+            fragment_name="jarvis_stdout_fragment",
+            finalize=finalize,
+        ):
             stripped = line.strip()
             if stripped == f"[{self.package_name}] [START] BEGIN":
+                if self.authoritative_source is None:
+                    self.authoritative_source = "jarvis_stdout"
                 self.active_package_stdout = True
                 continue
             if stripped == f"[{self.package_name}] [START] END":
@@ -61,7 +127,24 @@ class LammpsThermoProgressAdapter:
             record = self.observe_line(line)
             if record is not None:
                 records.append(record)
+        if finalize:
+            self.active_package_stdout = False
         return records
+
+    def _complete_lines(
+        self,
+        text: str,
+        *,
+        fragment_name: str,
+        finalize: bool,
+    ) -> list[str]:
+        fragment = cast(str, getattr(self, fragment_name))
+        lines = (fragment + text).splitlines(keepends=True)
+        if not finalize and lines and not lines[-1].endswith(("\n", "\r")):
+            setattr(self, fragment_name, lines.pop())
+        else:
+            setattr(self, fragment_name, "")
+        return [line.rstrip("\r\n") for line in lines]
 
     def progress_log_paths(self) -> list[Path]:
         """Return the LAMMPS thermo log owned by this package execution."""
@@ -85,16 +168,16 @@ class LammpsThermoProgressAdapter:
         """Require observed LAMMPS timing rather than a claimed percentage."""
         eta = metadata.get("eta_seconds")
         absolute_step = metadata.get("absolute_step")
+        eta_value = _finite_number(eta)
+        absolute_step_value = _finite_number(absolute_step)
         return (
             metadata.get("adapter") == self.adapter_name
             and metadata.get("prediction_status") == "observed_lammps_timing"
             and metadata.get("timing_source") == "lammps_thermo_cpu"
-            and isinstance(eta, int | float)
-            and not isinstance(eta, bool)
-            and float(eta) >= 0
-            and isinstance(absolute_step, int | float)
-            and not isinstance(absolute_step, bool)
-            and float(absolute_step) >= 0
+            and eta_value is not None
+            and eta_value >= 0
+            and absolute_step_value is not None
+            and absolute_step_value >= 0
         )
 
     def observe_line(self, line: str) -> dict[str, object] | None:
@@ -107,9 +190,10 @@ class LammpsThermoProgressAdapter:
             self.active_run_start_step = reset_step
             self.last_step = reset_step
             return None
-        run_steps = _parse_run_steps(stripped)
-        if run_steps is not None:
-            self.active_run_steps = run_steps
+        run_command = _parse_run_command(stripped)
+        if run_command is not None:
+            run_steps, run_upto = run_command
+            self.active_run_steps = None if run_upto else run_steps
             self.active_run_start_step = None
             return None
         if _looks_like_thermo_header(stripped):
@@ -124,12 +208,13 @@ class LammpsThermoProgressAdapter:
                     break
             return None
         if stripped.startswith("Loop time of "):
+            completed_steps = self.completed_steps
             if self.active_run_steps is not None:
-                self.completed_steps += self.active_run_steps
+                completed_steps += self.active_run_steps
             elif self.active_run_start_step is not None and self.last_step is not None:
-                self.completed_steps += max(
-                    0.0, self.last_step - self.active_run_start_step
-                )
+                completed_steps += max(0.0, self.last_step - self.active_run_start_step)
+            if math.isfinite(completed_steps):
+                self.completed_steps = completed_steps
             self.active_run_steps = None
             self.active_run_start_step = None
             self.active_columns = []
@@ -148,9 +233,8 @@ class LammpsThermoProgressAdapter:
         parts = stripped.split()
         if len(parts) != len(self.active_columns):
             return None
-        try:
-            step = float(parts[self.active_step_column])
-        except ValueError:
+        step = _optional_float(parts[self.active_step_column])
+        if step is None:
             return None
         if step < 0:
             return None
@@ -165,10 +249,12 @@ class LammpsThermoProgressAdapter:
         current = self.completed_steps + max(0.0, step - self.active_run_start_step)
         if self.active_run_steps is not None:
             current = min(self.completed_steps + self.active_run_steps, current)
-        progress_key = (self.completed_steps, current, step, elapsed_seconds)
-        if progress_key in self.emitted_keys:
+        if not math.isfinite(current):
             return None
-        self.emitted_keys.add(progress_key)
+        progress_key = (self.completed_steps, current, step, elapsed_seconds)
+        if progress_key == self.last_emitted_key:
+            return None
+        self.last_emitted_key = progress_key
         if elapsed_seconds is not None:
             self.samples.append((current, elapsed_seconds))
             self.samples = self.samples[-self.sample_window :]
@@ -191,6 +277,8 @@ class LammpsThermoProgressAdapter:
                     "timing_column": self.active_time_column_name,
                     **prediction,
                     "source": "jarvis_package",
+                    "progress_source": self.authoritative_source,
+                    "log_visibility": self.log_visibility,
                     "package_name": self.package_name,
                     "package_version": self.package_version,
                     "run_id": self.run_id,
@@ -222,13 +310,14 @@ class LammpsThermoProgressAdapter:
         for (previous_step, previous_time), (step, timestamp) in zip(
             self.samples,
             self.samples[1:],
-            strict=False,
         ):
             step_delta = step - previous_step
             time_delta = timestamp - previous_time
-            if step_delta <= 0 or time_delta < 0:
+            if step_delta <= 0 or time_delta <= 0:
                 continue
-            rates.append(time_delta / step_delta)
+            rate = time_delta / step_delta
+            if math.isfinite(rate):
+                rates.append(rate)
         if not rates:
             return {
                 "confidence": "warming_up",
@@ -238,8 +327,19 @@ class LammpsThermoProgressAdapter:
             }
         ordered = sorted(rates)
         trimmed = ordered[1:-1] if len(ordered) > 2 else ordered
-        seconds_per_step = statistics.fmean(trimmed)
+        seconds_per_step = statistics.mean(trimmed)
         remaining_steps = max(0.0, self.total_steps - current_step)
+        eta_seconds = remaining_steps * seconds_per_step
+        if not all(
+            math.isfinite(value)
+            for value in (seconds_per_step, remaining_steps, eta_seconds)
+        ):
+            return {
+                "confidence": "timing_unavailable",
+                "samples": len(self.samples),
+                "prediction_status": "nonfinite_prediction_rejected",
+                "elapsed_seconds": elapsed_seconds,
+            }
         return {
             "prediction_method": "trimmed_mean_step_time_after_warmup",
             "rate_samples": len(rates),
@@ -247,7 +347,7 @@ class LammpsThermoProgressAdapter:
             "min_seconds_per_step": min(trimmed),
             "max_seconds_per_step": max(trimmed),
             "seconds_per_step": seconds_per_step,
-            "eta_seconds": remaining_steps * seconds_per_step,
+            "eta_seconds": eta_seconds,
             "elapsed_seconds": elapsed_seconds,
             "remaining_steps": remaining_steps,
             "samples": len(self.samples),
@@ -265,46 +365,72 @@ def adapter_from_package(
     if package_type != "builtin.lammps":
         return None
     output = package.get("out")
+    deploy_mode = package.get("effective_deploy_mode") or package.get("deploy_mode")
+    progress = package.get("progress")
+    shared_log = _nested_progress_value(progress, "log_visibility") == "shared"
     output_dir = (
         Path(os.path.expandvars(output))
-        if isinstance(output, str) and output.strip()
+        if deploy_mode != "container"
+        and shared_log
+        and isinstance(output, str)
+        and output.strip()
         else None
     )
     return LammpsThermoProgressAdapter(
         package_name=str(package_type),
-        package_version=str(
-            package.get("pkg_version")
-            or package.get("version")
-            or package.get("package_version")
-            or "builtin"
-        ),
+        package_version=_distribution_version(),
+        log_visibility="shared" if output_dir is not None else "scoped_stdout",
         total_steps=_optional_float(
             package.get("total_steps")
             or package.get("steps")
-            or _nested_progress_total(package.get("progress"))
+            or _nested_progress_total(progress)
         ),
         output_dir=output_dir,
     )
 
 
 def _nested_progress_total(value: object) -> object:
+    return _nested_progress_value(value, "total_steps") or _nested_progress_value(
+        value, "total"
+    )
+
+
+def _nested_progress_value(value: object, key: str) -> object:
     if not isinstance(value, dict):
         return None
-    typed = cast(dict[str, object], value)
-    return typed.get("total_steps") or typed.get("total")
+    typed = cast("dict[str, object]", value)
+    return typed.get(key)
+
+
+def _distribution_version() -> str:
+    try:
+        return version("jarvis_cd")
+    except PackageNotFoundError:
+        return "source-checkout"
 
 
 def _optional_float(value: object) -> float | None:
     if value is None or isinstance(value, bool):
         return None
-    if isinstance(value, int | float):
-        return float(value)
+    if isinstance(value, (int, float)):
+        return _finite_number(value)
     if isinstance(value, str) and value != "":
         try:
-            return float(value)
-        except ValueError:
+            parsed = float(value)
+        except (TypeError, ValueError, OverflowError):
             return None
+        return parsed if math.isfinite(parsed) else None
     return None
+
+
+def _finite_number(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return parsed if math.isfinite(parsed) else None
 
 
 def _looks_like_thermo_header(line: str) -> bool:
@@ -312,11 +438,14 @@ def _looks_like_thermo_header(line: str) -> bool:
     return "Step" in columns and len(columns) >= 2
 
 
-def _parse_run_steps(line: str) -> float | None:
+def _parse_run_command(line: str) -> tuple[float, bool] | None:
     parts = line.split()
     if len(parts) < 2 or parts[0] != "run":
         return None
-    return _optional_float(parts[1])
+    run_value = _optional_float(parts[1])
+    if run_value is None or run_value < 0:
+        return None
+    return run_value, "upto" in parts[2:]
 
 
 def _parse_reset_timestep(line: str) -> float | None:

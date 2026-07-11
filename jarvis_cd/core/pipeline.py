@@ -15,6 +15,21 @@ from jarvis_cd.util.logger import logger
 from jarvis_cd.util.hostfile import Hostfile
 
 
+def _bounded_scheduler_stderr(result: Any, limit: int = 4096) -> Optional[str]:
+    """Return a bounded scheduler diagnostic captured by the executor."""
+    stderr = getattr(result, 'stderr', {})
+    if isinstance(stderr, dict):
+        value = stderr.get('localhost', '')
+    else:
+        value = stderr
+    diagnostic = str(value or '').strip()
+    if not diagnostic:
+        return None
+    if len(diagnostic) <= limit:
+        return diagnostic
+    return '[truncated]\n' + diagnostic[-limit:]
+
+
 class Pipeline:
     """
     Consolidated pipeline management class.
@@ -165,6 +180,7 @@ class Pipeline:
             'submitted': False,
             'wait': bool(wait),
             'terminal': False,
+            'scheduler_stderr': None,
             # ``sbatch --wait`` reports the completed workload status through
             # the sbatch process.  Keep that raw value while separately
             # recording whether it is an observed terminal return code.
@@ -180,6 +196,13 @@ class Pipeline:
             result = Exec(cmd, LocalExecInfo(hide_output=True)).run()
             exit_code = result.exit_code.get('localhost', 1)
             self.last_submission['submission_returncode'] = exit_code
+            scheduler_stderr = _bounded_scheduler_stderr(result)
+            self.last_submission['scheduler_stderr'] = scheduler_stderr
+            diagnostic = (
+                f"; scheduler stderr: {scheduler_stderr}"
+                if scheduler_stderr
+                else ''
+            )
             stdout = result.stdout.get('localhost', '')
             try:
                 provider_metadata = sched.parse_submission_output(stdout)
@@ -190,11 +213,12 @@ class Pipeline:
                 self.save()
                 if exit_code != 0:
                     raise RuntimeError(
-                        f"Scheduler submission failed (exit {exit_code}): {cmd}"
+                        f"Scheduler submission failed (exit {exit_code}): "
+                        f"{cmd}{diagnostic}"
                     ) from exc
                 raise RuntimeError(
                     "Scheduler accepted the submission but did not return a "
-                    "structured job identity"
+                    f"structured job identity{diagnostic}"
                 ) from exc
             self.last_submission.update(provider_metadata)
             self.last_submission.update({
@@ -215,12 +239,14 @@ class Pipeline:
                     raise RuntimeError(
                         "Scheduler job "
                         f"{self.last_submission['scheduler_job_id']} was accepted, "
-                        f"but the workload failed (exit {exit_code}): {cmd}"
+                        f"but the workload failed (exit {exit_code}): "
+                        f"{cmd}{diagnostic}"
                     )
                 raise RuntimeError(
                     "Scheduler job "
                     f"{self.last_submission['scheduler_job_id']} was accepted, "
-                    f"but the submission command returned exit {exit_code}: {cmd}"
+                    f"but the submission command returned exit {exit_code}: "
+                    f"{cmd}{diagnostic}"
                 )
             self.last_submission['state'] = 'completed' if wait else 'submitted'
         self.save()

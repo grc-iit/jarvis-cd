@@ -3,6 +3,9 @@ This module provides classes and methods to launch the LAMMPS application.
 LAMMPS (Large-scale Atomic/Molecular Massively Parallel Simulator) is a
 classical molecular-dynamics code from Sandia National Laboratories.
 """
+import os
+import shlex
+
 from jarvis_cd.core.pkg import Application
 from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
@@ -159,6 +162,36 @@ class Lammps(Application):
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def _log_path(self) -> str:
+        """Return the deterministic package-owned LAMMPS thermo log path."""
+        output_dir = os.path.expandvars(self.config.get('out') or '.')
+        return os.path.join(os.path.abspath(output_dir), 'log.lammps')
+
+    def _remove_stale_log(self) -> None:
+        """Remove the previous log before relay polling and LAMMPS startup."""
+        exec_args = {
+            'hostfile': self.hostfile,
+            'env': self.mod_env,
+        }
+        if self.config.get('deploy_mode') == 'container':
+            exec_args.update({
+                'container': self._container_engine,
+                'container_image': self.deploy_image_name(),
+                'gpu': self.config.get('kokkos_gpu', False),
+                'private_dir': self.private_dir,
+                'shared_dir': self.shared_dir,
+            })
+        cleanup = Exec(
+            f'rm -f {shlex.quote(self._log_path())}',
+            PsshExecInfo(**exec_args),
+        ).run()
+        failures = {
+            host: code for host, code in cleanup.exit_code.items() if code != 0
+        }
+        if failures:
+            raise RuntimeError(
+                f'Failed to remove stale LAMMPS log {self._log_path()}: {failures}')
+
     def start(self):
         """
         Launch LAMMPS.
@@ -166,10 +199,10 @@ class Lammps(Application):
         Branches on deploy_mode: uses MpiExecInfo with container engine for
         container mode, MpiExecInfo with hostfile for default mode.
         """
+        self._remove_stale_log()
         if self.config.get('deploy_mode') == 'container':
             script_path = self.config.get('script')
             if self.config.get('io_dump_interval', 0) > 0:
-                import os
                 n = self.config.get('io_lattice_size', 20)
                 steps = self.config.get('io_run_steps', 100)
                 interval = self.config['io_dump_interval']
@@ -196,14 +229,18 @@ class Lammps(Application):
                         f"thermo {interval}\n"
                         f"timestep 0.005\nrun {steps}\n"
                     )
-            cmd = ['/usr/local/bin/lmp']
+            cmd = ['/usr/local/bin/lmp', f'-log {shlex.quote(self._log_path())}']
             if script_path:
-                cmd.append(f"-in {script_path}")
+                cmd.append(f"-in {shlex.quote(os.path.expandvars(script_path))}")
             if self.config.get('kokkos_gpu'):
                 n_gpus = self.config.get('num_gpus', 1)
                 cmd += [f'-k on g {n_gpus}', '-sf kk', '-pk kokkos cuda/aware on']
 
-            Exec(' '.join(cmd), MpiExecInfo(
+            lammps_command = ' '.join(cmd)
+            output_dir = shlex.quote(os.path.dirname(self._log_path()))
+            container_command = shlex.quote(
+                f'mkdir -p {output_dir} && exec {lammps_command}')
+            Exec(f'bash -c {container_command}', MpiExecInfo(
                 nprocs=self.config['nprocs'],
                 ppn=self.config['ppn'],
                 hostfile=self.hostfile,
@@ -216,9 +253,13 @@ class Lammps(Application):
                 env=self.mod_env,
             )).run()
         else:
-            cmd = [self.config['lmp_bin']]
+            cmd = [
+                self.config['lmp_bin'],
+                f'-log {shlex.quote(self._log_path())}',
+            ]
             if self.config['script']:
-                cmd.append(f"-in {self.config['script']}")
+                cmd.append(
+                    f"-in {shlex.quote(os.path.expandvars(self.config['script']))}")
             if self.config.get('kokkos_gpu'):
                 n_gpus = self.config.get('num_gpus', 1)
                 cmd += [f'-k on g {n_gpus}', '-sf kk', '-pk kokkos cuda/aware on']

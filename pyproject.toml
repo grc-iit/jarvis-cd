@@ -2,8 +2,9 @@
 name = "jarvis_cd"
 description = "Jarvis-CD: Unified platform for deploying applications and benchmarks"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.11"
 dynamic = ["version"]
+license = "BSD-3-Clause"
 authors = [
   {name = "Luke Logan", email = "llogan@hawk.iit.edu"},
 ]
@@ -14,7 +15,6 @@ classifiers = [
   "Environment :: Console",
   "Intended Audience :: Developers",
   "Intended Audience :: System Administrators",
-  "License :: OSI Approved :: MIT License",
   "Operating System :: OS Independent",
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Topic :: System :: Systems Administration",
@@ -26,16 +26,24 @@ dependencies = [
   "podman-compose",
 ]
 
+[dependency-groups]
+dev = [
+  "pytest==9.1.1",
+  "pytest-cov==7.1.0",
+  "ruff==0.15.21",
+  "twine==6.2.0",
+]
+
 [project.urls]
-Documentation = "https://github.com/iowarp/ppi-jarvis-cd"
-issue-tracker = "https://github.com/iowarp/ppi-jarvis-cd/issues"
-source-code = "https://github.com/iowarp/ppi-jarvis-cd"
+Documentation = "https://github.com/grc-iit/jarvis-cd#readme"
+issue-tracker = "https://github.com/grc-iit/jarvis-cd/issues"
+source-code = "https://github.com/grc-iit/jarvis-cd"
 
 [build-system]
 build-backend = "setuptools.build_meta"
 requires = [
-  "setuptools>=42",
-  "setuptools-scm>=7",
+  "setuptools==80.9.0",
+  "setuptools-scm==8.3.1",
 ]
 
 [tool.setuptools]
@@ -51,7 +59,7 @@ builtin = ["pipelines/**/*.yaml", "pipelines/**/*.yml"]
 jarvis = "jarvis_cd.core.cli:main"
 
 [project.entry-points."clio_relay.package_progress_adapters"]
-jarvis_lammps = "jarvis_cd.progress.lammps:adapter_from_package"
+lammps = "jarvis_cd.progress.lammps:adapter_from_package"
 
 [tool.setuptools_scm]
 version_scheme = "no-guess-dev"

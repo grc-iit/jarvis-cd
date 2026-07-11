@@ -19,7 +19,6 @@ jobs:
       contents: read
       id-token: write
       attestations: write
-      artifact-metadata: write
 
     steps:
       - name: Check out exact tag
@@ -34,15 +33,18 @@ jobs:
           python-version: "3.11"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
         with:
           enable-cache: false
+          version: "0.11.28"
 
       - name: Run release-contract tests
         shell: bash
         run: |
-          uv run pytest -q \
+          uv lock --check
+          uv run --frozen pytest -q \
             test/unit/core/test_lammps_progress.py \
+            test/unit/core/test_lammps_package_runtime.py \
             test/unit/core/test_scheduler_submission.py \
             test/unit/core/test_pipeline_hostfile.py
 
@@ -53,8 +55,17 @@ jobs:
         run: |
           test "$GITHUB_REF_TYPE" = "tag"
           test "$(git rev-list -n 1 "$TAG_NAME")" = "$GITHUB_SHA"
+          git fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
           uv build
-          uvx --from 'twine==6.2.0' twine check dist/*
+          uv run --frozen twine check dist/*
+          uv export --quiet --frozen \
+            --no-dev \
+            --no-emit-project \
+            --format requirements.txt \
+            --output-file dist/runtime-requirements.txt
+          test -s dist/runtime-requirements.txt
           mapfile -t wheels < <(find dist -maxdepth 1 -type f -name '*.whl' -print | sort)
           mapfile -t sdists < <(find dist -maxdepth 1 -type f -name '*.tar.gz' -print | sort)
           test "${#wheels[@]}" -eq 1
@@ -83,18 +94,24 @@ jobs:
         run: |
           wheel="$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)"
           uv venv --python 3.11 .release-smoke
-          uv pip install --python .release-smoke/bin/python "$wheel"
-          .release-smoke/bin/python - <<'PY'
+          uv pip install \
+            --python .release-smoke/bin/python \
+            --require-hashes \
+            --requirements dist/runtime-requirements.txt
+          uv pip install --python .release-smoke/bin/python --no-deps "$wheel"
+          (
+          cd .release-smoke
+          bin/python - <<'PY'
           from importlib.metadata import entry_points
 
           from jarvis_cd.progress.lammps import adapter_from_package
 
           selected = entry_points().select(
               group='clio_relay.package_progress_adapters',
-              name='jarvis_lammps',
+              name='lammps',
           )
           if len(selected) != 1:
-              raise SystemExit('jarvis_lammps entry point is missing or duplicated')
+              raise SystemExit('lammps entry point is missing or duplicated')
           if selected[0].value != 'jarvis_cd.progress.lammps:adapter_from_package':
               raise SystemExit(f'unexpected entry point target: {selected[0].value}')
           adapter = adapter_from_package(
@@ -102,7 +119,10 @@ jobs:
           )
           if adapter is None or adapter.adapter_name != 'lammps':
               raise SystemExit('installed LAMMPS progress provider is not functional')
+          exec(adapter.package_load_probe_python(), {})
           PY
+          )
+          .release-smoke/bin/jarvis --help >/dev/null
 
       - name: Create release manifest
         env:
@@ -124,9 +144,10 @@ jobs:
                       'source_commit': commit,
                       'progress_entry_point': {
                           'group': 'clio_relay.package_progress_adapters',
-                          'name': 'jarvis_lammps',
+                          'name': 'lammps',
                           'value': 'jarvis_cd.progress.lammps:adapter_from_package',
                       },
+                      'runtime_lock': 'runtime-requirements.txt',
                   },
                   indent=2,
                   sort_keys=True,
@@ -137,7 +158,11 @@ jobs:
           PY
           (
             cd dist
-            sha256sum --binary ./*.whl ./*.tar.gz release-metadata.json > SHA256SUMS
+            sha256sum --binary \
+              ./*.whl \
+              ./*.tar.gz \
+              release-metadata.json \
+              runtime-requirements.txt > SHA256SUMS
             sha256sum --check --strict SHA256SUMS
           )
 
@@ -154,6 +179,7 @@ jobs:
             dist/*.whl
             dist/*.tar.gz
             dist/release-metadata.json
+            dist/runtime-requirements.txt
             dist/SHA256SUMS
           if-no-files-found: error
 
@@ -180,7 +206,11 @@ jobs:
         shell: bash
         run: |
           (cd dist && sha256sum --check --strict SHA256SUMS)
-          for subject in dist/*.whl dist/*.tar.gz dist/release-metadata.json; do
+          for subject in \
+            dist/*.whl \
+            dist/*.tar.gz \
+            dist/release-metadata.json \
+            dist/runtime-requirements.txt; do
             gh attestation verify "$subject" \
               --repo "$REPOSITORY" \
               --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
@@ -196,13 +226,63 @@ jobs:
           TAG_NAME: ${{ github.ref_name }}
         shell: bash
         run: |
+          resolve_remote_tag() {
+            local sha type
+            read -r sha type < <(
+              gh api "repos/$REPOSITORY/git/ref/tags/$TAG_NAME" \
+                --jq '[.object.sha, .object.type] | @tsv'
+            )
+            while [ "$type" = "tag" ]; do
+              read -r sha type < <(
+                gh api "repos/$REPOSITORY/git/tags/$sha" \
+                  --jq '[.object.sha, .object.type] | @tsv'
+              )
+            done
+            test "$type" = "commit"
+            printf '%s\n' "$sha"
+          }
+          require_immutable_releases() {
+            test "$(gh api \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$REPOSITORY/immutable-releases" \
+              --jq .enabled)" = true
+          }
           if gh release view "$TAG_NAME" --repo "$REPOSITORY" >/dev/null 2>&1; then
             echo "release already exists: $TAG_NAME" >&2
             exit 1
           fi
+          require_immutable_releases
+          test "$(resolve_remote_tag)" = "$GITHUB_SHA"
           gh release create "$TAG_NAME" \
-            dist/*.whl dist/*.tar.gz dist/release-metadata.json dist/SHA256SUMS \
             --repo "$REPOSITORY" \
             --verify-tag \
             --title "$TAG_NAME" \
-            --generate-notes
+            --generate-notes \
+            --draft
+          gh release upload "$TAG_NAME" \
+            dist/*.whl \
+            dist/*.tar.gz \
+            dist/release-metadata.json \
+            dist/runtime-requirements.txt \
+            dist/SHA256SUMS \
+            --repo "$REPOSITORY"
+          require_immutable_releases
+          test "$(resolve_remote_tag)" = "$GITHUB_SHA"
+          gh release edit "$TAG_NAME" \
+            --repo "$REPOSITORY" \
+            --draft=false
+          test "$(gh release view "$TAG_NAME" \
+            --repo "$REPOSITORY" \
+            --json isImmutable \
+            --jq .isImmutable)" = true
+          verified=false
+          for attempt in {1..12}; do
+            if gh release verify "$TAG_NAME" --repo "$REPOSITORY"; then
+              verified=true
+              break
+            fi
+            echo "release attestation not ready (attempt $attempt/12)" >&2
+            sleep 5
+          done
+          test "$verified" = true
