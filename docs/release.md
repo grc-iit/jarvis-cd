@@ -20,15 +20,26 @@ The immutable-release endpoint requires repository administration read access;
 the ephemeral `GITHUB_TOKEN` cannot be granted that permission. Do not create or
 push the version tag unless this preflight succeeds.
 
-Then verify that the release commit is the current remote `main`, that the tag
-matches the project version, and push the new tag:
+Then verify that the release commit is the current remote `main`, select the
+stable release version explicitly, and push the new tag:
 
 ```bash
 git fetch origin main --tags
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
-version="$(uv run python -c \
-  'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-test ! "$(git tag -l "v${version}")"
+# JARVIS-CD derives its package version from the immutable Git tag through
+# setuptools-scm, so the release operator must select and review the intended
+# version explicitly rather than reading a nonexistent static project.version.
+: "${RELEASE_VERSION:?set RELEASE_VERSION to a stable X.Y.Z version, for example 2.0.0}"
+version="$RELEASE_VERSION"
+uv run python - "$version" <<'PY'
+import re
+import sys
+
+component = r"(?:0|[1-9][0-9]*)"
+if re.fullmatch(rf"{component}\.{component}\.{component}", sys.argv[1]) is None:
+    raise SystemExit("release version must be a stable X.Y.Z version")
+PY
+test -z "$(git tag -l "v${version}")"
 git tag "v${version}" HEAD
 git push origin "v${version}"
 ```
