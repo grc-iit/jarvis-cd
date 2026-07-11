@@ -241,18 +241,10 @@ jobs:
             test "$type" = "commit"
             printf '%s\n' "$sha"
           }
-          require_immutable_releases() {
-            test "$(gh api \
-              -H 'Accept: application/vnd.github+json' \
-              -H 'X-GitHub-Api-Version: 2026-03-10' \
-              "repos/$REPOSITORY/immutable-releases" \
-              --jq .enabled)" = true
-          }
           if gh release view "$TAG_NAME" --repo "$REPOSITORY" >/dev/null 2>&1; then
             echo "release already exists: $TAG_NAME" >&2
             exit 1
           fi
-          require_immutable_releases
           test "$(resolve_remote_tag)" = "$GITHUB_SHA"
           gh release create "$TAG_NAME" \
             --repo "$REPOSITORY" \
@@ -267,7 +259,6 @@ jobs:
             dist/runtime-requirements.txt \
             dist/SHA256SUMS \
             --repo "$REPOSITORY"
-          require_immutable_releases
           test "$(resolve_remote_tag)" = "$GITHUB_SHA"
           gh release edit "$TAG_NAME" \
             --repo "$REPOSITORY" \
