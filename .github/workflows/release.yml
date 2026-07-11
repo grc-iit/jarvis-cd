@@ -1,0 +1,208 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  build:
+    name: Build and attest release artifacts
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+
+    steps:
+      - name: Check out exact tag
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5
+        with:
+          enable-cache: false
+
+      - name: Run release-contract tests
+        shell: bash
+        run: |
+          uv run pytest -q \
+            test/unit/core/test_lammps_progress.py \
+            test/unit/core/test_scheduler_submission.py \
+            test/unit/core/test_pipeline_hostfile.py
+
+      - name: Build and inspect distributions
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          test "$GITHUB_REF_TYPE" = "tag"
+          test "$(git rev-list -n 1 "$TAG_NAME")" = "$GITHUB_SHA"
+          uv build
+          uvx --from 'twine==6.2.0' twine check dist/*
+          mapfile -t wheels < <(find dist -maxdepth 1 -type f -name '*.whl' -print | sort)
+          mapfile -t sdists < <(find dist -maxdepth 1 -type f -name '*.tar.gz' -print | sort)
+          test "${#wheels[@]}" -eq 1
+          test "${#sdists[@]}" -eq 1
+          python - "${wheels[0]}" "${TAG_NAME#v}" <<'PY'
+          import email
+          import sys
+          import zipfile
+
+          wheel, expected_version = sys.argv[1:]
+          with zipfile.ZipFile(wheel) as archive:
+              metadata_names = [
+                  name for name in archive.namelist() if name.endswith('.dist-info/METADATA')
+              ]
+              if len(metadata_names) != 1:
+                  raise SystemExit('wheel must contain exactly one METADATA file')
+              metadata = email.message_from_bytes(archive.read(metadata_names[0]))
+          if metadata['Name'] != 'jarvis_cd' or metadata['Version'] != expected_version:
+              raise SystemExit(
+                  f"tag/wheel mismatch: {metadata['Name']} {metadata['Version']}"
+              )
+          PY
+
+      - name: Smoke installed wheel and progress entry point
+        shell: bash
+        run: |
+          wheel="$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)"
+          uv venv --python 3.11 .release-smoke
+          uv pip install --python .release-smoke/bin/python "$wheel"
+          .release-smoke/bin/python - <<'PY'
+          from importlib.metadata import entry_points
+
+          from jarvis_cd.progress.lammps import adapter_from_package
+
+          selected = entry_points().select(
+              group='clio_relay.package_progress_adapters',
+              name='jarvis_lammps',
+          )
+          if len(selected) != 1:
+              raise SystemExit('jarvis_lammps entry point is missing or duplicated')
+          if selected[0].value != 'jarvis_cd.progress.lammps:adapter_from_package':
+              raise SystemExit(f'unexpected entry point target: {selected[0].value}')
+          adapter = adapter_from_package(
+              {'pkg_type': 'builtin.lammps', 'progress': {'total_steps': 10}}
+          )
+          if adapter is None or adapter.adapter_name != 'lammps':
+              raise SystemExit('installed LAMMPS progress provider is not functional')
+          PY
+
+      - name: Create release manifest
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          python - "$TAG_NAME" "$GITHUB_SHA" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          tag, commit = sys.argv[1:]
+          Path('dist/release-metadata.json').write_text(
+              json.dumps(
+                  {
+                      'schema_version': '1.0',
+                      'tag': tag,
+                      'version': tag.removeprefix('v'),
+                      'source_commit': commit,
+                      'progress_entry_point': {
+                          'group': 'clio_relay.package_progress_adapters',
+                          'name': 'jarvis_lammps',
+                          'value': 'jarvis_cd.progress.lammps:adapter_from_package',
+                      },
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + '\n',
+              encoding='utf-8',
+          )
+          PY
+          (
+            cd dist
+            sha256sum --binary ./*.whl ./*.tar.gz release-metadata.json > SHA256SUMS
+            sha256sum --check --strict SHA256SUMS
+          )
+
+      - name: Attest release artifacts and metadata
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: jarvis-cd-${{ github.ref_name }}
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/release-metadata.json
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      attestations: read
+
+    steps:
+      - name: Download release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: jarvis-cd-${{ github.ref_name }}
+          path: dist
+
+      - name: Verify bundle and provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+          for subject in dist/*.whl dist/*.tar.gz dist/release-metadata.json; do
+            gh attestation verify "$subject" \
+              --repo "$REPOSITORY" \
+              --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$TAG_NAME" \
+              --source-digest "$GITHUB_SHA" \
+              --deny-self-hosted-runners
+          done
+
+      - name: Publish immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          if gh release view "$TAG_NAME" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            echo "release already exists: $TAG_NAME" >&2
+            exit 1
+          fi
+          gh release create "$TAG_NAME" \
+            dist/*.whl dist/*.tar.gz dist/release-metadata.json dist/SHA256SUMS \
+            --repo "$REPOSITORY" \
+            --verify-tag \
+            --title "$TAG_NAME" \
+            --generate-notes
