@@ -57,7 +57,7 @@ jobs:
           test "$(git rev-list -n 1 "$TAG_NAME")" = "$GITHUB_SHA"
           git fetch --no-tags origin \
             +refs/heads/main:refs/remotes/origin/main
-          git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main
+          test "$GITHUB_SHA" = "$(git rev-parse refs/remotes/origin/main)"
           uv build
           uv run --frozen twine check dist/*
           uv export --quiet --frozen \
