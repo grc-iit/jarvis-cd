@@ -5,19 +5,36 @@ resource manager (SLURM today; PBS / others can be added by subclassing
 `Scheduler`). The integration lives in `jarvis_cd/core/scheduler.py` and
 is driven by a top-level `scheduler:` key in the YAML.
 
-When `scheduler:` is set, `jarvis ppl submit` writes a job script into
-the pipeline's shared directory and (by default) hands it off to the
-scheduler's submit command (`sbatch` for SLURM). Inside the allocation
-the script:
+When `scheduler:` is set, `jarvis ppl submit` creates a unique execution
+directory under `<pipeline_shared_dir>/executions/`, seals the pipeline and
+environment that were current at submission time, writes an execution-scoped
+job script, and (by default) hands it off to the scheduler's submit command
+(`sbatch` for SLURM). Inside the allocation the script:
 
 1. Builds a hostfile from the scheduler's nodelist
    (`scontrol show hostnames "$SLURM_JOB_NODELIST"` for SLURM)
-2. Writes it to the path declared by `scheduler.hostfile`
-   (default: `${SHARED_DIR}/hostfile.txt`, where `${SHARED_DIR}` is the
-   pipeline's shared directory)
-3. Runs the pipeline (`jarvis ppl run yaml <file>` for a YAML-loaded
-   pipeline; `jarvis cd <name> && jarvis ppl run` for a current
-   pipeline)
+2. Writes it to that execution's private `hostfile.txt`
+3. Runs the execution's isolated `runtime/pipeline.yaml` working copy
+
+Changing or deleting the named pipeline after submission cannot change an
+already queued execution. Each execution directory contains:
+
+- `input/`: a read-only copy of the submitted `pipeline.yaml` and
+  `environment.yaml`, used as durable provenance
+- `runtime/`: the private working copy loaded inside the allocation; package
+  state written during the run stays here rather than mutating the named
+  pipeline
+- `shared/`: package-visible shared runtime files for this execution only
+- `private/`: package-visible machine-private runtime files for this execution
+  only
+- `submit.slurm`: the exact script handed to SLURM
+- `hostfile.txt`: the allocation hostfile created when the job starts
+- `.jarvis-execution.json`: the ownership and terminal-state marker used by
+  explicit cleanup
+
+The pipeline's structured `last_submission` record includes the execution ID,
+the execution root, the sealed input and runtime paths, the script and hostfile
+paths, and a SHA-256 digest of the two sealed input documents.
 
 The pipeline binds `self.hostfile` to that same path at load time, so
 every package in the pipeline that consults `self.hostfile` reads the
@@ -51,7 +68,7 @@ pkgs:
 | Key                | SBATCH flag             | Notes                               |
 |--------------------|-------------------------|-------------------------------------|
 | `name`             | (selects backend)       | Required: `slurm`                   |
-| `hostfile`         | (used by Jarvis)        | Defaults to `${SHARED_DIR}/hostfile.txt` |
+| `hostfile`         | (used by Jarvis)        | Direct scheduler use defaults to `${SHARED_DIR}/hostfile.txt`; `Pipeline.submit` isolates it per execution |
 | `suffix`           | (used by Jarvis)        | Appended to every hostname pulled from the allocation, e.g. `-40g` to target a 40GbE NIC |
 | `job_name`         | `--job-name`            |                                     |
 | `nodes`            | `--nodes`               |                                     |
@@ -184,7 +201,39 @@ jarvis ppl submit +no_submit
 jarvis ppl submit path/to/pipeline.yaml +no_submit
 ```
 
-The generated script is written to `<pipeline_shared_dir>/submit.slurm`.
+The generated script is written to
+`<pipeline_shared_dir>/executions/<execution-id>/submit.slurm`. A fresh
+execution ID is generated for every CLI submission; API callers may provide a
+bounded path-safe ID for end-to-end correlation.
+
+## Execution cleanup and pipeline destruction
+
+Scheduler execution roots are never removed by age, count, or "keep latest"
+retention. An old root may still belong to a queued or running job. Cleanup is
+therefore an explicit, bounded API operation over exact execution IDs:
+
+```python
+pipeline.cleanup_executions(["run-2026-07-11"])
+```
+
+JARVIS accepts an ID without an override only when its owned execution marker
+is terminal. For a nonterminal marker, the operator must first check the
+scheduler's authoritative state and then name that same ID in
+`terminal_verified`:
+
+```python
+pipeline.cleanup_executions(
+    ["run-2026-07-11"],
+    terminal_verified=["run-2026-07-11"],
+)
+```
+
+`force=True` is the explicit emergency override; it does not broaden the set
+of IDs being removed. Cleanup validates the ownership marker and quarantines
+each exact root before deletion. `Pipeline.destroy()` refuses to destroy a
+named pipeline while *any* execution-root entries remain, including queued
+jobs and incomplete or unrecognized entries. A runtime snapshot cannot clean
+execution roots or destroy its named source pipeline.
 
 ## Multi-node SSH inside an allocation
 

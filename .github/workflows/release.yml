@@ -12,8 +12,24 @@ concurrency:
 permissions: {}
 
 jobs:
+  release-preflight:
+    name: Preflight immutable release enforcement
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+
+    steps:
+      - name: Require repository-enforced immutable releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          test "$(gh api "repos/$REPOSITORY/immutable-releases" --jq .enabled)" = true
+
   build:
     name: Build and attest release artifacts
+    needs: release-preflight
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -46,7 +62,8 @@ jobs:
             test/unit/core/test_lammps_progress.py \
             test/unit/core/test_lammps_package_runtime.py \
             test/unit/core/test_scheduler_submission.py \
-            test/unit/core/test_pipeline_hostfile.py
+            test/unit/core/test_pipeline_hostfile.py \
+            test/unit/test_release_workflow.py
 
       - name: Build and inspect distributions
         env:
@@ -241,32 +258,119 @@ jobs:
             test "$type" = "commit"
             printf '%s\n' "$sha"
           }
-          if gh release view "$TAG_NAME" --repo "$REPOSITORY" >/dev/null 2>&1; then
-            echo "release already exists: $TAG_NAME" >&2
+          test "$(resolve_remote_tag)" = "$GITHUB_SHA"
+          test "$(gh api "repos/$REPOSITORY/immutable-releases" --jq .enabled)" = true
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+
+          mapfile -t artifacts < <(
+            find dist -maxdepth 1 -type f -printf '%f\n' | sort
+          )
+          test "${#artifacts[@]}" -eq 5
+          declare -A expected_sha=()
+          wheel_count=0
+          sdist_count=0
+          for name in "${artifacts[@]}"; do
+            [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]
+            case "$name" in
+              *.whl) wheel_count=$((wheel_count + 1)) ;;
+              *.tar.gz) sdist_count=$((sdist_count + 1)) ;;
+              release-metadata.json|runtime-requirements.txt|SHA256SUMS) ;;
+              *) echo "unexpected local release artifact: $name" >&2; exit 1 ;;
+            esac
+            expected_sha["$name"]="$(sha256sum "dist/$name" | cut -d' ' -f1)"
+          done
+          test "$wheel_count" -eq 1
+          test "$sdist_count" -eq 1
+          [[ -v 'expected_sha[release-metadata.json]' ]]
+          [[ -v 'expected_sha[runtime-requirements.txt]' ]]
+          [[ -v 'expected_sha[SHA256SUMS]' ]]
+
+          release_tmp="$(mktemp -d)"
+          trap 'rm -rf "$release_tmp"' EXIT
+          release_json="$release_tmp/release.json"
+          release_error="$release_tmp/release.error"
+
+          fetch_release() {
+            gh api "repos/$REPOSITORY/releases/tags/$TAG_NAME" >"$release_json"
+            test "$(jq -r .tag_name "$release_json")" = "$TAG_NAME"
+          }
+
+          load_and_verify_assets() {
+            local allow_missing="$1" id name declared_digest downloaded
+            declare -gA asset_ids=()
+            while IFS=$'\t' read -r id name declared_digest; do
+              [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]
+              if [[ ! -v "expected_sha[$name]" ]]; then
+                echo "unexpected release asset: $name" >&2
+                return 1
+              fi
+              if [[ -v "asset_ids[$name]" ]]; then
+                echo "duplicate release asset: $name" >&2
+                return 1
+              fi
+              if [ -n "$declared_digest" ] && \
+                 [ "$declared_digest" != "sha256:${expected_sha[$name]}" ]; then
+                echo "release asset digest mismatch: $name" >&2
+                return 1
+              fi
+              asset_ids["$name"]="$id"
+            done < <(
+              jq -r '.assets[] | [.id, .name, (.digest // "")] | @tsv' \
+                "$release_json"
+            )
+
+            for name in "${artifacts[@]}"; do
+              if [[ ! -v "asset_ids[$name]" ]]; then
+                if [ "$allow_missing" = true ]; then
+                  gh release upload "$TAG_NAME" "dist/$name" --repo "$REPOSITORY"
+                  continue
+                fi
+                echo "missing release asset: $name" >&2
+                return 1
+              fi
+              downloaded="$release_tmp/download-$name"
+              gh api \
+                -H 'Accept: application/octet-stream' \
+                "repos/$REPOSITORY/releases/assets/${asset_ids[$name]}" \
+                >"$downloaded"
+              cmp --silent "dist/$name" "$downloaded"
+            done
+          }
+
+          if fetch_release 2>"$release_error"; then
+            :
+          elif grep -Fq 'HTTP 404' "$release_error"; then
+            gh release create "$TAG_NAME" \
+              --repo "$REPOSITORY" \
+              --verify-tag \
+              --title "$TAG_NAME" \
+              --generate-notes \
+              --draft
+            fetch_release
+          else
+            cat "$release_error" >&2
             exit 1
           fi
+
+          draft="$(jq -r .draft "$release_json")"
+          immutable="$(jq -r .immutable "$release_json")"
+          if [ "$draft" = true ]; then
+            test "$immutable" = false
+            load_and_verify_assets true
+            fetch_release
+            load_and_verify_assets false
+            test "$(resolve_remote_tag)" = "$GITHUB_SHA"
+            gh release edit "$TAG_NAME" --repo "$REPOSITORY" --draft=false
+          else
+            test "$immutable" = true
+            load_and_verify_assets false
+          fi
+
           test "$(resolve_remote_tag)" = "$GITHUB_SHA"
-          gh release create "$TAG_NAME" \
-            --repo "$REPOSITORY" \
-            --verify-tag \
-            --title "$TAG_NAME" \
-            --generate-notes \
-            --draft
-          gh release upload "$TAG_NAME" \
-            dist/*.whl \
-            dist/*.tar.gz \
-            dist/release-metadata.json \
-            dist/runtime-requirements.txt \
-            dist/SHA256SUMS \
-            --repo "$REPOSITORY"
-          test "$(resolve_remote_tag)" = "$GITHUB_SHA"
-          gh release edit "$TAG_NAME" \
-            --repo "$REPOSITORY" \
-            --draft=false
-          test "$(gh release view "$TAG_NAME" \
-            --repo "$REPOSITORY" \
-            --json isImmutable \
-            --jq .isImmutable)" = true
+          fetch_release
+          test "$(jq -r .draft "$release_json")" = false
+          test "$(jq -r .immutable "$release_json")" = true
+          load_and_verify_assets false
           verified=false
           for attempt in {1..12}; do
             if gh release verify "$TAG_NAME" --repo "$REPOSITORY"; then
