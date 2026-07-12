@@ -19,6 +19,7 @@ import pytest
 
 from jarvis_cd.core.execution import (
     HANDLE_SCHEMA,
+    MAX_RECORD_BYTES,
     PROGRESS_SNAPSHOT_SCHEMA,
     RECORD_NAME,
     ExecutionHandle,
@@ -231,17 +232,36 @@ def test_execution_store_rejects_junction_ancestor_without_writing(
     assert not (target / "executions").exists()
 
 
-def test_windows_record_reader_does_not_block_atomic_replacement(
+def test_record_reader_does_not_block_atomic_replacement(
     tmp_path: Path,
 ) -> None:
-    """A live reader remains pinned while a Windows writer replaces the path."""
+    """A live reader remains safe while a writer atomically replaces the path."""
     store = ExecutionStore(tmp_path / "executions", "example")
     store.create("replaceable", mode="direct")
     record_path = store.executions_dir / "replaceable" / RECORD_NAME
+    initial_state = store.get("replaceable").state
     descriptor = os.open(record_path, os.O_RDONLY)
     try:
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(store.update, "replaceable", state="running")
+            if os.name != "nt":
+                # POSIX replacement is allowed to complete while the old inode
+                # is open. Waiting for a temporary file is therefore racy: the
+                # writer can create, fsync, replace, and unlink it before the
+                # polling thread is scheduled. Verify the useful contract
+                # directly instead.
+                updated = future.result(timeout=5)
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                pinned = json.loads(os.read(descriptor, MAX_RECORD_BYTES))
+                assert pinned["state"] == initial_state
+                assert store.get("replaceable").state == "running"
+                assert updated.state == "running"
+                return
+
+            # Windows replacement can wait for a reader that did not grant
+            # delete sharing. The durable writer retains its temporary file
+            # while retrying, so release the reader only after that state is
+            # observable.
             temporary_pattern = f".{RECORD_NAME}.*.tmp"
             for _ in range(1_000):
                 if list(record_path.parent.glob(temporary_pattern)):
