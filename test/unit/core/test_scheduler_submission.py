@@ -751,3 +751,33 @@ def test_script_only_execution_is_explicitly_cleanup_eligible(tmp_path: Path) ->
 
     assert removed == ["script-only"]
     assert not (tmp_path / "shared" / "example" / "executions" / "script-only").exists()
+
+
+def test_failed_execution_cleanup_reseals_and_restores_exact_root(
+    tmp_path: Path,
+) -> None:
+    """A deletion failure restores both the exact root and its prior input mode."""
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.submit(submit=False, execution_id="cleanup-rollback")
+    execution_root = tmp_path / "shared" / "example" / "executions" / "cleanup-rollback"
+
+    with (
+        patch(
+            "jarvis_cd.core.pipeline._set_execution_input_mode",
+            side_effect=[0o500, 0o700],
+        ) as set_mode,
+        patch(
+            "jarvis_cd.core.pipeline.shutil.rmtree",
+            side_effect=PermissionError("injected deletion failure"),
+        ),
+        pytest.raises(PermissionError, match="injected deletion failure"),
+    ):
+        pipeline.cleanup_executions(["cleanup-rollback"])
+
+    assert execution_root.is_dir()
+    assert not list(execution_root.parent.glob(".remove-cleanup-rollback-*"))
+    assert set_mode.call_count == 2
+    quarantine = set_mode.call_args_list[0].args[0]
+    assert quarantine.name.startswith(".remove-cleanup-rollback-")
+    assert set_mode.call_args_list[1].args == (quarantine,)
+    assert set_mode.call_args_list[1].kwargs == {"mode": 0o500}

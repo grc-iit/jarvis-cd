@@ -204,6 +204,47 @@ def _read_execution_marker(
     return document
 
 
+def _set_execution_input_mode(
+    execution_root: Path,
+    *,
+    mode: Optional[int] = None,
+) -> Optional[int]:
+    """Open the sealed input directory without following links and set its mode.
+
+    Execution inputs are intentionally sealed read-only on POSIX.  Exact
+    cleanup temporarily adds owner write/execute permission so the directory
+    entries can be unlinked.  The prior mode is returned so a failed cleanup
+    can restore the seal before putting the execution back in service.
+    """
+    if os.name == "nt":
+        return None
+    input_dir = execution_root / "input"
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptor = os.open(input_dir, flags)
+    try:
+        status = os.fstat(descriptor)
+        path_status = input_dir.lstat()
+        if (
+            not stat.S_ISDIR(status.st_mode)
+            or stat.S_ISLNK(path_status.st_mode)
+            or (status.st_dev, status.st_ino)
+            != (path_status.st_dev, path_status.st_ino)
+        ):
+            raise RuntimeError(f"execution input is not a real directory: {input_dir}")
+        previous = stat.S_IMODE(status.st_mode)
+        target = mode if mode is not None else previous | stat.S_IWUSR | stat.S_IXUSR
+        os.fchmod(descriptor, target)
+        os.fsync(descriptor)
+        return previous
+    finally:
+        os.close(descriptor)
+
+
 class Pipeline:
     """
     Consolidated pipeline management class.
@@ -627,6 +668,7 @@ class Pipeline:
         for execution_id, candidate in candidates:
             quarantine = executions_dir / f".remove-{execution_id}-{uuid4().hex}"
             os.replace(candidate, quarantine)
+            sealed_input_mode: Optional[int] = None
             try:
                 marker = _read_execution_marker(
                     quarantine,
@@ -636,10 +678,19 @@ class Pipeline:
                     raise RuntimeError(
                         f"execution changed before cleanup: {execution_id}"
                     )
+                sealed_input_mode = _set_execution_input_mode(quarantine)
                 shutil.rmtree(quarantine)
                 _fsync_directory(executions_dir)
             except BaseException:
                 if quarantine.exists() and not candidate.exists():
+                    if sealed_input_mode is not None:
+                        try:
+                            _set_execution_input_mode(
+                                quarantine,
+                                mode=sealed_input_mode,
+                            )
+                        except FileNotFoundError:
+                            pass
                     os.replace(quarantine, candidate)
                     _fsync_directory(executions_dir)
                 raise
