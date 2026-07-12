@@ -364,7 +364,10 @@ def test_record_reader_rejects_unknown_fields_and_symlink_roots(
         link.symlink_to(outside, target_is_directory=True)
     except OSError:
         return
-    with pytest.raises(RuntimeError, match="real directory"):
+    with pytest.raises(
+        RuntimeError,
+        match="real directory|symbolic link or reparse point",
+    ):
         store.get("linked")
 
 
