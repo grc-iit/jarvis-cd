@@ -11,6 +11,7 @@ Jarvis-CD is a unified platform for deploying scientific applications, storage s
 - [Pipeline Configuration](pipelines.md) — Full YAML format, install managers (container/spack), environment management, multi-node, devcontainers
 - [Package Development Guide](package_dev_guide.md) — Create new packages, Dockerfile templates, container and spack support
 - [Pipeline Tests](pipeline_tests.md) — Automated testing with grid search and parameter sweeps
+- [Execution Handles](executions.md) — Durable direct and scheduler run identities, status records, and JSON queries
 - [Hostfile Configuration](hostfile.md) — Multi-node setup, pattern expansion, IP resolution
 - [Scheduler Integration](scheduler.md) — Submit pipelines as SLURM jobs, automatic hostfile from `$SLURM_JOB_NODELIST`
 - [Resource Graph](resource_graph.md) — Storage and network topology discovery

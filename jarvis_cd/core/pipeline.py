@@ -11,31 +11,48 @@ import shlex
 import shutil
 import socket
 import stat
+import subprocess
+import sys
 import tempfile
 import yaml
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from uuid import uuid4
 from jarvis_cd.core.config import load_class, Jarvis
+from jarvis_cd.core.execution import (
+    LEGACY_RECORD_SCHEMA,
+    RECORD_NAME,
+    RECORD_SCHEMA,
+    ExecutionHandle,
+    ExecutionProgressSnapshot,
+    ExecutionRecord,
+    ExecutionStore,
+    is_execution_transaction_lock,
+    execution_transaction_lock,
+    prepare_direct_execution_lease,
+    validate_execution_id,
+    validate_pipeline_id,
+)
 from jarvis_cd.util.logger import logger
 from jarvis_cd.util.hostfile import Hostfile
 
 
-_EXECUTION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SNAPSHOT_ENVIRONMENT = "JARVIS_PIPELINE_SNAPSHOT_DIR"
-_EXECUTION_MARKER = ".jarvis-execution.json"
-_EXECUTION_MARKER_SCHEMA = "jarvis.execution.v1"
+_EXECUTION_MARKER = RECORD_NAME
+_EXECUTION_MARKER_SCHEMA = LEGACY_RECORD_SCHEMA
 _EXECUTION_CLEANUP_SCHEMA = "jarvis.execution-cleanup.v1"
 _MAX_EXPLICIT_EXECUTION_CLEANUP = 1024
-_WINDOWS_RESERVED_COMPONENTS = {
-    "CON",
-    "PRN",
-    "AUX",
-    "NUL",
-    "CLOCK$",
-    *(f"COM{index}" for index in range(1, 10)),
-    *(f"LPT{index}" for index in range(1, 10)),
-}
+
+
+def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> Dict[str, Any]:
+    """Build a JSON object while rejecting duplicate security fields."""
+    document: Dict[str, Any] = {}
+    for key, value in pairs:
+        if key in document:
+            raise ValueError(f"duplicate JSON key: {key}")
+        document[key] = value
+    return document
 
 
 def _bounded_scheduler_stderr(result: Any, limit: int = 4096) -> Optional[str]:
@@ -51,6 +68,17 @@ def _bounded_scheduler_stderr(result: Any, limit: int = 4096) -> Optional[str]:
     if len(diagnostic) <= limit:
         return diagnostic
     return "[truncated]\n" + diagnostic[-limit:]
+
+
+def _bounded_execution_error(error: BaseException, limit: int = 16_384) -> str:
+    """Return a bounded UTF-8 diagnostic without masking the original error."""
+    diagnostic = str(error) or type(error).__name__
+    encoded = diagnostic.encode("utf-8")
+    if len(encoded) <= limit:
+        return diagnostic
+    prefix = b"[truncated]\n"
+    suffix = encoded[-(limit - len(prefix)) :].decode("utf-8", errors="ignore")
+    return f"[truncated]\n{suffix}"
 
 
 def _atomic_yaml_dump(path: Path, value: Any) -> None:
@@ -144,20 +172,8 @@ def _posix_fchmod(descriptor: int, mode: int) -> None:
 
 
 def _validated_execution_id(value: Optional[str]) -> str:
-    """Return a bounded path-safe scheduler execution identifier."""
-    execution_id = value or f"jarvis_{uuid4().hex}"
-    reserved_stem = execution_id.split(".", 1)[0].upper()
-    if (
-        _EXECUTION_ID_PATTERN.fullmatch(execution_id) is None
-        or execution_id.endswith(".")
-        or reserved_stem in _WINDOWS_RESERVED_COMPONENTS
-    ):
-        raise ValueError(
-            "execution_id must be 1-128 ASCII letters, digits, dots, underscores, "
-            "or hyphens, cannot begin with punctuation or end with a dot, and "
-            "cannot be a reserved Windows path alias"
-        )
-    return execution_id
+    """Return a bounded path-safe execution identifier."""
+    return validate_execution_id(value)
 
 
 def _read_execution_marker(
@@ -206,15 +222,27 @@ def _validate_execution_marker_payload(
 ) -> Dict[str, Any]:
     """Decode and validate a bounded execution marker payload."""
     try:
-        document = json.loads(payload.decode("utf-8", errors="strict"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        document = json.loads(
+            payload.decode("utf-8", errors="strict"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise RuntimeError(
             f"invalid execution ownership marker: {marker_label}"
         ) from exc
-    if not isinstance(document, dict) or document.get("schema_version") != (
-        _EXECUTION_MARKER_SCHEMA
-    ):
+    if not isinstance(document, dict) or document.get("schema_version") not in {
+        _EXECUTION_MARKER_SCHEMA,
+        RECORD_SCHEMA,
+    }:
         raise RuntimeError(f"invalid execution ownership marker: {marker_label}")
+    if document.get("schema_version") == RECORD_SCHEMA:
+        try:
+            record = ExecutionRecord.from_dict(document)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"invalid execution ownership marker: {marker_label}"
+            ) from exc
+        document = record.to_dict()
     execution_id = document.get("execution_id")
     if (
         not isinstance(execution_id, str)
@@ -223,8 +251,15 @@ def _validate_execution_marker_payload(
         raise RuntimeError(f"invalid execution ownership marker: {marker_label}")
     if expected_name != execution_id:
         raise RuntimeError(f"execution marker identity mismatch: {marker_label}")
-    if not isinstance(document.get("pipeline_name"), str):
+    pipeline_name = document.get("pipeline_name")
+    if not isinstance(pipeline_name, str):
         raise RuntimeError(f"invalid execution ownership marker: {marker_label}")
+    try:
+        validate_pipeline_id(pipeline_name)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"invalid execution ownership marker: {marker_label}"
+        ) from exc
     if not isinstance(document.get("state"), str):
         raise RuntimeError(f"invalid execution ownership marker: {marker_label}")
     if not isinstance(document.get("submitted"), bool) or not isinstance(
@@ -313,17 +348,23 @@ def _validate_execution_cleanup_receipt(
 ) -> Dict[str, Any]:
     """Decode one cleanup receipt and validate identity-bound fields."""
     try:
-        document = json.loads(payload.decode("utf-8", errors="strict"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        document = json.loads(
+            payload.decode("utf-8", errors="strict"),
+            object_pairs_hook=_reject_duplicate_json_keys,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise RuntimeError(
             f"invalid execution cleanup receipt: {receipt_label}"
         ) from exc
+    pipeline_name = (
+        document.get("pipeline_name") if isinstance(document, dict) else None
+    )
     if (
         not isinstance(document, dict)
         or document.get("schema_version") != _EXECUTION_CLEANUP_SCHEMA
         or document.get("execution_id") != expected_execution_id
         or document.get("cleanup_nonce") != expected_nonce
-        or not isinstance(document.get("pipeline_name"), str)
+        or not isinstance(pipeline_name, str)
         or not isinstance(document.get("state"), str)
         or not isinstance(document.get("submitted"), bool)
         or not isinstance(document.get("terminal"), bool)
@@ -333,6 +374,12 @@ def _validate_execution_cleanup_receipt(
         or document["tombstone_inode"] <= 0
     ):
         raise RuntimeError(f"invalid execution cleanup receipt: {receipt_label}")
+    try:
+        validate_pipeline_id(pipeline_name)
+    except ValueError as exc:
+        raise RuntimeError(
+            f"invalid execution cleanup receipt: {receipt_label}"
+        ) from exc
     return document
 
 
@@ -963,8 +1010,9 @@ class Pipeline:
 
         :param name: Pipeline name (optional for new pipelines)
         """
+        validated_name = validate_pipeline_id(name) if name is not None else None
         self.jarvis = Jarvis.get_instance()
-        self.name = name
+        self.name = validated_name
         self.packages = []
         self.interceptors = {}  # Store pipeline-level interceptors by name
         self.env = {}
@@ -1017,7 +1065,7 @@ class Pipeline:
         self.scheduler = None
 
         # Load existing pipeline if name is provided
-        if name:
+        if validated_name:
             self.load()
 
     def get_hostfile(self) -> Hostfile:
@@ -1069,7 +1117,7 @@ class Pipeline:
         submit: bool = True,
         wait: bool = False,
         execution_id: Optional[str] = None,
-    ) -> Path:
+    ) -> ExecutionHandle:
         """Write the scheduler job script and (optionally) submit it.
 
         :param submit: when True, exec the scheduler's submit command
@@ -1080,7 +1128,8 @@ class Pipeline:
             ``sbatch --wait``; backends without an equivalent ignore it.
         :param execution_id: bounded caller-owned identity used to isolate the
             submitted pipeline, environment, script, and hostfile.
-        :return: Path to the generated job script.
+        :return: Queryable JARVIS execution handle. The generated script remains
+            available as ``handle.script_path`` and in ``last_submission``.
         """
         if not self.scheduler:
             raise ValueError(
@@ -1095,44 +1144,68 @@ class Pipeline:
         shared_dir = self.get_pipeline_shared_dir()
         shared_dir.mkdir(parents=True, exist_ok=True)
         resolved_execution_id = _validated_execution_id(execution_id)
-        executions_dir = shared_dir / "executions"
-        executions_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        executions_status = executions_dir.lstat()
-        if not stat.S_ISDIR(executions_status.st_mode) or stat.S_ISLNK(
-            executions_status.st_mode
-        ):
-            raise RuntimeError("pipeline executions path is not a real directory")
-        if os.name != "nt":
-            if executions_status.st_uid != _posix_effective_uid():
-                raise RuntimeError("pipeline executions path is not owner-controlled")
-            executions_descriptor = os.open(
-                executions_dir,
-                os.O_RDONLY
-                | getattr(os, "O_DIRECTORY", 0)
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
-            )
-            try:
-                _posix_fchmod(executions_descriptor, 0o700)
-                os.fsync(executions_descriptor)
-            finally:
-                os.close(executions_descriptor)
-        execution_root = executions_dir / resolved_execution_id
-        execution_root.mkdir(mode=0o700)
-        if os.name != "nt":
-            execution_root.chmod(0o700)
-        _fsync_directory(execution_root.parent)
-        _atomic_json_dump(
-            execution_root / _EXECUTION_MARKER,
-            {
-                "schema_version": _EXECUTION_MARKER_SCHEMA,
-                "pipeline_name": self.name,
-                "execution_id": resolved_execution_id,
-                "state": "preparing",
-                "submitted": False,
-                "terminal": False,
-            },
+        scheduler_provider = self.scheduler.get("name")
+        if not isinstance(scheduler_provider, str) or not scheduler_provider.strip():
+            raise ValueError("scheduler.name is required (e.g. 'slurm')")
+        store = self._execution_store()
+        store.create(
+            resolved_execution_id,
+            mode="scheduler",
+            scheduler_provider=scheduler_provider.strip().lower(),
         )
+        execution_root = store.executions_dir / resolved_execution_id
+
+        def persist_stage_exception(
+            error: BaseException,
+            stage: str,
+            *,
+            ambiguous: bool,
+            accepted: bool = False,
+            return_code: int = 1,
+        ) -> None:
+            """Best-effort durable state for one failed submission stage."""
+            diagnostic = _bounded_execution_error(error)
+            try:
+                current = store.get(resolved_execution_id)
+                metadata = {
+                    "failure_stage": stage,
+                    "submission_diagnostic": diagnostic,
+                }
+                if current.terminal and current.state != "scripted":
+                    store.update(resolved_execution_id, metadata=metadata)
+                elif ambiguous:
+                    uncertain_state = (
+                        "unknown"
+                        if current.state in {"preparing", "submitting", "submitted"}
+                        else None
+                    )
+                    store.update(
+                        resolved_execution_id,
+                        state=uncertain_state,
+                        submitted=current.submitted or accepted,
+                        terminal=None,
+                        metadata=metadata,
+                    )
+                else:
+                    store.update(
+                        resolved_execution_id,
+                        state="failed",
+                        submitted=current.submitted or accepted,
+                        terminal=True,
+                        return_code=return_code if return_code != 0 else 1,
+                        error=diagnostic,
+                        metadata=metadata,
+                    )
+            except Exception as record_error:
+                error.add_note(
+                    f"could not persist scheduler stage {stage!r}: {record_error}"
+                )
+            try:
+                self.save()
+            except Exception as save_error:
+                error.add_note(
+                    f"could not save scheduler stage {stage!r}: {save_error}"
+                )
 
         try:
             # Save current in-memory state before sealing the submission input.
@@ -1153,16 +1226,19 @@ class Pipeline:
             )
             script_path = sched.write_script()
         except BaseException as exc:
-            # No scheduler side effect has occurred yet, so this directory is
-            # solely ours and is safe to remove. Do not leave a partial input
-            # tree that an operator could mistake for a valid execution.
             try:
-                shutil.rmtree(execution_root)
-                _fsync_directory(execution_root.parent)
-            except OSError as cleanup_error:
+                store.update(
+                    resolved_execution_id,
+                    state="failed",
+                    terminal=True,
+                    return_code=1,
+                    error=_bounded_execution_error(exc),
+                    metadata={"failure_stage": "scheduler_preparation"},
+                )
+            except Exception as record_error:
                 exc.add_note(
-                    "could not remove incomplete scheduler execution "
-                    f"{execution_root}: {cleanup_error}"
+                    "could not persist failed scheduler preparation state: "
+                    f"{record_error}"
                 )
             raise
         logger.pipeline(f"Wrote scheduler script: {script_path}")
@@ -1200,84 +1276,191 @@ class Pipeline:
                 else None
             ),
         }
-        self._update_execution_marker(execution_root)
-        # Save local JARVIS state before the external side effect. The relay's
-        # authenticated pre-submit intent remains the reconciliation authority;
-        # this record makes standalone JARVIS recovery and diagnosis possible.
-        self.save()
-
-        if submit:
-            from jarvis_cd.shell import Exec, LocalExecInfo
-
-            argv = sched.submit_command(wait=wait)
-            cmd = " ".join(shlex.quote(part) for part in argv)
-            logger.pipeline(f"Submitting: {cmd}")
-            result = Exec(cmd, LocalExecInfo(hide_output=True)).run()
-            exit_code = result.exit_code.get("localhost", 1)
-            self.last_submission["submission_returncode"] = exit_code
-            scheduler_stderr = _bounded_scheduler_stderr(result)
-            self.last_submission["scheduler_stderr"] = scheduler_stderr
-            diagnostic = (
-                f"; scheduler stderr: {scheduler_stderr}" if scheduler_stderr else ""
+        try:
+            self._update_execution_marker(execution_root)
+            # Save local JARVIS state before the external side effect. The
+            # relay's authenticated intent remains the reconciliation authority;
+            # this record makes standalone recovery and diagnosis possible.
+            self.save()
+        except BaseException as exc:
+            self.last_submission["state"] = "pre_submit_failed"
+            self.last_submission["terminal"] = True
+            persist_stage_exception(
+                exc,
+                "scheduler_pre_submit_persistence",
+                ambiguous=False,
             )
-            stdout = result.stdout.get("localhost", "")
-            try:
-                provider_metadata = sched.parse_submission_output(stdout)
-            except ValueError as exc:
-                self.last_submission["state"] = (
-                    "submission_failed" if exit_code != 0 else "identity_failed"
+            raise
+
+        if not submit:
+            return store.get(resolved_execution_id).handle
+
+        from jarvis_cd.shell import Exec, LocalExecInfo
+
+        argv = sched.submit_command(wait=wait)
+        cmd = " ".join(shlex.quote(part) for part in argv)
+        logger.pipeline(f"Submitting: {cmd}")
+        try:
+            result = Exec(cmd, LocalExecInfo(hide_output=True)).run()
+        except BaseException as exc:
+            self.last_submission["state"] = "submit_ambiguous"
+            self.last_submission["terminal"] = False
+            persist_stage_exception(
+                exc,
+                "scheduler_submit_side_effect",
+                ambiguous=True,
+            )
+            raise
+        exit_code = result.exit_code.get("localhost", 1)
+        self.last_submission["submission_returncode"] = exit_code
+        scheduler_stderr = _bounded_scheduler_stderr(result)
+        self.last_submission["scheduler_stderr"] = scheduler_stderr
+        diagnostic = (
+            f"; scheduler stderr: {scheduler_stderr}" if scheduler_stderr else ""
+        )
+        stdout = result.stdout.get("localhost", "")
+        try:
+            provider_metadata = sched.parse_submission_output(stdout)
+        except ValueError as parse_error:
+            self.last_submission["state"] = (
+                "submission_failed" if exit_code != 0 else "identity_failed"
+            )
+            self.last_submission["submitted"] = exit_code == 0
+            self.last_submission["terminal"] = exit_code != 0
+            if exit_code != 0:
+                outcome_error = RuntimeError(
+                    f"Scheduler submission failed (exit {exit_code}): {cmd}{diagnostic}"
                 )
-                self.last_submission["submitted"] = exit_code == 0
-                self.last_submission["terminal"] = exit_code != 0
-                self._update_execution_marker(execution_root)
-                self.save()
-                if exit_code != 0:
-                    raise RuntimeError(
-                        f"Scheduler submission failed (exit {exit_code}): "
-                        f"{cmd}{diagnostic}"
-                    ) from exc
-                raise RuntimeError(
+            else:
+                outcome_error = RuntimeError(
                     "Scheduler accepted the submission but did not return a "
                     f"structured job identity{diagnostic}"
-                ) from exc
-            self.last_submission.update(provider_metadata)
-            self.last_submission.update(
-                {
-                    "submitted": True,
-                    "terminal": bool(wait),
-                    "terminal_returncode": exit_code if wait else None,
-                }
-            )
+                )
+            try:
+                self._update_execution_marker(execution_root)
+                self.save()
+            except BaseException as persist_error:
+                outcome_error.add_note(
+                    f"could not persist scheduler parse outcome: {persist_error}"
+                )
+                persist_stage_exception(
+                    outcome_error,
+                    "scheduler_submission_identity_parse",
+                    ambiguous=exit_code == 0,
+                    accepted=exit_code == 0,
+                    return_code=exit_code,
+                )
+            raise outcome_error from parse_error
+
+        self.last_submission.update(provider_metadata)
+        self.last_submission.update(
+            {
+                "submitted": True,
+                "terminal": bool(wait),
+                "terminal_returncode": exit_code if wait else None,
+            }
+        )
+        try:
             self._update_execution_marker(execution_root)
             # Persist the provider-owned identity immediately after parsing;
             # later logging or state decoration must not reopen the orphan gap.
             self.save()
-            logger.pipeline(
-                f"Scheduler job identity: {self.last_submission['scheduler_job_id']}"
+        except BaseException as exc:
+            self.last_submission["state"] = "identity_persistence_failed"
+            self.last_submission["terminal"] = False
+            persist_stage_exception(
+                exc,
+                "scheduler_identity_persistence",
+                ambiguous=True,
+                accepted=True,
             )
-            if exit_code != 0:
-                self.last_submission["state"] = (
-                    "workload_failed" if wait else "accepted_with_error"
+            raise RuntimeError(
+                "Scheduler accepted job "
+                f"{self.last_submission['scheduler_job_id']}, but JARVIS could not "
+                "persist its complete submission identity"
+            ) from exc
+        logger.pipeline(
+            f"Scheduler job identity: {self.last_submission['scheduler_job_id']}"
+        )
+        if exit_code != 0:
+            self.last_submission["state"] = (
+                "workload_failed" if wait else "accepted_with_error"
+            )
+            if wait:
+                outcome_error = RuntimeError(
+                    "Scheduler job "
+                    f"{self.last_submission['scheduler_job_id']} was accepted, "
+                    f"but the workload failed (exit {exit_code}): "
+                    f"{cmd}{diagnostic}"
                 )
-                self._update_execution_marker(execution_root)
-                self.save()
-                if wait:
-                    raise RuntimeError(
-                        "Scheduler job "
-                        f"{self.last_submission['scheduler_job_id']} was accepted, "
-                        f"but the workload failed (exit {exit_code}): "
-                        f"{cmd}{diagnostic}"
-                    )
-                raise RuntimeError(
+            else:
+                outcome_error = RuntimeError(
                     "Scheduler job "
                     f"{self.last_submission['scheduler_job_id']} was accepted, "
                     f"but the submission command returned exit {exit_code}: "
                     f"{cmd}{diagnostic}"
                 )
-            self.last_submission["state"] = "completed" if wait else "submitted"
-        self._update_execution_marker(execution_root)
-        self.save()
-        return script_path
+            try:
+                self._update_execution_marker(execution_root)
+                self.save()
+            except BaseException as persist_error:
+                outcome_error.add_note(
+                    f"could not persist scheduler terminal outcome: {persist_error}"
+                )
+                persist_stage_exception(
+                    outcome_error,
+                    "scheduler_terminal_outcome_persistence",
+                    ambiguous=not wait,
+                    accepted=True,
+                    return_code=exit_code,
+                )
+            raise outcome_error
+
+        self.last_submission["state"] = "completed" if wait else "submitted"
+        try:
+            self._update_execution_marker(execution_root)
+            self.save()
+        except BaseException as exc:
+            persist_stage_exception(
+                exc,
+                "scheduler_final_state_persistence",
+                ambiguous=True,
+                accepted=True,
+            )
+            raise RuntimeError(
+                "Scheduler accepted job "
+                f"{self.last_submission['scheduler_job_id']}, but JARVIS could not "
+                "persist its final submission state"
+            ) from exc
+        return store.get(resolved_execution_id).handle
+
+    def _execution_store(self) -> ExecutionStore:
+        """Return the durable execution store for this pipeline identity."""
+        if not self.name:
+            raise ValueError("Pipeline name not set")
+        execution_root = getattr(self, "_execution_root", None)
+        if execution_root is not None:
+            executions_dir = Path(execution_root).parent
+        else:
+            executions_dir = (
+                self.jarvis.get_pipeline_shared_dir(self.name) / "executions"
+            )
+        return ExecutionStore(executions_dir, self.name)
+
+    def get_execution(self, execution_id: str) -> ExecutionRecord:
+        """Return the latest durable state for one exact execution identity."""
+        return self._execution_store().get(execution_id)
+
+    def list_executions(self) -> List[ExecutionRecord]:
+        """Return all durable executions owned by this pipeline."""
+        return self._execution_store().list()
+
+    def get_execution_progress(
+        self,
+        execution_id: str,
+    ) -> ExecutionProgressSnapshot:
+        """Return validated package progress for one exact execution."""
+        return self._execution_store().progress(execution_id)
 
     def _pipeline_storage_dir(self) -> Path:
         """Return the directory this Pipeline instance is allowed to mutate."""
@@ -1315,17 +1498,98 @@ class Pipeline:
         return f"{prefix}-{digest}"
 
     def _update_execution_marker(self, execution_root: Path) -> None:
-        """Persist cleanup eligibility alongside scheduler submission state."""
+        """Project scheduler compatibility metadata into its durable record."""
         submission = self.last_submission or {}
-        _atomic_json_dump(
-            execution_root / _EXECUTION_MARKER,
-            {
-                "schema_version": _EXECUTION_MARKER_SCHEMA,
-                "pipeline_name": self.name,
-                "execution_id": submission.get("execution_id"),
-                "state": submission.get("state"),
-                "submitted": submission.get("submitted") is True,
-                "terminal": submission.get("terminal") is True,
+        execution_id = submission.get("execution_id")
+        if not isinstance(execution_id, str) or execution_root.name != execution_id:
+            raise RuntimeError("scheduler submission lost its execution identity")
+        store = ExecutionStore(execution_root.parent, str(self.name))
+        current = store.get(execution_id)
+        scheduler_state = submission.get("state")
+        if scheduler_state == "scripted":
+            if submission.get("submitted") is True:
+                if submission.get("wait") is True:
+                    canonical_state = (
+                        "completed"
+                        if submission.get("terminal_returncode") == 0
+                        else "failed"
+                    )
+                else:
+                    canonical_state = "submitted"
+            else:
+                canonical_state = (
+                    "scripted" if submission.get("terminal") else ("submitting")
+                )
+        else:
+            canonical_state = {
+                "submitted": "submitted",
+                "completed": "completed",
+                "submission_failed": "failed",
+                "identity_failed": "unknown",
+                "pre_submit_failed": "failed",
+                "submit_ambiguous": "unknown",
+                "identity_persistence_failed": "unknown",
+                "workload_failed": "failed",
+                "accepted_with_error": "submitted",
+            }.get(scheduler_state)
+        # A fast scheduler job may advance the record before the submitting
+        # process has parsed the provider-native identity. Never regress that
+        # independently persisted runtime state back to submitted. A terminal
+        # runtime result is authoritative over sbatch's process status.
+        runtime_terminal = current.terminal and current.state in {
+            "completed",
+            "failed",
+            "canceled",
+        }
+        if runtime_terminal or (
+            current.state == "running"
+            and canonical_state in {None, "scripted", "submitting", "submitted"}
+        ):
+            canonical_state = None
+        terminal = submission.get("terminal") is True
+        if canonical_state is None:
+            terminal_value = None
+        else:
+            terminal_value = terminal
+        return_code = submission.get("terminal_returncode")
+        if canonical_state == "failed" and not isinstance(return_code, int):
+            submission_return_code = submission.get("submission_returncode")
+            return_code = (
+                submission_return_code
+                if isinstance(submission_return_code, int)
+                and not isinstance(submission_return_code, bool)
+                and submission_return_code != 0
+                else 1
+            )
+        if runtime_terminal or not isinstance(return_code, int):
+            return_code = current.return_code
+        scheduler_error = submission.get("scheduler_stderr")
+        if (
+            runtime_terminal
+            or not isinstance(scheduler_error, str)
+            or not scheduler_error
+        ):
+            scheduler_error = current.error
+        provider = submission.get("provider")
+        native_id = submission.get("scheduler_job_id")
+        cluster = submission.get("scheduler_cluster")
+        store.update(
+            execution_id,
+            state=canonical_state,
+            submitted=current.submitted or submission.get("submitted") is True,
+            terminal=terminal_value,
+            scheduler_provider=(
+                provider if provider is not None else current.scheduler_provider
+            ),
+            native_id=(
+                native_id if native_id is not None else current.scheduler_native_id
+            ),
+            cluster=cluster if cluster is not None else current.cluster,
+            return_code=return_code,
+            error=scheduler_error,
+            metadata={
+                "submission": dict(submission),
+                "script_path": submission.get("script_path"),
             },
         )
 
@@ -1414,7 +1678,15 @@ class Pipeline:
             ]
         ] = []
         removed: List[str] = []
+        execution_locks = ExitStack()
         try:
+            # Acquire locks in stable order so overlapping multi-ID cleanups do
+            # not deadlock. Hold them through ownership validation, tombstone
+            # deletion, and cleanup-receipt removal.
+            for execution_id in sorted(normalized):
+                execution_locks.enter_context(
+                    execution_transaction_lock(executions_dir, execution_id)
+                )
             for execution_id in normalized:
                 candidate = executions_dir / execution_id
                 quarantine = executions_dir / f".remove-{execution_id}"
@@ -1700,6 +1972,7 @@ class Pipeline:
                 removed.append(execution_id)
             return removed
         finally:
+            execution_locks.close()
             if executions_descriptor is not None:
                 os.close(executions_descriptor)
 
@@ -1834,6 +2107,7 @@ class Pipeline:
 
         :param pipeline_name: Name of the pipeline to create
         """
+        pipeline_name = validate_pipeline_id(pipeline_name)
         self.name = pipeline_name
 
         # Create all three directories for the pipeline
@@ -2025,6 +2299,7 @@ class Pipeline:
             else:
                 pipeline_name = self.name
 
+        pipeline_name = validate_pipeline_id(pipeline_name)
         target_pipeline_dir = self.jarvis.get_pipeline_dir(pipeline_name)
         executions_dir = (
             self.jarvis.get_pipeline_shared_dir(pipeline_name) / "executions"
@@ -2033,7 +2308,10 @@ class Pipeline:
             status = executions_dir.lstat()
             if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
                 raise RuntimeError("pipeline executions path is not a real directory")
-            if any(executions_dir.iterdir()):
+            if any(
+                not is_execution_transaction_lock(entry)
+                for entry in executions_dir.iterdir()
+            ):
                 raise RuntimeError(
                     f"Pipeline '{pipeline_name}' still owns execution snapshots; "
                     "clean exact terminal execution IDs explicitly before destroy"
@@ -2094,6 +2372,7 @@ class Pipeline:
                     # Print BEGIN message
                     logger.success(f"[{pkg_def['pkg_type']}] [START] BEGIN")
 
+                    self._bind_package_execution_environment(pkg_def)
                     pkg_instance = self._load_package_instance(pkg_def, self.env)
 
                     # Apply interceptors to this package before starting
@@ -2121,6 +2400,50 @@ class Pipeline:
                         f"Pipeline startup failed at package '{pkg_def['pkg_id']}': {e}"
                     ) from e
 
+    def _bind_package_execution_environment(self, pkg_def: Dict[str, Any]) -> None:
+        """Bind authoritative per-package progress paths to the active execution."""
+        execution_root = getattr(self, "_execution_root", None)
+        execution_id = getattr(self, "_execution_id", None)
+        if execution_root is None or not isinstance(execution_id, str):
+            return
+        package_id = str(pkg_def.get("pkg_id") or pkg_def.get("pkg_type") or "package")
+        package_name = str(pkg_def.get("pkg_type") or package_id)
+        prefix = re.sub(r"[^A-Za-z0-9_-]", "-", package_id).strip("-")[:48]
+        if not prefix:
+            prefix = "package"
+        digest = hashlib.sha256(package_id.encode("utf-8")).hexdigest()[:12]
+        progress_dir = Path(execution_root) / "progress"
+        progress_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name != "nt":
+            progress_dir.chmod(0o700)
+        progress_path = progress_dir / f"{prefix}-{digest}.jsonl"
+        package_config = pkg_def.get("config", {})
+        package_containerized = isinstance(package_config, dict) and (
+            package_config.get("deploy_mode") == "container"
+        )
+        progress_transport = (
+            "stdout" if self.is_containerized() or package_containerized else "sidecar"
+        )
+        self.env.update(
+            {
+                "JARVIS_EXECUTION_ID": execution_id,
+                "JARVIS_PACKAGE_ID": package_id,
+                "JARVIS_PACKAGE_NAME": package_name,
+                "JARVIS_PROGRESS_PATH": str(progress_path),
+                "JARVIS_PROGRESS_TRANSPORT": progress_transport,
+            }
+        )
+        record = self._execution_store().get(execution_id)
+        progress_files = dict(record.metadata.get("progress_files", {}))
+        progress_files[package_id] = {
+            "filename": progress_path.name,
+            "package_name": package_name,
+        }
+        self._execution_store().update(
+            execution_id,
+            metadata={"progress_files": progress_files},
+        )
+
     def stop(self):
         """Stop all packages in the pipeline"""
         from jarvis_cd.util.logger import logger
@@ -2138,6 +2461,7 @@ class Pipeline:
                     # Print BEGIN message
                     logger.success(f"[{pkg_def['pkg_type']}] [STOP] BEGIN")
 
+                    self._bind_package_execution_environment(pkg_def)
                     pkg_instance = self._load_package_instance(pkg_def, self.env)
 
                     if hasattr(pkg_instance, "stop"):
@@ -2170,6 +2494,7 @@ class Pipeline:
                     # Print BEGIN message
                     logger.success(f"[{pkg_def['pkg_type']}] [KILL] BEGIN")
 
+                    self._bind_package_execution_environment(pkg_def)
                     pkg_instance = self._load_package_instance(pkg_def, self.env)
 
                     if hasattr(pkg_instance, "kill"):
@@ -2217,19 +2542,82 @@ class Pipeline:
 
         return "\n".join(status_info)
 
-    def run(self, load_type: Optional[str] = None, pipeline_file: Optional[str] = None):
+    def run(
+        self,
+        load_type: Optional[str] = None,
+        pipeline_file: Optional[str] = None,
+        execution_id: Optional[str] = None,
+        wait: bool = True,
+    ) -> ExecutionHandle:
         """
         Run the pipeline (start all packages, then stop them).
         Optionally load a pipeline file first.
 
         :param load_type: Type of pipeline file to load (e.g., 'yaml')
         :param pipeline_file: Path to pipeline file to load and run
+        :param execution_id: Optional caller-selected JARVIS execution identity.
+        :param wait: When false, launch an owned local execution process and
+            return its queryable handle immediately.
+        :return: Queryable handle for the live or completed execution.
         """
+        if load_type and pipeline_file:
+            self.load(load_type, pipeline_file)
+        if not wait:
+            return self._launch_direct_execution(execution_id)
+        store = self._execution_store()
+        original_execution_root = getattr(self, "_execution_root", None)
+        original_execution_id = getattr(self, "_execution_id", None)
+        original_execution_env = {
+            name: self.env.get(name)
+            for name in (
+                "JARVIS_EXECUTION_ID",
+                "JARVIS_PACKAGE_ID",
+                "JARVIS_PACKAGE_NAME",
+                "JARVIS_PROGRESS_PATH",
+                "JARVIS_PROGRESS_TRANSPORT",
+            )
+        }
+        snapshot_execution_id = getattr(self, "_execution_id", None)
+        if getattr(self, "_execution_root", None) is not None:
+            if execution_id is not None and execution_id != snapshot_execution_id:
+                raise ValueError("scheduler snapshot execution_id cannot be overridden")
+            if not isinstance(snapshot_execution_id, str):
+                raise RuntimeError("scheduler snapshot has no execution identity")
+            resolved_execution_id = snapshot_execution_id
+            record = store.get(resolved_execution_id)
+            if record.mode == "scheduler":
+                store.update(
+                    resolved_execution_id,
+                    state="running",
+                    submitted=True,
+                    terminal=False,
+                )
+            elif record.mode == "direct":
+                store.update(
+                    resolved_execution_id,
+                    state="running",
+                    submitted=False,
+                    terminal=False,
+                )
+            else:
+                raise RuntimeError("execution snapshot record has the wrong mode")
+        else:
+            resolved_execution_id = _validated_execution_id(execution_id)
+            record = store.create(resolved_execution_id, mode="direct")
+            self._execution_root = store.executions_dir / resolved_execution_id
+            self._execution_id = resolved_execution_id
+            try:
+                store.update(
+                    resolved_execution_id,
+                    state="running",
+                    submitted=False,
+                    terminal=False,
+                )
+            except BaseException:
+                self._execution_root = original_execution_root
+                self._execution_id = original_execution_id
+                raise
         try:
-            # Load pipeline file if specified
-            if load_type and pipeline_file:
-                self.load(load_type, pipeline_file)
-
             # Configure all packages before starting.
             # This runs _configure() on each package, which sets up
             # environment variables (e.g., CHI_SERVER_CONF) needed by start().
@@ -2238,15 +2626,176 @@ class Pipeline:
             self.start()
             logger.pipeline("Pipeline started successfully. Stopping packages...")
             self.stop()
-        except Exception as e:
-            logger.error(f"Error during pipeline run: {e}")
+            if record.mode == "scheduler":
+                # The generated scheduler script owns the final transition so
+                # failures in post-run hooks are included in the execution.
+                return store.get(resolved_execution_id).handle
+            return store.update(
+                resolved_execution_id,
+                state="completed",
+                terminal=True,
+                return_code=0,
+                error=None,
+            ).handle
+        except BaseException as error:
+            logger.error(f"Error during pipeline run: {error}")
             logger.info("Attempting to stop packages...")
             try:
                 self.stop()
-            except Exception as stop_error:
+            except BaseException as stop_error:
                 logger.error(f"Error during cleanup: {stop_error}")
+                error.add_note(f"pipeline cleanup also failed: {stop_error}")
+            try:
+                store.update(
+                    resolved_execution_id,
+                    state="failed",
+                    terminal=True,
+                    return_code=1,
+                    error=_bounded_execution_error(error),
+                )
+            except Exception as record_error:
+                error.add_note(
+                    f"could not persist failed execution state: {record_error}"
+                )
             # Re-raise the original error after cleanup
             raise
+        finally:
+            if record.mode == "direct":
+                self._execution_root = original_execution_root
+                self._execution_id = original_execution_id
+                for name, value in original_execution_env.items():
+                    if value is None:
+                        self.env.pop(name, None)
+                    else:
+                        self.env[name] = value
+
+    def _launch_direct_execution(
+        self,
+        execution_id: Optional[str],
+    ) -> ExecutionHandle:
+        """Launch an isolated local execution and return before it completes."""
+        if getattr(self, "_execution_root", None) is not None:
+            raise RuntimeError("cannot background an execution snapshot")
+        if not self.name:
+            raise ValueError("Pipeline name not set")
+        self.name = validate_pipeline_id(self.name)
+        resolved_execution_id = _validated_execution_id(execution_id)
+        self.save()
+        store = self._execution_store()
+        direct_launch = {
+            "schema_version": "jarvis.direct-launch.v1",
+            "phase": "launching",
+            "launcher_pid": os.getpid(),
+            "child_pid": None,
+        }
+        store.create(
+            resolved_execution_id,
+            mode="direct",
+            metadata={"direct_launch": direct_launch},
+        )
+        execution_root = store.executions_dir / resolved_execution_id
+        process: Optional[subprocess.Popen[Any]] = None
+        try:
+            runtime_dir, input_dir, snapshot_sha256 = self._write_execution_snapshot(
+                execution_root,
+                {},
+            )
+            prepare_direct_execution_lease(execution_root)
+            stdout_path = execution_root / "stdout.log"
+            stderr_path = execution_root / "stderr.log"
+            direct_launch = {**direct_launch, "phase": "prepared"}
+            store.update(
+                resolved_execution_id,
+                metadata={
+                    "direct_launch": direct_launch,
+                    "pipeline_snapshot_path": str(runtime_dir),
+                    "pipeline_input_path": str(input_dir),
+                    "pipeline_snapshot_sha256": snapshot_sha256,
+                    "stdout_file": stdout_path.name,
+                    "stderr_file": stderr_path.name,
+                },
+            )
+            stdout_stream = stdout_path.open("ab", buffering=0)
+            try:
+                stderr_stream = stderr_path.open("ab", buffering=0)
+            except BaseException:
+                stdout_stream.close()
+                raise
+            try:
+                if os.name != "nt":
+                    stdout_path.chmod(0o600)
+                    stderr_path.chmod(0o600)
+                command = [
+                    sys.executable,
+                    "-m",
+                    "jarvis_cd.core.execution",
+                    "run-snapshot",
+                    "--execution-root",
+                    str(execution_root),
+                    "--execution-id",
+                    resolved_execution_id,
+                    "--snapshot-dir",
+                    str(runtime_dir),
+                ]
+                options: Dict[str, Any] = {
+                    "stdin": subprocess.DEVNULL,
+                    "stdout": stdout_stream,
+                    "stderr": stderr_stream,
+                    "close_fds": True,
+                }
+                if os.name == "nt":
+                    options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+                else:
+                    options["start_new_session"] = True
+                launched_process = subprocess.Popen(command, **options)
+                process = launched_process
+            finally:
+                stdout_stream.close()
+                stderr_stream.close()
+            direct_launch = {
+                **direct_launch,
+                "phase": "spawned",
+                "child_pid": launched_process.pid,
+            }
+            try:
+                store.update(
+                    resolved_execution_id,
+                    metadata={
+                        "direct_launch": direct_launch,
+                        "direct_process_id": launched_process.pid,
+                    },
+                )
+            except BaseException:
+                if launched_process.poll() is None:
+                    launched_process.terminate()
+                    try:
+                        launched_process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        launched_process.kill()
+                        launched_process.wait(timeout=5)
+                raise
+        except BaseException as error:
+            failed_launch = dict(direct_launch)
+            failed_launch["phase"] = "failed"
+            try:
+                store.update(
+                    resolved_execution_id,
+                    state="failed",
+                    terminal=True,
+                    return_code=1,
+                    error=_bounded_execution_error(error),
+                    metadata={
+                        "direct_launch": failed_launch,
+                        "failure_stage": "direct_launch",
+                    },
+                )
+            except Exception as record_error:
+                error.add_note(
+                    f"could not persist failed direct launch state: {record_error}"
+                )
+            raise
+        assert process is not None
+        return store.get(resolved_execution_id).handle
 
     def configure_all_packages(self):
         """
@@ -2598,6 +3147,11 @@ class Pipeline:
         # Load pipeline configuration (in script format)
         with open(config_file, "r") as f:
             pipeline_config = yaml.safe_load(f)
+        if not isinstance(pipeline_config, dict):
+            raise ValueError("pipeline configuration must be a mapping")
+        stored_name = validate_pipeline_id(pipeline_config.get("name"))
+        if stored_name != self.name:
+            raise ValueError("pipeline configuration identity mismatch")
 
         # Extract metadata
         self.created_at = pipeline_config.get("created_at")
@@ -2748,8 +3302,10 @@ class Pipeline:
         # Load pipeline definition
         with open(pipeline_file, "r") as f:
             pipeline_def = yaml.safe_load(f)
+        if not isinstance(pipeline_def, dict):
+            raise ValueError("pipeline YAML must be a mapping")
 
-        self.name = pipeline_def.get("name", pipeline_file.stem)
+        self.name = validate_pipeline_id(pipeline_def.get("name", pipeline_file.stem))
         if (
             snapshot_marker is not None
             and snapshot_marker["pipeline_name"] != self.name
@@ -3652,6 +4208,7 @@ class Pipeline:
         for pkg_def in self.packages:
             try:
                 logger.success(f"[{pkg_def['pkg_type']}] [START] BEGIN")
+                self._bind_package_execution_environment(pkg_def)
                 pkg_instance = self._load_package_instance(pkg_def, self.env)
                 self._apply_interceptors_to_package(pkg_instance, pkg_def)
 
@@ -3661,6 +4218,7 @@ class Pipeline:
                     logger.warning(f"Package {pkg_def['pkg_id']} has no start method")
 
                 self.env.update(pkg_instance.env)
+                self._started_instances.append(pkg_instance)
                 logger.success(f"[{pkg_def['pkg_type']}] [START] END")
             except Exception as e:
                 logger.error(f"Error starting package {pkg_def['pkg_id']}: {e}")
@@ -3750,6 +4308,7 @@ class Pipeline:
         for pkg_def in reversed(self.packages):
             try:
                 logger.success(f"[{pkg_def['pkg_type']}] [STOP] BEGIN")
+                self._bind_package_execution_environment(pkg_def)
                 pkg_instance = self._load_package_instance(pkg_def, self.env)
                 if hasattr(pkg_instance, "stop"):
                     pkg_instance.stop()
@@ -3792,6 +4351,7 @@ class Pipeline:
         for pkg_def in self.packages:
             try:
                 logger.success(f"[{pkg_def['pkg_type']}] [KILL] BEGIN")
+                self._bind_package_execution_environment(pkg_def)
                 pkg_instance = self._load_package_instance(pkg_def, self.env)
                 if hasattr(pkg_instance, "kill"):
                     pkg_instance.kill()

@@ -24,6 +24,7 @@ dependencies = [
   "pyyaml",
   "pandas",
   "podman-compose",
+  "pywin32>=311 ; sys_platform == 'win32'",
 ]
 
 [dependency-groups]
@@ -60,6 +61,7 @@ jarvis = "jarvis_cd.core.cli:main"
 
 [project.entry-points."clio_relay.package_progress_adapters"]
 lammps = "jarvis_cd.progress.lammps:adapter_from_package"
+paraview = "jarvis_cd.progress.paraview:adapter_from_package"
 
 [tool.setuptools_scm]
 version_scheme = "no-guess-dev"

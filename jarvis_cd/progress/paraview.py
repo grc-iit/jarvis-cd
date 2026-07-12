@@ -1,8 +1,4 @@
-"""Compatibility bridge to the package-local builtin LAMMPS provider.
-
-New integrations should use package-local JARVIS discovery. This module keeps
-the historical relay entry point without importing JARVIS repository names.
-"""
+"""Compatibility bridge to the package-local builtin ParaView provider."""
 
 from pathlib import Path
 from typing import Any, cast
@@ -14,17 +10,22 @@ _MODULE = load_progress_module(
     Path(__file__).resolve().parents[2]
     / "builtin"
     / "builtin"
-    / "lammps"
+    / "paraview"
     / "progress.py"
 )
 
-LammpsThermoProgressAdapter = _MODULE.LammpsThermoProgressAdapter
+ParaViewProgressAdapter = _MODULE.ParaViewProgressAdapter
+ParaViewProgressReporter = _MODULE.ParaViewProgressReporter
 _FACTORY = cast(RelayProgressAdapterFactory, _MODULE.adapter_from_package)
 
 
 def adapter_from_package(package: dict[str, Any]) -> RelayProgressAdapter | None:
-    """Create the package-local LAMMPS provider through the legacy entry point."""
+    """Create the package-local ParaView provider through a stable entry point."""
     return _FACTORY(package)
 
 
-__all__ = ["LammpsThermoProgressAdapter", "adapter_from_package"]
+__all__ = [
+    "ParaViewProgressAdapter",
+    "ParaViewProgressReporter",
+    "adapter_from_package",
+]

@@ -29,10 +29,12 @@ already queued execution. Each execution directory contains:
   only
 - `submit.slurm`: the exact script handed to SLURM
 - `hostfile.txt`: the allocation hostfile created when the job starts
-- `.jarvis-execution.json`: the ownership and terminal-state marker used by
-  explicit cleanup
+- `.jarvis-execution.json`: the typed durable execution record used by status
+  queries and explicit cleanup
 
-The pipeline's structured `last_submission` record includes the execution ID,
+`Pipeline.submit()` returns a typed execution handle containing the JARVIS
+execution ID plus the provider-native scheduler ID when submission succeeds.
+The pipeline's compatibility `last_submission` record includes the execution ID,
 the execution root, the sealed input and runtime paths, the script and hostfile
 paths, and a SHA-256 digest of the two sealed input documents.
 
@@ -199,6 +201,12 @@ jarvis ppl submit path/to/pipeline_test.yaml      # YAML test
 # Generate script only, no sbatch
 jarvis ppl submit +no_submit
 jarvis ppl submit path/to/pipeline.yaml +no_submit
+
+# Submit asynchronously and print the handle as the final JSON line
+jarvis ppl submit +json
+
+# Block until the scheduler workload finishes
+jarvis ppl submit +wait +json
 ```
 
 The generated script is written to

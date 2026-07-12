@@ -205,6 +205,47 @@ class Scheduler:
             return f"jarvis cd {shlex.quote(self.pipeline_name)} && jarvis ppl run"
         return "jarvis ppl run"
 
+    def _execution_lifecycle_block(self) -> str:
+        """Render an EXIT trap that durably finalizes scheduler script state."""
+        finalizer = ""
+        if self.pipeline_snapshot_dir is not None:
+            execution_root = self.pipeline_snapshot_dir.parent
+            execution_id = execution_root.name
+            python_executable = shlex.quote(sys.executable)
+            finalizer = (
+                f"    if ! {python_executable} -m jarvis_cd.core.execution finalize "
+                f"--execution-root {shlex.quote(str(execution_root))} "
+                f"--execution-id {shlex.quote(execution_id)} "
+                '--return-code "$jarvis_exit_code"; then\n'
+                '        echo "Could not persist JARVIS execution state" >&2\n'
+                '        if [ "$jarvis_exit_code" -eq 0 ]; then\n'
+                "            jarvis_exit_code=1\n"
+                "        fi\n"
+                "    fi\n"
+            )
+        return (
+            "jarvis_hostfile_tmp=\n"
+            "jarvis_finalize_execution() {\n"
+            "    jarvis_exit_code=$?\n"
+            "    trap - EXIT\n"
+            '    if [ -n "${jarvis_hostfile_tmp:-}" ]; then\n'
+            '        if ! rm -f -- "$jarvis_hostfile_tmp"; then\n'
+            '            echo "Could not remove temporary JARVIS hostfile" >&2\n'
+            '            if [ "$jarvis_exit_code" -eq 0 ]; then\n'
+            "                jarvis_exit_code=1\n"
+            "            fi\n"
+            "        fi\n"
+            "    fi\n"
+            f"{finalizer}"
+            '    exit "$jarvis_exit_code"\n'
+            "}\n"
+            "trap jarvis_finalize_execution EXIT\n"
+        )
+
+    def _execution_activation_block(self) -> str:
+        """Render provider-specific runtime identity activation when available."""
+        return ""
+
 
 class SlurmScheduler(Scheduler):
     """SLURM (sbatch) backend."""
@@ -320,6 +361,8 @@ class SlurmScheduler(Scheduler):
         hostfile = shlex.quote(self.hostfile)
         python_executable = shlex.quote(sys.executable)
         invocation = self._pipeline_invocation()
+        lifecycle = self._execution_lifecycle_block()
+        activation = self._execution_activation_block()
 
         # Build hostfile from the allocation. scontrol expands the
         # compact nodelist into one host per line; that's exactly what
@@ -342,12 +385,6 @@ class SlurmScheduler(Scheduler):
             'mkdir -p -- "$jarvis_hostfile_dir"\n'
             "jarvis_hostfile_tmp=$(mktemp -- "
             '"$jarvis_hostfile_dir/.${jarvis_hostfile_name}.jarvis.$$.XXXXXX")\n'
-            "jarvis_cleanup_hostfile_tmp() {\n"
-            '    if [ -n "${jarvis_hostfile_tmp:-}" ]; then\n'
-            '        rm -f -- "$jarvis_hostfile_tmp"\n'
-            "    fi\n"
-            "}\n"
-            "trap jarvis_cleanup_hostfile_tmp EXIT\n"
             f'if ! {{ {hostnames_cmd}; }} > "$jarvis_hostfile_tmp"; then\n'
             '    echo "Could not expand the SLURM allocation hostfile" >&2\n'
             "    exit 1\n"
@@ -390,7 +427,6 @@ class SlurmScheduler(Scheduler):
             "        os.close(directory)\n"
             "PY\n"
             "jarvis_hostfile_tmp=\n"
-            "trap - EXIT\n"
             'echo "Wrote hostfile: $jarvis_hostfile"\n'
             'cat -- "$jarvis_hostfile"\n'
         )
@@ -400,6 +436,9 @@ class SlurmScheduler(Scheduler):
             f"{directives}\n"
             "\n"
             "set -euo pipefail\n"
+            "\n"
+            f"{lifecycle}"
+            f"{activation}"
             "\n"
             "# --- Pre-run hooks ---\n"
             f"{pre}\n"
@@ -414,6 +453,25 @@ class SlurmScheduler(Scheduler):
             f"{post}\n"
         )
         return script
+
+    def _execution_activation_block(self) -> str:
+        """Bind the allocation's trusted SLURM identity before user hooks."""
+        if self.pipeline_snapshot_dir is None:
+            return ""
+        execution_root = self.pipeline_snapshot_dir.parent
+        execution_id = execution_root.name
+        python_executable = shlex.quote(sys.executable)
+        return (
+            "jarvis_scheduler_cluster_args=()\n"
+            'if [ -n "${SLURM_CLUSTER_NAME:-}" ]; then\n'
+            '    jarvis_scheduler_cluster_args=(--cluster "$SLURM_CLUSTER_NAME")\n'
+            "fi\n"
+            f"{python_executable} -m jarvis_cd.core.execution activate "
+            f"--execution-root {shlex.quote(str(execution_root))} "
+            f"--execution-id {shlex.quote(execution_id)} "
+            f"--provider {shlex.quote(self.NAME)} "
+            '--native-id "$SLURM_JOB_ID" "${jarvis_scheduler_cluster_args[@]}"\n'
+        )
 
     def submit_command(self, wait: bool = False) -> List[str]:
         # ``--parsable`` is the provider boundary: stdout is a stable

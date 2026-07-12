@@ -28,6 +28,10 @@ class CoreExec(ABC):
         self.process_groups = {}  # hostname -> process-group leader pid
         self.windows_jobs: Dict[str, WindowsJob] = {}
         self.output_threads = {}  # hostname -> (stdout_thread, stderr_thread)
+        self.output_callback_errors = []
+        self._output_callback_failure = threading.Event()
+        self._output_callback_lock = threading.Lock()
+        self._output_callback_finalized = False
 
     @abstractmethod
     def run(self):
@@ -59,6 +63,18 @@ class CoreExec(ABC):
             self.exit_code[hostname] = exit_code
 
             self._join_output_threads(hostname)
+            self._finalize_output_callback()
+
+            if self.output_callback_errors:
+                existing = self.stderr.get(hostname, "")
+                separator = "" if not existing or existing.endswith("\n") else "\n"
+                self.stderr[hostname] = (
+                    f"{existing}{separator}{''.join(self.output_callback_errors)}"
+                )
+                self.output_callback_errors.clear()
+                if exit_code == 0:
+                    exit_code = 1
+                    self.exit_code[hostname] = exit_code
 
             windows_job = self.windows_jobs.get(hostname)
             if windows_job is not None:
@@ -103,6 +119,57 @@ class CoreExec(ABC):
         if any(thread.is_alive() for thread in threads):
             diagnostic = "Output capture did not close after process-tree termination\n"
             self.stderr[hostname] = self.stderr.get(hostname, "") + diagnostic
+
+    def _record_output_callback_failure(
+        self,
+        output_type: str,
+        exc: Exception,
+        *,
+        terminate: bool,
+    ) -> None:
+        """Latch one bounded callback failure and terminate the owned process."""
+        should_terminate = False
+        with self._output_callback_lock:
+            if self._output_callback_failure.is_set():
+                return
+            self._output_callback_failure.set()
+            detail = str(exc)
+            if len(detail) > 4096:
+                detail = detail[:4093] + "..."
+            self.output_callback_errors.append(
+                f"Output line callback failed for {output_type}: {detail}\n"
+            )
+            should_terminate = terminate
+        if should_terminate:
+            hostname = getattr(self, "hostname", "localhost")
+            try:
+                self.kill(hostname)
+            except Exception as kill_error:
+                detail = str(kill_error)
+                if len(detail) > 1024:
+                    detail = detail[:1021] + "..."
+                with self._output_callback_lock:
+                    self.output_callback_errors.append(
+                        f"Could not terminate process after callback failure: {detail}\n"
+                    )
+
+    def _finalize_output_callback(self) -> None:
+        """Finalize a stateful output callback once after both streams close."""
+        callback = getattr(getattr(self, "exec_info", None), "line_callback", None)
+        finalizer = getattr(callback, "finalize", None)
+        if finalizer is None or not callable(finalizer):
+            return
+        with self._output_callback_lock:
+            if (
+                self._output_callback_finalized
+                or self._output_callback_failure.is_set()
+            ):
+                return
+            self._output_callback_finalized = True
+        try:
+            finalizer()
+        except Exception as exc:
+            self._record_output_callback_failure("finalization", exc, terminate=False)
 
     def wait_all(self) -> Dict[str, int]:
         """
@@ -257,7 +324,11 @@ class LocalExec(CoreExec):
             self.process_groups[self.hostname] = process.pid
 
             # Start output monitoring threads
-            if self.exec_info.collect_output or not self.exec_info.hide_output:
+            if (
+                self.exec_info.collect_output
+                or not self.exec_info.hide_output
+                or self.exec_info.line_callback is not None
+            ):
                 stdout_thread = threading.Thread(
                     target=self._monitor_output, args=(process.stdout, "stdout")
                 )
@@ -299,6 +370,17 @@ class LocalExec(CoreExec):
             for line in iter(pipe.readline, ""):
                 if not line:
                     break
+
+                callback = self.exec_info.line_callback
+                if callback is not None and not self._output_callback_failure.is_set():
+                    try:
+                        callback(output_type, line)
+                    except Exception as exc:
+                        self._record_output_callback_failure(
+                            output_type,
+                            exc,
+                            terminate=True,
+                        )
 
                 # Store in buffer if collecting output
                 if self.exec_info.collect_output:

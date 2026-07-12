@@ -15,6 +15,7 @@ import pytest
 import yaml
 
 from jarvis_cd.core.config import Jarvis
+from jarvis_cd.core.execution import ExecutionStore
 from jarvis_cd.core.pipeline import (
     Pipeline,
     _atomic_yaml_dump,
@@ -192,6 +193,189 @@ def test_slurm_hostfile_generation_failure_preserves_previous_file(
     assert list(tmp_path.glob(".hostfile.txt.jarvis.*")) == []
 
 
+def _run_execution_scheduler_script(
+    tmp_path: Path,
+    *,
+    execution_id: str,
+    scontrol_script: str,
+    initial_state: str = "submitted",
+) -> tuple[subprocess.CompletedProcess[str], ExecutionStore, Path]:
+    """Execute a rendered scheduler script with deterministic local commands."""
+    store = ExecutionStore(tmp_path / "executions", "example")
+    store.create(
+        execution_id,
+        mode="scheduler",
+        scheduler_provider="slurm",
+    )
+    if initial_state == "scripted":
+        store.update(execution_id, state="scripted", terminal=True)
+    else:
+        store.update(execution_id, state="submitting")
+        if initial_state == "submitted":
+            store.update(
+                execution_id,
+                state="submitted",
+                submitted=True,
+                native_id="41",
+            )
+        elif initial_state != "submitting":
+            raise ValueError(f"unsupported test execution state: {initial_state}")
+    execution_root = store.executions_dir / execution_id
+    scheduler = SlurmScheduler(
+        {"name": "slurm"},
+        execution_root,
+        pipeline_snapshot_dir=execution_root / "runtime",
+    )
+
+    executable_dir = tmp_path / "bin"
+    executable_dir.mkdir()
+    scontrol = executable_dir / "scontrol"
+    scontrol.write_text(scontrol_script, encoding="utf-8")
+    scontrol.chmod(0o700)
+    jarvis = executable_dir / "jarvis"
+    jarvis.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    jarvis.chmod(0o700)
+    environment = dict(os.environ)
+    environment["PATH"] = f"{executable_dir}{os.pathsep}{environment['PATH']}"
+    environment["SLURM_JOB_NODELIST"] = "ignored"
+    environment["SLURM_JOB_ID"] = "41"
+    environment["SLURM_CLUSTER_NAME"] = "ares"
+    completed = subprocess.run(
+        ["bash", "-c", scheduler.render()],
+        env=environment,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    return completed, store, execution_root
+
+
+def test_slurm_exit_handler_finalizes_success_after_hostfile_publish(
+    tmp_path: Path,
+) -> None:
+    """Hostfile setup cannot clear the durable execution finalizer."""
+    if os.name == "nt":
+        rendered = SlurmScheduler(
+            {"name": "slurm"},
+            tmp_path / "executions" / "success",
+            pipeline_snapshot_dir=(tmp_path / "executions" / "success" / "runtime"),
+        ).render()
+        assert rendered.count("trap jarvis_finalize_execution EXIT") == 1
+        assert (
+            "trap - EXIT"
+            not in rendered.split("trap jarvis_finalize_execution EXIT", maxsplit=1)[1]
+        )
+        return
+
+    completed, store, execution_root = _run_execution_scheduler_script(
+        tmp_path,
+        execution_id="success",
+        scontrol_script="#!/bin/sh\nprintf 'node-1\\n'\n",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    record = store.get("success")
+    assert record.state == "completed"
+    assert record.terminal is True
+    assert record.return_code == 0
+    assert record.scheduler_native_id == "41"
+    assert record.cluster == "ares"
+    assert list(execution_root.glob(".hostfile.txt.jarvis.*")) == []
+
+
+def test_slurm_runtime_identity_closes_submitter_crash_window(
+    tmp_path: Path,
+) -> None:
+    """The allocation binds native identity even before submit stdout is saved."""
+    if os.name == "nt":
+        rendered = SlurmScheduler(
+            {"name": "slurm"},
+            tmp_path / "executions" / "crash-window",
+            pipeline_snapshot_dir=(
+                tmp_path / "executions" / "crash-window" / "runtime"
+            ),
+        ).render()
+        assert '--native-id "$SLURM_JOB_ID"' in rendered
+        assert '"${jarvis_scheduler_cluster_args[@]}"' in rendered
+        return
+
+    completed, store, _execution_root = _run_execution_scheduler_script(
+        tmp_path,
+        execution_id="crash-window",
+        scontrol_script="#!/bin/sh\nprintf 'node-1\\n'\n",
+        initial_state="submitting",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    record = store.get("crash-window")
+    assert record.state == "completed"
+    assert record.scheduler_native_id == "41"
+    assert record.cluster == "ares"
+
+
+def test_generated_script_can_activate_and_complete_after_manual_submission(
+    tmp_path: Path,
+) -> None:
+    """A script-only handle remains safely activatable by a real allocation."""
+    if os.name == "nt":
+        store = ExecutionStore(tmp_path / "executions", "example")
+        store.create("manual", mode="scheduler", scheduler_provider="slurm")
+        store.update("manual", state="scripted", terminal=True)
+        activated = store.activate_scheduler(
+            "manual",
+            provider="slurm",
+            native_id="41",
+            cluster="ares",
+        )
+        assert activated.state == "running"
+        assert activated.terminal is False
+        return
+
+    completed, store, _execution_root = _run_execution_scheduler_script(
+        tmp_path,
+        execution_id="manual",
+        scontrol_script="#!/bin/sh\nprintf 'node-1\\n'\n",
+        initial_state="scripted",
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    record = store.get("manual")
+    assert record.state == "completed"
+    assert record.scheduler_native_id == "41"
+
+
+def test_slurm_exit_handler_cleans_temp_and_finalizes_hostfile_failure(
+    tmp_path: Path,
+) -> None:
+    """An early hostfile failure both removes its temp and records failure."""
+    if os.name == "nt":
+        rendered = SlurmScheduler(
+            {"name": "slurm"},
+            tmp_path / "executions" / "hostfile-failure",
+            pipeline_snapshot_dir=(
+                tmp_path / "executions" / "hostfile-failure" / "runtime"
+            ),
+        ).render()
+        assert "jarvis_cleanup_hostfile_tmp" not in rendered
+        assert 'rm -f -- "$jarvis_hostfile_tmp"' in rendered
+        return
+
+    completed, store, execution_root = _run_execution_scheduler_script(
+        tmp_path,
+        execution_id="hostfile-failure",
+        scontrol_script="#!/bin/sh\nprintf 'partial-node\\n'\nexit 23\n",
+    )
+
+    assert completed.returncode != 0
+    assert "Could not expand the SLURM allocation hostfile" in completed.stderr
+    record = store.get("hostfile-failure")
+    assert record.state == "failed"
+    assert record.terminal is True
+    assert record.return_code == completed.returncode
+    assert list(execution_root.glob(".hostfile.txt.jarvis.*")) == []
+
+
 def test_atomic_yaml_dump_preserves_existing_document_when_serialization_fails(
     tmp_path: Path,
 ) -> None:
@@ -297,7 +481,7 @@ def test_pipeline_persists_provider_owned_submission_identity(tmp_path: Path) ->
         with patch("jarvis_cd.shell.Exec", return_value=executor):
             returned = pipeline.submit(submit=True, wait=False)
 
-    assert returned == script_path
+    assert returned.script_path == script_path
     assert pipeline.last_submission == {
         "schema_version": "jarvis.scheduler.submission.v1",
         "execution_id": pipeline.last_submission["execution_id"],
@@ -329,6 +513,71 @@ def test_pipeline_persists_provider_owned_submission_identity(tmp_path: Path) ->
     assert saved_submissions[2]["scheduler_job_id"] == "24680"
     assert saved_submissions[2]["submitted"] is True
     assert saved_submissions[3]["state"] == "submitted"
+
+
+def test_pre_submit_persistence_failure_is_terminal_without_scheduler_effect(
+    tmp_path: Path,
+) -> None:
+    """Failure before invoking sbatch is known local failure, not ambiguity."""
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.save = Mock(side_effect=[None, RuntimeError("state save failed"), None])
+
+    with patch("jarvis_cd.shell.Exec") as executor:
+        with pytest.raises(RuntimeError, match="state save failed"):
+            pipeline.submit(submit=True, execution_id="pre-submit-failure")
+
+    executor.assert_not_called()
+    record = pipeline.get_execution("pre-submit-failure")
+    assert record.state == "failed"
+    assert record.terminal is True
+    assert record.return_code == 1
+    assert record.metadata["failure_stage"] == "scheduler_pre_submit_persistence"
+
+
+def test_scheduler_executor_exception_is_durably_ambiguous(tmp_path: Path) -> None:
+    """An exception around sbatch never falsely claims that no job exists."""
+    pipeline = _real_pipeline(tmp_path)
+    executor = Mock()
+    executor.run.side_effect = RuntimeError("submit transport disappeared")
+
+    with patch("jarvis_cd.shell.Exec", return_value=executor):
+        with pytest.raises(RuntimeError, match="submit transport disappeared"):
+            pipeline.submit(submit=True, execution_id="ambiguous-submit")
+
+    record = pipeline.get_execution("ambiguous-submit")
+    assert record.state == "unknown"
+    assert record.terminal is False
+    assert record.scheduler_native_id is None
+    assert record.metadata["failure_stage"] == "scheduler_submit_side_effect"
+
+
+def test_accepted_identity_survives_submitter_persistence_failure(
+    tmp_path: Path,
+) -> None:
+    """An accepted job remains identifiable when compatibility save fails."""
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.save = Mock(
+        side_effect=[None, None, RuntimeError("compatibility save failed"), None]
+    )
+    execution = SimpleNamespace(
+        exit_code={"localhost": 0},
+        stdout={"localhost": "41;ares\n"},
+        stderr={"localhost": ""},
+    )
+    executor = Mock()
+    executor.run.return_value = execution
+
+    with patch("jarvis_cd.shell.Exec", return_value=executor):
+        with pytest.raises(RuntimeError, match="accepted job 41"):
+            pipeline.submit(submit=True, execution_id="identity-save-failure")
+
+    record = pipeline.get_execution("identity-save-failure")
+    assert record.state == "unknown"
+    assert record.submitted is True
+    assert record.terminal is False
+    assert record.scheduler_native_id == "41"
+    assert record.cluster == "ares"
+    assert record.metadata["failure_stage"] == "scheduler_identity_persistence"
 
 
 def test_pipeline_never_accepts_unstructured_submission_stdout(tmp_path: Path) -> None:
@@ -468,7 +717,9 @@ def test_scheduler_submission_uses_isolated_pipeline_environment_and_paths(
     """A queued job references only its immutable execution-scoped snapshot."""
     pipeline = _real_pipeline(tmp_path)
 
-    script_a = pipeline.submit(submit=False, execution_id="execution-a")
+    handle_a = pipeline.submit(submit=False, execution_id="execution-a")
+    script_a = handle_a.script_path
+    assert script_a is not None
     submission_a = dict(pipeline.last_submission)
     runtime_a = Path(submission_a["pipeline_snapshot_path"])
     input_a = Path(submission_a["pipeline_input_path"])
@@ -476,7 +727,9 @@ def test_scheduler_submission_uses_isolated_pipeline_environment_and_paths(
 
     pipeline.env = {"PATH": "/spack/b/bin", "SPACK_ROOT": "/opt/spack"}
     pipeline.save()
-    script_b = pipeline.submit(submit=False, execution_id="execution-b")
+    handle_b = pipeline.submit(submit=False, execution_id="execution-b")
+    script_b = handle_b.script_path
+    assert script_b is not None
     submission_b = dict(pipeline.last_submission)
     runtime_b = Path(submission_b["pipeline_snapshot_path"])
 
@@ -627,7 +880,9 @@ def test_scheduler_submission_rejects_invalid_or_reused_execution_ids(
     with pytest.raises(ValueError, match="execution_id"):
         pipeline.submit(submit=False, execution_id="../outside")
 
-    script = pipeline.submit(submit=False, execution_id="stable-id")
+    handle = pipeline.submit(submit=False, execution_id="stable-id")
+    script = handle.script_path
+    assert script is not None
     original = script.read_bytes()
     with pytest.raises(FileExistsError):
         pipeline.submit(submit=False, execution_id="stable-id")
@@ -636,10 +891,10 @@ def test_scheduler_submission_rejects_invalid_or_reused_execution_ids(
     assert not (tmp_path / "shared" / "outside").exists()
 
 
-def test_scheduler_submission_removes_incomplete_execution_snapshot(
+def test_scheduler_submission_records_incomplete_execution_snapshot_failure(
     tmp_path: Path,
 ) -> None:
-    """A pre-submit snapshot failure leaves no execution-shaped residue."""
+    """A pre-submit snapshot failure remains durably queryable and terminal."""
     pipeline = _real_pipeline(tmp_path)
     pipeline._write_execution_snapshot = Mock(
         side_effect=RuntimeError("snapshot failed")
@@ -648,7 +903,10 @@ def test_scheduler_submission_removes_incomplete_execution_snapshot(
     with pytest.raises(RuntimeError, match="snapshot failed"):
         pipeline.submit(submit=False, execution_id="incomplete")
 
-    assert not (tmp_path / "shared" / "example" / "executions" / "incomplete").exists()
+    record = pipeline.get_execution("incomplete")
+    assert record.state == "failed"
+    assert record.terminal is True
+    assert record.metadata["failure_stage"] == "scheduler_preparation"
 
 
 def test_real_packages_use_execution_scoped_config_shared_and_private_roots(

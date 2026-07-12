@@ -7,6 +7,11 @@ from pathlib import Path
 
 import pytest
 
+from jarvis_cd.progress import (
+    PackageProgressProvider,
+    ProgressObservation,
+    RelayProgressAdapter,
+)
 from jarvis_cd.progress.lammps import (
     LammpsThermoProgressAdapter,
     adapter_from_package,
@@ -28,11 +33,14 @@ def test_adapter_is_owned_by_builtin_lammps(tmp_path: Path) -> None:
 
     assert isinstance(adapter, LammpsThermoProgressAdapter)
     assert adapter.package_name == "builtin.lammps"
+    assert adapter.package_id == "lammps"
     assert adapter.package_version
     assert adapter.application_profile == "jarvis-cd.builtin.lammps"
     assert adapter.log_visibility == "shared"
     assert adapter.total_steps == 100
     assert adapter.progress_log_paths() == [tmp_path / "log.lammps"]
+    assert isinstance(adapter, PackageProgressProvider)
+    assert isinstance(adapter, RelayProgressAdapter)
 
     container_adapter = adapter_from_package(
         {
@@ -89,9 +97,23 @@ def test_adapter_observes_only_lammps_jarvis_scope() -> None:
     assert isinstance(metadata, dict)
     assert metadata["source"] == "jarvis_package"
     assert metadata["package_name"] == "builtin.lammps"
+    assert metadata["package_id"] == "lammps"
     assert metadata["run_id"] == "job_1"
     assert metadata["execution_id"] == "job_1"
     assert adapter.acceptance_progress_valid(metadata)
+
+
+def test_lammps_provider_exposes_typed_jarvis_observations() -> None:
+    """JARVIS core consumes a typed SPI independently of the relay projection."""
+    provider = LammpsThermoProgressAdapter(total_steps=10)
+
+    observations = provider.observe_progress(
+        "run 10\nStep Temp CPU\n0 1.0 0.0\n5 1.1 1.0\n"
+    )
+
+    assert all(isinstance(item, ProgressObservation) for item in observations)
+    assert [item.current for item in observations] == [0.0, 5.0]
+    assert [item.total for item in observations] == [10, 10]
 
 
 def test_adapter_rejects_unobserved_acceptance_claims() -> None:

@@ -7,10 +7,103 @@ import os
 import sys
 import time
 import inspect
+import threading
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import TYPE_CHECKING, Dict, Any, Callable, List, Optional, cast
 from jarvis_cd.core.config import Jarvis
 from jarvis_cd.util.hostfile import Hostfile
+
+if TYPE_CHECKING:
+    from jarvis_cd.progress import (
+        PackageProgressProvider,
+        ProgressObservation,
+        ProgressReporter,
+    )
+
+
+class _PackageProgressLineCallback:
+    """Serialize one provider stream and finalize it exactly once at EOF."""
+
+    def __init__(
+        self,
+        provider: Optional["PackageProgressProvider"],
+        reporter: "ProgressReporter",
+        *,
+        progress_path: Path,
+        execution_id: str,
+        package_name: str,
+        package_id: str,
+    ) -> None:
+        self._provider = provider
+        self._reporter = reporter
+        self._progress_path = progress_path
+        self._expected_identity = (execution_id, package_name, package_id)
+        self._lock = threading.Lock()
+        self._finalized = False
+        self._source: Optional[str] = None
+
+    def __call__(self, stream_name: str, line: str) -> None:
+        """Interpret one stdout line and persist validated observations."""
+        if stream_name != "stdout":
+            return
+        with self._lock:
+            if self._finalized:
+                raise RuntimeError("package progress callback is already finalized")
+            from jarvis_cd.progress import (
+                PROGRESS_LINE_PREFIX,
+                ProgressStore,
+                event_from_progress_line,
+            )
+
+            if line.strip().startswith(PROGRESS_LINE_PREFIX):
+                if self._source == "provider":
+                    raise ValueError(
+                        "package progress cannot mix provider and structured sources"
+                    )
+                event = event_from_progress_line(line)
+                if event is None:
+                    raise ValueError("structured package progress line was empty")
+                identity = (
+                    event.execution_id,
+                    event.package_name,
+                    event.package_id,
+                )
+                if identity != self._expected_identity:
+                    raise ValueError("structured package progress identity mismatch")
+                ProgressStore(self._progress_path).append(event)
+                self._source = "structured_stdout"
+                return
+            if self._source == "structured_stdout" or self._provider is None:
+                return
+            observations = self._provider.observe_progress(line)
+            if observations:
+                self._source = "provider"
+                self._persist(observations)
+
+    def finalize(self) -> None:
+        """Flush the provider's final fragment once after output capture closes."""
+        with self._lock:
+            if self._finalized:
+                return
+            if self._source != "structured_stdout" and self._provider is not None:
+                observations = self._provider.finalize_progress()
+                if observations:
+                    self._source = "provider"
+                    self._persist(observations)
+            self._finalized = True
+
+    def _persist(self, observations: list["ProgressObservation"]) -> None:
+        """Persist typed observations with JARVIS-owned identity and sequence."""
+        for observation in observations:
+            self._reporter.emit(
+                label=observation.label,
+                state=observation.state,
+                current=observation.current,
+                total=observation.total,
+                unit=observation.unit,
+                message=observation.message,
+                metadata=dict(observation.metadata),
+            )
 
 
 class Pkg:
@@ -149,6 +242,91 @@ class Pkg:
 
         # Fall back to global jarvis hostfile
         return self.jarvis.hostfile
+
+    def get_progress_provider(self) -> Optional["PackageProgressProvider"]:
+        """Load this package's optional sibling ``progress.py`` provider.
+
+        The convention works for packages loaded from a registered filesystem
+        repository as well as packages bundled in the JARVIS distribution.
+
+        :return: A package progress provider, or ``None`` when not implemented.
+        """
+        from jarvis_cd.progress import provider_from_package
+
+        return provider_from_package(self)
+
+    def bind_execution_progress(
+        self,
+        execution_id: str,
+        path: str | os.PathLike[str],
+    ) -> None:
+        """Bind package reporters to a JARVIS-owned execution sidecar.
+
+        Pipeline execution code must call this after assigning the execution ID
+        and before invoking package lifecycle methods. Package configuration is
+        deliberately not allowed to select the authoritative sidecar.
+
+        :param execution_id: Stable JARVIS execution identifier.
+        :param path: Absolute JSONL path inside the owned execution root.
+        """
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError("execution progress requires a non-empty execution ID")
+        progress_path = Path(path)
+        if not progress_path.is_absolute():
+            raise ValueError("execution progress path must be absolute")
+        values = {
+            "JARVIS_EXECUTION_ID": execution_id,
+            "JARVIS_PROGRESS_PATH": str(progress_path),
+            "JARVIS_PACKAGE_NAME": str(self.pkg_type),
+            "JARVIS_PACKAGE_ID": str(self.pkg_id),
+            "JARVIS_PROGRESS_TRANSPORT": "sidecar",
+        }
+        self.env.update(values)
+        self.mod_env.update(values)
+
+    def progress_line_callback(self) -> Optional[Callable[[str, str], None]]:
+        """Build a generic stdout-to-sidecar callback for this package.
+
+        Package-local providers interpret application output. Already
+        structured ``JARVIS_PROGRESS`` lines are accepted without a provider.
+        This helper owns event identity, sequencing, validation, persistence,
+        and EOF finalization.
+
+        :return: A line callback bound to this execution, or ``None``.
+        """
+        execution_id = self.mod_env.get("JARVIS_EXECUTION_ID")
+        progress_path = self.mod_env.get("JARVIS_PROGRESS_PATH")
+        package_name = self.mod_env.get("JARVIS_PACKAGE_NAME")
+        package_id = self.mod_env.get("JARVIS_PACKAGE_ID")
+        transport = self.mod_env.get("JARVIS_PROGRESS_TRANSPORT", "sidecar")
+        if not all(
+            isinstance(value, str) and value
+            for value in (execution_id, progress_path, package_name, package_id)
+        ):
+            return None
+        if transport not in {"sidecar", "stdout"}:
+            raise ValueError("package progress transport must be sidecar or stdout")
+        provider = self.get_progress_provider()
+        if provider is None and transport != "stdout":
+            return None
+
+        from jarvis_cd.progress import ProgressReporter
+
+        reporter = ProgressReporter(
+            package_name=cast(str, package_name),
+            package_id=cast(str, package_id),
+            execution_id=cast(str, execution_id),
+            path=cast(str, progress_path),
+        )
+
+        return _PackageProgressLineCallback(
+            provider,
+            reporter,
+            progress_path=Path(cast(str, progress_path)),
+            execution_id=cast(str, execution_id),
+            package_name=cast(str, package_name),
+            package_id=cast(str, package_id),
+        )
 
     def _init(self):
         """

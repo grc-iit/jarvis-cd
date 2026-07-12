@@ -36,6 +36,101 @@ class TestLocalExec(unittest.TestCase):
         self.assertEqual(local_exec.exit_code["localhost"], 0)
         self.assertIn("hello world", local_exec.stdout["localhost"])
 
+    def test_line_callback_observes_complete_stdout_and_stderr(self):
+        """Execution callbacks receive live complete lines from both streams."""
+        observed = []
+        command = self.python_command(
+            'import sys; print("out"); print("err", file=sys.stderr)'
+        )
+
+        local_exec = LocalExec(
+            command,
+            LocalExecInfo(
+                hide_output=True,
+                line_callback=lambda stream, line: observed.append((stream, line)),
+            ),
+        )
+
+        self.assertEqual(local_exec.exit_code["localhost"], 0)
+        self.assertIn(("stdout", "out\n"), observed)
+        self.assertIn(("stderr", "err\n"), observed)
+
+    def test_line_callback_failure_is_reported(self):
+        """A progress callback failure terminates work and stays bounded."""
+
+        callback_calls = 0
+
+        def fail_callback(stream, line):
+            nonlocal callback_calls
+            callback_calls += 1
+            raise RuntimeError(f"cannot persist {stream}: {line.strip()}")
+
+        started = time.monotonic()
+        local_exec = LocalExec(
+            self.python_command(
+                'import time; print("progress", flush=True); time.sleep(30)'
+            ),
+            LocalExecInfo(hide_output=True, line_callback=fail_callback),
+        )
+
+        self.assertNotEqual(local_exec.exit_code["localhost"], 0)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(callback_calls, 1)
+        self.assertIn("Output line callback failed", local_exec.stderr["localhost"])
+        self.assertIn("cannot persist stdout: progress", local_exec.stderr["localhost"])
+
+    def test_stateful_line_callback_finalizes_once_at_eof(self):
+        """A callback can flush an unterminated final fragment exactly once."""
+
+        class Callback:
+            def __init__(self):
+                self.lines = []
+                self.finalized = 0
+
+            def __call__(self, stream, line):
+                self.lines.append((stream, line))
+
+            def finalize(self):
+                self.finalized += 1
+
+        callback = Callback()
+        local_exec = LocalExec(
+            self.python_command('import sys; sys.stdout.write("tail")'),
+            LocalExecInfo(
+                collect_output=False,
+                hide_output=True,
+                line_callback=callback,
+            ),
+        )
+        local_exec.wait()
+
+        self.assertEqual(local_exec.exit_code["localhost"], 0)
+        self.assertEqual(callback.lines, [("stdout", "tail")])
+        self.assertEqual(callback.finalized, 1)
+
+    def test_line_callback_finalization_failure_is_reported(self):
+        """A final provider flush failure makes an otherwise clean process fail."""
+
+        class Callback:
+            def __call__(self, stream, line):
+                del stream, line
+
+            def finalize(self):
+                raise RuntimeError("cannot flush final progress fragment")
+
+        local_exec = LocalExec(
+            self.python_command("pass"),
+            LocalExecInfo(hide_output=True, line_callback=Callback()),
+        )
+
+        self.assertEqual(local_exec.exit_code["localhost"], 1)
+        self.assertIn(
+            "callback failed for finalization", local_exec.stderr["localhost"]
+        )
+        self.assertIn(
+            "cannot flush final progress fragment", local_exec.stderr["localhost"]
+        )
+
     def test_single_env_variable(self):
         """Test execution with a single environment variable"""
         exec_info = LocalExecInfo(env={"TEST_VAR": "test_value"})
