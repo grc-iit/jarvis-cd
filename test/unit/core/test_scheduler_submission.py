@@ -15,7 +15,12 @@ import pytest
 import yaml
 
 from jarvis_cd.core.config import Jarvis
-from jarvis_cd.core.pipeline import Pipeline, _atomic_yaml_dump
+from jarvis_cd.core.pipeline import (
+    Pipeline,
+    _atomic_yaml_dump,
+    _remove_execution_tree,
+    _unlock_execution_input_for_cleanup,
+)
 from jarvis_cd.core.scheduler import SlurmScheduler
 
 
@@ -753,31 +758,243 @@ def test_script_only_execution_is_explicitly_cleanup_eligible(tmp_path: Path) ->
     assert not (tmp_path / "shared" / "example" / "executions" / "script-only").exists()
 
 
-def test_failed_execution_cleanup_reseals_and_restores_exact_root(
+def test_failed_execution_cleanup_leaves_resumable_tombstone(
     tmp_path: Path,
 ) -> None:
-    """A deletion failure restores both the exact root and its prior input mode."""
+    """A deletion failure never restores a possibly damaged live execution."""
     pipeline = _real_pipeline(tmp_path)
     pipeline.submit(submit=False, execution_id="cleanup-rollback")
     execution_root = tmp_path / "shared" / "example" / "executions" / "cleanup-rollback"
+    quarantine = execution_root.parent / ".remove-cleanup-rollback"
 
     with (
         patch(
-            "jarvis_cd.core.pipeline._set_execution_input_mode",
-            side_effect=[0o500, 0o700],
-        ) as set_mode,
+            "jarvis_cd.core.pipeline._unlock_execution_input_for_cleanup",
+        ),
         patch(
-            "jarvis_cd.core.pipeline.shutil.rmtree",
+            "jarvis_cd.core.pipeline._remove_execution_tree",
             side_effect=PermissionError("injected deletion failure"),
         ),
         pytest.raises(PermissionError, match="injected deletion failure"),
     ):
         pipeline.cleanup_executions(["cleanup-rollback"])
 
-    assert execution_root.is_dir()
-    assert not list(execution_root.parent.glob(".remove-cleanup-rollback-*"))
-    assert set_mode.call_count == 2
-    quarantine = set_mode.call_args_list[0].args[0]
-    assert quarantine.name.startswith(".remove-cleanup-rollback-")
-    assert set_mode.call_args_list[1].args == (quarantine,)
-    assert set_mode.call_args_list[1].kwargs == {"mode": 0o500}
+    assert not execution_root.exists()
+    assert quarantine.is_dir()
+    assert pipeline.cleanup_executions(["cleanup-rollback"]) == ["cleanup-rollback"]
+    assert not quarantine.exists()
+
+
+def test_partial_execution_cleanup_never_restores_damaged_root(tmp_path: Path) -> None:
+    """A retry resumes the tombstone after an injected partial tree deletion."""
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.submit(submit=False, execution_id="partial-cleanup")
+    execution_root = tmp_path / "shared" / "example" / "executions" / "partial-cleanup"
+    quarantine = execution_root.parent / ".remove-partial-cleanup"
+
+    def delete_one_file_then_fail(*_args: object, **_kwargs: object) -> None:
+        (quarantine / "input" / "pipeline.yaml").unlink()
+        raise OSError("injected partial deletion")
+
+    with (
+        patch(
+            "jarvis_cd.core.pipeline._remove_execution_tree",
+            side_effect=delete_one_file_then_fail,
+        ),
+        pytest.raises(OSError, match="injected partial deletion"),
+    ):
+        pipeline.cleanup_executions(["partial-cleanup"])
+
+    assert not execution_root.exists()
+    assert quarantine.is_dir()
+    assert not (quarantine / "input" / "pipeline.yaml").exists()
+    assert pipeline.cleanup_executions(["partial-cleanup"]) == ["partial-cleanup"]
+    assert not quarantine.exists()
+
+
+def test_unlock_failure_leaves_execution_under_cleanup_tombstone(
+    tmp_path: Path,
+) -> None:
+    """A post-fchmod failure cannot return an unsealed execution to service."""
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.submit(submit=False, execution_id="unlock-failure")
+    execution_root = tmp_path / "shared" / "example" / "executions" / "unlock-failure"
+    quarantine = execution_root.parent / ".remove-unlock-failure"
+
+    def fail_after_mode_change(
+        _execution_root: Path,
+        *,
+        root_descriptor: int | None = None,
+    ) -> None:
+        if os.name != "nt":
+            assert root_descriptor is not None
+            descriptor = os.open(
+                "input",
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+                dir_fd=root_descriptor,
+            )
+            try:
+                os.fchmod(descriptor, 0o700)
+            finally:
+                os.close(descriptor)
+        raise OSError("injected unlock durability failure")
+
+    with (
+        patch(
+            "jarvis_cd.core.pipeline._unlock_execution_input_for_cleanup",
+            side_effect=fail_after_mode_change,
+        ),
+        pytest.raises(OSError, match="injected unlock durability failure"),
+    ):
+        pipeline.cleanup_executions(["unlock-failure"])
+
+    assert not execution_root.exists()
+    assert quarantine.is_dir()
+    if os.name != "nt":
+        assert ((quarantine / "input").stat().st_mode & 0o777) == 0o700
+    assert pipeline.cleanup_executions(["unlock-failure"]) == ["unlock-failure"]
+    assert not quarantine.exists()
+
+
+def test_cleanup_receipt_finalizes_after_tree_was_already_removed(
+    tmp_path: Path,
+) -> None:
+    """A crash after tree deletion leaves a receipt-only retry state."""
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.submit(submit=False, execution_id="receipt-only")
+    execution_root = tmp_path / "shared" / "example" / "executions" / "receipt-only"
+    quarantine = execution_root.parent / ".remove-receipt-only"
+
+    def remove_tree_then_fail(
+        path: Path,
+        *,
+        executions_descriptor: int | None,
+        root_descriptor: int | None,
+        windows_root_handle: int | None,
+        root_identity: tuple[int, int],
+    ) -> None:
+        _remove_execution_tree(
+            path,
+            executions_descriptor=executions_descriptor,
+            root_descriptor=root_descriptor,
+            windows_root_handle=windows_root_handle,
+            root_identity=root_identity,
+        )
+        raise OSError("injected post-tree crash")
+
+    with (
+        patch(
+            "jarvis_cd.core.pipeline._remove_execution_tree",
+            side_effect=remove_tree_then_fail,
+        ),
+        pytest.raises(OSError, match="injected post-tree crash"),
+    ):
+        pipeline.cleanup_executions(["receipt-only"])
+
+    assert not execution_root.exists()
+    assert not quarantine.exists()
+    receipts = list(execution_root.parent.glob(".remove-receipt-only-*.json"))
+    assert len(receipts) == 1
+    receipt = receipts[0]
+    assert receipt.is_file()
+    assert pipeline.cleanup_executions(["receipt-only"]) == ["receipt-only"]
+    assert not receipt.exists()
+
+
+def test_cleanup_unlock_never_follows_execution_root_symlink(tmp_path: Path) -> None:
+    """POSIX cleanup opens both the root and input relative to trusted handles."""
+    if os.name == "nt":
+        _unlock_execution_input_for_cleanup(tmp_path / "missing")
+        return
+
+    outside = tmp_path / "outside"
+    outside_input = outside / "input"
+    outside_input.mkdir(parents=True)
+    outside_input.chmod(0o500)
+    quarantine = tmp_path / ".remove-symlink"
+    quarantine.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(OSError):
+        _unlock_execution_input_for_cleanup(quarantine)
+
+    assert (outside_input.stat().st_mode & 0o777) == 0o500
+
+
+def test_cleanup_never_deletes_root_replacement_after_validation(
+    tmp_path: Path,
+) -> None:
+    """A validated tombstone swap fails closed without deleting the replacement."""
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.submit(submit=False, execution_id="race-delete")
+    executions = tmp_path / "shared" / "example" / "executions"
+    quarantine = executions / ".remove-race-delete"
+    stolen = executions / ".stolen-owned"
+    victim = executions / ".victim-source"
+    victim.mkdir()
+    (victim / "sentinel.txt").write_text("keep", encoding="utf-8")
+
+    def unlock_then_swap(
+        execution_root: Path,
+        *,
+        root_descriptor: int | None = None,
+    ) -> None:
+        _unlock_execution_input_for_cleanup(
+            execution_root,
+            root_descriptor=root_descriptor,
+        )
+        os.replace(quarantine, stolen)
+        os.replace(victim, quarantine)
+
+    with (
+        patch(
+            "jarvis_cd.core.pipeline._unlock_execution_input_for_cleanup",
+            side_effect=unlock_then_swap,
+        ),
+        pytest.raises(PermissionError if os.name == "nt" else RuntimeError),
+    ):
+        pipeline.cleanup_executions(["race-delete"])
+
+    if os.name == "nt":
+        assert (victim / "sentinel.txt").read_text(encoding="utf-8") == "keep"
+        assert quarantine.is_dir()
+        assert not stolen.exists()
+    else:
+        assert (quarantine / "sentinel.txt").read_text(encoding="utf-8") == "keep"
+        assert stolen.is_dir()
+
+
+def test_live_cleanup_revalidates_identity_after_rename(tmp_path: Path) -> None:
+    """A candidate replacement in the detach window is never accepted."""
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.submit(submit=False, execution_id="race-live")
+    executions = tmp_path / "shared" / "example" / "executions"
+    candidate = executions / "race-live"
+    quarantine = executions / ".remove-race-live"
+    stolen = executions / ".stolen-live"
+    victim = executions / ".victim-live"
+    victim.mkdir()
+    (victim / "sentinel.txt").write_text("keep", encoding="utf-8")
+    real_replace = os.replace
+    swapped = False
+
+    def replace_after_swap(
+        source: object,
+        destination: object,
+        **kwargs: object,
+    ) -> None:
+        nonlocal swapped
+        if not swapped and Path(str(source)).name == "race-live":
+            swapped = True
+            real_replace(candidate, stolen)
+            real_replace(victim, candidate)
+        real_replace(source, destination, **kwargs)
+
+    with (
+        patch("jarvis_cd.core.pipeline.os.replace", side_effect=replace_after_swap),
+        pytest.raises(RuntimeError, match="execution changed before cleanup"),
+    ):
+        pipeline.cleanup_executions(["race-live"])
+
+    assert swapped is True
+    assert (quarantine / "sentinel.txt").read_text(encoding="utf-8") == "keep"
+    assert stolen.is_dir()

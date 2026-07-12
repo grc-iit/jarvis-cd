@@ -25,6 +25,7 @@ _EXECUTION_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SNAPSHOT_ENVIRONMENT = "JARVIS_PIPELINE_SNAPSHOT_DIR"
 _EXECUTION_MARKER = ".jarvis-execution.json"
 _EXECUTION_MARKER_SCHEMA = "jarvis.execution.v1"
+_EXECUTION_CLEANUP_SCHEMA = "jarvis.execution-cleanup.v1"
 _MAX_EXPLICIT_EXECUTION_CLEANUP = 1024
 _WINDOWS_RESERVED_COMPONENTS = {
     "CON",
@@ -126,6 +127,22 @@ def _fsync_directory(path: Path) -> None:
         os.close(descriptor)
 
 
+def _posix_effective_uid() -> int:
+    """Return the effective POSIX uid or fail closed on unsupported platforms."""
+    getter = getattr(os, "geteuid", None)
+    if not callable(getter):
+        raise RuntimeError("POSIX ownership checks are unavailable")
+    return int(getter())
+
+
+def _posix_fchmod(descriptor: int, mode: int) -> None:
+    """Change a POSIX descriptor mode or fail closed when unavailable."""
+    changer = getattr(os, "fchmod", None)
+    if not callable(changer):
+        raise RuntimeError("POSIX descriptor permissions are unavailable")
+    changer(descriptor, mode)
+
+
 def _validated_execution_id(value: Optional[str]) -> str:
     """Return a bounded path-safe scheduler execution identifier."""
     execution_id = value or f"jarvis_{uuid4().hex}"
@@ -174,75 +191,764 @@ def _read_execution_marker(
             )
     finally:
         os.close(descriptor)
+    return _validate_execution_marker_payload(
+        payload,
+        marker_label=str(marker_path),
+        expected_name=expected_execution_id or execution_root.name,
+    )
+
+
+def _validate_execution_marker_payload(
+    payload: bytes,
+    *,
+    marker_label: str,
+    expected_name: str,
+) -> Dict[str, Any]:
+    """Decode and validate a bounded execution marker payload."""
     try:
         document = json.loads(payload.decode("utf-8", errors="strict"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError(
-            f"invalid execution ownership marker: {marker_path}"
+            f"invalid execution ownership marker: {marker_label}"
         ) from exc
     if not isinstance(document, dict) or document.get("schema_version") != (
         _EXECUTION_MARKER_SCHEMA
     ):
-        raise RuntimeError(f"invalid execution ownership marker: {marker_path}")
+        raise RuntimeError(f"invalid execution ownership marker: {marker_label}")
     execution_id = document.get("execution_id")
     if (
         not isinstance(execution_id, str)
         or _validated_execution_id(execution_id) != execution_id
     ):
-        raise RuntimeError(f"invalid execution ownership marker: {marker_path}")
-    expected_name = expected_execution_id or execution_root.name
+        raise RuntimeError(f"invalid execution ownership marker: {marker_label}")
     if expected_name != execution_id:
-        raise RuntimeError(f"execution marker identity mismatch: {execution_root}")
+        raise RuntimeError(f"execution marker identity mismatch: {marker_label}")
     if not isinstance(document.get("pipeline_name"), str):
-        raise RuntimeError(f"invalid execution ownership marker: {marker_path}")
+        raise RuntimeError(f"invalid execution ownership marker: {marker_label}")
     if not isinstance(document.get("state"), str):
-        raise RuntimeError(f"invalid execution ownership marker: {marker_path}")
+        raise RuntimeError(f"invalid execution ownership marker: {marker_label}")
     if not isinstance(document.get("submitted"), bool) or not isinstance(
         document.get("terminal"), bool
     ):
-        raise RuntimeError(f"invalid execution ownership marker: {marker_path}")
+        raise RuntimeError(f"invalid execution ownership marker: {marker_label}")
     return document
 
 
-def _set_execution_input_mode(
-    execution_root: Path,
-    *,
-    mode: Optional[int] = None,
-) -> Optional[int]:
-    """Open the sealed input directory without following links and set its mode.
-
-    Execution inputs are intentionally sealed read-only on POSIX.  Exact
-    cleanup temporarily adds owner write/execute permission so the directory
-    entries can be unlinked.  The prior mode is returned so a failed cleanup
-    can restore the seal before putting the execution back in service.
-    """
-    if os.name == "nt":
-        return None
-    input_dir = execution_root / "input"
+def _open_directory_at(parent_descriptor: int, name: str, *, label: Path) -> int:
+    """Open one real child directory relative to an already trusted directory."""
+    no_follow = getattr(os, "O_NOFOLLOW", 0)
+    if no_follow == 0:
+        raise RuntimeError("secure directory-relative cleanup is unavailable")
     flags = (
         os.O_RDONLY
         | getattr(os, "O_DIRECTORY", 0)
         | getattr(os, "O_CLOEXEC", 0)
-        | getattr(os, "O_NOFOLLOW", 0)
+        | no_follow
     )
-    descriptor = os.open(input_dir, flags)
+    descriptor = os.open(name, flags, dir_fd=parent_descriptor)
+    status = os.fstat(descriptor)
+    if not stat.S_ISDIR(status.st_mode):
+        os.close(descriptor)
+        raise RuntimeError(f"execution path is not a real directory: {label}")
+    return descriptor
+
+
+def _read_execution_marker_at(
+    execution_descriptor: int,
+    *,
+    execution_label: Path,
+    expected_execution_id: str,
+) -> Dict[str, Any]:
+    """Read an execution marker relative to a held, no-follow root handle."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(_EXECUTION_MARKER, flags, dir_fd=execution_descriptor)
     try:
         status = os.fstat(descriptor)
-        path_status = input_dir.lstat()
         if (
-            not stat.S_ISDIR(status.st_mode)
+            not stat.S_ISREG(status.st_mode)
+            or status.st_nlink != 1
+            or status.st_size > 65_536
+        ):
+            raise RuntimeError(f"invalid execution ownership marker: {execution_label}")
+        payload = os.read(descriptor, 65_537)
+        if len(payload) > 65_536:
+            raise RuntimeError(
+                f"execution ownership marker is too large: {execution_label}"
+            )
+    finally:
+        os.close(descriptor)
+    return _validate_execution_marker_payload(
+        payload,
+        marker_label=str(execution_label / _EXECUTION_MARKER),
+        expected_name=expected_execution_id,
+    )
+
+
+def _cleanup_receipt_document(
+    marker: Dict[str, Any],
+    *,
+    tombstone_identity: tuple[int, int],
+    nonce: str,
+) -> Dict[str, Any]:
+    """Return the durable sibling receipt that authorizes tombstone retries."""
+    return {
+        "schema_version": _EXECUTION_CLEANUP_SCHEMA,
+        "pipeline_name": marker["pipeline_name"],
+        "execution_id": marker["execution_id"],
+        "state": marker["state"],
+        "submitted": marker["submitted"],
+        "terminal": marker["terminal"],
+        "cleanup_nonce": nonce,
+        "tombstone_device": tombstone_identity[0],
+        "tombstone_inode": tombstone_identity[1],
+    }
+
+
+def _validate_execution_cleanup_receipt(
+    payload: bytes,
+    *,
+    receipt_label: str,
+    expected_nonce: str,
+    expected_execution_id: str,
+) -> Dict[str, Any]:
+    """Decode one cleanup receipt and validate identity-bound fields."""
+    try:
+        document = json.loads(payload.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"invalid execution cleanup receipt: {receipt_label}"
+        ) from exc
+    if (
+        not isinstance(document, dict)
+        or document.get("schema_version") != _EXECUTION_CLEANUP_SCHEMA
+        or document.get("execution_id") != expected_execution_id
+        or document.get("cleanup_nonce") != expected_nonce
+        or not isinstance(document.get("pipeline_name"), str)
+        or not isinstance(document.get("state"), str)
+        or not isinstance(document.get("submitted"), bool)
+        or not isinstance(document.get("terminal"), bool)
+        or not isinstance(document.get("tombstone_device"), int)
+        or document["tombstone_device"] < 0
+        or not isinstance(document.get("tombstone_inode"), int)
+        or document["tombstone_inode"] <= 0
+    ):
+        raise RuntimeError(f"invalid execution cleanup receipt: {receipt_label}")
+    return document
+
+
+def _read_execution_cleanup_receipt(
+    path: Path,
+    *,
+    expected_nonce: str,
+    expected_execution_id: str,
+) -> Dict[str, Any]:
+    """Read one bounded no-follow cleanup receipt by path on Windows."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        status = os.fstat(descriptor)
+        path_status = path.lstat()
+        if (
+            not stat.S_ISREG(status.st_mode)
             or stat.S_ISLNK(path_status.st_mode)
             or (status.st_dev, status.st_ino)
             != (path_status.st_dev, path_status.st_ino)
+            or status.st_nlink != 1
+            or status.st_size > 65_536
         ):
-            raise RuntimeError(f"execution input is not a real directory: {input_dir}")
-        previous = stat.S_IMODE(status.st_mode)
-        target = mode if mode is not None else previous | stat.S_IWUSR | stat.S_IXUSR
-        os.fchmod(descriptor, target)
-        os.fsync(descriptor)
-        return previous
+            raise RuntimeError(f"invalid execution cleanup receipt: {path}")
+        if os.name != "nt" and (
+            stat.S_IMODE(status.st_mode) & 0o077
+            or status.st_uid != _posix_effective_uid()
+        ):
+            raise RuntimeError(f"execution cleanup receipt is not private: {path}")
+        payload = os.read(descriptor, 65_537)
+        if len(payload) > 65_536:
+            raise RuntimeError(f"execution cleanup receipt is too large: {path}")
     finally:
         os.close(descriptor)
+    return _validate_execution_cleanup_receipt(
+        payload,
+        receipt_label=str(path),
+        expected_nonce=expected_nonce,
+        expected_execution_id=expected_execution_id,
+    )
+
+
+def _read_execution_cleanup_receipt_at(
+    executions_descriptor: int,
+    receipt_name: str,
+    *,
+    expected_nonce: str,
+    expected_execution_id: str,
+) -> Dict[str, Any]:
+    """Read one cleanup receipt relative to a held executions directory."""
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(receipt_name, flags, dir_fd=executions_descriptor)
+    try:
+        status = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(status.st_mode)
+            or status.st_nlink != 1
+            or status.st_size > 65_536
+        ):
+            raise RuntimeError(f"invalid execution cleanup receipt: {receipt_name}")
+        if (
+            stat.S_IMODE(status.st_mode) & 0o077
+            or status.st_uid != _posix_effective_uid()
+        ):
+            raise RuntimeError(
+                f"execution cleanup receipt is not private: {receipt_name}"
+            )
+        payload = os.read(descriptor, 65_537)
+        if len(payload) > 65_536:
+            raise RuntimeError(
+                f"execution cleanup receipt is too large: {receipt_name}"
+            )
+    finally:
+        os.close(descriptor)
+    return _validate_execution_cleanup_receipt(
+        payload,
+        receipt_label=receipt_name,
+        expected_nonce=expected_nonce,
+        expected_execution_id=expected_execution_id,
+    )
+
+
+def _write_execution_cleanup_receipt_at(
+    executions_descriptor: int,
+    receipt_name: str,
+    document: Dict[str, Any],
+) -> None:
+    """Create one durable nonce-named receipt relative to a held root."""
+    payload = (
+        json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n"
+    ).encode("utf-8")
+    temporary_name = f".{receipt_name}.{uuid4().hex}.tmp"
+    descriptor = os.open(
+        temporary_name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0),
+        0o600,
+        dir_fd=executions_descriptor,
+    )
+    published = False
+    try:
+        offset = 0
+        while offset < len(payload):
+            written = os.write(descriptor, payload[offset:])
+            if written <= 0:
+                raise OSError("could not persist execution cleanup receipt")
+            offset += written
+        os.fsync(descriptor)
+        os.close(descriptor)
+        descriptor = -1
+        os.replace(
+            temporary_name,
+            receipt_name,
+            src_dir_fd=executions_descriptor,
+            dst_dir_fd=executions_descriptor,
+        )
+        published = True
+        os.fsync(executions_descriptor)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        if not published:
+            try:
+                os.unlink(temporary_name, dir_fd=executions_descriptor)
+            except FileNotFoundError:
+                pass
+
+
+def _cleanup_receipt_nonce(execution_id: str, receipt_name: str) -> Optional[str]:
+    """Return the nonce encoded by one exact cleanup receipt name."""
+    prefix = f".remove-{execution_id}-"
+    suffix = ".json"
+    if not receipt_name.startswith(prefix) or not receipt_name.endswith(suffix):
+        return None
+    nonce = receipt_name[len(prefix) : -len(suffix)]
+    if len(nonce) != 32 or any(
+        character not in "0123456789abcdef" for character in nonce
+    ):
+        return None
+    return nonce
+
+
+def _find_cleanup_receipts(
+    executions_dir: Path,
+    execution_id: str,
+    *,
+    executions_descriptor: Optional[int],
+) -> list[tuple[Path, str]]:
+    """Find the single identity-bearing receipt allowed for an execution."""
+    receipts: list[tuple[Path, str]] = []
+    if executions_descriptor is None:
+        entries_context = os.scandir(executions_dir)
+    else:
+        entries_context = os.scandir(executions_descriptor)
+    with entries_context as entries:
+        for entry in entries:
+            nonce = _cleanup_receipt_nonce(execution_id, entry.name)
+            if nonce is not None:
+                receipts.append((executions_dir / entry.name, nonce))
+                if len(receipts) > 1:
+                    raise RuntimeError(
+                        f"multiple cleanup receipts exist: {execution_id}"
+                    )
+    return receipts
+
+
+def _require_exact_cleanup_receipt(
+    executions_dir: Path,
+    execution_id: str,
+    *,
+    executions_descriptor: Optional[int],
+    expected_path: Path,
+    expected_nonce: str,
+    expected_identity: tuple[int, int],
+) -> None:
+    """Reopen and revalidate the sole identity-bound transaction receipt."""
+    receipts = _find_cleanup_receipts(
+        executions_dir,
+        execution_id,
+        executions_descriptor=executions_descriptor,
+    )
+    if receipts != [(expected_path, expected_nonce)]:
+        raise RuntimeError(f"execution cleanup receipt set changed: {execution_id}")
+    receipt = _read_cleanup_receipt_bound(
+        expected_path,
+        expected_nonce,
+        executions_descriptor=executions_descriptor,
+        expected_execution_id=execution_id,
+    )
+    if _receipt_tombstone_identity(receipt) != expected_identity:
+        raise RuntimeError(
+            f"execution cleanup receipt identity changed: {execution_id}"
+        )
+
+
+def _entry_exists(
+    path: Path,
+    *,
+    parent_descriptor: Optional[int],
+) -> bool:
+    """Check one child without following it when a trusted parent is available."""
+    if parent_descriptor is None:
+        return os.path.lexists(path)
+    try:
+        os.stat(path.name, dir_fd=parent_descriptor, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _inspect_execution_root(
+    path: Path,
+    *,
+    executions_descriptor: Optional[int],
+    expected_execution_id: str,
+) -> tuple[Dict[str, Any], tuple[int, int]]:
+    """Read a root marker and return the exact directory identity it belongs to."""
+    if executions_descriptor is None:
+        status = path.lstat()
+        if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
+            raise RuntimeError(f"execution root is not a real directory: {path}")
+        marker = _read_execution_marker(
+            path,
+            expected_execution_id=expected_execution_id,
+        )
+        return marker, (status.st_dev, status.st_ino)
+    root_descriptor = _open_directory_at(
+        executions_descriptor,
+        path.name,
+        label=path,
+    )
+    try:
+        status = os.fstat(root_descriptor)
+        marker = _read_execution_marker_at(
+            root_descriptor,
+            execution_label=path,
+            expected_execution_id=expected_execution_id,
+        )
+        return marker, (status.st_dev, status.st_ino)
+    finally:
+        os.close(root_descriptor)
+
+
+def _execution_root_identity(
+    path: Path,
+    *,
+    executions_descriptor: Optional[int],
+) -> tuple[int, int]:
+    """Return one no-follow execution directory identity."""
+    if executions_descriptor is None:
+        status = path.lstat()
+        if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
+            raise RuntimeError(f"execution root is not a real directory: {path}")
+        return status.st_dev, status.st_ino
+    root_descriptor = _open_directory_at(
+        executions_descriptor,
+        path.name,
+        label=path,
+    )
+    try:
+        status = os.fstat(root_descriptor)
+        return status.st_dev, status.st_ino
+    finally:
+        os.close(root_descriptor)
+
+
+def _read_cleanup_receipt_bound(
+    path: Path,
+    nonce: str,
+    *,
+    executions_descriptor: Optional[int],
+    expected_execution_id: str,
+) -> Dict[str, Any]:
+    """Read a receipt through the trusted executions descriptor when possible."""
+    if executions_descriptor is None:
+        return _read_execution_cleanup_receipt(
+            path,
+            expected_nonce=nonce,
+            expected_execution_id=expected_execution_id,
+        )
+    return _read_execution_cleanup_receipt_at(
+        executions_descriptor,
+        path.name,
+        expected_nonce=nonce,
+        expected_execution_id=expected_execution_id,
+    )
+
+
+def _receipt_tombstone_identity(receipt: Dict[str, Any]) -> tuple[int, int]:
+    """Return the validated tombstone identity carried by a receipt."""
+    return (
+        int(receipt["tombstone_device"]),
+        int(receipt["tombstone_inode"]),
+    )
+
+
+def _unlock_execution_input_for_cleanup(
+    execution_root: Path,
+    *,
+    root_descriptor: Optional[int] = None,
+) -> None:
+    """Open the sealed input directory without following links and unlock it.
+
+    Execution inputs are intentionally sealed read-only on POSIX.  Exact
+    cleanup temporarily adds owner write/execute permission so the directory
+    entries can be unlinked.  Once cleanup starts, the execution remains under
+    its deterministic tombstone and is never returned to the live identity.
+    """
+    if os.name == "nt":
+        return
+    owns_root_descriptor = root_descriptor is None
+    if root_descriptor is None:
+        parent = execution_root.parent
+        parent_descriptor = os.open(
+            parent,
+            os.O_RDONLY
+            | getattr(os, "O_DIRECTORY", 0)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            root_descriptor = _open_directory_at(
+                parent_descriptor,
+                execution_root.name,
+                label=execution_root,
+            )
+        finally:
+            os.close(parent_descriptor)
+    assert root_descriptor is not None
+    descriptor = _open_directory_at(
+        root_descriptor,
+        "input",
+        label=execution_root / "input",
+    )
+    try:
+        status = os.fstat(descriptor)
+        previous = stat.S_IMODE(status.st_mode)
+        target = previous | stat.S_IWUSR | stat.S_IXUSR
+        _posix_fchmod(descriptor, target)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+        if owns_root_descriptor:
+            os.close(root_descriptor)
+
+
+def _remove_directory_contents_at(
+    directory_descriptor: int,
+    *,
+    directory_label: Path,
+) -> None:
+    """Recursively remove children relative to a held no-follow directory."""
+    with os.scandir(directory_descriptor) as entries:
+        snapshot = list(entries)
+    for entry in snapshot:
+        name = entry.name
+        try:
+            observed = entry.stat(follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        if stat.S_ISDIR(observed.st_mode) and not stat.S_ISLNK(observed.st_mode):
+            child_label = directory_label / name
+            child_descriptor = _open_directory_at(
+                directory_descriptor,
+                name,
+                label=child_label,
+            )
+            try:
+                child_identity = os.fstat(child_descriptor)
+                if (child_identity.st_dev, child_identity.st_ino) != (
+                    observed.st_dev,
+                    observed.st_ino,
+                ):
+                    raise RuntimeError(
+                        f"execution directory changed during cleanup: {child_label}"
+                    )
+                _remove_directory_contents_at(
+                    child_descriptor,
+                    directory_label=child_label,
+                )
+                current = os.stat(
+                    name,
+                    dir_fd=directory_descriptor,
+                    follow_symlinks=False,
+                )
+                if (current.st_dev, current.st_ino) != (
+                    child_identity.st_dev,
+                    child_identity.st_ino,
+                ):
+                    raise RuntimeError(
+                        f"execution directory changed during cleanup: {child_label}"
+                    )
+                os.rmdir(name, dir_fd=directory_descriptor)
+            finally:
+                os.close(child_descriptor)
+        else:
+            current = os.stat(
+                name,
+                dir_fd=directory_descriptor,
+                follow_symlinks=False,
+            )
+            if (current.st_dev, current.st_ino) != (observed.st_dev, observed.st_ino):
+                raise RuntimeError(
+                    f"execution entry changed during cleanup: {directory_label / name}"
+                )
+            os.unlink(name, dir_fd=directory_descriptor)
+    os.fsync(directory_descriptor)
+
+
+_WINDOWS_DELETE = 0x00010000
+_WINDOWS_FILE_LIST_DIRECTORY = 0x00000001
+_WINDOWS_FILE_READ_ATTRIBUTES = 0x00000080
+_WINDOWS_FILE_SHARE_READ = 0x00000001
+_WINDOWS_FILE_SHARE_WRITE = 0x00000002
+_WINDOWS_OPEN_EXISTING = 3
+_WINDOWS_FILE_ATTRIBUTE_DIRECTORY = 0x00000010
+_WINDOWS_FILE_ATTRIBUTE_REPARSE_POINT = 0x00000400
+_WINDOWS_FILE_FLAG_OPEN_REPARSE_POINT = 0x00200000
+_WINDOWS_FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+_WINDOWS_FILE_DISPOSITION_INFO = 4
+
+
+def _open_windows_cleanup_entry(
+    path: Path,
+    *,
+    expected_inode: int,
+) -> tuple[int, int]:
+    """Open and validate one Windows entry without delete sharing."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateFileW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        wintypes.HANDLE,
+    ]
+    kernel32.CreateFileW.restype = wintypes.HANDLE
+    raw_handle = kernel32.CreateFileW(
+        str(path),
+        _WINDOWS_DELETE | _WINDOWS_FILE_LIST_DIRECTORY | _WINDOWS_FILE_READ_ATTRIBUTES,
+        _WINDOWS_FILE_SHARE_READ | _WINDOWS_FILE_SHARE_WRITE,
+        None,
+        _WINDOWS_OPEN_EXISTING,
+        _WINDOWS_FILE_FLAG_BACKUP_SEMANTICS | _WINDOWS_FILE_FLAG_OPEN_REPARSE_POINT,
+        None,
+    )
+    invalid_handle = ctypes.c_void_p(-1).value
+    if raw_handle == invalid_handle:
+        error = ctypes.get_last_error()
+        raise OSError(error, os.strerror(error), path)
+    handle = int(raw_handle)
+    try:
+        attributes, inode = _windows_cleanup_handle_information(handle, path)
+        if expected_inode <= 0 or inode != expected_inode:
+            raise RuntimeError(f"Windows cleanup entry changed while opening: {path}")
+        return handle, attributes
+    except BaseException:
+        _close_windows_cleanup_handle(handle)
+        raise
+
+
+def _windows_cleanup_handle_information(handle: int, path: Path) -> tuple[int, int]:
+    """Return attributes and stable identity for one Windows cleanup handle."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _ByHandleFileInformation(ctypes.Structure):
+        _fields_ = [
+            ("file_attributes", wintypes.DWORD),
+            ("creation_time", wintypes.FILETIME),
+            ("last_access_time", wintypes.FILETIME),
+            ("last_write_time", wintypes.FILETIME),
+            ("volume_serial_number", wintypes.DWORD),
+            ("file_size_high", wintypes.DWORD),
+            ("file_size_low", wintypes.DWORD),
+            ("number_of_links", wintypes.DWORD),
+            ("file_index_high", wintypes.DWORD),
+            ("file_index_low", wintypes.DWORD),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetFileInformationByHandle.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(_ByHandleFileInformation),
+    ]
+    kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+    information = _ByHandleFileInformation()
+    if not kernel32.GetFileInformationByHandle(handle, ctypes.byref(information)):
+        error = ctypes.get_last_error()
+        raise OSError(error, os.strerror(error), path)
+    inode = (int(information.file_index_high) << 32) | int(information.file_index_low)
+    return int(information.file_attributes), inode
+
+
+def _mark_windows_cleanup_handle_for_delete(handle: int, path: Path) -> None:
+    """Mark one exact, already-open Windows entry for deletion on close."""
+    import ctypes
+    from ctypes import wintypes
+
+    class _FileDispositionInformation(ctypes.Structure):
+        _fields_ = [("delete_file", wintypes.BOOL)]
+
+    disposition = _FileDispositionInformation(delete_file=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.SetFileInformationByHandle.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+    ]
+    kernel32.SetFileInformationByHandle.restype = wintypes.BOOL
+    if not kernel32.SetFileInformationByHandle(
+        handle,
+        _WINDOWS_FILE_DISPOSITION_INFO,
+        ctypes.byref(disposition),
+        ctypes.sizeof(disposition),
+    ):
+        error = ctypes.get_last_error()
+        raise OSError(error, os.strerror(error), path)
+
+
+def _close_windows_cleanup_handle(handle: int) -> None:
+    """Close one Windows cleanup handle."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    kernel32.CloseHandle(handle)
+
+
+def _remove_windows_directory_contents(path: Path) -> None:
+    """Delete children by exact Windows handles without following reparse points."""
+    with os.scandir(path) as entries:
+        snapshot = list(entries)
+    for entry in snapshot:
+        child_path = path / entry.name
+        observed = os.stat(child_path, follow_symlinks=False)
+        if observed.st_ino <= 0:
+            raise RuntimeError(
+                f"Windows cleanup entry has no stable identity: {child_path}"
+            )
+        child_handle, attributes = _open_windows_cleanup_entry(
+            child_path,
+            expected_inode=observed.st_ino,
+        )
+        try:
+            is_directory = bool(attributes & _WINDOWS_FILE_ATTRIBUTE_DIRECTORY)
+            is_reparse = bool(attributes & _WINDOWS_FILE_ATTRIBUTE_REPARSE_POINT)
+            if is_directory and not is_reparse:
+                _remove_windows_directory_contents(child_path)
+            _mark_windows_cleanup_handle_for_delete(child_handle, child_path)
+        finally:
+            _close_windows_cleanup_handle(child_handle)
+
+
+def _remove_execution_tree(
+    quarantine: Path,
+    *,
+    executions_descriptor: Optional[int],
+    root_descriptor: Optional[int],
+    windows_root_handle: Optional[int],
+    root_identity: tuple[int, int],
+) -> None:
+    """Remove only the execution root whose held identity was validated."""
+    if windows_root_handle is not None:
+        attributes, inode = _windows_cleanup_handle_information(
+            windows_root_handle,
+            quarantine,
+        )
+        if (
+            not attributes & _WINDOWS_FILE_ATTRIBUTE_DIRECTORY
+            or attributes & _WINDOWS_FILE_ATTRIBUTE_REPARSE_POINT
+            or inode != root_identity[1]
+        ):
+            raise RuntimeError(
+                f"cleanup tombstone changed before deletion: {quarantine}"
+            )
+        _remove_windows_directory_contents(quarantine)
+        _mark_windows_cleanup_handle_for_delete(windows_root_handle, quarantine)
+        return
+    if executions_descriptor is None or root_descriptor is None:
+        current = quarantine.lstat()
+        if (
+            not stat.S_ISDIR(current.st_mode)
+            or stat.S_ISLNK(current.st_mode)
+            or (current.st_dev, current.st_ino) != root_identity
+        ):
+            raise RuntimeError(
+                f"cleanup tombstone changed before deletion: {quarantine}"
+            )
+        shutil.rmtree(quarantine)
+        _fsync_directory(quarantine.parent)
+        return
+
+    _remove_directory_contents_at(
+        root_descriptor,
+        directory_label=quarantine,
+    )
+    current = os.stat(
+        quarantine.name,
+        dir_fd=executions_descriptor,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        or (current.st_dev, current.st_ino) != root_identity
+    ):
+        raise RuntimeError(f"cleanup tombstone changed before deletion: {quarantine}")
+    os.rmdir(quarantine.name, dir_fd=executions_descriptor)
+    os.fsync(executions_descriptor)
 
 
 class Pipeline:
@@ -389,8 +1095,29 @@ class Pipeline:
         shared_dir = self.get_pipeline_shared_dir()
         shared_dir.mkdir(parents=True, exist_ok=True)
         resolved_execution_id = _validated_execution_id(execution_id)
-        execution_root = shared_dir / "executions" / resolved_execution_id
-        execution_root.parent.mkdir(parents=True, exist_ok=True)
+        executions_dir = shared_dir / "executions"
+        executions_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        executions_status = executions_dir.lstat()
+        if not stat.S_ISDIR(executions_status.st_mode) or stat.S_ISLNK(
+            executions_status.st_mode
+        ):
+            raise RuntimeError("pipeline executions path is not a real directory")
+        if os.name != "nt":
+            if executions_status.st_uid != _posix_effective_uid():
+                raise RuntimeError("pipeline executions path is not owner-controlled")
+            executions_descriptor = os.open(
+                executions_dir,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+            try:
+                _posix_fchmod(executions_descriptor, 0o700)
+                os.fsync(executions_descriptor)
+            finally:
+                os.close(executions_descriptor)
+        execution_root = executions_dir / resolved_execution_id
         execution_root.mkdir(mode=0o700)
         if os.name != "nt":
             execution_root.chmod(0o700)
@@ -646,56 +1373,335 @@ class Pipeline:
         ):
             raise RuntimeError("pipeline executions path is not a real directory")
 
-        candidates: List[tuple[str, Path]] = []
-        for execution_id in normalized:
-            candidate = executions_dir / execution_id
-            try:
-                marker = _read_execution_marker(candidate)
-            except FileNotFoundError as exc:
-                raise RuntimeError(f"execution does not exist: {execution_id}") from exc
-            if marker["pipeline_name"] != self.name:
-                raise RuntimeError(
-                    f"execution marker pipeline mismatch: {execution_id}"
-                )
-            if not marker["terminal"] and execution_id not in verified and not force:
-                raise RuntimeError(
-                    f"execution is not terminal: {execution_id}; verify scheduler "
-                    "state and pass terminal_verified explicitly"
-                )
-            candidates.append((execution_id, candidate))
+        executions_descriptor: Optional[int] = None
+        if os.name != "nt":
+            no_follow = getattr(os, "O_NOFOLLOW", 0)
+            if no_follow == 0:
+                raise RuntimeError("secure directory-relative cleanup is unavailable")
+            executions_descriptor = os.open(
+                executions_dir,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | no_follow,
+            )
+            descriptor_status = os.fstat(executions_descriptor)
+            current_status = executions_dir.lstat()
+            if (
+                not stat.S_ISDIR(descriptor_status.st_mode)
+                or stat.S_ISLNK(current_status.st_mode)
+                or (descriptor_status.st_dev, descriptor_status.st_ino)
+                != (current_status.st_dev, current_status.st_ino)
+            ):
+                os.close(executions_descriptor)
+                raise RuntimeError("pipeline executions path changed during cleanup")
+            if descriptor_status.st_uid != _posix_effective_uid():
+                os.close(executions_descriptor)
+                raise RuntimeError("pipeline executions path is not owner-controlled")
+            _posix_fchmod(executions_descriptor, 0o700)
+            os.fsync(executions_descriptor)
 
+        candidates: List[
+            tuple[
+                str,
+                Path,
+                Path,
+                Optional[Path],
+                Optional[str],
+                str,
+                Dict[str, Any],
+                Optional[tuple[int, int]],
+            ]
+        ] = []
         removed: List[str] = []
-        for execution_id, candidate in candidates:
-            quarantine = executions_dir / f".remove-{execution_id}-{uuid4().hex}"
-            os.replace(candidate, quarantine)
-            sealed_input_mode: Optional[int] = None
-            try:
-                marker = _read_execution_marker(
-                    quarantine,
-                    expected_execution_id=execution_id,
+        try:
+            for execution_id in normalized:
+                candidate = executions_dir / execution_id
+                quarantine = executions_dir / f".remove-{execution_id}"
+                receipts = _find_cleanup_receipts(
+                    executions_dir,
+                    execution_id,
+                    executions_descriptor=executions_descriptor,
                 )
-                if marker["execution_id"] != execution_id:
-                    raise RuntimeError(
-                        f"execution changed before cleanup: {execution_id}"
+                candidate_exists = _entry_exists(
+                    candidate,
+                    parent_descriptor=executions_descriptor,
+                )
+                quarantine_exists = _entry_exists(
+                    quarantine,
+                    parent_descriptor=executions_descriptor,
+                )
+                if candidate_exists:
+                    if quarantine_exists or receipts:
+                        raise RuntimeError(
+                            f"execution and cleanup state both exist: {execution_id}"
+                        )
+                    cleanup_state = "live"
+                    marker, expected_identity = _inspect_execution_root(
+                        candidate,
+                        executions_descriptor=executions_descriptor,
+                        expected_execution_id=execution_id,
                     )
-                sealed_input_mode = _set_execution_input_mode(quarantine)
-                shutil.rmtree(quarantine)
-                _fsync_directory(executions_dir)
-            except BaseException:
-                if quarantine.exists() and not candidate.exists():
-                    if sealed_input_mode is not None:
+                    receipt = None
+                    receipt_nonce = None
+                elif quarantine_exists:
+                    cleanup_state = "tombstone"
+                    if receipts:
+                        receipt, receipt_nonce = receipts[0]
+                        marker = _read_cleanup_receipt_bound(
+                            receipt,
+                            receipt_nonce,
+                            executions_descriptor=executions_descriptor,
+                            expected_execution_id=execution_id,
+                        )
+                        expected_identity = _receipt_tombstone_identity(marker)
+                        current_identity = _execution_root_identity(
+                            quarantine,
+                            executions_descriptor=executions_descriptor,
+                        )
+                        if current_identity != expected_identity:
+                            raise RuntimeError(
+                                f"cleanup receipt tombstone mismatch: {execution_id}"
+                            )
+                    else:
+                        receipt = None
+                        receipt_nonce = None
+                        marker, expected_identity = _inspect_execution_root(
+                            quarantine,
+                            executions_descriptor=executions_descriptor,
+                            expected_execution_id=execution_id,
+                        )
+                elif receipts:
+                    cleanup_state = "receipt-only"
+                    receipt, receipt_nonce = receipts[0]
+                    marker = _read_cleanup_receipt_bound(
+                        receipt,
+                        receipt_nonce,
+                        executions_descriptor=executions_descriptor,
+                        expected_execution_id=execution_id,
+                    )
+                    expected_identity = None
+                else:
+                    raise RuntimeError(f"execution does not exist: {execution_id}")
+                if marker["pipeline_name"] != self.name:
+                    raise RuntimeError(
+                        f"execution marker pipeline mismatch: {execution_id}"
+                    )
+                if (
+                    not marker["terminal"]
+                    and execution_id not in verified
+                    and not force
+                ):
+                    raise RuntimeError(
+                        f"execution is not terminal: {execution_id}; verify scheduler "
+                        "state and pass terminal_verified explicitly"
+                    )
+                candidates.append(
+                    (
+                        execution_id,
+                        candidate,
+                        quarantine,
+                        receipt,
+                        receipt_nonce,
+                        cleanup_state,
+                        marker,
+                        expected_identity,
+                    )
+                )
+
+            for (
+                execution_id,
+                candidate,
+                quarantine,
+                receipt,
+                receipt_nonce,
+                cleanup_state,
+                marker,
+                expected_identity,
+            ) in candidates:
+                if cleanup_state == "live":
+                    if receipt is not None or receipt_nonce is not None:
+                        raise RuntimeError(
+                            f"live execution has a cleanup receipt: {execution_id}"
+                        )
+                    if executions_descriptor is None:
+                        os.replace(candidate, quarantine)
+                        _fsync_directory(executions_dir)
+                    else:
+                        os.replace(
+                            candidate.name,
+                            quarantine.name,
+                            src_dir_fd=executions_descriptor,
+                            dst_dir_fd=executions_descriptor,
+                        )
+                        os.fsync(executions_descriptor)
+                    cleanup_state = "tombstone"
+
+                if cleanup_state == "tombstone":
+                    root_descriptor: Optional[int] = None
+                    windows_root_handle: Optional[int] = None
+                    try:
+                        if executions_descriptor is None:
+                            quarantine_status = quarantine.lstat()
+                            if not stat.S_ISDIR(
+                                quarantine_status.st_mode
+                            ) or stat.S_ISLNK(quarantine_status.st_mode):
+                                raise RuntimeError(
+                                    f"cleanup tombstone is not a real directory: "
+                                    f"{execution_id}"
+                                )
+                            current_identity = (
+                                quarantine_status.st_dev,
+                                quarantine_status.st_ino,
+                            )
+                            if expected_identity is not None and (
+                                current_identity != expected_identity
+                            ):
+                                raise RuntimeError(
+                                    f"execution changed before cleanup: {execution_id}"
+                                )
+                            windows_root_handle, attributes = (
+                                _open_windows_cleanup_entry(
+                                    quarantine,
+                                    expected_inode=current_identity[1],
+                                )
+                            )
+                            if (
+                                not attributes & _WINDOWS_FILE_ATTRIBUTE_DIRECTORY
+                                or attributes & _WINDOWS_FILE_ATTRIBUTE_REPARSE_POINT
+                            ):
+                                raise RuntimeError(
+                                    f"cleanup tombstone is not a real directory: "
+                                    f"{execution_id}"
+                                )
+                            if receipt is None:
+                                marker = _read_execution_marker(
+                                    quarantine,
+                                    expected_execution_id=execution_id,
+                                )
+                        else:
+                            root_descriptor = _open_directory_at(
+                                executions_descriptor,
+                                quarantine.name,
+                                label=quarantine,
+                            )
+                            root_status = os.fstat(root_descriptor)
+                            current_identity = (
+                                root_status.st_dev,
+                                root_status.st_ino,
+                            )
+                            if expected_identity is not None and (
+                                current_identity != expected_identity
+                            ):
+                                raise RuntimeError(
+                                    f"execution changed before cleanup: {execution_id}"
+                                )
+                            if receipt is None:
+                                marker = _read_execution_marker_at(
+                                    root_descriptor,
+                                    execution_label=quarantine,
+                                    expected_execution_id=execution_id,
+                                )
+                        if marker["pipeline_name"] != self.name or (
+                            not marker["terminal"]
+                            and execution_id not in verified
+                            and not force
+                        ):
+                            raise RuntimeError(
+                                f"execution changed before cleanup: {execution_id}"
+                            )
+                        if receipt is None:
+                            receipt_nonce = uuid4().hex
+                            receipt = executions_dir / (
+                                f".remove-{execution_id}-{receipt_nonce}.json"
+                            )
+                            receipt_document = _cleanup_receipt_document(
+                                marker,
+                                tombstone_identity=current_identity,
+                                nonce=receipt_nonce,
+                            )
+                            if executions_descriptor is None:
+                                _atomic_json_dump(receipt, receipt_document)
+                            else:
+                                _write_execution_cleanup_receipt_at(
+                                    executions_descriptor,
+                                    receipt.name,
+                                    receipt_document,
+                                )
+                        assert receipt is not None
+                        assert receipt_nonce is not None
+                        marker = _read_cleanup_receipt_bound(
+                            receipt,
+                            receipt_nonce,
+                            executions_descriptor=executions_descriptor,
+                            expected_execution_id=execution_id,
+                        )
+                        if (
+                            marker["pipeline_name"] != self.name
+                            or _receipt_tombstone_identity(marker) != current_identity
+                        ):
+                            raise RuntimeError(
+                                f"execution cleanup receipt changed: {execution_id}"
+                            )
+                        _require_exact_cleanup_receipt(
+                            executions_dir,
+                            execution_id,
+                            executions_descriptor=executions_descriptor,
+                            expected_path=receipt,
+                            expected_nonce=receipt_nonce,
+                            expected_identity=current_identity,
+                        )
                         try:
-                            _set_execution_input_mode(
+                            _unlock_execution_input_for_cleanup(
                                 quarantine,
-                                mode=sealed_input_mode,
+                                root_descriptor=root_descriptor,
                             )
                         except FileNotFoundError:
                             pass
-                    os.replace(quarantine, candidate)
+                        _remove_execution_tree(
+                            quarantine,
+                            executions_descriptor=executions_descriptor,
+                            root_descriptor=root_descriptor,
+                            windows_root_handle=windows_root_handle,
+                            root_identity=current_identity,
+                        )
+                    finally:
+                        if root_descriptor is not None:
+                            os.close(root_descriptor)
+                        if windows_root_handle is not None:
+                            _close_windows_cleanup_handle(windows_root_handle)
+
+                assert receipt is not None
+                assert receipt_nonce is not None
+                _require_exact_cleanup_receipt(
+                    executions_dir,
+                    execution_id,
+                    executions_descriptor=executions_descriptor,
+                    expected_path=receipt,
+                    expected_nonce=receipt_nonce,
+                    expected_identity=_receipt_tombstone_identity(marker),
+                )
+                final_receipt = _read_cleanup_receipt_bound(
+                    receipt,
+                    receipt_nonce,
+                    executions_descriptor=executions_descriptor,
+                    expected_execution_id=execution_id,
+                )
+                if final_receipt["pipeline_name"] != self.name:
+                    raise RuntimeError(
+                        f"execution cleanup receipt changed: {execution_id}"
+                    )
+                if executions_descriptor is None:
+                    receipt.unlink()
                     _fsync_directory(executions_dir)
-                raise
-            removed.append(execution_id)
-        return removed
+                else:
+                    os.unlink(receipt.name, dir_fd=executions_descriptor)
+                    os.fsync(executions_descriptor)
+                removed.append(execution_id)
+            return removed
+        finally:
+            if executions_descriptor is not None:
+                os.close(executions_descriptor)
 
     def _write_execution_snapshot(
         self,
