@@ -1,0 +1,562 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  release-preflight:
+    name: Validate exact release request
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      request: ${{ steps.request.outputs.request }}
+
+    steps:
+      - name: Check out exact tag request validator
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Verify protected release controls
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ACTOR: ${{ github.actor }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          case "$RELEASE_ACTOR" in
+            JaimeCernuda|akougkas|iameneko|lukemartinlogan) ;;
+            *) echo "tag actor is not an approved release administrator" >&2; exit 1 ;;
+          esac
+          controls="$(mktemp -d)"
+          trap 'rm -rf "$controls"' EXIT
+          for release_admin in \
+            JaimeCernuda \
+            akougkas \
+            iameneko \
+            lukemartinlogan; do
+            gh api "repos/$REPOSITORY/collaborators/$release_admin/permission" \
+              > "$controls/permission-$release_admin.json"
+            jq -e \
+              '.permission == "admin" and .role_name == "admin"' \
+              "$controls/permission-$release_admin.json" >/dev/null
+          done
+          gh api "repos/$REPOSITORY/environments/immutable-release" \
+            > "$controls/environment.json"
+          gh api \
+            "repos/$REPOSITORY/environments/immutable-release/deployment-branch-policies?per_page=100" \
+            > "$controls/environment-policies.json"
+          jq -e '
+            .can_admins_bypass == false
+            and .deployment_branch_policy == {
+              "custom_branch_policies": true,
+              "protected_branches": false
+            }
+            and (
+              [.protection_rules[] | select(.type == "required_reviewers")]
+              | length
+            ) == 1
+            and (
+              .protection_rules[]
+              | select(.type == "required_reviewers")
+              | .prevent_self_review == true
+              and ([.reviewers[].reviewer.login] | sort) == [
+                "akougkas",
+                "iameneko",
+                "lukemartinlogan"
+              ]
+            )
+          ' "$controls/environment.json" >/dev/null
+          jq -e '
+            .total_count == 1
+            and .branch_policies == [{
+              "id": 54450144,
+              "name": "v*",
+              "node_id": "MDE2OkdhdGVCcmFuY2hQb2xpY3k1NDQ1MDE0NA==",
+              "type": "tag"
+            }]
+          ' "$controls/environment-policies.json" >/dev/null
+
+          mapfile -t immutable_ruleset_ids < <(
+            gh api "repos/$REPOSITORY/rulesets?per_page=100" --jq \
+              '.[] | select(.name == "Protect immutable version tags") | .id'
+          )
+          mapfile -t creation_ruleset_ids < <(
+            gh api "repos/$REPOSITORY/rulesets?per_page=100" --jq \
+              '.[] | select(.name == "Restrict immutable version tag creation") | .id'
+          )
+          test "${#immutable_ruleset_ids[@]}" -eq 1
+          test "${#creation_ruleset_ids[@]}" -eq 1
+          gh api "repos/$REPOSITORY/rulesets/${immutable_ruleset_ids[0]}" \
+            > "$controls/immutable-ruleset.json"
+          gh api "repos/$REPOSITORY/rulesets/${creation_ruleset_ids[0]}" \
+            > "$controls/creation-ruleset.json"
+          jq -e '
+            .target == "tag"
+            and .enforcement == "active"
+            and .conditions.ref_name == {
+              "exclude": [],
+              "include": ["refs/tags/v*"]
+            }
+            and ([.rules[].type] | sort) == ["deletion", "update"]
+          ' "$controls/immutable-ruleset.json" >/dev/null
+          jq -e '
+            .target == "tag"
+            and .enforcement == "active"
+            and .conditions.ref_name == {
+              "exclude": [],
+              "include": ["refs/tags/v*"]
+            }
+            and [.rules[].type] == ["creation"]
+          ' "$controls/creation-ruleset.json" >/dev/null
+
+      - name: Require fresh exact release request
+        id: request
+        env:
+          RELEASE_REQUEST: ${{ vars.JARVIS_RELEASE_REQUEST }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          request="$(
+            printf '%s\n' "$RELEASE_REQUEST" | python ci/release_request.py \
+              --repository "$REPOSITORY" \
+              --tag "$TAG_NAME" \
+              --commit "$GITHUB_SHA" \
+              --max-age-seconds 3600
+          )"
+          printf 'request=%s\n' "$request" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build and attest release artifacts
+    needs: release-preflight
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Check out exact tag
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          enable-cache: false
+          version: "0.11.28"
+
+      - name: Run release-contract tests
+        shell: bash
+        run: |
+          uv lock --check
+          uv run --frozen pytest -q \
+            test/unit/core/test_lammps_progress.py \
+            test/unit/core/test_lammps_package_runtime.py \
+            test/unit/core/test_scheduler_submission.py \
+            test/unit/core/test_pipeline_hostfile.py \
+            test/unit/test_release_request.py \
+            test/unit/test_release_workflow.py
+
+      - name: Build and inspect distributions
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          test "$GITHUB_REF_TYPE" = "tag"
+          test "$(git rev-list -n 1 "$TAG_NAME")" = "$GITHUB_SHA"
+          git fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main
+          test "$GITHUB_SHA" = "$(git rev-parse refs/remotes/origin/main)"
+          uv build
+          uv run --frozen twine check dist/*
+          uv export --quiet --frozen \
+            --no-dev \
+            --no-emit-project \
+            --format requirements.txt \
+            --output-file dist/runtime-requirements.txt
+          test -s dist/runtime-requirements.txt
+          mapfile -t wheels < <(find dist -maxdepth 1 -type f -name '*.whl' -print | sort)
+          mapfile -t sdists < <(find dist -maxdepth 1 -type f -name '*.tar.gz' -print | sort)
+          test "${#wheels[@]}" -eq 1
+          test "${#sdists[@]}" -eq 1
+          python - "${wheels[0]}" "${TAG_NAME#v}" <<'PY'
+          import email
+          import sys
+          import zipfile
+
+          wheel, expected_version = sys.argv[1:]
+          with zipfile.ZipFile(wheel) as archive:
+              metadata_names = [
+                  name for name in archive.namelist() if name.endswith('.dist-info/METADATA')
+              ]
+              if len(metadata_names) != 1:
+                  raise SystemExit('wheel must contain exactly one METADATA file')
+              metadata = email.message_from_bytes(archive.read(metadata_names[0]))
+          if metadata['Name'] != 'jarvis_cd' or metadata['Version'] != expected_version:
+              raise SystemExit(
+                  f"tag/wheel mismatch: {metadata['Name']} {metadata['Version']}"
+              )
+          PY
+
+      - name: Smoke installed wheel and progress entry point
+        shell: bash
+        run: |
+          wheel="$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)"
+          uv venv --python 3.11 .release-smoke
+          uv pip install \
+            --python .release-smoke/bin/python \
+            --require-hashes \
+            --requirements dist/runtime-requirements.txt
+          uv pip install --python .release-smoke/bin/python --no-deps "$wheel"
+          (
+          cd .release-smoke
+          bin/python - <<'PY'
+          from importlib.metadata import entry_points
+
+          from jarvis_cd.progress.lammps import adapter_from_package
+
+          selected = entry_points().select(
+              group='clio_relay.package_progress_adapters',
+              name='lammps',
+          )
+          if len(selected) != 1:
+              raise SystemExit('lammps entry point is missing or duplicated')
+          if selected[0].value != 'jarvis_cd.progress.lammps:adapter_from_package':
+              raise SystemExit(f'unexpected entry point target: {selected[0].value}')
+          adapter = adapter_from_package(
+              {'pkg_type': 'builtin.lammps', 'progress': {'total_steps': 10}}
+          )
+          if adapter is None or adapter.adapter_name != 'lammps':
+              raise SystemExit('installed LAMMPS progress provider is not functional')
+          exec(adapter.package_load_probe_python(), {})
+          PY
+          )
+          .release-smoke/bin/jarvis --help >/dev/null
+
+      - name: Create release manifest
+        env:
+          RELEASE_REQUEST: ${{ needs.release-preflight.outputs.request }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          python - "$TAG_NAME" "$GITHUB_SHA" <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          tag, commit = sys.argv[1:]
+          release_request = json.loads(os.environ['RELEASE_REQUEST'])
+          Path('dist/release-metadata.json').write_text(
+              json.dumps(
+                  {
+                      'schema_version': '1.0',
+                      'tag': tag,
+                      'version': tag.removeprefix('v'),
+                      'source_commit': commit,
+                      'release_request': release_request,
+                      'progress_entry_point': {
+                          'group': 'clio_relay.package_progress_adapters',
+                          'name': 'lammps',
+                          'value': 'jarvis_cd.progress.lammps:adapter_from_package',
+                      },
+                      'runtime_lock': 'runtime-requirements.txt',
+                  },
+                  indent=2,
+                  sort_keys=True,
+              )
+              + '\n',
+              encoding='utf-8',
+          )
+          PY
+          (
+            cd dist
+            sha256sum --binary \
+              ./*.whl \
+              ./*.tar.gz \
+              release-metadata.json \
+              runtime-requirements.txt > SHA256SUMS
+            sha256sum --check --strict SHA256SUMS
+          )
+
+      - name: Attest release artifacts and metadata
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Upload release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: jarvis-cd-${{ github.ref_name }}
+          path: |
+            dist/*.whl
+            dist/*.tar.gz
+            dist/release-metadata.json
+            dist/runtime-requirements.txt
+            dist/SHA256SUMS
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub release
+    needs: build
+    runs-on: ubuntu-24.04
+    environment: immutable-release
+    permissions:
+      contents: write
+      attestations: read
+
+    steps:
+      - name: Check out exact tag request validator
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.11"
+
+      - name: Download release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: jarvis-cd-${{ github.ref_name }}
+          path: dist
+
+      - name: Verify bundle and provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+          for subject in \
+            dist/*.whl \
+            dist/*.tar.gz \
+            dist/release-metadata.json \
+            dist/runtime-requirements.txt; do
+            gh attestation verify "$subject" \
+              --repo "$REPOSITORY" \
+              --signer-workflow "$REPOSITORY/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$TAG_NAME" \
+              --source-digest "$GITHUB_SHA" \
+              --deny-self-hosted-runners
+          done
+
+      - name: Revalidate fresh request and current main
+        env:
+          REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          git fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main
+          test "$GITHUB_SHA" = "$(git rev-parse refs/remotes/origin/main)"
+          request="$(python - dist/release-metadata.json "$TAG_NAME" "$GITHUB_SHA" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          path, tag, commit = sys.argv[1:]
+          metadata = json.loads(Path(path).read_text(encoding='utf-8'))
+          if metadata.get('tag') != tag or metadata.get('source_commit') != commit:
+              raise SystemExit('release metadata does not match the exact tag commit')
+          request = metadata.get('release_request')
+          if not isinstance(request, dict):
+              raise SystemExit('release metadata has no request record')
+          print(json.dumps(request, ensure_ascii=True, separators=(',', ':'), sort_keys=True))
+          PY
+          )"
+          validated="$(
+            printf '%s\n' "$request" | python ci/release_request.py \
+              --repository "$REPOSITORY" \
+              --tag "$TAG_NAME" \
+              --commit "$GITHUB_SHA" \
+              --max-age-seconds 3600
+          )"
+          test "$validated" = "$request"
+
+      - name: Publish immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          resolve_remote_tag() {
+            local sha type
+            read -r sha type < <(
+              gh api "repos/$REPOSITORY/git/ref/tags/$TAG_NAME" \
+                --jq '[.object.sha, .object.type] | @tsv'
+            )
+            while [ "$type" = "tag" ]; do
+              read -r sha type < <(
+                gh api "repos/$REPOSITORY/git/tags/$sha" \
+                  --jq '[.object.sha, .object.type] | @tsv'
+              )
+            done
+            test "$type" = "commit"
+            printf '%s\n' "$sha"
+          }
+          test "$(resolve_remote_tag)" = "$GITHUB_SHA"
+          (cd dist && sha256sum --check --strict SHA256SUMS)
+
+          mapfile -t artifacts < <(
+            find dist -maxdepth 1 -type f -printf '%f\n' | sort
+          )
+          test "${#artifacts[@]}" -eq 5
+          declare -A expected_sha=()
+          wheel_count=0
+          sdist_count=0
+          for name in "${artifacts[@]}"; do
+            [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]
+            case "$name" in
+              *.whl) wheel_count=$((wheel_count + 1)) ;;
+              *.tar.gz) sdist_count=$((sdist_count + 1)) ;;
+              release-metadata.json|runtime-requirements.txt|SHA256SUMS) ;;
+              *) echo "unexpected local release artifact: $name" >&2; exit 1 ;;
+            esac
+            expected_sha["$name"]="$(sha256sum "dist/$name" | cut -d' ' -f1)"
+          done
+          test "$wheel_count" -eq 1
+          test "$sdist_count" -eq 1
+          [[ -v 'expected_sha[release-metadata.json]' ]]
+          [[ -v 'expected_sha[runtime-requirements.txt]' ]]
+          [[ -v 'expected_sha[SHA256SUMS]' ]]
+
+          release_tmp="$(mktemp -d)"
+          trap 'rm -rf "$release_tmp"' EXIT
+          release_json="$release_tmp/release.json"
+          release_error="$release_tmp/release.error"
+          release_body="JARVIS-CD $TAG_NAME immutable release."
+
+          fetch_release() {
+            gh api "repos/$REPOSITORY/releases/tags/$TAG_NAME" >"$release_json"
+            jq -e \
+              --arg tag "$TAG_NAME" \
+              --arg body "$release_body" '
+                .tag_name == $tag
+                and .name == $tag
+                and .body == $body
+                and .prerelease == false
+                and .author.login == "github-actions[bot]"
+              ' "$release_json" >/dev/null
+          }
+
+          load_and_verify_assets() {
+            local allow_missing="$1" id name declared_digest downloaded
+            declare -gA asset_ids=()
+            while IFS=$'\t' read -r id name declared_digest; do
+              [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]
+              if [[ ! -v "expected_sha[$name]" ]]; then
+                echo "unexpected release asset: $name" >&2
+                return 1
+              fi
+              if [[ -v "asset_ids[$name]" ]]; then
+                echo "duplicate release asset: $name" >&2
+                return 1
+              fi
+              if [ -n "$declared_digest" ] && \
+                 [ "$declared_digest" != "sha256:${expected_sha[$name]}" ]; then
+                echo "release asset digest mismatch: $name" >&2
+                return 1
+              fi
+              asset_ids["$name"]="$id"
+            done < <(
+              jq -r '.assets[] | [.id, .name, (.digest // "")] | @tsv' \
+                "$release_json"
+            )
+
+            for name in "${artifacts[@]}"; do
+              if [[ ! -v "asset_ids[$name]" ]]; then
+                if [ "$allow_missing" = true ]; then
+                  gh release upload "$TAG_NAME" "dist/$name" --repo "$REPOSITORY"
+                  continue
+                fi
+                echo "missing release asset: $name" >&2
+                return 1
+              fi
+              downloaded="$release_tmp/download-$name"
+              gh api \
+                -H 'Accept: application/octet-stream' \
+                "repos/$REPOSITORY/releases/assets/${asset_ids[$name]}" \
+                >"$downloaded"
+              cmp --silent "dist/$name" "$downloaded"
+            done
+          }
+
+          if fetch_release 2>"$release_error"; then
+            :
+          elif grep -Fq 'HTTP 404' "$release_error"; then
+            gh release create "$TAG_NAME" \
+              --repo "$REPOSITORY" \
+              --verify-tag \
+              --title "$TAG_NAME" \
+              --notes "$release_body" \
+              --latest \
+              --draft
+            fetch_release
+          else
+            cat "$release_error" >&2
+            exit 1
+          fi
+
+          draft="$(jq -r .draft "$release_json")"
+          immutable="$(jq -r .immutable "$release_json")"
+          if [ "$draft" = true ]; then
+            test "$immutable" = false
+            load_and_verify_assets true
+            fetch_release
+            load_and_verify_assets false
+            test "$(resolve_remote_tag)" = "$GITHUB_SHA"
+            gh release edit "$TAG_NAME" \
+              --repo "$REPOSITORY" \
+              --draft=false \
+              --latest
+          else
+            test "$immutable" = true
+            load_and_verify_assets false
+          fi
+
+          test "$(resolve_remote_tag)" = "$GITHUB_SHA"
+          fetch_release
+          test "$(jq -r .draft "$release_json")" = false
+          test "$(jq -r .immutable "$release_json")" = true
+          test "$(gh api "repos/$REPOSITORY/releases/latest" --jq .tag_name)" = \
+            "$TAG_NAME"
+          load_and_verify_assets false
+          verified=false
+          for attempt in {1..12}; do
+            if gh release verify "$TAG_NAME" --repo "$REPOSITORY"; then
+              verified=true
+              break
+            fi
+            echo "release attestation not ready (attempt $attempt/12)" >&2
+            sleep 5
+          done
+          test "$verified" = true

@@ -4,13 +4,106 @@ Provides the consolidated Pkg class and its subclasses for Services, Application
 """
 
 import os
-import yaml
+import sys
 import time
 import inspect
+import threading
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-from jarvis_cd.core.config import Jarvis, load_class
+from typing import TYPE_CHECKING, Dict, Any, Callable, List, Optional, cast
+from jarvis_cd.core.config import Jarvis
 from jarvis_cd.util.hostfile import Hostfile
+
+if TYPE_CHECKING:
+    from jarvis_cd.progress import (
+        PackageProgressProvider,
+        ProgressObservation,
+        ProgressReporter,
+    )
+
+
+class _PackageProgressLineCallback:
+    """Serialize one provider stream and finalize it exactly once at EOF."""
+
+    def __init__(
+        self,
+        provider: Optional["PackageProgressProvider"],
+        reporter: "ProgressReporter",
+        *,
+        progress_path: Path,
+        execution_id: str,
+        package_name: str,
+        package_id: str,
+    ) -> None:
+        self._provider = provider
+        self._reporter = reporter
+        self._progress_path = progress_path
+        self._expected_identity = (execution_id, package_name, package_id)
+        self._lock = threading.Lock()
+        self._finalized = False
+        self._source: Optional[str] = None
+
+    def __call__(self, stream_name: str, line: str) -> None:
+        """Interpret one stdout line and persist validated observations."""
+        if stream_name != "stdout":
+            return
+        with self._lock:
+            if self._finalized:
+                raise RuntimeError("package progress callback is already finalized")
+            from jarvis_cd.progress import (
+                PROGRESS_LINE_PREFIX,
+                ProgressStore,
+                event_from_progress_line,
+            )
+
+            if line.strip().startswith(PROGRESS_LINE_PREFIX):
+                if self._source == "provider":
+                    raise ValueError(
+                        "package progress cannot mix provider and structured sources"
+                    )
+                event = event_from_progress_line(line)
+                if event is None:
+                    raise ValueError("structured package progress line was empty")
+                identity = (
+                    event.execution_id,
+                    event.package_name,
+                    event.package_id,
+                )
+                if identity != self._expected_identity:
+                    raise ValueError("structured package progress identity mismatch")
+                ProgressStore(self._progress_path).append(event)
+                self._source = "structured_stdout"
+                return
+            if self._source == "structured_stdout" or self._provider is None:
+                return
+            observations = self._provider.observe_progress(line)
+            if observations:
+                self._source = "provider"
+                self._persist(observations)
+
+    def finalize(self) -> None:
+        """Flush the provider's final fragment once after output capture closes."""
+        with self._lock:
+            if self._finalized:
+                return
+            if self._source != "structured_stdout" and self._provider is not None:
+                observations = self._provider.finalize_progress()
+                if observations:
+                    self._source = "provider"
+                    self._persist(observations)
+            self._finalized = True
+
+    def _persist(self, observations: list["ProgressObservation"]) -> None:
+        """Persist typed observations with JARVIS-owned identity and sequence."""
+        for observation in observations:
+            self._reporter.emit(
+                label=observation.label,
+                state=observation.state,
+                current=observation.current,
+                total=observation.total,
+                unit=observation.unit,
+                message=observation.message,
+                metadata=dict(observation.metadata),
+            )
 
 
 class Pkg:
@@ -18,7 +111,7 @@ class Pkg:
     Consolidated base class for all Jarvis packages.
     Provides common functionality and interface for services, applications, and interceptors.
     """
-    
+
     @classmethod
     def load_standalone(cls, package_spec: str):
         """
@@ -33,9 +126,9 @@ class Pkg:
         jarvis = Jarvis.get_instance()
 
         # Parse package specification
-        if '.' in package_spec:
+        if "." in package_spec:
             # Full specification like "builtin.ior"
-            import_parts = package_spec.split('.')
+            import_parts = package_spec.split(".")
             repo_name = import_parts[0]
             pkg_name = import_parts[1]
         else:
@@ -43,21 +136,22 @@ class Pkg:
             full_spec = jarvis.find_package(package_spec)
             if not full_spec:
                 raise ValueError(f"Package not found: {package_spec}")
-            import_parts = full_spec.split('.')
+            import_parts = full_spec.split(".")
             repo_name = import_parts[0]
             pkg_name = import_parts[1]
 
         # Determine class name (convert snake_case to PascalCase)
         import re
-        class_name = ''.join(word.capitalize() for word in re.split(r'[_-]', pkg_name))
+
+        class_name = "".join(word.capitalize() for word in re.split(r"[_-]", pkg_name))
 
         # Load class
-        if repo_name == 'builtin':
+        if repo_name == "builtin":
             repo_path = str(jarvis.get_builtin_repo_path())
         else:
             # Find repo path in registered repos
             repo_path = None
-            for registered_repo in jarvis.repos['repos']:
+            for registered_repo in jarvis.repos["repos"]:
                 if Path(registered_repo).name == repo_name:
                     repo_path = registered_repo
                     break
@@ -69,7 +163,9 @@ class Pkg:
         try:
             pkg_class = load_class(import_str, repo_path, class_name)
         except Exception as e:
-            raise ValueError(f"Failed to load package '{package_spec}': Error loading class {class_name} from {import_str}: {e}")
+            raise ValueError(
+                f"Failed to load package '{package_spec}': Error loading class {class_name} from {import_str}: {e}"
+            )
 
         if not pkg_class:
             raise ValueError(f"Package class not found: {class_name} in {import_str}")
@@ -92,7 +188,7 @@ class Pkg:
         pkg_instance._ensure_directories()
 
         return pkg_instance
-    
+
     def __init__(self, pipeline):
         """
         Initialize package with default values.
@@ -101,13 +197,13 @@ class Pkg:
         """
         self.jarvis = Jarvis.get_instance()
         self.pipeline = pipeline
-        self.pkg_dir = None          # Directory containing the package source (pkg.py file)
-        self.config_dir = None       # Directory for saving package configuration files
+        self.pkg_dir = None  # Directory containing the package source (pkg.py file)
+        self.config_dir = None  # Directory for saving package configuration files
         self.shared_dir = None
         self.private_dir = None
-        self.env = {}                # Base environment (everything except LD_PRELOAD)
-        self.mod_env = {}           # Modified environment (exact replica of env + LD_PRELOAD)
-        self.config = {'interceptors': {}}
+        self.env = {}  # Base environment (everything except LD_PRELOAD)
+        self.mod_env = {}  # Modified environment (exact replica of env + LD_PRELOAD)
+        self.config = {"interceptors": {}}
         self.pkg_type = None
         self.global_id = None
         self.pkg_id = None
@@ -136,16 +232,101 @@ class Pkg:
         :return: Hostfile object
         """
         # Check if package has a hostfile configured
-        hostfile_path = self.config.get('hostfile', '')
+        hostfile_path = self.config.get("hostfile", "")
         if hostfile_path:
             return Hostfile(path=hostfile_path)
 
         # Fall back to pipeline's hostfile
-        if hasattr(self.pipeline, 'get_hostfile'):
+        if hasattr(self.pipeline, "get_hostfile"):
             return self.pipeline.get_hostfile()
 
         # Fall back to global jarvis hostfile
         return self.jarvis.hostfile
+
+    def get_progress_provider(self) -> Optional["PackageProgressProvider"]:
+        """Load this package's optional sibling ``progress.py`` provider.
+
+        The convention works for packages loaded from a registered filesystem
+        repository as well as packages bundled in the JARVIS distribution.
+
+        :return: A package progress provider, or ``None`` when not implemented.
+        """
+        from jarvis_cd.progress import provider_from_package
+
+        return provider_from_package(self)
+
+    def bind_execution_progress(
+        self,
+        execution_id: str,
+        path: str | os.PathLike[str],
+    ) -> None:
+        """Bind package reporters to a JARVIS-owned execution sidecar.
+
+        Pipeline execution code must call this after assigning the execution ID
+        and before invoking package lifecycle methods. Package configuration is
+        deliberately not allowed to select the authoritative sidecar.
+
+        :param execution_id: Stable JARVIS execution identifier.
+        :param path: Absolute JSONL path inside the owned execution root.
+        """
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError("execution progress requires a non-empty execution ID")
+        progress_path = Path(path)
+        if not progress_path.is_absolute():
+            raise ValueError("execution progress path must be absolute")
+        values = {
+            "JARVIS_EXECUTION_ID": execution_id,
+            "JARVIS_PROGRESS_PATH": str(progress_path),
+            "JARVIS_PACKAGE_NAME": str(self.pkg_type),
+            "JARVIS_PACKAGE_ID": str(self.pkg_id),
+            "JARVIS_PROGRESS_TRANSPORT": "sidecar",
+        }
+        self.env.update(values)
+        self.mod_env.update(values)
+
+    def progress_line_callback(self) -> Optional[Callable[[str, str], None]]:
+        """Build a generic stdout-to-sidecar callback for this package.
+
+        Package-local providers interpret application output. Already
+        structured ``JARVIS_PROGRESS`` lines are accepted without a provider.
+        This helper owns event identity, sequencing, validation, persistence,
+        and EOF finalization.
+
+        :return: A line callback bound to this execution, or ``None``.
+        """
+        execution_id = self.mod_env.get("JARVIS_EXECUTION_ID")
+        progress_path = self.mod_env.get("JARVIS_PROGRESS_PATH")
+        package_name = self.mod_env.get("JARVIS_PACKAGE_NAME")
+        package_id = self.mod_env.get("JARVIS_PACKAGE_ID")
+        transport = self.mod_env.get("JARVIS_PROGRESS_TRANSPORT", "sidecar")
+        if not all(
+            isinstance(value, str) and value
+            for value in (execution_id, progress_path, package_name, package_id)
+        ):
+            return None
+        if transport not in {"sidecar", "stdout"}:
+            raise ValueError("package progress transport must be sidecar or stdout")
+        provider = self.get_progress_provider()
+        if provider is None and transport != "stdout":
+            return None
+
+        from jarvis_cd.progress import ProgressReporter
+
+        reporter = ProgressReporter(
+            package_name=cast(str, package_name),
+            package_id=cast(str, package_id),
+            execution_id=cast(str, execution_id),
+            path=cast(str, progress_path),
+        )
+
+        return _PackageProgressLineCallback(
+            provider,
+            reporter,
+            progress_path=Path(cast(str, progress_path)),
+            execution_id=cast(str, execution_id),
+            package_name=cast(str, package_name),
+            package_id=cast(str, package_id),
+        )
 
     def _init(self):
         """
@@ -155,15 +336,15 @@ class Pkg:
         Default values should almost always be None.
         """
         pass
-        
+
     def _configure_menu(self) -> List[Dict[str, Any]]:
         """
         Override this method to define configuration options.
-        
+
         :return: List of configuration option dictionaries
         """
         return []
-        
+
     def _configure(self, **kwargs):
         """
         Override this method to handle package configuration.
@@ -173,102 +354,101 @@ class Pkg:
         :param kwargs: Configuration parameters
         """
         self.update_config(kwargs, rebuild=False)
-        
+
     def configure_menu(self):
         """
         Get the complete configuration menu including common parameters.
         Returns the menu in argument dictionary format so parameters can be set from command line.
-        
+
         :return: List of configuration option dictionaries
         """
         # Get package-specific menu
         package_menu = self._configure_menu()
-        
+
         # Add common parameters that all packages should have
         common_menu = [
             {
-                'name': 'install_method',
-                'msg': "Installer to use for this package "
-                       "('pip', 'conda', 'spack', 'container'). Empty "
-                       "string defers to the pipeline's base_deploy_mode.",
-                'type': str,
-                'default': '',
+                "name": "install_method",
+                "msg": "Installer to use for this package "
+                "('pip', 'conda', 'spack', 'container'). Empty "
+                "string defers to the pipeline's base_deploy_mode.",
+                "type": str,
+                "default": "",
             },
             {
-                'name': 'install_query',
-                'msg': 'Package spec consumed by the installer (e.g. spack '
-                       'spec, pip requirement, conda package name).',
-                'type': str,
-                'default': '',
+                "name": "install_query",
+                "msg": "Package spec consumed by the installer (e.g. spack "
+                "spec, pip requirement, conda package name).",
+                "type": str,
+                "default": "",
             },
             {
-                'name': 'install',
-                'msg': 'Deprecated alias for install_query. Prefer '
-                       'install_query.',
-                'type': str,
-                'default': '',
+                "name": "install",
+                "msg": "Deprecated alias for install_query. Prefer install_query.",
+                "type": str,
+                "default": "",
             },
             {
-                'name': 'container_cache',
-                'msg': 'Use Docker layer cache when building containers (set false to force rebuild)',
-                'type': bool,
-                'default': True,
+                "name": "container_cache",
+                "msg": "Use Docker layer cache when building containers (set false to force rebuild)",
+                "type": bool,
+                "default": True,
             },
             {
-                'name': 'interceptors',
-                'msg': 'List of interceptor package names to apply',
-                'type': list,
-                'default': [],
-                'args': [
+                "name": "interceptors",
+                "msg": "List of interceptor package names to apply",
+                "type": list,
+                "default": [],
+                "args": [
                     {
-                        'name': 'interceptor_name',
-                        'msg': 'Name of an interceptor package',
-                        'type': str,
+                        "name": "interceptor_name",
+                        "msg": "Name of an interceptor package",
+                        "type": str,
                     }
-                ]
+                ],
             },
             {
-                'name': 'sleep',
-                'msg': 'Sleep time in seconds',
-                'type': int,
-                'default': 0,
+                "name": "sleep",
+                "msg": "Sleep time in seconds",
+                "type": int,
+                "default": 0,
             },
             {
-                'name': 'do_dbg',
-                'msg': 'Enable debug mode',
-                'type': bool,
-                'default': False,
+                "name": "do_dbg",
+                "msg": "Enable debug mode",
+                "type": bool,
+                "default": False,
             },
             {
-                'name': 'dbg_port',
-                'msg': 'Debug port number',
-                'type': int,
-                'default': 1234,
+                "name": "dbg_port",
+                "msg": "Debug port number",
+                "type": int,
+                "default": 1234,
             },
             {
-                'name': 'timeout',
-                'msg': 'Operation timeout in seconds',
-                'type': int,
-                'default': 300,
+                "name": "timeout",
+                "msg": "Operation timeout in seconds",
+                "type": int,
+                "default": 300,
             },
             {
-                'name': 'retry_count',
-                'msg': 'Number of retry attempts',
-                'type': int,
-                'default': 3,
+                "name": "retry_count",
+                "msg": "Number of retry attempts",
+                "type": int,
+                "default": 3,
             },
             {
-                'name': 'hide_output',
-                'msg': 'Hide command output',
-                'type': bool,
-                'default': False,
+                "name": "hide_output",
+                "msg": "Hide command output",
+                "type": bool,
+                "default": False,
             },
             {
-                'name': 'hostfile',
-                'msg': 'Path to hostfile (empty string means use pipeline hostfile)',
-                'type': str,
-                'default': '',
-            }
+                "name": "hostfile",
+                "msg": "Path to hostfile (empty string means use pipeline hostfile)",
+                "type": str,
+                "default": "",
+            },
         ]
 
         # Combine package-specific and common menus
@@ -282,7 +462,8 @@ class Pkg:
         :return: PkgArgParse instance
         """
         from jarvis_cd.util import PkgArgParse
-        pkg_name = getattr(self, 'pkg_id', None) or self.__class__.__name__
+
+        pkg_name = getattr(self, "pkg_id", None) or self.__class__.__name__
         return PkgArgParse(pkg_name, self.configure_menu())
 
     def configure(self, **kwargs):
@@ -329,7 +510,7 @@ class Pkg:
         :return: Delegate instance
         """
         # Check if we already have a delegate for this mode
-        delegate_key = f'_delegate_{deploy_mode}'
+        delegate_key = f"_delegate_{deploy_mode}"
         if hasattr(self, delegate_key) and getattr(self, delegate_key) is not None:
             return getattr(self, delegate_key)
 
@@ -338,14 +519,17 @@ class Pkg:
 
         # Build delegate class name: {BaseClassName}{DeployModeCapitalized}
         # e.g., 'Ior' + 'Container' = 'IorContainer'
-        deploy_mode_capitalized = ''.join(word.capitalize() for word in deploy_mode.split('_'))
+        deploy_mode_capitalized = "".join(
+            word.capitalize() for word in deploy_mode.split("_")
+        )
         delegate_class_name = f"{base_class_name}{deploy_mode_capitalized}"
 
         # Import the module dynamically relative to current package
         # e.g., if we're in builtin.ior.pkg, import builtin.ior.{deploy_mode}
         import importlib
+
         current_module = self.__class__.__module__  # e.g., 'builtin.ior.pkg'
-        package_path = current_module.rsplit('.', 1)[0]  # e.g., 'builtin.ior'
+        package_path = current_module.rsplit(".", 1)[0]  # e.g., 'builtin.ior'
         module_path = f"{package_path}.{deploy_mode}"
 
         try:
@@ -397,15 +581,39 @@ class Pkg:
         - private_dir: pipeline_name/pkg_id
         """
         if not self.config_dir or not self.shared_dir or not self.private_dir:
-            pkg_id = getattr(self, 'pkg_id', None) or self.__class__.__name__.lower()
+            pkg_id = getattr(self, "pkg_id", None) or self.__class__.__name__.lower()
 
             # Get directories from pipeline
-            pipeline_config_dir = self.jarvis.get_pipeline_dir(self.pipeline.name)
-            pipeline_shared_dir = self.jarvis.get_pipeline_shared_dir(self.pipeline.name)
-            pipeline_private_dir = self.jarvis.get_pipeline_private_dir(self.pipeline.name)
+            getters = [
+                getattr(self.pipeline, method, None)
+                for method in (
+                    "get_pipeline_config_dir",
+                    "get_pipeline_shared_dir",
+                    "get_pipeline_private_dir",
+                )
+            ]
+            scoped_roots = (
+                [getter() for getter in getters]
+                if all(callable(getter) for getter in getters)
+                else []
+            )
+            if len(scoped_roots) == 3 and all(
+                isinstance(root, (str, os.PathLike)) for root in scoped_roots
+            ):
+                pipeline_config_dir, pipeline_shared_dir, pipeline_private_dir = (
+                    Path(root) for root in scoped_roots
+                )
+            else:
+                pipeline_config_dir = self.jarvis.get_pipeline_dir(self.pipeline.name)
+                pipeline_shared_dir = self.jarvis.get_pipeline_shared_dir(
+                    self.pipeline.name
+                )
+                pipeline_private_dir = self.jarvis.get_pipeline_private_dir(
+                    self.pipeline.name
+                )
 
             if not self.config_dir:
-                self.config_dir = str(pipeline_config_dir / 'packages' / pkg_id)
+                self.config_dir = str(pipeline_config_dir / "packages" / pkg_id)
             if not self.shared_dir:
                 self.shared_dir = str(pipeline_shared_dir / pkg_id)
             if not self.private_dir:
@@ -415,10 +623,10 @@ class Pkg:
             for dir_path in [self.config_dir, self.shared_dir, self.private_dir]:
                 if dir_path and not Path(dir_path).exists():
                     Path(dir_path).mkdir(parents=True, exist_ok=True)
-            
+
             # Call user-defined initialization
             self._init()
-    
+
     def _detect_pkg_dir(self):
         """
         Detect the directory containing this package's source code (where pkg.py is located).
@@ -428,33 +636,37 @@ class Pkg:
             class_file = inspect.getfile(self.__class__)
             # Get the directory containing the package file
             self.pkg_dir = str(Path(class_file).parent)
-        except Exception as e:
+        except Exception:
             # Fallback: leave pkg_dir as None if detection fails
             pass
-            
+
     def _apply_menu_defaults(self):
         """
         Apply default values from the configuration menu to ensure all parameters have values.
         """
         menu = self.configure_menu()
         for item in menu:
-            param_name = item.get('name')
-            default_value = item.get('default')
-            if param_name and param_name not in self.config and default_value is not None:
+            param_name = item.get("name")
+            default_value = item.get("default")
+            if (
+                param_name
+                and param_name not in self.config
+                and default_value is not None
+            ):
                 self.config[param_name] = default_value
-        
+
     def update_config(self, new_config: Dict[str, Any], rebuild: bool = True):
         """
         Update package configuration.
-        
+
         :param new_config: New configuration values
         :param rebuild: Whether to rebuild configuration files
         """
         self.config.update(new_config)
-        
-        if rebuild and hasattr(self, '_configure'):
+
+        if rebuild and hasattr(self, "_configure"):
             self._configure(**self.config)
-            
+
     def start(self):
         """
         Start the package.
@@ -462,7 +674,7 @@ class Pkg:
         Override this method in package implementations.
         """
         pass
-        
+
     def stop(self):
         """
         Stop the package.
@@ -470,7 +682,7 @@ class Pkg:
         Override this method in package implementations.
         """
         pass
-        
+
     def kill(self):
         """
         Kill the package.
@@ -478,7 +690,7 @@ class Pkg:
         Override this method in package implementations.
         """
         pass
-        
+
     def clean(self):
         """
         Clean package data.
@@ -487,141 +699,143 @@ class Pkg:
         Override this method in package implementations.
         """
         pass
-        
+
     def status(self) -> str:
         """
         Override this method to return package status.
         Called during pipeline status operations.
-        
+
         :return: Status string
         """
         return "unknown"
-        
+
     def track_env(self, env_track_dict: Dict[str, str]):
         """
         Track environment variables.
-        
+
         :param env_track_dict: Dictionary of environment variables to track
         """
         # Add to env (but not LD_PRELOAD)
         for key, value in env_track_dict.items():
-            if key != 'LD_PRELOAD':
+            if key != "LD_PRELOAD":
                 self.env[key] = value
-        
+
         # mod_env is exact replica of env plus LD_PRELOAD
         self.mod_env = self.env.copy()
-        if 'LD_PRELOAD' in env_track_dict:
-            self.mod_env['LD_PRELOAD'] = env_track_dict['LD_PRELOAD']
-        
+        if "LD_PRELOAD" in env_track_dict:
+            self.mod_env["LD_PRELOAD"] = env_track_dict["LD_PRELOAD"]
+
     def prepend_env(self, env_name: str, val: str):
         """
         Prepend a value to an environment variable.
-        
+
         :param env_name: Environment variable name
         :param val: Value to prepend
         """
         # For LD_PRELOAD, only update mod_env
-        if env_name == 'LD_PRELOAD':
-            current_val = self.mod_env.get(env_name, '')
+        if env_name == "LD_PRELOAD":
+            current_val = self.mod_env.get(env_name, "")
             if current_val:
                 self.mod_env[env_name] = f"{val}:{current_val}"
             else:
                 self.mod_env[env_name] = val
         else:
             # For other variables, update env
-            current_val = self.env.get(env_name, '')
+            current_val = self.env.get(env_name, "")
             if current_val:
                 self.env[env_name] = f"{val}:{current_val}"
             else:
                 self.env[env_name] = val
-            
+
             # Keep mod_env in sync (exact replica of env + LD_PRELOAD)
             self.mod_env[env_name] = self.env[env_name]
-            
+
     def setenv(self, env_name: str, val: str):
         """
         Set an environment variable.
-        
+
         :param env_name: Environment variable name
         :param val: Value to set
         """
         # For LD_PRELOAD, only update mod_env
-        if env_name == 'LD_PRELOAD':
+        if env_name == "LD_PRELOAD":
             self.mod_env[env_name] = val
         else:
             # For other variables, update env
             self.env[env_name] = val
-            
+
             # Keep mod_env in sync (exact replica of env + LD_PRELOAD)
             self.mod_env[env_name] = val
 
     def find_library(self, library_name: str) -> Optional[str]:
         """
         Find a shared library by searching LD_LIBRARY_PATH and system paths.
-        
+
         :param library_name: Name of the library to find
         :return: Path to library if found, None otherwise
         """
         import shutil
-        
+
         # Generate possible library filenames
         lib_filenames = [
-            f"lib{library_name}.so",     # Standard shared library
-            f"{library_name}.so",        # Library name as-is with .so
-            f"lib{library_name}.a",      # Static library
-            library_name                 # Exact name as provided
+            f"lib{library_name}.so",  # Standard shared library
+            f"{library_name}.so",  # Library name as-is with .so
+            f"lib{library_name}.a",  # Static library
+            library_name,  # Exact name as provided
         ]
-        
+
         # Collect all library search paths in priority order
         search_paths = []
-        
+
         # 1. Package-specific environment (mod_env takes precedence over env)
-        mod_ld_path = self.mod_env.get('LD_LIBRARY_PATH')
+        mod_ld_path = self.mod_env.get("LD_LIBRARY_PATH")
         if mod_ld_path:
-            search_paths.extend(mod_ld_path.split(':'))
-        
-        env_ld_path = self.env.get('LD_LIBRARY_PATH')
+            search_paths.extend(mod_ld_path.split(os.pathsep))
+
+        env_ld_path = self.env.get("LD_LIBRARY_PATH")
         if env_ld_path:
-            search_paths.extend(env_ld_path.split(':'))
-            
+            search_paths.extend(env_ld_path.split(os.pathsep))
+
         # 2. System LD_LIBRARY_PATH
-        system_ld_path = os.environ.get('LD_LIBRARY_PATH')
+        system_ld_path = os.environ.get("LD_LIBRARY_PATH")
         if system_ld_path:
-            search_paths.extend(system_ld_path.split(':'))
-        
+            search_paths.extend(system_ld_path.split(os.pathsep))
+
         # 3. Common system library directories
-        search_paths.extend([
-            "/usr/lib",
-            "/usr/local/lib", 
-            "/usr/lib64",
-            "/usr/local/lib64",
-            "/lib",
-            "/lib64"
-        ])
-        
+        search_paths.extend(
+            [
+                "/usr/lib",
+                "/usr/local/lib",
+                "/usr/lib64",
+                "/usr/local/lib64",
+                "/lib",
+                "/lib64",
+            ]
+        )
+
         # Search for the library in all paths
         for search_path in search_paths:
             if not search_path:  # Skip empty paths
                 continue
-                
+
             search_dir = Path(search_path)
             if not search_dir.exists():
                 continue
-                
+
             for lib_filename in lib_filenames:
                 lib_path = search_dir / lib_filename
                 print(lib_path)
                 if lib_path.exists():
                     return str(lib_path)
-        
+
         # Fallback: try using shutil.which for executable-style lookup
         for lib_filename in lib_filenames:
             lib_path = shutil.which(lib_filename)
             if lib_path:
                 return lib_path
-                
+
         return None
-    
+
     def log(self, message, color=None):
         """
         Log a message with package context and optional color.
@@ -629,7 +843,7 @@ class Pkg:
         :param message: Message to log
         :param color: Color to use (from jarvis_cd.util.logger.Color enum), defaults to YELLOW for info messages
         """
-        from jarvis_cd.util.logger import logger, Color
+        from jarvis_cd.util.logger import logger
 
         formatted_message = f"[{self.__class__.__name__}] {message}"
 
@@ -638,31 +852,31 @@ class Pkg:
         else:
             # Default to yellow for info messages
             logger.warning(formatted_message)
-        
+
     def sleep(self, time_sec=None):
         """
         Sleep for a specified amount of time.
-        
+
         :param time_sec: Time to sleep in seconds. If not provided, uses self.config['sleep']
         """
         if time_sec is None:
-            time_sec = self.config.get('sleep', 0)
-            
+            time_sec = self.config.get("sleep", 0)
+
         self.log(f"Sleeping for {time_sec} seconds")
         if time_sec > 0:
             time.sleep(time_sec)
-            
+
     def copy_template_file(self, source_path, dest_path, replacements=None):
         """
         Copy a template file from source to destination, replacing template constants.
-        
+
         Template constants have the format ##CONSTANT_NAME## and are replaced with
         values from the replacements dictionary.
-        
+
         :param source_path: Path to the source template file
         :param dest_path: Path where the processed file should be saved
         :param replacements: Dictionary of replacements {CONSTANT_NAME: value}
-        
+
         Example:
             self.copy_template_file(f'{self.pkg_dir}/config/hermes.xml',
                                    self.adios2_xml_path,
@@ -671,35 +885,35 @@ class Pkg:
         try:
             if replacements is None:
                 replacements = {}
-                
+
             # Read the template file
-            with open(source_path, 'r') as f:
+            with open(source_path, "r") as f:
                 content = f.read()
-            
+
             # Replace template constants
             for key, value in replacements.items():
                 template_token = f"##{key}##"
                 content = content.replace(template_token, str(value))
-            
+
             # Ensure destination directory exists
             dest_dir = Path(dest_path).parent
             dest_dir.mkdir(parents=True, exist_ok=True)
-            
+
             # Write the processed content to destination
-            with open(dest_path, 'w') as f:
+            with open(dest_path, "w") as f:
                 f.write(content)
-                
-            self.log(f"Copied template file {source_path} -> {dest_path} with {len(replacements)} replacements")
-            
+
+            self.log(
+                f"Copied template file {source_path} -> {dest_path} with {len(replacements)} replacements"
+            )
+
         except FileNotFoundError:
             self.log(f"Error: Template file not found: {source_path}")
             raise
         except Exception as e:
             self.log(f"Error copying template file {source_path} -> {dest_path}: {e}")
             raise
-            
-        
-    
+
     # ------------------------------------------------------------------
     # Container support — properties
     # ------------------------------------------------------------------
@@ -712,11 +926,11 @@ class Pkg:
                        When None, uses self._build_suffix (set by build_phase).
         :return: e.g. 'jarvis-build-lammps-kokkos-a100'
         """
-        pkg_name = self.pkg_type.split('.')[-1].replace('_', '-')
-        s = suffix if suffix is not None else getattr(self, '_build_suffix', '')
+        pkg_name = self.pkg_type.split(".")[-1].replace("_", "-")
+        s = suffix if suffix is not None else getattr(self, "_build_suffix", "")
         if s:
-            return f'jarvis-build-{pkg_name}-{s}'
-        return f'jarvis-build-{pkg_name}'
+            return f"jarvis-build-{pkg_name}-{s}"
+        return f"jarvis-build-{pkg_name}"
 
     def deploy_image_name(self, suffix=None) -> str:
         """
@@ -725,10 +939,19 @@ class Pkg:
         :param suffix: Image suffix identifying this configuration.
                        When None, uses self._deploy_suffix (set by build_deploy_phase).
         """
-        base = self.pipeline.name if hasattr(self, 'pipeline') and self.pipeline else 'jarvis-deploy'
-        s = suffix if suffix is not None else getattr(self, '_deploy_suffix', '')
+        pipeline = getattr(self, "pipeline", None)
+        base = (
+            getattr(
+                pipeline,
+                "execution_container_name",
+                getattr(pipeline, "name", "jarvis-deploy"),
+            )
+            if pipeline
+            else "jarvis-deploy"
+        )
+        s = suffix if suffix is not None else getattr(self, "_deploy_suffix", "")
         if s:
-            return f'{base}-{s}'
+            return f"{base}-{s}"
         return base
 
     @property
@@ -739,9 +962,9 @@ class Pkg:
         """
         mounts = []
         if self.shared_dir:
-            mounts.append(f'{self.shared_dir}:{self.shared_dir}')
+            mounts.append(f"{self.shared_dir}:{self.shared_dir}")
         if self.private_dir:
-            mounts.append(f'{self.private_dir}:{self.private_dir}')
+            mounts.append(f"{self.private_dir}:{self.private_dir}")
         return mounts
 
     @property
@@ -749,9 +972,9 @@ class Pkg:
         """SSH port for reaching container nodes.
         Returns the pipeline's container_ssh_port when the pipeline is
         containerized, otherwise the default SSH port (22)."""
-        if hasattr(self, 'pipeline') and self.pipeline:
+        if hasattr(self, "pipeline") and self.pipeline:
             if self.pipeline._has_containerized_packages():
-                return getattr(self.pipeline, 'container_ssh_port', 22)
+                return getattr(self.pipeline, "container_ssh_port", 22)
         return 22
 
     @property
@@ -763,21 +986,22 @@ class Pkg:
         wrp_cte_libfuse running on the host while the workload runs in
         the SIF).
         """
-        if hasattr(self, 'pipeline') and self.pipeline:
-            if self.config.get('deploy_mode') == 'container':
-                return getattr(self.pipeline, 'container_engine', 'none')
-        return 'none'
+        if hasattr(self, "pipeline") and self.pipeline:
+            if self.config.get("deploy_mode") == "container":
+                return getattr(self.pipeline, "container_engine", "none")
+        return "none"
 
     @property
     def _build_engine(self) -> str:
         """Get the engine to use for building (apptainer needs docker/podman as intermediate)."""
         engine = self._container_engine
-        if engine == 'apptainer':
+        if engine == "apptainer":
             import shutil
-            if shutil.which('docker'):
-                return 'docker'
-            elif shutil.which('podman'):
-                return 'podman'
+
+            if shutil.which("docker"):
+                return "docker"
+            elif shutil.which("podman"):
+                return "podman"
             else:
                 raise RuntimeError(
                     "Apptainer requires docker or podman for the build phase. "
@@ -800,12 +1024,13 @@ class Pkg:
         :return: File content with substitutions applied
         """
         import os
+
         path = os.path.join(self.pkg_dir, filename)
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             content = f.read()
         if replacements:
             for key, value in replacements.items():
-                content = content.replace(f'##{key}##', str(value))
+                content = content.replace(f"##{key}##", str(value))
         return content
 
     # Keep old name as alias for backwards compatibility
@@ -868,20 +1093,21 @@ class Pkg:
                            callers are migrated.
         :return: True if the image exists
         """
-        if engine == 'apptainer':
+        if engine == "apptainer":
             from pathlib import Path
+
             sif_root = sif_dir or shared_dir
             if not sif_root:
                 return False
-            sif = Path(sif_root) / f'{image_name}.sif'
+            sif = Path(sif_root) / f"{image_name}.sif"
             return sif.exists()
         # docker / podman
         from jarvis_cd.shell import Exec, LocalExecInfo
+
         result = Exec(
-            f'{engine} image inspect {image_name}',
-            LocalExecInfo(hide_output=True)
+            f"{engine} image inspect {image_name}", LocalExecInfo(hide_output=True)
         ).run()
-        return result.exit_code.get('localhost', 1) == 0
+        return result.exit_code.get("localhost", 1) == 0
 
     def show_build_script(self):
         """
@@ -891,7 +1117,7 @@ class Pkg:
         packages that gate generation on deploy_mode).
         """
         # Most _build_phase implementations require deploy_mode='container'
-        self.config.setdefault('deploy_mode', 'container')
+        self.config.setdefault("deploy_mode", "container")
 
         try:
             result = self._build_phase()
@@ -901,20 +1127,20 @@ class Pkg:
         else:
             err = None
 
-        content = ''
-        suffix = ''
+        content = ""
+        suffix = ""
         if result and isinstance(result, tuple):
-            content, suffix = (result + ('',))[:2]
+            content, suffix = (result + ("",))[:2]
 
         if not content and self.pkg_dir:
-            raw = Path(self.pkg_dir) / 'build.sh'
+            raw = Path(self.pkg_dir) / "build.sh"
             if raw.exists():
                 print(f"=== build.sh for {self.__class__.__name__} (raw template) ===")
                 print(f"Location: {raw}")
                 if err:
                     print(f"Note: _build_phase() raised {type(err).__name__}: {err}")
                 print()
-                print(raw.read_text(encoding='utf-8'))
+                print(raw.read_text(encoding="utf-8"))
                 return
 
         if content:
@@ -936,7 +1162,7 @@ class Pkg:
         deploy image for this package. Falls back to the raw Dockerfile.deploy
         on disk when _build_deploy_phase() returns None or empty.
         """
-        self.config.setdefault('deploy_mode', 'container')
+        self.config.setdefault("deploy_mode", "container")
 
         try:
             result = self._build_deploy_phase()
@@ -946,20 +1172,24 @@ class Pkg:
         else:
             err = None
 
-        content = ''
-        suffix = ''
+        content = ""
+        suffix = ""
         if result and isinstance(result, tuple):
-            content, suffix = (result + ('',))[:2]
+            content, suffix = (result + ("",))[:2]
 
         if not content and self.pkg_dir:
-            raw = Path(self.pkg_dir) / 'Dockerfile.deploy'
+            raw = Path(self.pkg_dir) / "Dockerfile.deploy"
             if raw.exists():
-                print(f"=== Dockerfile.deploy for {self.__class__.__name__} (raw template) ===")
+                print(
+                    f"=== Dockerfile.deploy for {self.__class__.__name__} (raw template) ==="
+                )
                 print(f"Location: {raw}")
                 if err:
-                    print(f"Note: _build_deploy_phase() raised {type(err).__name__}: {err}")
+                    print(
+                        f"Note: _build_deploy_phase() raised {type(err).__name__}: {err}"
+                    )
                 print()
-                print(raw.read_text(encoding='utf-8'))
+                print(raw.read_text(encoding="utf-8"))
                 return
 
         if content:
@@ -982,15 +1212,15 @@ class Pkg:
         if not self.pkg_dir:
             print("Package directory not set - cannot locate README")
             return
-            
-        readme_path = Path(self.pkg_dir) / 'README.md'
-        
+
+        readme_path = Path(self.pkg_dir) / "README.md"
+
         if readme_path.exists():
             print(f"=== README for {self.__class__.__name__} ===")
             print(f"Location: {readme_path}")
             print()
             try:
-                with open(readme_path, 'r', encoding='utf-8') as f:
+                with open(readme_path, "r", encoding="utf-8") as f:
                     content = f.read()
                 print(content)
             except Exception as e:
@@ -998,53 +1228,53 @@ class Pkg:
         else:
             print(f"No README found for package {self.__class__.__name__}")
             print(f"Expected location: {readme_path}")
-    
+
     def show_paths(self, path_flags: Dict[str, bool]):
         """
         Show directory paths based on flags.
-        
+
         :param path_flags: Dictionary of path flags to show
         """
         try:
             # Ensure directories are set
             self._ensure_directories()
-            
+
             paths_to_show = []
-            
+
             # Check each flag and add corresponding paths
-            if path_flags.get('conf'):
+            if path_flags.get("conf"):
                 if self.config_dir:
                     paths_to_show.append(f"{self.config_dir}/config.yaml")
-                    
-            if path_flags.get('env'):
+
+            if path_flags.get("env"):
                 if self.config_dir:
                     paths_to_show.append(f"{self.config_dir}/env.yaml")
-                    
-            if path_flags.get('mod_env'):
+
+            if path_flags.get("mod_env"):
                 if self.config_dir:
                     paths_to_show.append(f"{self.config_dir}/mod_env.yaml")
-                    
-            if path_flags.get('conf_dir'):
+
+            if path_flags.get("conf_dir"):
                 if self.config_dir:
                     paths_to_show.append(self.config_dir)
-                    
-            if path_flags.get('shared_dir'):
+
+            if path_flags.get("shared_dir"):
                 if self.shared_dir:
                     paths_to_show.append(self.shared_dir)
-                    
-            if path_flags.get('priv_dir'):
+
+            if path_flags.get("priv_dir"):
                 if self.private_dir:
                     paths_to_show.append(self.private_dir)
-                    
-            if path_flags.get('pkg_dir'):
+
+            if path_flags.get("pkg_dir"):
                 if self.pkg_dir:
                     paths_to_show.append(self.pkg_dir)
-            
+
             # Print only the paths, one per line (for shell usage)
             for path in paths_to_show:
                 if path:  # Only print non-None paths
                     print(path)
-                    
+
         except Exception as e:
             print(f"Error getting package paths: {e}", file=sys.stderr)
 
@@ -1057,7 +1287,7 @@ class Service(Pkg):
 
     def __init__(self, pipeline):
         super().__init__(pipeline=pipeline)
-        
+
     def _init(self):
         """
         Initialize service-specific variables.
@@ -1121,14 +1351,14 @@ class Interceptor(Pkg):
 
     def __init__(self, pipeline):
         super().__init__(pipeline=pipeline)
-        
+
     def _init(self):
         """
         Initialize interceptor-specific variables.
         Override in subclasses.
         """
         pass
-        
+
     def modify_env(self):
         """
         Override this method to modify the environment for interception.

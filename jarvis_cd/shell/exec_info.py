@@ -2,13 +2,14 @@
 Execution information classes for Jarvis shell execution.
 Contains ExecType enums and ExecInfo data structures.
 """
+
 from enum import Enum
-from typing import Dict, Any, Optional, List, Union
-from pathlib import Path
+from typing import Callable, Optional
 
 
 class ExecType(Enum):
     """Execution types supported by Jarvis"""
+
     LOCAL = "local"
     SSH = "ssh"
     PSSH = "pssh"
@@ -50,18 +51,41 @@ class ExecInfo:
         if mpi_cmd is not None:
             cls._default_mpi_cmd = mpi_cmd or None
 
-    def __init__(self, exec_type=ExecType.LOCAL, nprocs=None, ppn=None,
-                 user=None, pkey=None, port=None,
-                 hostfile=None, env=None,
-                 sleep_ms=0, sudo=False, sudoenv=True, cwd=None,
-                 collect_output=None, pipe_stdout=None, pipe_stderr=None,
-                 hide_output=None, exec_async=False, stdin=None,
-                 strict_ssh=False, timeout=None,
-                 container='none', gpu=False, container_image=None,
-                 shared_dir=None, private_dir=None, bind_mounts=None,
-                 dry_run=False,
-                 ssh_cmd=None, pssh_cmd=None, mpi_cmd=None,
-                 **kwargs):
+    def __init__(
+        self,
+        exec_type=ExecType.LOCAL,
+        nprocs=None,
+        ppn=None,
+        user=None,
+        pkey=None,
+        port=None,
+        hostfile=None,
+        env=None,
+        sleep_ms=0,
+        sudo=False,
+        sudoenv=True,
+        cwd=None,
+        collect_output=None,
+        pipe_stdout=None,
+        pipe_stderr=None,
+        hide_output=None,
+        exec_async=False,
+        stdin=None,
+        strict_ssh=False,
+        timeout=None,
+        container="none",
+        gpu=False,
+        container_image=None,
+        shared_dir=None,
+        private_dir=None,
+        bind_mounts=None,
+        dry_run=False,
+        ssh_cmd=None,
+        pssh_cmd=None,
+        mpi_cmd=None,
+        line_callback: Optional[Callable[[str, str], None]] = None,
+        **kwargs,
+    ):
         """
         Initialize execution information.
 
@@ -100,6 +124,10 @@ class ExecInfo:
             bind-mount into the container (docker/podman: -v, apptainer: --bind).
         :param dry_run: If True, build the command string but do not execute it.
             Used by Exec to obtain the MPI command string for container wrapping.
+        :param line_callback: Optional callback receiving ``(stream_name, line)``
+            for each stdout/stderr line as it is observed. If the callback
+            exposes ``finalize()``, execution invokes it once after both output
+            streams close. Callback failures terminate the owned process.
         :param kwargs: Additional unknown parameters (silently ignored)
         """
         self.exec_type = exec_type
@@ -129,25 +157,23 @@ class ExecInfo:
         self.private_dir = private_dir
         self.bind_mounts = bind_mounts or []
         self.dry_run = dry_run
+        self.line_callback = line_callback
 
         # Launcher overrides. None means "use the built-in default"
         # (``ssh`` / ``pssh`` / ``mpiexec``). Set per-instance via kwargs
         # or globally via ``ExecInfo.set_launcher_defaults`` (the pipeline
         # loader calls that after reading top-level ssh_cmd/pssh_cmd/
         # mpi_cmd from YAML).
-        self.ssh_cmd = (ssh_cmd if ssh_cmd is not None
-                        else ExecInfo._default_ssh_cmd)
-        self.pssh_cmd = (pssh_cmd if pssh_cmd is not None
-                         else ExecInfo._default_pssh_cmd)
-        self.mpi_cmd = (mpi_cmd if mpi_cmd is not None
-                        else ExecInfo._default_mpi_cmd)
+        self.ssh_cmd = ssh_cmd if ssh_cmd is not None else ExecInfo._default_ssh_cmd
+        self.pssh_cmd = pssh_cmd if pssh_cmd is not None else ExecInfo._default_pssh_cmd
+        self.mpi_cmd = mpi_cmd if mpi_cmd is not None else ExecInfo._default_mpi_cmd
 
         # Basic environment for process execution (without LD_PRELOAD)
         # This is used for launching MPI itself, not the MPI processes
         self.basic_env = self.env.copy()
-        if 'LD_PRELOAD' in self.basic_env:
-            del self.basic_env['LD_PRELOAD']
-        
+        if "LD_PRELOAD" in self.basic_env:
+            del self.basic_env["LD_PRELOAD"]
+
     def mod(self, **kwargs):
         """
         Create a modified copy of this ExecInfo with updated parameters.
@@ -157,14 +183,39 @@ class ExecInfo:
         """
         # Create a copy of current attributes
         current_attrs = {}
-        for attr in ['exec_type', 'nprocs', 'ppn', 'user', 'pkey', 'port',
-                     'hostfile', 'env', 'sleep_ms', 'sudo', 'sudoenv', 'cwd',
-                     'collect_output', 'pipe_stdout', 'pipe_stderr', 'hide_output',
-                     'exec_async', 'stdin', 'strict_ssh', 'timeout',
-                     'container', 'gpu', 'container_image',
-                     'shared_dir', 'private_dir', 'bind_mounts',
-                     'dry_run',
-                     'ssh_cmd', 'pssh_cmd', 'mpi_cmd']:
+        for attr in [
+            "exec_type",
+            "nprocs",
+            "ppn",
+            "user",
+            "pkey",
+            "port",
+            "hostfile",
+            "env",
+            "sleep_ms",
+            "sudo",
+            "sudoenv",
+            "cwd",
+            "collect_output",
+            "pipe_stdout",
+            "pipe_stderr",
+            "hide_output",
+            "exec_async",
+            "stdin",
+            "strict_ssh",
+            "timeout",
+            "container",
+            "gpu",
+            "container_image",
+            "shared_dir",
+            "private_dir",
+            "bind_mounts",
+            "dry_run",
+            "ssh_cmd",
+            "pssh_cmd",
+            "mpi_cmd",
+            "line_callback",
+        ]:
             current_attrs[attr] = getattr(self, attr)
 
         # Update with new values
@@ -175,41 +226,41 @@ class ExecInfo:
 
 class SshExecInfo(ExecInfo):
     """SSH-specific execution information"""
-    
+
     def __init__(self, **kwargs):
         super().__init__(exec_type=ExecType.SSH, **kwargs)
 
 
 class PsshExecInfo(ExecInfo):
     """PSSH-specific execution information"""
-    
+
     def __init__(self, **kwargs):
         super().__init__(exec_type=ExecType.PSSH, **kwargs)
 
 
 class MpiExecInfo(ExecInfo):
     """MPI-specific execution information"""
-    
+
     def __init__(self, **kwargs):
         super().__init__(exec_type=ExecType.MPI, **kwargs)
 
 
 class LocalExecInfo(ExecInfo):
     """Local execution information"""
-    
+
     def __init__(self, **kwargs):
         super().__init__(exec_type=ExecType.LOCAL, **kwargs)
 
 
 class ScpExecInfo(ExecInfo):
     """SCP-specific execution information"""
-    
+
     def __init__(self, **kwargs):
         super().__init__(exec_type=ExecType.SCP, **kwargs)
 
 
 class PscpExecInfo(ExecInfo):
     """PSCP-specific execution information"""
-    
+
     def __init__(self, **kwargs):
         super().__init__(exec_type=ExecType.PSCP, **kwargs)

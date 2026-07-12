@@ -3,6 +3,10 @@ This module provides classes and methods to launch the LAMMPS application.
 LAMMPS (Large-scale Atomic/Molecular Massively Parallel Simulator) is a
 classical molecular-dynamics code from Sandia National Laboratories.
 """
+
+import os
+import shlex
+
 from jarvis_cd.core.pkg import Application
 from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
@@ -23,76 +27,76 @@ class Lammps(Application):
     def _configure_menu(self):
         return [
             {
-                'name': 'nprocs',
-                'msg': 'Number of MPI processes',
-                'type': int,
-                'default': 4,
+                "name": "nprocs",
+                "msg": "Number of MPI processes",
+                "type": int,
+                "default": 4,
             },
             {
-                'name': 'ppn',
-                'msg': 'Processes per node',
-                'type': int,
-                'default': 4,
+                "name": "ppn",
+                "msg": "Processes per node",
+                "type": int,
+                "default": 4,
             },
             {
-                'name': 'script',
-                'msg': 'Path to LAMMPS input script (e.g., in.lj)',
-                'type': str,
-                'default': None,
+                "name": "script",
+                "msg": "Path to LAMMPS input script (e.g., in.lj)",
+                "type": str,
+                "default": None,
             },
             {
-                'name': 'lmp_bin',
-                'msg': 'Path to LAMMPS binary (default: lmp in PATH)',
-                'type': str,
-                'default': 'lmp',
+                "name": "lmp_bin",
+                "msg": "Path to LAMMPS binary (default: lmp in PATH)",
+                "type": str,
+                "default": "lmp",
             },
             {
-                'name': 'cuda_arch',
-                'msg': 'CUDA architecture code (80=A100, 90=H100, 70=V100)',
-                'type': int,
-                'default': 80,
+                "name": "cuda_arch",
+                "msg": "CUDA architecture code (80=A100, 90=H100, 70=V100)",
+                "type": int,
+                "default": 80,
             },
             {
-                'name': 'base_image',
-                'msg': 'Base Docker image for build container',
-                'type': str,
-                'default': 'sci-hpc-base',
+                "name": "base_image",
+                "msg": "Base Docker image for build container",
+                "type": str,
+                "default": "sci-hpc-base",
             },
             {
-                'name': 'out',
-                'msg': 'Output directory for results',
-                'type': str,
-                'default': '/tmp/lammps_out',
+                "name": "out",
+                "msg": "Output directory for results",
+                "type": str,
+                "default": "/tmp/lammps_out",
             },
             {
-                'name': 'kokkos_gpu',
-                'msg': 'Enable Kokkos GPU (CUDA) acceleration',
-                'type': bool,
-                'default': True,
+                "name": "kokkos_gpu",
+                "msg": "Enable Kokkos GPU (CUDA) acceleration",
+                "type": bool,
+                "default": True,
             },
             {
-                'name': 'num_gpus',
-                'msg': 'Number of GPUs per node',
-                'type': int,
-                'default': 1,
+                "name": "num_gpus",
+                "msg": "Number of GPUs per node",
+                "type": int,
+                "default": 1,
             },
             {
-                'name': 'io_dump_interval',
-                'msg': 'If >0, auto-generate LJ input with dump every N steps',
-                'type': int,
-                'default': 0,
+                "name": "io_dump_interval",
+                "msg": "If >0, auto-generate LJ input with dump every N steps",
+                "type": int,
+                "default": 0,
             },
             {
-                'name': 'io_lattice_size',
-                'msg': 'FCC lattice size per dim (4*N^3 atoms) for auto-generated IO input',
-                'type': int,
-                'default': 80,
+                "name": "io_lattice_size",
+                "msg": "FCC lattice size per dim (4*N^3 atoms) for auto-generated IO input",
+                "type": int,
+                "default": 80,
             },
             {
-                'name': 'io_run_steps',
-                'msg': 'Total steps for auto-generated IO input',
-                'type': int,
-                'default': 5000,
+                "name": "io_run_steps",
+                "msg": "Total steps for auto-generated IO input",
+                "type": int,
+                "default": 5000,
             },
         ]
 
@@ -101,38 +105,45 @@ class Lammps(Application):
     # ------------------------------------------------------------------
 
     def _build_phase(self):
-        if self.config.get('deploy_mode') != 'container':
+        if self.config.get("deploy_mode") != "container":
             return None
-        base = self.config.get('base_image', 'sci-hpc-base')
-        use_gpu = self.config.get('kokkos_gpu', True)
-        cuda_arch = self.config.get('cuda_arch', 80)
+        base = self.config.get("base_image", "sci-hpc-base")
+        use_gpu = self.config.get("kokkos_gpu", True)
+        cuda_arch = self.config.get("cuda_arch", 80)
         if use_gpu:
             cmake_extra = (
-                f'-DPKG_KOKKOS=ON '
-                f'-DKokkos_ENABLE_CUDA=ON '
+                f"-DPKG_KOKKOS=ON "
+                f"-DKokkos_ENABLE_CUDA=ON "
                 f'"-DKokkos_ARCH_AMPERE{cuda_arch}=ON" '
             )
-            suffix = f'kokkos-gpu-{cuda_arch}'
+            suffix = f"kokkos-gpu-{cuda_arch}"
         else:
-            cmake_extra = ''
-            suffix = 'cpu'
-        content = self._read_build_script('build.sh', {
-            'BASE_IMAGE': base,
-            'CMAKE_EXTRA': cmake_extra,
-        })
+            cmake_extra = ""
+            suffix = "cpu"
+        content = self._read_build_script(
+            "build.sh",
+            {
+                "BASE_IMAGE": base,
+                "CMAKE_EXTRA": cmake_extra,
+            },
+        )
         return content, suffix
 
     def _build_deploy_phase(self):
-        if self.config.get('deploy_mode') != 'container':
+        if self.config.get("deploy_mode") != "container":
             return None
-        use_gpu = self.config.get('kokkos_gpu', True)
-        deploy_base = ('nvidia/cuda:12.6.0-runtime-ubuntu24.04'
-                       if use_gpu else 'ubuntu:24.04')
-        suffix = getattr(self, '_build_suffix', '')
-        content = self._read_dockerfile('Dockerfile.deploy', {
-            'BUILD_IMAGE': self.build_image_name(),
-            'DEPLOY_BASE': deploy_base,
-        })
+        use_gpu = self.config.get("kokkos_gpu", True)
+        deploy_base = (
+            "nvidia/cuda:12.6.0-runtime-ubuntu24.04" if use_gpu else "ubuntu:24.04"
+        )
+        suffix = getattr(self, "_build_suffix", "")
+        content = self._read_dockerfile(
+            "Dockerfile.deploy",
+            {
+                "BUILD_IMAGE": self.build_image_name(),
+                "DEPLOY_BASE": deploy_base,
+            },
+        )
         return content, suffix
 
     # ------------------------------------------------------------------
@@ -150,14 +161,47 @@ class Lammps(Application):
         """
         super()._configure(**kwargs)
 
-        if self.config.get('deploy_mode') == 'default':
-            if self.config['out']:
-                Mkdir(self.config['out'],
-                      PsshExecInfo(hostfile=self.hostfile, env=self.env)).run()
+        if self.config.get("deploy_mode") == "default":
+            if self.config["out"]:
+                Mkdir(
+                    self.config["out"],
+                    PsshExecInfo(hostfile=self.hostfile, env=self.env),
+                ).run()
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
+
+    def _log_path(self) -> str:
+        """Return the deterministic package-owned LAMMPS thermo log path."""
+        output_dir = os.path.expandvars(self.config.get("out") or ".")
+        return os.path.join(os.path.abspath(output_dir), "log.lammps")
+
+    def _remove_stale_log(self) -> None:
+        """Remove the previous log before relay polling and LAMMPS startup."""
+        exec_args = {
+            "hostfile": self.hostfile,
+            "env": self.mod_env,
+        }
+        if self.config.get("deploy_mode") == "container":
+            exec_args.update(
+                {
+                    "container": self._container_engine,
+                    "container_image": self.deploy_image_name(),
+                    "gpu": self.config.get("kokkos_gpu", False),
+                    "private_dir": self.private_dir,
+                    "shared_dir": self.shared_dir,
+                }
+            )
+        cleanup = Exec(
+            f"rm -f {shlex.quote(self._log_path())}",
+            PsshExecInfo(**exec_args),
+        ).run()
+        failures = {host: code for host, code in cleanup.exit_code.items() if code != 0}
+        if failures:
+            raise RuntimeError(
+                f"Failed to remove stale LAMMPS log {self._log_path()}: {failures}"
+            )
 
     def start(self):
         """
@@ -166,17 +210,19 @@ class Lammps(Application):
         Branches on deploy_mode: uses MpiExecInfo with container engine for
         container mode, MpiExecInfo with hostfile for default mode.
         """
-        if self.config.get('deploy_mode') == 'container':
-            script_path = self.config.get('script')
-            if self.config.get('io_dump_interval', 0) > 0:
-                import os
-                n = self.config.get('io_lattice_size', 20)
-                steps = self.config.get('io_run_steps', 100)
-                interval = self.config['io_dump_interval']
-                out_dir = self.config.get('out', '/tmp/lammps_out')
+        self._remove_stale_log()
+        line_callback = self.progress_line_callback()
+        if self.config.get("deploy_mode") == "container":
+            script_path = self.config.get("script")
+            if self.config.get("io_dump_interval", 0) > 0:
+                n = self.config.get("io_lattice_size", 20)
+                steps = self.config.get("io_run_steps", 100)
+                interval = self.config["io_dump_interval"]
+                out_dir = self.config.get("out", "/tmp/lammps_out")
                 script_path = os.path.join(
-                    str(self.shared_dir), 'generated_io_input.lmp')
-                with open(script_path, 'w') as f:
+                    str(self.shared_dir), "generated_io_input.lmp"
+                )
+                with open(script_path, "w") as f:
                     f.write(
                         f"shell mkdir -p {out_dir}\n"
                         f"units lj\natom_style atomic\n"
@@ -196,39 +242,61 @@ class Lammps(Application):
                         f"thermo {interval}\n"
                         f"timestep 0.005\nrun {steps}\n"
                     )
-            cmd = ['/usr/local/bin/lmp']
+            cmd = ["/usr/local/bin/lmp", f"-log {shlex.quote(self._log_path())}"]
             if script_path:
-                cmd.append(f"-in {script_path}")
-            if self.config.get('kokkos_gpu'):
-                n_gpus = self.config.get('num_gpus', 1)
-                cmd += [f'-k on g {n_gpus}', '-sf kk', '-pk kokkos cuda/aware on']
+                cmd.append(f"-in {shlex.quote(os.path.expandvars(script_path))}")
+            if self.config.get("kokkos_gpu"):
+                n_gpus = self.config.get("num_gpus", 1)
+                cmd += [f"-k on g {n_gpus}", "-sf kk", "-pk kokkos cuda/aware on"]
 
-            Exec(' '.join(cmd), MpiExecInfo(
-                nprocs=self.config['nprocs'],
-                ppn=self.config['ppn'],
-                hostfile=self.hostfile,
-                port=self.ssh_port,
-                container=self._container_engine,
-                container_image=self.deploy_image_name(),
-                shared_dir=self.shared_dir,
-                private_dir=self.private_dir,
-                gpu=self.config.get('kokkos_gpu', False),
-                env=self.mod_env,
-            )).run()
+            lammps_command = " ".join(cmd)
+            output_dir = shlex.quote(os.path.dirname(self._log_path()))
+            container_command = shlex.quote(
+                f"mkdir -p {output_dir} && exec {lammps_command}"
+            )
+            result = Exec(
+                f"bash -c {container_command}",
+                MpiExecInfo(
+                    nprocs=self.config["nprocs"],
+                    ppn=self.config["ppn"],
+                    hostfile=self.hostfile,
+                    port=self.ssh_port,
+                    container=self._container_engine,
+                    container_image=self.deploy_image_name(),
+                    shared_dir=self.shared_dir,
+                    private_dir=self.private_dir,
+                    gpu=self.config.get("kokkos_gpu", False),
+                    env=self.mod_env,
+                    line_callback=line_callback,
+                ),
+            ).run()
         else:
-            cmd = [self.config['lmp_bin']]
-            if self.config['script']:
-                cmd.append(f"-in {self.config['script']}")
-            if self.config.get('kokkos_gpu'):
-                n_gpus = self.config.get('num_gpus', 1)
-                cmd += [f'-k on g {n_gpus}', '-sf kk', '-pk kokkos cuda/aware on']
+            cmd = [
+                self.config["lmp_bin"],
+                f"-log {shlex.quote(self._log_path())}",
+            ]
+            if self.config["script"]:
+                cmd.append(
+                    f"-in {shlex.quote(os.path.expandvars(self.config['script']))}"
+                )
+            if self.config.get("kokkos_gpu"):
+                n_gpus = self.config.get("num_gpus", 1)
+                cmd += [f"-k on g {n_gpus}", "-sf kk", "-pk kokkos cuda/aware on"]
 
-            Exec(' '.join(cmd),
-                 MpiExecInfo(nprocs=self.config['nprocs'],
-                             ppn=self.config['ppn'],
-                             hostfile=self.hostfile,
-                             env=self.mod_env,
-                             cwd=self.config.get('out'))).run()
+            result = Exec(
+                " ".join(cmd),
+                MpiExecInfo(
+                    nprocs=self.config["nprocs"],
+                    ppn=self.config["ppn"],
+                    hostfile=self.hostfile,
+                    env=self.mod_env,
+                    cwd=self.config.get("out"),
+                    line_callback=line_callback,
+                ),
+            ).run()
+        failures = {host: code for host, code in result.exit_code.items() if code != 0}
+        if failures:
+            raise RuntimeError(f"LAMMPS execution failed: {failures}")
 
     def stop(self):
         """Stop LAMMPS (no-op — LAMMPS runs to completion)."""
@@ -236,6 +304,8 @@ class Lammps(Application):
 
     def clean(self):
         """Remove LAMMPS output directory."""
-        if self.config['out']:
-            Rm(self.config['out'] + '*',
-               PsshExecInfo(hostfile=self.hostfile, env=self.env)).run()
+        if self.config["out"]:
+            Rm(
+                self.config["out"] + "*",
+                PsshExecInfo(hostfile=self.hostfile, env=self.env),
+            ).run()
