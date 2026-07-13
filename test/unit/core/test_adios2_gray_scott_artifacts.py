@@ -46,6 +46,7 @@ def test_adios2_gray_scott_exposes_output_and_checkpoint_lifecycles() -> None:
         "checkpoint at step 70 create file /scratch/run/ckpt.bp\n"
         "Rank 0 - ET 2345 - milliseconds\n"
     )
+    observations += adapter.finalize_artifacts()
 
     outputs = [item for item in observations if item.role is ArtifactRole.OUTPUT]
     checkpoints = [
@@ -117,9 +118,50 @@ def test_adios2_gray_scott_resolves_default_relative_checkpoint() -> None:
         "checkpoint at step 70 create file /work/pipeline/ckpt.bp\n"
         "Rank 0 - ET 2345 - milliseconds\n"
     )
+    observations += adapter.finalize_artifacts()
 
     checkpoint = next(
         item for item in observations if item.role is ArtifactRole.CHECKPOINT
     )
     assert checkpoint.location is not None
     assert checkpoint.location.value == "/work/pipeline/ckpt.bp"
+
+
+@pytest.mark.parametrize("include_terminal_line", [False, True])
+def test_adios2_gray_scott_nonzero_exit_marks_outputs_incomplete(
+    include_terminal_line: bool,
+) -> None:
+    """Process failure leaves both output and checkpoint terminally incomplete."""
+    adapter = _module().adapter_from_package(
+        {
+            "pkg_type": "builtin.adios2_gray_scott",
+            "engine": "bp5",
+            "out_file": "/scratch/run/gs.bp",
+            "checkpoint_output": "/scratch/run/ckpt.bp",
+        }
+    )
+    assert adapter is not None
+
+    output = (
+        "steps: 100\n"
+        "Simulation at step 50 writing output step 5\n"
+        "checkpoint at step 40 create file /scratch/run/ckpt.bp\n"
+    )
+    if include_terminal_line:
+        output += "Rank 0 - ET 2345 - milliseconds\n"
+    observations = adapter.observe_artifacts(output)
+    observations += adapter.finalize_artifacts_for_exit(7)
+
+    terminal = observations[-2:]
+    assert {item.role for item in terminal} == {
+        ArtifactRole.OUTPUT,
+        ArtifactRole.CHECKPOINT,
+    }
+    assert all(item.state is ArtifactState.INCOMPLETE for item in terminal)
+    assert all(item.metadata["return_code"] == 7 for item in terminal)
+    if include_terminal_line:
+        assert all(
+            item.metadata["application_completion_signal"]
+            == "writer_closed_and_timing_reported"
+            for item in terminal
+        )

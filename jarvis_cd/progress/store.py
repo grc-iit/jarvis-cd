@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import os
 import stat
+import time
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Final, Iterator
 
-from .schema import MAX_PROGRESS_EVENT_BYTES, ProgressEvent
+from .schema import (
+    MAX_PROGRESS_EVENT_BYTES,
+    PROCESS_EXIT_RECONCILIATION_KEY,
+    ProgressEvent,
+    ProgressState,
+)
 from jarvis_cd.util.private_path import (
     ensure_private_descriptor,
     ensure_private_path,
@@ -109,6 +116,70 @@ class ProgressStore:
         """Return the most recent valid event, if one exists."""
         events = self.read_all()
         return events[-1] if events else None
+
+    def reconcile_process_exit(self, return_code: int) -> ProgressEvent | None:
+        """Correct a false completion after a nonzero package process exit.
+
+        The package's quantitative progress and identity remain intact. JARVIS
+        appends a machine-readable failed event with the next sequence while
+        holding the same lock used by ordinary progress writes.
+        """
+        if isinstance(return_code, bool) or not isinstance(return_code, int):
+            raise TypeError("process return code must be an integer")
+        if return_code == 0:
+            return None
+        _reject_symlink_tree(self.path.parent)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        ensure_private_path(self.path.parent, directory=True)
+        _reject_symlink_tree(self.path.parent)
+        with _exclusive_store_lock(self.path):
+            descriptor = _open_store(self.path, write=True)
+            try:
+                info = _validate_descriptor(self.path, descriptor)
+                previous = _latest_event(descriptor, info.st_size)
+                if previous is None or previous.state is not ProgressState.COMPLETED:
+                    return None
+                metadata = dict(previous.metadata)
+                metadata[PROCESS_EXIT_RECONCILIATION_KEY] = {
+                    "reported_state": ProgressState.COMPLETED.value,
+                    "return_code": return_code,
+                    "source": "jarvis_process_owner",
+                }
+                event = replace(
+                    previous,
+                    state=ProgressState.FAILED,
+                    message=(
+                        "JARVIS corrected completed progress after the package "
+                        f"process exited with code {return_code}"
+                    ),
+                    sequence=previous.sequence + 1,
+                    observed_at_epoch=time.time(),
+                    metadata=metadata,
+                )
+                payload = (event.to_json() + "\n").encode("utf-8")
+                if info.st_size + len(payload) > MAX_PROGRESS_STORE_BYTES:
+                    raise ValueError("progress store would exceed maximum size")
+                if _stream_identity(event) != _stream_identity(previous):
+                    raise ValueError(
+                        "progress event identity must remain stable within a store"
+                    )
+                try:
+                    offset = 0
+                    while offset < len(payload):
+                        written = os.write(descriptor, payload[offset:])
+                        if written <= 0:
+                            raise OSError(
+                                "short write while appending progress reconciliation"
+                            )
+                        offset += written
+                    os.fsync(descriptor)
+                except BaseException:
+                    os.ftruncate(descriptor, info.st_size)
+                    os.fsync(descriptor)
+                    raise
+                return event
+            finally:
+                os.close(descriptor)
 
 
 def _reject_symlink(path: Path, *, label: str) -> None:

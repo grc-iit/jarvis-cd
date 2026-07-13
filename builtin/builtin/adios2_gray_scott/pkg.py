@@ -9,6 +9,8 @@ from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
 from jarvis_cd.util.config_parser import JsonFile
 import os
+import shlex
+from typing import Any
 
 
 class Adios2GrayScott(Application):
@@ -46,6 +48,12 @@ class Adios2GrayScott(Application):
                 "msg": "Processes per node",
                 "type": int,
                 "default": 16,
+            },
+            {
+                "name": "executable",
+                "msg": "ADIOS2 Gray-Scott producer executable or absolute path",
+                "type": str,
+                "default": "adios2-gray-scott",
             },
             {
                 "name": "L",
@@ -92,7 +100,7 @@ class Adios2GrayScott(Application):
             {
                 "name": "plotgap",
                 "msg": "Number of steps between output",
-                "type": float,
+                "type": int,
                 "default": 10,
             },
             {
@@ -301,6 +309,10 @@ class Adios2GrayScott(Application):
         """
         # print(self.env['HERMES_CLIENT_CONF'])
         line_callback = self.runtime_line_callback()
+        executable = self.config.get("executable", "adios2-gray-scott")
+        if not isinstance(executable, str) or not executable.strip():
+            raise ValueError("ADIOS2 Gray-Scott executable must be a non-empty string")
+        command = f"{shlex.quote(executable)} {shlex.quote(self.settings_json_path)}"
         if self.config["engine"].lower() in [
             "bp5_derived",
             "hermes_derived",
@@ -308,7 +320,7 @@ class Adios2GrayScott(Application):
         ]:
             derived = 1
             self.process = Exec(
-                f"gray-scott {self.settings_json_path} {derived}",
+                f"{command} {derived}",
                 MpiExecInfo(
                     nprocs=self.config["nprocs"],
                     ppn=self.config["ppn"],
@@ -318,11 +330,13 @@ class Adios2GrayScott(Application):
                     line_callback=line_callback,
                 ),
             )
-            self.process.run()
+            result = self.process.run()
+            if not self.config["run_async"]:
+                self._raise_for_exec_failure(result, operation="ADIOS2 Gray-Scott")
         elif self.config["engine"].lower() in ["hermes", "bp5", "iowarp", "sst"]:
             derived = 0
             self.process = Exec(
-                f"gray-scott {self.settings_json_path} {derived}",
+                f"{command} {derived}",
                 MpiExecInfo(
                     nprocs=self.config["nprocs"],
                     ppn=self.config["ppn"],
@@ -332,7 +346,9 @@ class Adios2GrayScott(Application):
                     line_callback=line_callback,
                 ),
             )
-            self.process.run()
+            result = self.process.run()
+            if not self.config["run_async"]:
+                self._raise_for_exec_failure(result, operation="ADIOS2 Gray-Scott")
 
     def wait(self):
         """
@@ -342,6 +358,10 @@ class Adios2GrayScott(Application):
         """
         if self.process:
             self.process.wait_all()
+            self._raise_for_exec_failure(
+                self.process,
+                operation="ADIOS2 Gray-Scott async producer",
+            )
 
     def stop(self):
         """
@@ -354,9 +374,29 @@ class Adios2GrayScott(Application):
         if self.config.get("run_async", False) and self.process:
             print("Waiting for async gray-scott producer to complete...")
             self.process.wait_all()
+            self._raise_for_exec_failure(
+                self.process,
+                operation="ADIOS2 Gray-Scott async producer",
+            )
         elif self.process:
             self.process.kill_all()
-        pass
+
+    @staticmethod
+    def _raise_for_exec_failure(result: Any, *, operation: str) -> None:
+        """Raise when an execution has no status or any host exits nonzero."""
+        exit_codes = getattr(result, "exit_code", None)
+        if not isinstance(exit_codes, dict) or not exit_codes:
+            raise RuntimeError(f"{operation} returned no process exit status")
+        failures = {
+            str(host): code
+            for host, code in exit_codes.items()
+            if isinstance(code, bool) or not isinstance(code, int) or code != 0
+        }
+        if failures:
+            details = ", ".join(
+                f"{host}={code!r}" for host, code in sorted(failures.items())
+            )
+            raise RuntimeError(f"{operation} failed with exit status: {details}")
 
     def clean(self):
         """

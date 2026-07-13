@@ -1233,6 +1233,46 @@ def test_pipeline_stop_reuses_the_started_async_package_instance() -> None:
     pipeline._load_package_instance.assert_not_called()
 
 
+def test_pipeline_stop_attempts_every_package_before_reraising() -> None:
+    """One failed async wait cannot prevent cleanup of remaining packages."""
+    pipeline = Pipeline.__new__(Pipeline)
+    pipeline.name = "example"
+    pipeline.packages = [
+        {"pkg_id": package_id, "pkg_type": f"builtin.{package_id}", "config": {}}
+        for package_id in ("first", "failed", "last")
+    ]
+    pipeline.env = {}
+    pipeline._execution_root = None
+    pipeline._execution_id = None
+    pipeline.is_containerized = Mock(return_value=False)
+    attempts: list[str] = []
+
+    class StartedPackage:
+        def __init__(self, package_id: str, *, fail: bool = False) -> None:
+            self.pkg_id = package_id
+            self._fail = fail
+
+        def stop(self) -> None:
+            attempts.append(self.pkg_id)
+            if self._fail:
+                raise RuntimeError(f"{self.pkg_id} wait failed")
+
+    pipeline._started_instances = [
+        StartedPackage("first"),
+        StartedPackage("failed", fail=True),
+        StartedPackage("last"),
+    ]
+    pipeline._load_package_instance = Mock()
+
+    with pytest.raises(ExceptionGroup, match="pipeline package stop failed") as error:
+        pipeline.stop()
+
+    assert attempts == ["last", "failed", "first"]
+    assert len(error.value.exceptions) == 1
+    assert str(error.value.exceptions[0]) == "failed wait failed"
+    pipeline._load_package_instance.assert_not_called()
+
+
 def test_terminal_record_update_seals_and_finalizes_core_logs(tmp_path: Path) -> None:
     """Every terminal transition seals manifests while closing owned logs."""
     store = ExecutionStore(tmp_path / "executions", "example")
@@ -1348,9 +1388,7 @@ def test_package_alias_cannot_overwrite_core_artifact_index(tmp_path: Path) -> N
             logical_name=logical_name,
             kind="log" if logical_name == "stdout" else "result",
             role=(
-                ArtifactRole.LOG
-                if logical_name == "stdout"
-                else ArtifactRole.OUTPUT
+                ArtifactRole.LOG if logical_name == "stdout" else ArtifactRole.OUTPUT
             ),
             structure=ArtifactStructure.FILE,
             ownership=ArtifactOwnership.EXECUTION,

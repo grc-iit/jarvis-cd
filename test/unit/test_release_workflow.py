@@ -318,6 +318,12 @@ def test_exact_release_request_gates_artifact_build() -> None:
     assert "collaborators/$release_admin/permission" in WORKFLOW
     assert '.permission == "admin" and .role_name == "admin"' in WORKFLOW
     assert "test/unit/core/test_artifact_spi.py" in WORKFLOW
+    assert "test/unit/core/test_progress_spi.py" in WORKFLOW
+    assert "test/unit/core/test_pipeline_coverage.py" in WORKFLOW
+    assert "test/unit/ci/test_live_ares_gray_scott_probe.py" in WORKFLOW
+    assert "test/unit/shell/test_local_exec.py" in WORKFLOW
+    assert "test/unit/shell/test_mpi_exec.py" in WORKFLOW
+    assert "test/unit/util/test_pkg_argparse.py" in WORKFLOW
     assert "'schema_version': 'jarvis.artifact.v1'" in WORKFLOW
     assert "jarvis execution artifacts" in WORKFLOW
     build_block = WORKFLOW[build_index : WORKFLOW.index("  release:")]

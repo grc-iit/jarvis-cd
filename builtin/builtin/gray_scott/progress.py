@@ -40,6 +40,9 @@ class GrayScottProgressAdapter:
     _restart_step: int = 0
     _started: bool = False
     _completed: bool = False
+    _failed: bool = False
+    _pending_completion_signal: str | None = None
+    _pending_elapsed_milliseconds: int | None = None
 
     def observe_progress(self, text: str) -> list[ProgressObservation]:
         """Return truthful progress observations from complete output lines."""
@@ -47,7 +50,33 @@ class GrayScottProgressAdapter:
 
     def finalize_progress(self) -> list[ProgressObservation]:
         """Flush one final unterminated Gray-Scott output line."""
-        return self._observe("", finalize=True)
+        observations = self._observe("", finalize=True)
+        completed = self._pending_completed_observation()
+        if completed is not None:
+            observations.append(completed)
+        return observations
+
+    def finalize_progress_for_exit(self, return_code: int) -> list[ProgressObservation]:
+        """Finalize direct IOWarp runs from JARVIS's owned process result."""
+        observations = self._observe("", finalize=True)
+        if return_code != 0:
+            failed = self._failed_observation(return_code)
+            if failed is not None:
+                observations.append(failed)
+            return observations
+
+        completed = self._pending_completed_observation()
+        if completed is None and (
+            self._started
+            and self.total_steps is not None
+            and self._last_step == self.total_steps
+        ):
+            completed = self._completed_observation(
+                completion_signal="process_exit_zero_after_final_output"
+            )
+        if completed is not None:
+            observations.append(completed)
+        return observations
 
     def reset_progress(self) -> None:
         """Reset parsing when the application output stream is replaced."""
@@ -56,6 +85,9 @@ class GrayScottProgressAdapter:
         self._restart_step = 0
         self._started = False
         self._completed = False
+        self._failed = False
+        self._pending_completion_signal = None
+        self._pending_elapsed_milliseconds = None
 
     def _observe(self, text: str, *, finalize: bool) -> list[ProgressObservation]:
         observations: list[ProgressObservation] = []
@@ -67,6 +99,9 @@ class GrayScottProgressAdapter:
 
     def _observe_line(self, line: str) -> ProgressObservation | None:
         stripped = line.strip()
+        if self._completed or self._failed:
+            return None
+
         restart_match = _ADIOS_RESTART_RE.fullmatch(stripped)
         if restart_match is not None:
             self._restart_step = int(restart_match.group("step"))
@@ -186,15 +221,35 @@ class GrayScottProgressAdapter:
 
         adios_completed_match = _ADIOS_COMPLETED_RE.fullmatch(stripped)
         if adios_completed_match is not None:
-            return self._completed_observation(
-                completion_signal="writer_closed_and_timing_reported",
+            self._remember_completion(
+                "writer_closed_and_timing_reported",
                 elapsed_milliseconds=int(adios_completed_match.group("elapsed_ms")),
             )
+            return None
         if stripped == "Done.":
-            return self._completed_observation(
-                completion_signal="application_reported_done"
-            )
+            self._remember_completion("application_reported_done")
         return None
+
+    def _remember_completion(
+        self,
+        completion_signal: str,
+        *,
+        elapsed_milliseconds: int | None = None,
+    ) -> None:
+        """Hold an application success marker until process exit is known."""
+        if self._pending_completion_signal is not None:
+            return
+        self._pending_completion_signal = completion_signal
+        self._pending_elapsed_milliseconds = elapsed_milliseconds
+
+    def _pending_completed_observation(self) -> ProgressObservation | None:
+        """Commit a deferred application success marker for legacy callers."""
+        if self._pending_completion_signal is None:
+            return None
+        return self._completed_observation(
+            completion_signal=self._pending_completion_signal,
+            elapsed_milliseconds=self._pending_elapsed_milliseconds,
+        )
 
     def _completed_observation(
         self,
@@ -203,7 +258,7 @@ class GrayScottProgressAdapter:
         elapsed_milliseconds: int | None = None,
     ) -> ProgressObservation | None:
         """Return one terminal observation from a real application signal."""
-        if self._completed:
+        if self._completed or self._failed:
             return None
         self._completed = True
         current = self.total_steps if self.total_steps is not None else self._last_step
@@ -222,6 +277,29 @@ class GrayScottProgressAdapter:
             total=(float(self.total_steps) if self.total_steps is not None else None),
             unit="timestep",
             message="Gray-Scott simulation completed",
+            metadata=metadata,
+        )
+
+    def _failed_observation(self, return_code: int) -> ProgressObservation | None:
+        """Return one terminal failure from an authoritative process status."""
+        if self._completed or self._failed:
+            return None
+        self._failed = True
+        metadata: dict[str, str | int] = {
+            "application": "gray_scott",
+            "progress_kind": "simulation_timestep",
+            "completion_signal": "process_exit_nonzero",
+            "return_code": return_code,
+        }
+        if self._pending_completion_signal is not None:
+            metadata["application_completion_signal"] = self._pending_completion_signal
+        return ProgressObservation(
+            label="simulation",
+            state=ProgressState.FAILED,
+            current=float(self._last_step),
+            total=(float(self.total_steps) if self.total_steps is not None else None),
+            unit="timestep",
+            message=f"Gray-Scott simulation failed with exit status {return_code}",
             metadata=metadata,
         )
 

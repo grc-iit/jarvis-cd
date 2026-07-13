@@ -18,6 +18,7 @@ from jarvis_cd.util.private_path import (
 
 from .schema import (
     MAX_ARTIFACT_EVENT_BYTES,
+    PROCESS_EXIT_RECONCILIATION_KEY,
     ArtifactEvent,
     ArtifactState,
     validate_artifact_history,
@@ -97,6 +98,62 @@ class ArtifactStore:
         for event in self.read_all():
             current[event.artifact_id] = event
         return current
+
+    def reconcile_process_exit(self, return_code: int) -> list[ArtifactEvent]:
+        """Correct false finalized claims after a nonzero package process exit.
+
+        The correction is committed as one locked batch, retaining each opaque
+        artifact ID and advancing both its revision and the manifest sequence.
+        Available, producing, and already-incomplete/failed artifacts are left
+        untouched because their lifecycle remains meaningful after failure.
+        """
+        if isinstance(return_code, bool) or not isinstance(return_code, int):
+            raise TypeError("process return code must be an integer")
+        if return_code == 0:
+            return []
+        self._prepare_parent()
+        with _exclusive_store_lock(self.path):
+            if _store_is_sealed(self.path):
+                raise RuntimeError("artifact store is sealed")
+            descriptor = _open_store(self.path, write=True)
+            try:
+                info = _validate_descriptor(self.path, descriptor)
+                existing = _read_events_from_descriptor(descriptor, info.st_size)
+                current: dict[str, ArtifactEvent] = {}
+                for event in existing:
+                    current[event.artifact_id] = event
+                sequence = existing[-1].sequence if existing else 0
+                observed_at = time.time()
+                reconciled: list[ArtifactEvent] = []
+                for event in current.values():
+                    if event.state is not ArtifactState.FINALIZED:
+                        continue
+                    sequence += 1
+                    metadata = dict(event.metadata)
+                    metadata[PROCESS_EXIT_RECONCILIATION_KEY] = {
+                        "reported_state": ArtifactState.FINALIZED.value,
+                        "return_code": return_code,
+                        "source": "jarvis_process_owner",
+                    }
+                    reconciled.append(
+                        replace(
+                            event,
+                            state=ArtifactState.INCOMPLETE,
+                            message=(
+                                "JARVIS corrected a finalized artifact after the "
+                                f"package process exited with code {return_code}"
+                            ),
+                            revision=event.revision + 1,
+                            sequence=sequence,
+                            observed_at_epoch=observed_at,
+                            metadata=metadata,
+                        )
+                    )
+                if reconciled:
+                    _commit_events(descriptor, info.st_size, existing, reconciled)
+                return reconciled
+            finally:
+                os.close(descriptor)
 
     def is_sealed(self) -> bool:
         """Return whether execution terminalization sealed this manifest."""

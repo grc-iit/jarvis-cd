@@ -47,7 +47,10 @@ class Adios2GrayScottArtifactAdapter:
     _latest_step: int = 0
     _checkpoint_announced: bool = False
     _latest_checkpoint_step: int = 0
-    _finalized: bool = False
+    _terminal: bool = False
+    _pending_elapsed_milliseconds: int | None = None
+    _completion_signal: str | None = None
+    _return_code: int | None = None
 
     def observe_artifacts(self, text: str) -> list[ArtifactObservation]:
         """Return artifact revisions from native Gray-Scott output."""
@@ -55,7 +58,35 @@ class Adios2GrayScottArtifactAdapter:
 
     def finalize_artifacts(self) -> list[ArtifactObservation]:
         """Flush one final unterminated application output line."""
-        return self._observe("", finalize=True)
+        observations = self._observe("", finalize=True)
+        if self._pending_elapsed_milliseconds is not None and not self._terminal:
+            self._terminal = True
+            self._completion_signal = "writer_closed_and_timing_reported"
+            observations.extend(self._terminal_observations(ArtifactState.FINALIZED))
+        return observations
+
+    def finalize_artifacts_for_exit(
+        self, return_code: int
+    ) -> list[ArtifactObservation]:
+        """Finalize durable outputs from the producer's owned process status."""
+        observations = self._observe("", finalize=True)
+        if self._terminal or not (self._output_announced or self._checkpoint_announced):
+            return observations
+
+        self._terminal = True
+        self._return_code = return_code
+        if return_code == 0:
+            self._completion_signal = (
+                "writer_closed_and_timing_reported"
+                if self._pending_elapsed_milliseconds is not None
+                else "process_exit_zero_after_final_output"
+            )
+            terminal_state = ArtifactState.FINALIZED
+        else:
+            self._completion_signal = "process_exit_nonzero"
+            terminal_state = ArtifactState.INCOMPLETE
+        observations.extend(self._terminal_observations(terminal_state))
+        return observations
 
     def reset_artifacts(self) -> None:
         """Reset parsing after the application output stream is replaced."""
@@ -65,7 +96,10 @@ class Adios2GrayScottArtifactAdapter:
         self._latest_step = 0
         self._checkpoint_announced = False
         self._latest_checkpoint_step = 0
-        self._finalized = False
+        self._terminal = False
+        self._pending_elapsed_milliseconds = None
+        self._completion_signal = None
+        self._return_code = None
 
     def _observe(self, text: str, *, finalize: bool) -> list[ArtifactObservation]:
         observations: list[ArtifactObservation] = []
@@ -74,7 +108,7 @@ class Adios2GrayScottArtifactAdapter:
         return observations
 
     def _observe_line(self, line: str) -> list[ArtifactObservation]:
-        if self._finalized:
+        if self._terminal:
             return []
 
         if _STEPS_RE.fullmatch(line) is not None:
@@ -114,30 +148,21 @@ class Adios2GrayScottArtifactAdapter:
         completed_match = _COMPLETED_RE.fullmatch(line)
         if completed_match is None:
             return []
-        self._finalized = True
-        elapsed_ms = int(completed_match.group("elapsed_ms"))
+        self._pending_elapsed_milliseconds = int(completed_match.group("elapsed_ms"))
+        return []
+
+    def _terminal_observations(self, state: ArtifactState) -> list[ArtifactObservation]:
+        """Return terminal revisions for every artifact seen in this run."""
         observations: list[ArtifactObservation] = []
         if self._output_announced:
-            observations.append(
-                self._output_observation(
-                    ArtifactState.FINALIZED,
-                    elapsed_milliseconds=elapsed_ms,
-                )
-            )
+            observations.append(self._output_observation(state))
         if self._checkpoint_announced:
-            observations.append(
-                self._checkpoint_observation(
-                    ArtifactState.FINALIZED,
-                    elapsed_milliseconds=elapsed_ms,
-                )
-            )
+            observations.append(self._checkpoint_observation(state))
         return observations
 
     def _output_observation(
         self,
         state: ArtifactState,
-        *,
-        elapsed_milliseconds: int | None = None,
     ) -> ArtifactObservation:
         if self.output_path is None:
             raise RuntimeError("ADIOS2 Gray-Scott output location is unavailable")
@@ -148,9 +173,13 @@ class Adios2GrayScottArtifactAdapter:
             "output_steps_observed": self._output_steps,
             "latest_timestep": self._latest_step,
         }
-        if elapsed_milliseconds is not None:
-            metadata["elapsed_milliseconds"] = elapsed_milliseconds
-            metadata["completion_signal"] = "writer_closed_and_timing_reported"
+        self._add_terminal_metadata(metadata, state)
+        if state is ArtifactState.FINALIZED:
+            message = "Gray-Scott ADIOS2 output finalized"
+        elif state is ArtifactState.INCOMPLETE:
+            message = "Gray-Scott ADIOS2 output is incomplete after process failure"
+        else:
+            message = "Gray-Scott ADIOS2 output is being produced"
         return ArtifactObservation(
             artifact_id=self.output_artifact_id,
             logical_name="gray-scott-simulation-output",
@@ -162,19 +191,13 @@ class Adios2GrayScottArtifactAdapter:
             location=ArtifactLocation.cluster_path(self.output_path),
             media_type="application/x-adios2-bp",
             format=_output_format(self.engine),
-            message=(
-                "Gray-Scott ADIOS2 output finalized"
-                if state is ArtifactState.FINALIZED
-                else "Gray-Scott ADIOS2 output is being produced"
-            ),
+            message=message,
             metadata=metadata,
         )
 
     def _checkpoint_observation(
         self,
         state: ArtifactState,
-        *,
-        elapsed_milliseconds: int | None = None,
     ) -> ArtifactObservation:
         if self.checkpoint_path is None:
             raise RuntimeError("ADIOS2 Gray-Scott checkpoint location is unavailable")
@@ -183,9 +206,15 @@ class Adios2GrayScottArtifactAdapter:
             "io_backend": "adios2",
             "checkpoint_timestep": self._latest_checkpoint_step,
         }
-        if elapsed_milliseconds is not None:
-            metadata["elapsed_milliseconds"] = elapsed_milliseconds
-            metadata["completion_signal"] = "application_completed_after_checkpoint"
+        self._add_terminal_metadata(metadata, state)
+        if state is ArtifactState.FINALIZED:
+            message = "Gray-Scott restart checkpoint finalized"
+        elif state is ArtifactState.INCOMPLETE:
+            message = (
+                "Gray-Scott restart checkpoint is incomplete after process failure"
+            )
+        else:
+            message = "Gray-Scott is writing a restart checkpoint"
         return ArtifactObservation(
             artifact_id=self.checkpoint_artifact_id,
             logical_name="gray-scott-restart-checkpoint",
@@ -197,13 +226,31 @@ class Adios2GrayScottArtifactAdapter:
             location=ArtifactLocation.cluster_path(self.checkpoint_path),
             media_type="application/x-adios2-bp",
             format="adios2-bp5",
-            message=(
-                "Gray-Scott restart checkpoint finalized"
-                if state is ArtifactState.FINALIZED
-                else "Gray-Scott is writing a restart checkpoint"
-            ),
+            message=message,
             metadata=metadata,
         )
+
+    def _add_terminal_metadata(
+        self,
+        metadata: dict[str, str | int],
+        state: ArtifactState,
+    ) -> None:
+        """Attach process-aware metadata only to terminal revisions."""
+        if state not in {ArtifactState.FINALIZED, ArtifactState.INCOMPLETE}:
+            return
+        if self._completion_signal is not None:
+            metadata["completion_signal"] = self._completion_signal
+        if self._pending_elapsed_milliseconds is not None:
+            metadata["elapsed_milliseconds"] = self._pending_elapsed_milliseconds
+        if (
+            self._completion_signal == "process_exit_nonzero"
+            and self._pending_elapsed_milliseconds is not None
+        ):
+            metadata["application_completion_signal"] = (
+                "writer_closed_and_timing_reported"
+            )
+        if self._return_code is not None:
+            metadata["return_code"] = self._return_code
 
 
 def adapter_from_package(

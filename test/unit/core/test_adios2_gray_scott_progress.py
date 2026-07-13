@@ -62,6 +62,7 @@ def test_adios2_gray_scott_tracks_restart_outputs_and_completion() -> None:
         "Rank 0 - ET 1234 - milliseconds\n"
         "Rank 1 - ET 1235 - milliseconds\n"
     )
+    observations += adapter.finalize_progress()
 
     assert [item.current for item in observations] == [40.0, 50.0, 60.0, 100.0]
     assert [item.total for item in observations] == [100.0] * 4
@@ -99,14 +100,59 @@ def test_adios2_gray_scott_factory_is_package_local() -> None:
     assert module.adapter_from_package({"pkg_type": "builtin.gray_scott"}) is None
 
 
+@pytest.mark.parametrize("include_terminal_line", [False, True])
+def test_adios2_gray_scott_nonzero_exit_is_terminal_failure(
+    include_terminal_line: bool,
+) -> None:
+    """Neither partial output nor timing text can conceal producer failure."""
+    module = _progress_module()
+    adapter = module.adapter_from_package(
+        {
+            "pkg_type": "builtin.adios2_gray_scott",
+            "steps": 100,
+            "plotgap": 10,
+        }
+    )
+    assert adapter is not None
+
+    output = "steps: 100\nSimulation at step 50 writing output step 5\n"
+    if include_terminal_line:
+        output += "Rank 0 - ET 1234 - milliseconds\n"
+    observations = adapter.observe_progress(output)
+    observations += adapter.finalize_progress_for_exit(11)
+
+    assert all(item.state is not ProgressState.COMPLETED for item in observations)
+    assert observations[-1].state is ProgressState.FAILED
+    assert observations[-1].current == 50.0
+    assert observations[-1].metadata["return_code"] == 11
+    if include_terminal_line:
+        assert observations[-1].metadata["application_completion_signal"] == (
+            "writer_closed_and_timing_reported"
+        )
+
+
 class _CapturedExec:
     calls: list[tuple[str, Any]] = []
+    launch_exit_codes: dict[str, int] = {"localhost": 0}
+    wait_exit_codes: dict[str, int] = {"localhost": 0}
 
     def __init__(self, command: str, exec_info: Any) -> None:
         self.calls.append((command, exec_info))
+        self.exit_code = dict(self.launch_exit_codes)
+        self.wait_calls = 0
+        self.kill_calls = 0
 
     def run(self) -> "_CapturedExec":
         return self
+
+    def wait_all(self) -> dict[str, int]:
+        self.wait_calls += 1
+        self.exit_code.clear()
+        self.exit_code.update(self.wait_exit_codes)
+        return dict(self.exit_code)
+
+    def kill_all(self) -> None:
+        self.kill_calls += 1
 
 
 def test_adios2_gray_scott_runtime_streams_stdout_to_owned_provider(
@@ -124,8 +170,9 @@ def test_adios2_gray_scott_runtime_streams_stdout_to_owned_provider(
         "nprocs": 2,
         "ppn": 2,
         "run_async": False,
+        "executable": "/opt/coeus apps/adios2-gray-scott",
     }
-    package.settings_json_path = "/tmp/settings.json"
+    package.settings_json_path = "/tmp/settings files.json"
     package.pipeline = SimpleNamespace(get_hostfile=lambda: object())
     package.mod_env = {}
     package.runtime_line_callback = lambda: callback
@@ -135,5 +182,61 @@ def test_adios2_gray_scott_runtime_streams_stdout_to_owned_provider(
     package.start()
 
     assert len(_CapturedExec.calls) == 1
-    _, exec_info = _CapturedExec.calls[0]
+    command, exec_info = _CapturedExec.calls[0]
+    assert command == (
+        "'/opt/coeus apps/adios2-gray-scott' '/tmp/settings files.json' 0"
+    )
     assert exec_info.line_callback is callback
+
+
+def test_adios2_gray_scott_sync_start_propagates_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A synchronous Coeus producer cannot report a successful package start."""
+    module = _package_module()
+    package = object.__new__(module.Adios2GrayScott)
+    package.config = {
+        "engine": "bp5",
+        "nprocs": 2,
+        "ppn": 2,
+        "run_async": False,
+        "executable": "adios2-gray-scott",
+    }
+    package.settings_json_path = "/tmp/settings.json"
+    package.pipeline = SimpleNamespace(get_hostfile=lambda: object())
+    package.mod_env = {}
+    package.runtime_line_callback = lambda: None
+    _CapturedExec.calls = []
+    monkeypatch.setattr(_CapturedExec, "launch_exit_codes", {"ares": 5})
+    monkeypatch.setattr(module, "Exec", _CapturedExec)
+
+    with pytest.raises(RuntimeError, match="ADIOS2 Gray-Scott.*ares=5"):
+        package.start()
+
+
+def test_adios2_gray_scott_async_stop_propagates_wait_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Waiting for an async producer raises after its checked nonzero exit."""
+    module = _package_module()
+    package = object.__new__(module.Adios2GrayScott)
+    package.config = {
+        "engine": "bp5",
+        "nprocs": 2,
+        "ppn": 2,
+        "run_async": True,
+        "executable": "adios2-gray-scott",
+    }
+    package.settings_json_path = "/tmp/settings.json"
+    package.pipeline = SimpleNamespace(get_hostfile=lambda: object())
+    package.mod_env = {}
+    package.runtime_line_callback = lambda: None
+    _CapturedExec.calls = []
+    monkeypatch.setattr(_CapturedExec, "wait_exit_codes", {"ares": 6})
+    monkeypatch.setattr(module, "Exec", _CapturedExec)
+
+    package.start()
+    with pytest.raises(RuntimeError, match="async producer.*ares=6"):
+        package.stop()
+
+    assert package.process.wait_calls == 1

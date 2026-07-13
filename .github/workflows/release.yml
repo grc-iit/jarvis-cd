@@ -176,15 +176,23 @@ jobs:
           uv lock --check
           uv run --frozen pytest -q \
             test/unit/core/test_artifact_spi.py \
+            test/unit/core/test_progress_spi.py \
             test/unit/core/test_execution.py \
             test/unit/core/test_gray_scott_artifacts.py \
+            test/unit/core/test_gray_scott_progress.py \
             test/unit/core/test_adios2_gray_scott_artifacts.py \
+            test/unit/core/test_adios2_gray_scott_progress.py \
+            test/unit/core/test_pipeline_coverage.py \
+            test/unit/ci/test_live_ares_gray_scott_probe.py \
+            test/unit/shell/test_local_exec.py \
+            test/unit/shell/test_mpi_exec.py \
             test/unit/core/test_lammps_artifacts.py \
             test/unit/core/test_lammps_progress.py \
             test/unit/core/test_lammps_package_runtime.py \
             test/unit/core/test_paraview_artifacts.py \
             test/unit/core/test_scheduler_submission.py \
             test/unit/core/test_pipeline_hostfile.py \
+            test/unit/util/test_pkg_argparse.py \
             test/unit/test_release_draft.py \
             test/unit/test_release_request.py \
             test/unit/test_release_workflow.py

@@ -4,6 +4,7 @@ import multiprocessing
 import os
 import shlex
 import subprocess
+import sys
 from copy import deepcopy
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -48,6 +49,7 @@ def _real_pipeline(tmp_path: Path) -> Pipeline:
         get_pipeline_private_dir=lambda name: tmp_path / "private" / name,
         get_builtin_repo_path=lambda: repository_root / "builtin",
         set_current_pipeline=lambda _name: None,
+        jarvis_root=tmp_path / "jarvis-root",
     )
     with patch("jarvis_cd.core.pipeline.Jarvis.get_instance", return_value=jarvis):
         pipeline = Pipeline()
@@ -106,6 +108,49 @@ def test_slurm_submission_uses_and_parses_parsable_identity(tmp_path: Path) -> N
         "scheduler_cluster": "ares",
         "identity_source": "scheduler_submit_api",
     }
+
+
+def test_jarvis_root_environment_selects_scheduler_configuration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scheduled CLI process can retain the submitting JARVIS root."""
+    selected_root = tmp_path / "selected-root"
+    monkeypatch.setenv("JARVIS_ROOT", str(selected_root))
+    Jarvis._instance = None
+    try:
+        assert Jarvis.get_instance().jarvis_root == selected_root
+    finally:
+        Jarvis._instance = None
+
+
+def test_jarvis_root_environment_normalizes_relative_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A scheduler inherits one absolute root independent of its working directory."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("JARVIS_ROOT", "relative-root")
+    Jarvis._instance = None
+    try:
+        assert (
+            Jarvis.get_instance().jarvis_root == (tmp_path / "relative-root").resolve()
+        )
+    finally:
+        Jarvis._instance = None
+
+
+def test_jarvis_root_environment_rejects_control_characters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The scheduler configuration root cannot inject structured values."""
+    monkeypatch.setenv("JARVIS_ROOT", "/safe/path\nattacker")
+    Jarvis._instance = None
+    try:
+        with pytest.raises(ValueError, match="printable path"):
+            Jarvis.get_instance()
+    finally:
+        Jarvis._instance = None
 
 
 @pytest.mark.parametrize(
@@ -221,10 +266,17 @@ def _run_execution_scheduler_script(
         elif initial_state != "submitting":
             raise ValueError(f"unsupported test execution state: {initial_state}")
     execution_root = store.executions_dir / execution_id
+    runtime_dir = execution_root / "runtime"
+    runtime_dir.mkdir()
+    (runtime_dir / "pipeline.yaml").write_text(
+        "name: example\npkgs: []\ninterceptors: []\n",
+        encoding="utf-8",
+    )
+    (runtime_dir / "environment.yaml").write_text("{}\n", encoding="utf-8")
     scheduler = SlurmScheduler(
         {"name": "slurm"},
         execution_root,
-        pipeline_snapshot_dir=execution_root / "runtime",
+        pipeline_snapshot_dir=runtime_dir,
     )
 
     executable_dir = tmp_path / "bin"
@@ -312,6 +364,51 @@ def test_slurm_runtime_identity_closes_submitter_crash_window(
     assert record.state == "completed"
     assert record.scheduler_native_id == "41"
     assert record.cluster == "ares"
+
+
+def test_runtime_cluster_backfills_submission_projection(tmp_path: Path) -> None:
+    """A cluster known only inside the allocation remains queryable afterward."""
+    pipeline = _real_pipeline(tmp_path)
+    store = pipeline._execution_store()
+    execution_id = "runtime-cluster"
+    store.create(execution_id, mode="scheduler", scheduler_provider="slurm")
+    store.update(execution_id, state="submitting", terminal=False)
+    store.activate_scheduler(
+        execution_id,
+        provider="slurm",
+        native_id="42",
+        cluster="linux",
+    )
+    execution_root = store.executions_dir / execution_id
+    pipeline.last_submission = {
+        "schema_version": "jarvis.scheduler.submission.v1",
+        "execution_id": execution_id,
+        "provider": "slurm",
+        "script_path": str(execution_root / "submit.slurm"),
+        "scheduler_job_id": "42",
+        "scheduler_cluster": None,
+        "identity_source": "scheduler_submit_api",
+        "state": "completed",
+        "submitted": True,
+        "wait": True,
+        "terminal": True,
+        "scheduler_stderr": None,
+        "submission_returncode": 0,
+        "terminal_returncode": 0,
+    }
+
+    pipeline._update_execution_marker(execution_root)
+
+    record = store.get(execution_id)
+    submission = record.metadata["submission"]
+    assert record.cluster == "linux"
+    assert submission["scheduler_cluster"] == "linux"
+    assert submission["cluster_identity_source"] == "scheduler_runtime_environment"
+    assert pipeline.last_submission["scheduler_cluster"] == "linux"
+    assert (
+        pipeline.last_submission["cluster_identity_source"]
+        == "scheduler_runtime_environment"
+    )
 
 
 def test_generated_script_can_activate_and_complete_after_manual_submission(
@@ -743,6 +840,12 @@ def test_scheduler_submission_uses_isolated_pipeline_environment_and_paths(
     )
     script_text = script_a.read_text(encoding="utf-8")
     assert "JARVIS_PIPELINE_SNAPSHOT_DIR" in script_text
+    assert f"JARVIS_ROOT={shlex.quote(str(pipeline.jarvis.jarvis_root))}" in script_text
+    assert (
+        f"{shlex.quote(sys.executable)} -m jarvis_cd.core.cli ppl run yaml"
+        in script_text
+    )
+    assert " jarvis ppl run" not in script_text
     assert str(runtime_a) in script_text
     assert "jarvis cd example" not in script_text
     assert len(str(submission_a["pipeline_snapshot_sha256"])) == 64

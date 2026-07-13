@@ -222,6 +222,20 @@ def test_artifact_history_enforces_revisions_and_terminal_lifecycle() -> None:
                 replace(finalized, revision=4, sequence=4),
             ]
         )
+    with pytest.raises(ValueError, match="cannot transition"):
+        validate_artifact_history(
+            [
+                producing,
+                available,
+                finalized,
+                replace(
+                    finalized,
+                    state=ArtifactState.INCOMPLETE,
+                    revision=4,
+                    sequence=4,
+                ),
+            ]
+        )
     with pytest.raises(ValueError, match="contiguous"):
         validate_artifact_history([producing, replace(available, sequence=3)])
 
@@ -535,3 +549,200 @@ def test_package_runtime_callback_persists_artifact_provider_output(
     assert event.package_name == "site.application"
     assert event.package_id == "application-a"
     assert event.state is ArtifactState.FINALIZED
+
+
+def test_package_callback_passes_owned_process_exit_to_artifact_provider(
+    tmp_path: Path,
+) -> None:
+    """Exit-aware artifact providers can finalize only successful outputs."""
+
+    artifact_id = new_artifact_id()
+
+    class Provider:
+        def observe_artifacts(self, text: str) -> list[ArtifactObservation]:
+            del text
+            return [
+                ArtifactObservation(
+                    artifact_id=artifact_id,
+                    logical_name="result",
+                    kind="scientific_dataset",
+                    role=ArtifactRole.OUTPUT,
+                    structure=ArtifactStructure.COLLECTION,
+                    ownership=ArtifactOwnership.SHARED,
+                    state=ArtifactState.PRODUCING,
+                    location=ArtifactLocation.cluster_path("/scratch/result.bp"),
+                )
+            ]
+
+        def finalize_artifacts(self) -> list[ArtifactObservation]:
+            raise AssertionError("exit-aware provider used legacy finalization")
+
+        def finalize_artifacts_for_exit(
+            self, return_code: int
+        ) -> list[ArtifactObservation]:
+            return [
+                ArtifactObservation(
+                    artifact_id=artifact_id,
+                    logical_name="result",
+                    kind="scientific_dataset",
+                    role=ArtifactRole.OUTPUT,
+                    structure=ArtifactStructure.COLLECTION,
+                    ownership=ArtifactOwnership.SHARED,
+                    state=(
+                        ArtifactState.FINALIZED
+                        if return_code == 0
+                        else ArtifactState.PRODUCING
+                    ),
+                    location=ArtifactLocation.cluster_path("/scratch/result.bp"),
+                    metadata={"return_code": return_code},
+                )
+            ]
+
+        def reset_artifacts(self) -> None:
+            return None
+
+    path = (tmp_path / "exit-artifacts.jsonl").resolve()
+    package = object.__new__(Pkg)
+    package.mod_env = {
+        "JARVIS_EXECUTION_ID": "exec-exit",
+        "JARVIS_PACKAGE_NAME": "site.application",
+        "JARVIS_PACKAGE_ID": "application-a",
+        "JARVIS_ARTIFACT_PATH": str(path),
+    }
+    package.get_artifact_provider = lambda: Provider()  # type: ignore[method-assign]
+
+    callback = package.runtime_line_callback()
+    assert callback is not None
+    callback("stdout", "wrote result.bp\n")
+    getattr(callback, "finalize_process")(0)
+
+    event = ArtifactStore(path).latest()
+    assert event is not None
+    assert event.state is ArtifactState.FINALIZED
+    assert event.metadata["return_code"] == 0
+    assert event.revision == 2
+
+
+def test_structured_finalized_artifacts_are_reconciled_after_nonzero_exit(
+    tmp_path: Path,
+) -> None:
+    """A failed process corrects finalized output without erasing its identity."""
+    path = (tmp_path / "reconciled-artifacts.jsonl").resolve()
+    stream = io.StringIO()
+    child_reporter = ArtifactReporter(
+        package_name="site.application",
+        package_id="container_app",
+        execution_id="exec_failed_container",
+        stream=stream,
+    )
+    finalized = child_reporter.emit(
+        logical_name="simulation-output",
+        kind="scientific_dataset",
+        role=ArtifactRole.OUTPUT,
+        structure=ArtifactStructure.COLLECTION,
+        ownership=ArtifactOwnership.SHARED,
+        state=ArtifactState.FINALIZED,
+        location=ArtifactLocation.cluster_path("/scratch/run/result.bp"),
+        format="adios2-bp5",
+        checksum="sha256:" + "a" * 64,
+        metadata={"application_signal": "writer_close"},
+    )
+    checkpoint = child_reporter.emit(
+        logical_name="restart-checkpoint",
+        kind="checkpoint",
+        role=ArtifactRole.CHECKPOINT,
+        structure=ArtifactStructure.FILE,
+        ownership=ArtifactOwnership.SHARED,
+        state=ArtifactState.FINALIZED,
+        location=ArtifactLocation.cluster_path("/scratch/run/restart.bp"),
+    )
+    available = child_reporter.emit(
+        logical_name="shared-input",
+        kind="input_dataset",
+        role=ArtifactRole.INTERMEDIATE,
+        structure=ArtifactStructure.FILE,
+        ownership=ArtifactOwnership.SHARED,
+        state=ArtifactState.AVAILABLE,
+        location=ArtifactLocation.cluster_path("/shared/input.bp"),
+    )
+
+    package = object.__new__(Pkg)
+    package.mod_env = {
+        "JARVIS_EXECUTION_ID": "exec_failed_container",
+        "JARVIS_PACKAGE_ID": "container_app",
+        "JARVIS_PACKAGE_NAME": "site.application",
+        "JARVIS_ARTIFACT_PATH": str(path),
+        "JARVIS_ARTIFACT_TRANSPORT": "stdout",
+    }
+    package.get_progress_provider = lambda: None  # type: ignore[method-assign]
+    package.get_artifact_provider = lambda: None  # type: ignore[method-assign]
+
+    callback = package.runtime_line_callback()
+    assert callback is not None
+    for line in stream.getvalue().splitlines(keepends=True):
+        callback("stdout", line)
+    getattr(callback, "finalize_process")(19)
+    getattr(callback, "finalize_process")(19)
+
+    events = ArtifactStore(path).read_all()
+    assert events[:3] == [finalized, checkpoint, available]
+    assert len(events) == 5
+    corrected = events[3]
+    assert corrected.artifact_id == finalized.artifact_id
+    assert corrected.state is ArtifactState.INCOMPLETE
+    assert corrected.revision == finalized.revision + 1
+    assert corrected.sequence == available.sequence + 1
+    assert corrected.location == finalized.location
+    assert corrected.checksum == finalized.checksum
+    assert corrected.metadata["jarvis_process_exit"] == {
+        "reported_state": "finalized",
+        "return_code": 19,
+        "source": "jarvis_process_owner",
+    }
+    corrected_checkpoint = events[4]
+    assert corrected_checkpoint.artifact_id == checkpoint.artifact_id
+    assert corrected_checkpoint.state is ArtifactState.INCOMPLETE
+    assert corrected_checkpoint.revision == checkpoint.revision + 1
+    assert corrected_checkpoint.sequence == corrected.sequence + 1
+    assert ArtifactStore(path).latest(available.artifact_id) == available
+
+
+def test_structured_finalized_artifact_survives_zero_process_exit(
+    tmp_path: Path,
+) -> None:
+    """A zero JARVIS-owned return code leaves a finalized artifact intact."""
+    path = (tmp_path / "successful-artifacts.jsonl").resolve()
+    stream = io.StringIO()
+    child_reporter = ArtifactReporter(
+        package_name="site.application",
+        package_id="container_app",
+        execution_id="exec_successful_container",
+        stream=stream,
+    )
+    finalized = child_reporter.emit(
+        logical_name="simulation-output",
+        kind="scientific_dataset",
+        role=ArtifactRole.OUTPUT,
+        structure=ArtifactStructure.COLLECTION,
+        ownership=ArtifactOwnership.SHARED,
+        state=ArtifactState.FINALIZED,
+        location=ArtifactLocation.cluster_path("/scratch/run/result.bp"),
+    )
+
+    package = object.__new__(Pkg)
+    package.mod_env = {
+        "JARVIS_EXECUTION_ID": "exec_successful_container",
+        "JARVIS_PACKAGE_ID": "container_app",
+        "JARVIS_PACKAGE_NAME": "site.application",
+        "JARVIS_ARTIFACT_PATH": str(path),
+        "JARVIS_ARTIFACT_TRANSPORT": "stdout",
+    }
+    package.get_progress_provider = lambda: None  # type: ignore[method-assign]
+    package.get_artifact_provider = lambda: None  # type: ignore[method-assign]
+
+    callback = package.runtime_line_callback()
+    assert callback is not None
+    callback("stdout", stream.getvalue())
+    getattr(callback, "finalize_process")(0)
+
+    assert ArtifactStore(path).read_all() == [finalized]

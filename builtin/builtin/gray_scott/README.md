@@ -1,154 +1,70 @@
-Gray-Scott is a 3D 7-Point stencil code
+# IOWarp Gray-Scott
 
-# Installation
+`builtin.gray_scott` runs the direct Gray-Scott application maintained in
+[`iowarp/clio-core`](https://github.com/iowarp/clio-core), under
+`external/iowarp-gray-scott`. It does not require Coeus or Hermes.
+
+## Install
+
+The Clio Core Spack repository exposes the project as `iowarp`. Enable ADIOS2
+when installing the direct application:
 
 ```bash
-scspkg create gray-scott
-cd `scspkg pkg src gray-scott`
-git clone https://github.com/pnorbert/adiosvm
-cd adiosvm/Tutorial/gs-mpiio
-mkdir build
-pushd build
-cmake ../ -DCMAKE_BUILD_TYPE=Release
-make -j8
-export GRAY_SCOTT_PATH=`pwd`
-scspkg env set gray_scott GRAY_SCOTT_PATH="${GRAY_SCOTT_PATH}"
-scspkg env prepend gray_scott PATH "${GRAY_SCOTT_PATH}"
-module load gray_scott
-spack load mpi adios2
+git clone https://github.com/iowarp/clio-core.git
+spack repo add clio-core/installers/spack
+spack install iowarp@main+adios2
+spack load iowarp@main+adios2
 ```
 
-# Gray Scott
+You can also build `external/iowarp-gray-scott` directly with CMake. The
+resulting executable is named `gray-scott`.
 
-## 1. Setup Environment
+## Run with JARVIS
 
-Create the environment variables needed by Gray Scott
+The executable can be selected explicitly, which is recommended for durable
+and live-validated runs:
+
 ```bash
-module load gray_scott
-spack load mpi
-```````````
-
-## 1. Create a Resource Graph
-
-If you haven't already, create a resource graph. This only needs to be done
-once throughout the lifetime of Jarvis. No need to repeat if you have already
-done this for a different pipeline.
-
-If you are running distributed tests, set path to the hostfile you are  using.
-```bash
-jarvis hostfile set /path/to/hostfile
+jarvis ppl create gray-scott-test
+jarvis ppl append builtin.gray_scott \
+  executable=/absolute/path/to/gray-scott \
+  nprocs=1 ppn=1 width=32 height=32 \
+  steps=20 out_every=10 \
+  outdir=/shared/results/gray-scott.bp
+jarvis ppl run
 ```
 
-Next, collect the resources from each of those pkgs. Walkthrough will give
-a command line tutorial on how to build the hostfile.
-```bash
-jarvis resource-graph build +walkthrough
+The package writes the complete settings schema expected by Clio Core,
+including checkpoint and ADIOS2 memory-selection defaults. Its file-backed
+default uses BP5. If `outdir` is omitted, JARVIS writes under this package's
+pipeline-shared directory rather than temporary host storage.
+
+## Durable progress and artifacts
+
+For an owned execution, JARVIS records simulation-timestep progress and one
+evolving artifact named `gray-scott-timesteps`. The artifact is a shared
+cluster-path collection with media type `application/x-adios2-bp` and format
+`adios2-bp5`. A successful process exit after the final observed timestep
+finalizes both progress and the artifact; a nonzero exit never makes that
+claim.
+
+When `checkpoint=true`, JARVIS also reports
+`gray-scott-restart-checkpoint` at the configured `checkpoint_output` path.
+The direct Clio Core writer does not emit a checkpoint-completion message, so
+JARVIS snapshots that exact path before launch and reports it only if it was
+created or changed by the owned process. A zero exit finalizes the checkpoint;
+a nonzero exit records a changed checkpoint as incomplete. Package cleanup
+removes the exact main-output and checkpoint paths, including independently
+configured locations, without wildcard deletion.
+
+Use the execution handle or reopen the execution later:
+
+```python
+handle = pipeline.run()
+record = handle.refresh()
+progress = handle.progress()
+artifacts = handle.artifacts()
 ```
 
-## 2. Create a Pipeline
-
-The Jarvis pipeline will store all configuration data needed by Gray Scott.
-
-```bash
-jarvis pipeline create gray-scott-test
-```
-
-## 3. Save Environment
-
-Store the current environment in the pipeline.
-```bash
-jarvis pipeline env build
-```
-
-## 4. Add pkgs to the Pipeline
-
-Create a Jarvis pipeline with Gray Scott
-```bash
-jarvis pipeline append gray_scott
-```
-
-## 5. Run Experiment
-
-Run the experiment
-```bash
-jarvis pipeline run
-```
-
-## 6. Clean Data
-
-Clean data produced by Gray Scott
-```bash
-jarvis pipeline clean
-```
-
-# Gray Scott With Hermes
-
-## 1. Setup Environment
-
-Create the environment variables needed by Hermes + Gray Scott
-```bash
-# On personal
-spack install hermes@master adios2
-spack load hermes adios2
-# On Ares
-module load hermes/master-feow7up adios2/2.9.0-mmkelnu
-# export GRAY_SCOTT_PATH=${HOME}/adiosvm/Tutorial/gs-mpiio/build
-export PATH="${GRAY_SCOTT_PATH}:$PATH"
-```
-
-## 2. Create a Resource Graph
-
-If you haven't already, create a resource graph. This only needs to be done
-once throughout the lifetime of Jarvis. No need to repeat if you have already
-done this for a different pipeline.
-
-If you are running distributed tests, set path to the hostfile you are  using.
-```bash
-jarvis hostfile set /path/to/hostfile.txt
-```
-
-Next, collect the resources from each of those pkgs. Walkthrough will give
-a command line tutorial on how to build the hostfile.
-```bash
-jarvis resource-graph build +walkthrough
-```
-
-## 3. Create a Pipeline
-
-The Jarvis pipeline will store all configuration data needed by Hermes
-and Gray Scott.
-
-```bash
-jarvis pipeline create gs-hermes
-```
-
-## 3. Save Environment
-
-Store the current environment in the pipeline.
-```bash
-jarvis pipeline env build
-```
-
-## 4. Add pkgs to the Pipeline
-
-Create a Jarvis pipeline with Hermes, the Hermes MPI-IO interceptor,
-and gray-scott
-```bash
-jarvis pipeline append hermes --sleep=10 --output_dir=${HOME}/gray-scott
-jarvis pipeline append hermes_api +mpi
-jarvis pipeline append gray_scott
-```
-
-## 5. Run the Experiment
-
-Run the experiment
-```bash
-jarvis pipeline run
-```
-
-## 6. Clean Data
-
-To clean data produced by Hermes + Gray-Scott:
-```bash
-jarvis pipeline clean
-```
+Coeus-specific engines and adapter experiments belong to the Coeus package and
+repository rather than this direct application package.
