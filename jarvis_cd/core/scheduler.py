@@ -23,12 +23,26 @@ import re
 import shlex
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
 _DIRECTIVE_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 _HOST_SUFFIX = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
+_SLURM_NATIVE_ID = re.compile(r"^[0-9]{1,64}$")
+_UNRESOLVED_SLURM_ARTIFACT_PATH = (
+    "JARVIS could not prove one concrete path for this SLURM filename pattern"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SchedulerArtifactPathResolution:
+    """One provider-owned attempt to resolve a scheduler filename pattern."""
+
+    path: Optional[str]
+    diagnostic_code: Optional[str] = None
+    diagnostic: Optional[str] = None
 
 
 def _validated_single_line(value: Any, *, field: str, limit: int = 4096) -> str:
@@ -191,6 +205,25 @@ class Scheduler:
         """
         raise NotImplementedError
 
+    @property
+    def array_requested(self) -> bool:
+        """Return whether this submission can create an array of jobs."""
+        return False
+
+    @classmethod
+    def resolve_artifact_path(
+        cls,
+        path_pattern: str,
+        *,
+        native_id: str,
+        array_requested: bool = False,
+    ) -> SchedulerArtifactPathResolution:
+        """Resolve one provider filename pattern from trusted submission identity."""
+        del native_id, array_requested
+        return SchedulerArtifactPathResolution(
+            path=_validated_single_line(path_pattern, field="artifact_path")
+        )
+
     def _pipeline_invocation(self) -> str:
         """Shell snippet that runs the pipeline once the hostfile is in
         place. Always points jarvis at the persisted YAML when one was
@@ -334,6 +367,13 @@ class SlurmScheduler(Scheduler):
                     ):
                         raise ValueError(
                             "scheduler.sbatch_args entries must be single --flag tokens"
+                        )
+                    if key == "sbatch_args" and rendered.split("=", 1)[0] in {
+                        "--error",
+                        "--output",
+                    }:
+                        raise ValueError(
+                            "scheduler.sbatch_args cannot override output or error"
                         )
                 continue
             if value is None or isinstance(value, bool):
@@ -491,9 +531,17 @@ class SlurmScheduler(Scheduler):
     def submit_command(self, wait: bool = False) -> List[str]:
         # ``--parsable`` is the provider boundary: stdout is a stable
         # ``job_id[;cluster]`` record rather than human-oriented text.
-        cmd = ["sbatch", "--parsable"]
+        # Command-line output/error options override both inherited SBATCH_*
+        # variables and script directives. Removing SBATCH_ARRAY_INX prevents
+        # an ambient shell variable from silently turning a scalar submission
+        # into an array whose log paths require task identity.
+        cmd = ["env", "-u", "SBATCH_ARRAY_INX", "sbatch", "--parsable"]
         if wait:
             cmd.append("--wait")
+        for key in ("output", "error"):
+            value = self.spec.get(key)
+            if value is not None:
+                cmd.append(f"--{key}={value}")
         cmd.append(str(self.script_path))
         return cmd
 
@@ -513,7 +561,99 @@ class SlurmScheduler(Scheduler):
             "identity_source": "scheduler_submit_api",
         }
 
+    @property
+    def array_requested(self) -> bool:
+        """Return whether spec or raw arguments request a SLURM job array."""
+        configured = self.spec.get("array")
+        if configured is not None and configured is not False and configured != "":
+            return True
+        return any(
+            str(argument).split("=", 1)[0] == "--array"
+            for argument in self.spec.get("sbatch_args", []) or []
+        )
 
-_SCHEDULERS: Dict[str, type] = {
+    @classmethod
+    def resolve_artifact_path(
+        cls,
+        path_pattern: str,
+        *,
+        native_id: str,
+        array_requested: bool = False,
+    ) -> SchedulerArtifactPathResolution:
+        """Resolve only SLURM path tokens proven by scalar submission output.
+
+        ``%j`` and width-qualified forms are bound to the parsed native job ID.
+        ``%%`` is a literal percent and is never reinterpreted. Other percent
+        replacement symbols depend on allocation or task state, so JARVIS
+        leaves their artifact location unset rather than guessing.
+        """
+        pattern = _validated_single_line(path_pattern, field="artifact_path")
+        if _SLURM_NATIVE_ID.fullmatch(native_id) is None:
+            raise ValueError("SLURM artifact resolution requires a numeric job ID")
+        if "\\" in pattern:
+            return SchedulerArtifactPathResolution(
+                path=None,
+                diagnostic_code="slurm_artifact_path_unresolved",
+                diagnostic=_UNRESOLVED_SLURM_ARTIFACT_PATH,
+            )
+        rendered: list[str] = []
+        index = 0
+        while index < len(pattern):
+            if pattern[index] != "%":
+                rendered.append(pattern[index])
+                index += 1
+                continue
+            if index + 1 < len(pattern) and pattern[index + 1] == "%":
+                rendered.append("%")
+                index += 2
+                continue
+            token_end = index + 1
+            while token_end < len(pattern) and "0" <= pattern[token_end] <= "9":
+                token_end += 1
+            if token_end >= len(pattern) or not pattern[token_end].isalpha():
+                return SchedulerArtifactPathResolution(
+                    path=None,
+                    diagnostic_code="slurm_artifact_path_unresolved",
+                    diagnostic=_UNRESOLVED_SLURM_ARTIFACT_PATH,
+                )
+            token = pattern[token_end]
+            if token != "j" or array_requested:
+                return SchedulerArtifactPathResolution(
+                    path=None,
+                    diagnostic_code="slurm_artifact_path_unresolved",
+                    diagnostic=_UNRESOLVED_SLURM_ARTIFACT_PATH,
+                )
+            width_text = pattern[index + 1 : token_end]
+            width = 0
+            if width_text:
+                width = min(int(width_text), 10)
+            rendered.append(native_id.zfill(width))
+            index = token_end + 1
+        return SchedulerArtifactPathResolution(path="".join(rendered))
+
+
+_SCHEDULERS: Dict[str, type[Scheduler]] = {
     SlurmScheduler.NAME: SlurmScheduler,
 }
+
+
+def resolve_scheduler_artifact_path(
+    provider: str,
+    path_pattern: str,
+    *,
+    native_id: str,
+    array_requested: bool = False,
+) -> SchedulerArtifactPathResolution:
+    """Resolve a filename pattern through its explicit scheduler provider."""
+    scheduler_type = _SCHEDULERS.get(provider.strip().lower())
+    if scheduler_type is None:
+        return SchedulerArtifactPathResolution(
+            path=None,
+            diagnostic_code="scheduler_artifact_provider_unsupported",
+            diagnostic="JARVIS has no artifact path resolver for this scheduler",
+        )
+    return scheduler_type.resolve_artifact_path(
+        path_pattern,
+        native_id=native_id,
+        array_requested=array_requested,
+    )

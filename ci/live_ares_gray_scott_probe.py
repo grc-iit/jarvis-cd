@@ -479,6 +479,8 @@ def _new_report(args: argparse.Namespace) -> dict[str, Any]:
             "artifact_state": "finalized",
             "artifact_format": "adios2-bp5",
             "artifact_completion_signal": "process_exit_zero_after_final_output",
+            "scheduler_log_pattern": "%j",
+            "scheduler_log_validation": ("resolved-path-exists-and-contains-native-id"),
         },
         "execution": {},
         "queries": {},
@@ -984,6 +986,8 @@ def _configured_pipeline(
     )
     pipeline = Pipeline()
     pipeline.create(run_id)
+    scheduler_log_root = output_path.parent / "scheduler-logs"
+    scheduler_log_root.mkdir(parents=False, exist_ok=False)
     scheduler: dict[str, Any] = {
         "name": "slurm",
         "job_name": run_id,
@@ -992,6 +996,8 @@ def _configured_pipeline(
         "ntasks_per_node": 1,
         "time": "00:10:00",
         "partition": args.partition,
+        "output": str((scheduler_log_root / "stdout-%j.log").resolve()),
+        "error": str((scheduler_log_root / "stderr-%j.log").resolve()),
     }
     if args.account is not None:
         scheduler["account"] = args.account
@@ -1152,15 +1158,60 @@ def _run_bpls(
     return results
 
 
-def _execution_log_evidence(submission: Mapping[str, Any]) -> dict[str, Any]:
-    """Return bounded scheduler stdout/stderr evidence and full-file digests."""
+def _execution_log_evidence(
+    submission: Mapping[str, Any],
+    artifacts: Mapping[str, Any],
+    scheduler_native_id: str,
+) -> dict[str, Any]:
+    """Validate referenced core logs and return bounded physical evidence."""
+    if not scheduler_native_id:
+        raise RuntimeError("execution record has no scheduler-native identity")
     root_value = submission.get("execution_root_path")
     if not isinstance(root_value, str) or not root_value:
         raise RuntimeError("scheduler submission did not retain its execution root")
     execution_root = Path(root_value)
     evidence: dict[str, Any] = {}
-    for name in ("stdout.log", "stderr.log"):
-        path = execution_root / name
+    current_artifacts = artifacts.get("artifacts")
+    for logical_name in ("stdout", "stderr"):
+        artifact = _single_by_key(
+            current_artifacts,
+            "logical_name",
+            logical_name,
+        )
+        if artifact is None or artifact.get("package_id") != "jarvis-core":
+            raise RuntimeError(
+                f"scheduler {logical_name} artifact reference is missing or duplicated"
+            )
+        if artifact.get("state") != "finalized":
+            raise RuntimeError(
+                f"scheduler {logical_name} artifact reference is not finalized"
+            )
+        location = artifact.get("location")
+        if not isinstance(location, Mapping):
+            raise RuntimeError(
+                f"scheduler {logical_name} artifact has no resolved location"
+            )
+        location_kind = location.get("kind")
+        location_value = location.get("value")
+        if not isinstance(location_value, str) or not location_value:
+            raise RuntimeError(f"scheduler {logical_name} artifact location is invalid")
+        if "%" in location_value:
+            raise RuntimeError(
+                f"scheduler {logical_name} artifact location retains a Slurm token"
+            )
+        if scheduler_native_id not in location_value:
+            raise RuntimeError(
+                f"scheduler {logical_name} artifact location does not contain "
+                "the execution scheduler-native ID"
+            )
+        if location_kind == "execution_path":
+            path = execution_root / location_value
+        elif location_kind == "cluster_path":
+            path = Path(location_value)
+        else:
+            raise RuntimeError(
+                f"scheduler {logical_name} artifact location kind is unsupported"
+            )
         status = path.stat(follow_symlinks=False)
         if not stat.S_ISREG(status.st_mode):
             raise RuntimeError(f"scheduler log is not a regular file: {path}")
@@ -1168,7 +1219,10 @@ def _execution_log_evidence(submission: Mapping[str, Any]) -> dict[str, Any]:
             if status.st_size > 65_536:
                 stream.seek(status.st_size - 65_536)
             tail = stream.read().decode("utf-8", errors="replace")
-        evidence[name] = {
+        evidence[logical_name] = {
+            "artifact_id": artifact.get("artifact_id"),
+            "artifact_state": artifact.get("state"),
+            "location": dict(location),
             "path": str(path),
             "size_bytes": status.st_size,
             "sha256": sha256_file(path),
@@ -1268,7 +1322,9 @@ def _run_installed_probe(args: argparse.Namespace, report: dict[str, Any]) -> No
         {"record": record, "progress": progress, "artifacts": artifacts}
     )
     report["execution"]["logs"] = _execution_log_evidence(
-        report["execution"]["submission"]
+        report["execution"]["submission"],
+        artifacts,
+        str(record.get("scheduler_native_id") or ""),
     )
     report["phase"] = "physical_validation"
     bpls_output = _run_bpls(

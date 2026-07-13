@@ -166,12 +166,16 @@ class ArtifactStore:
     def finalize_open(
         self,
         state_for_open: ArtifactState = ArtifactState.INCOMPLETE,
+        *,
+        state_without_location: ArtifactState | None = None,
     ) -> list[ArtifactEvent]:
         """Seal every still-producing artifact during execution terminalization.
 
         ``AVAILABLE`` artifacts remain available. The execution layer seals
         application output as ``INCOMPLETE``/``FAILED`` unless its authoritative
         producer explicitly owns completion, such as JARVIS core log streams.
+        A caller that normally finalizes owned output may select a fail-closed
+        terminal state for a producing artifact whose location is still unset.
         """
         if state_for_open not in {
             ArtifactState.FINALIZED,
@@ -179,6 +183,13 @@ class ArtifactStore:
             ArtifactState.FAILED,
         }:
             raise ValueError("open artifacts require a terminal sealing state")
+        if state_without_location is not None and state_without_location not in {
+            ArtifactState.INCOMPLETE,
+            ArtifactState.FAILED,
+        }:
+            raise ValueError(
+                "location-less artifacts require an incomplete or failed state"
+            )
         self._prepare_parent()
         with _exclusive_store_lock(self.path):
             if _store_is_sealed(self.path):
@@ -197,10 +208,15 @@ class ArtifactStore:
                     if event.state is not ArtifactState.PRODUCING:
                         continue
                     sequence += 1
+                    terminal_state = (
+                        state_without_location
+                        if event.location is None and state_without_location is not None
+                        else state_for_open
+                    )
                     sealed.append(
                         replace(
                             event,
-                            state=state_for_open,
+                            state=terminal_state,
                             revision=event.revision + 1,
                             sequence=sequence,
                             observed_at_epoch=observed_at,

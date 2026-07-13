@@ -6,6 +6,7 @@ Provides the consolidated Pipeline class that combines pipeline creation, loadin
 import os
 import hashlib
 import json
+import posixpath
 import re
 import shlex
 import shutil
@@ -33,6 +34,8 @@ from jarvis_cd.core.execution import (
     LEGACY_RECORD_SCHEMA,
     RECORD_NAME,
     RECORD_SCHEMA,
+    SCHEDULER_ARTIFACT_PATH_METADATA_KEY,
+    SCHEDULER_ARTIFACT_PATH_SCHEMA,
     ExecutionHandle,
     ExecutionArtifactSnapshot,
     ExecutionProgressSnapshot,
@@ -53,6 +56,15 @@ _EXECUTION_MARKER = RECORD_NAME
 _EXECUTION_MARKER_SCHEMA = LEGACY_RECORD_SCHEMA
 _EXECUTION_CLEANUP_SCHEMA = "jarvis.execution-cleanup.v1"
 _MAX_EXPLICIT_EXECUTION_CLEANUP = 1024
+
+
+def _absolute_scheduler_log_path(value: object) -> str:
+    """Return one lexical absolute path without expanding or resolving links."""
+    if not isinstance(value, str) or not value:
+        raise ValueError("scheduler output and error paths must be non-empty strings")
+    if os.name == "nt" and value.startswith("/"):
+        return posixpath.normpath(value)
+    return os.path.normpath(os.path.abspath(value))
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> Dict[str, Any]:
@@ -1261,6 +1273,10 @@ class Pipeline:
             scheduler_spec["hostfile"] = str(execution_root / "hostfile.txt")
             scheduler_spec.setdefault("output", str(execution_root / "stdout.log"))
             scheduler_spec.setdefault("error", str(execution_root / "stderr.log"))
+            for scheduler_key in ("output", "error"):
+                scheduler_spec[scheduler_key] = _absolute_scheduler_log_path(
+                    scheduler_spec[scheduler_key]
+                )
             snapshot_dir, input_dir, snapshot_sha256 = self._write_execution_snapshot(
                 execution_root,
                 scheduler_spec,
@@ -1294,58 +1310,6 @@ class Pipeline:
                     media_type="text/x-shellscript",
                     format_name="slurm-shell",
                 )
-            if submit:
-                for logical_name, scheduler_key in (
-                    ("stdout", "output"),
-                    ("stderr", "error"),
-                ):
-                    configured_path = Path(str(scheduler_spec[scheduler_key]))
-                    try:
-                        relative_path = configured_path.relative_to(
-                            execution_root
-                        ).as_posix()
-                    except ValueError:
-                        if not configured_path.is_absolute():
-                            configured_path = (Path.cwd() / configured_path).resolve()
-                        if os.name == "nt":
-                            continue
-                        self._core_artifact_reporter(
-                            store,
-                            resolved_execution_id,
-                        ).emit(
-                            logical_name=logical_name,
-                            kind="log",
-                            role=ArtifactRole.LOG,
-                            structure=ArtifactStructure.STREAM,
-                            ownership=ArtifactOwnership.SHARED,
-                            state=ArtifactState.PRODUCING,
-                            location=ArtifactLocation.cluster_path(
-                                configured_path.as_posix()
-                            ),
-                            media_type="text/plain",
-                            format="log",
-                            message=(
-                                "Scheduler output stream; content may grow until "
-                                "execution ends"
-                            ),
-                        )
-                        continue
-                    self._register_execution_file(
-                        store,
-                        resolved_execution_id,
-                        logical_name=logical_name,
-                        relative_path=relative_path,
-                        kind="log",
-                        role=ArtifactRole.LOG,
-                        structure=ArtifactStructure.STREAM,
-                        state=ArtifactState.PRODUCING,
-                        media_type="text/plain",
-                        format_name="log",
-                        message=(
-                            "Scheduler output stream; content may grow until "
-                            "execution ends"
-                        ),
-                    )
         except BaseException as exc:
             try:
                 store.update(
@@ -1416,6 +1380,30 @@ class Pipeline:
         if not submit:
             return store.get(resolved_execution_id).handle
 
+        try:
+            for logical_name, scheduler_key in (
+                ("stdout", "output"),
+                ("stderr", "error"),
+            ):
+                self._register_scheduler_log_artifact(
+                    store,
+                    resolved_execution_id,
+                    execution_root=execution_root,
+                    provider=sched.NAME,
+                    array_requested=sched.array_requested,
+                    logical_name=logical_name,
+                    configured_path=str(scheduler_spec[scheduler_key]),
+                )
+        except BaseException as exc:
+            self.last_submission["state"] = "pre_submit_failed"
+            self.last_submission["terminal"] = True
+            persist_stage_exception(
+                exc,
+                "scheduler_artifact_registration",
+                ambiguous=False,
+            )
+            raise
+
         from jarvis_cd.shell import Exec, LocalExecInfo
 
         argv = sched.submit_command(wait=wait)
@@ -1482,9 +1470,18 @@ class Pipeline:
             }
         )
         try:
+            provider_value = provider_metadata.get("provider")
+            native_id_value = provider_metadata.get("scheduler_job_id")
+            if not isinstance(provider_value, str) or not isinstance(
+                native_id_value, str
+            ):
+                raise RuntimeError(
+                    "scheduler provider returned incomplete artifact identity"
+                )
             self._update_execution_marker(execution_root)
             # Persist the provider-owned identity immediately after parsing;
-            # later logging or state decoration must not reopen the orphan gap.
+            # artifact resolution, logging, and state decoration must not
+            # reopen the orphan gap for an accepted scheduler job.
             self.save()
         except BaseException as exc:
             self.last_submission["state"] = "identity_persistence_failed"
@@ -1499,6 +1496,26 @@ class Pipeline:
                 "Scheduler accepted job "
                 f"{self.last_submission['scheduler_job_id']}, but JARVIS could not "
                 "persist its complete submission identity"
+            ) from exc
+        try:
+            store.resolve_scheduler_artifact_paths(
+                resolved_execution_id,
+                provider=provider_value,
+                native_id=native_id_value,
+            )
+        except BaseException as exc:
+            self.last_submission["state"] = "artifact_resolution_failed"
+            self.last_submission["terminal"] = False
+            persist_stage_exception(
+                exc,
+                "scheduler_artifact_resolution",
+                ambiguous=True,
+                accepted=True,
+            )
+            raise RuntimeError(
+                "Scheduler accepted job "
+                f"{self.last_submission['scheduler_job_id']} and JARVIS persisted "
+                "its identity, but scheduler artifact path resolution failed"
             ) from exc
         logger.pipeline(
             f"Scheduler job identity: {self.last_submission['scheduler_job_id']}"
@@ -2651,6 +2668,55 @@ class Pipeline:
             media_type=media_type,
             format=format_name,
             message=message,
+        )
+
+    def _register_scheduler_log_artifact(
+        self,
+        store: ExecutionStore,
+        execution_id: str,
+        *,
+        execution_root: Path,
+        provider: str,
+        array_requested: bool,
+        logical_name: str,
+        configured_path: str,
+    ) -> None:
+        """Register a location-less log pending provider-owned path resolution."""
+        path = Path(configured_path)
+        try:
+            path_pattern = path.relative_to(execution_root).as_posix()
+        except ValueError:
+            scope = "cluster"
+            path_pattern = (
+                posixpath.normpath(configured_path)
+                if os.name == "nt" and configured_path.startswith("/")
+                else path.as_posix()
+            )
+            ownership = ArtifactOwnership.SHARED
+        else:
+            scope = "execution"
+            ownership = ArtifactOwnership.EXECUTION
+        self._core_artifact_reporter(store, execution_id).emit(
+            logical_name=logical_name,
+            kind="log",
+            role=ArtifactRole.LOG,
+            structure=ArtifactStructure.STREAM,
+            ownership=ownership,
+            state=ArtifactState.PRODUCING,
+            location=None,
+            media_type="text/plain",
+            format="log",
+            message=("Scheduler output stream; content may grow until execution ends"),
+            metadata={
+                SCHEDULER_ARTIFACT_PATH_METADATA_KEY: {
+                    "schema_version": SCHEDULER_ARTIFACT_PATH_SCHEMA,
+                    "provider": provider,
+                    "path_pattern": path_pattern,
+                    "scope": scope,
+                    "array_requested": array_requested,
+                    "status": "pending",
+                }
+            },
         )
 
     def _register_execution_snapshot_artifacts(

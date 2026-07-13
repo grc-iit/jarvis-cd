@@ -287,6 +287,31 @@ def test_store_is_durable_and_terminalization_seals_only_producing(
         assert path.stat().st_mode & 0o077 == 0
 
 
+def test_store_fail_closes_locationless_core_output_during_finalization(
+    tmp_path: Path,
+) -> None:
+    """A core producer cannot become finalized before its path is resolved."""
+    path = tmp_path / "locationless.jsonl"
+    store = ArtifactStore(path)
+    pending = replace(
+        _event(state=ArtifactState.PRODUCING),
+        location=None,
+    )
+    store.append(pending)
+
+    sealed = store.finalize_open(
+        ArtifactState.FINALIZED,
+        state_without_location=ArtifactState.INCOMPLETE,
+    )
+
+    assert len(sealed) == 1
+    assert sealed[0].artifact_id == pending.artifact_id
+    assert sealed[0].revision == 2
+    assert sealed[0].state is ArtifactState.INCOMPLETE
+    assert sealed[0].location is None
+    assert store.is_sealed() is True
+
+
 def test_store_rejects_identity_replay_torn_records_and_redirects(
     tmp_path: Path,
 ) -> None:
