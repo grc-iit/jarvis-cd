@@ -9,6 +9,7 @@ from .provider import (
     LineBuffer,
     PackageProgressProvider,
     PackageScopeFilter,
+    ProcessExitProgressProvider,
     ProgressObservation,
     ProgressProviderFactory,
     RelayProgressAdapter,
@@ -24,7 +25,12 @@ from .reporter import (
     ProgressReporter,
     event_from_progress_line,
 )
-from .schema import PROGRESS_SCHEMA_VERSION, ProgressEvent, ProgressState
+from .schema import (
+    PROCESS_EXIT_RECONCILIATION_KEY,
+    PROGRESS_SCHEMA_VERSION,
+    ProgressEvent,
+    ProgressState,
+)
 from .store import ProgressStore
 
 __all__ = [
@@ -36,8 +42,10 @@ __all__ = [
     "PROGRESS_PATH_ENV",
     "PROGRESS_SCHEMA_VERSION",
     "PROGRESS_TRANSPORT_ENV",
+    "PROCESS_EXIT_RECONCILIATION_KEY",
     "PackageProgressProvider",
     "PackageScopeFilter",
+    "ProcessExitProgressProvider",
     "ProgressEvent",
     "ProgressObservation",
     "ProgressProviderFactory",

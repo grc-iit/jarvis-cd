@@ -6,6 +6,9 @@ from jarvis_cd.core.execution import validate_pipeline_id
 from jarvis_cd.util.hostfile import Hostfile
 
 
+_JARVIS_ROOT_ENVIRONMENT = "JARVIS_ROOT"
+
+
 def load_class(import_str: str, path: str, class_name: str):
     """
     Loads a class from a python file.
@@ -76,10 +79,20 @@ class Jarvis:
             return
 
         # Set up jarvis root directory
-        if jarvis_root is None:
+        configured_root = jarvis_root
+        if configured_root is None:
+            configured_root = os.environ.get(_JARVIS_ROOT_ENVIRONMENT)
+        if configured_root is None:
             self.jarvis_root = Path.home() / ".ppi-jarvis"
         else:
-            self.jarvis_root = Path(jarvis_root)
+            if not configured_root or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in configured_root
+            ):
+                raise ValueError(
+                    f"{_JARVIS_ROOT_ENVIRONMENT} must be a non-empty printable path"
+                )
+            self.jarvis_root = Path(configured_root).expanduser().resolve()
 
         self.config_file = self.jarvis_root / "jarvis_config.yaml"
         self.repos_file = self.jarvis_root / "repos.yaml"

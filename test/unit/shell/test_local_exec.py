@@ -108,6 +108,34 @@ class TestLocalExec(unittest.TestCase):
         self.assertEqual(callback.lines, [("stdout", "tail")])
         self.assertEqual(callback.finalized, 1)
 
+    def test_stateful_callback_receives_owned_process_return_code(self):
+        """Exit-aware callbacks receive the real code after output drains."""
+
+        class Callback:
+            def __init__(self):
+                self.return_codes = []
+
+            def __call__(self, stream, line):
+                del stream, line
+
+            def finalize_process(self, return_code):
+                self.return_codes.append(return_code)
+
+        success = Callback()
+        failed = Callback()
+        LocalExec(
+            self.python_command("pass"),
+            LocalExecInfo(hide_output=True, line_callback=success),
+        )
+        execution = LocalExec(
+            self.python_command("raise SystemExit(7)"),
+            LocalExecInfo(hide_output=True, line_callback=failed),
+        )
+
+        self.assertEqual(success.return_codes, [0])
+        self.assertEqual(failed.return_codes, [7])
+        self.assertEqual(execution.exit_code["localhost"], 7)
+
     def test_line_callback_finalization_failure_is_reported(self):
         """A final provider flush failure makes an otherwise clean process fail."""
 
@@ -130,6 +158,33 @@ class TestLocalExec(unittest.TestCase):
         self.assertIn(
             "cannot flush final progress fragment", local_exec.stderr["localhost"]
         )
+
+    def test_finalizer_failure_reconciles_with_effective_return_code(self):
+        """A failed finalizer receives the effective failure in a correction pass."""
+
+        class Callback:
+            def __init__(self):
+                self.reconciled = []
+
+            def __call__(self, stream, line):
+                del stream, line
+
+            def finalize_process(self, return_code):
+                self.reported_return_code = return_code
+                raise RuntimeError("terminal metadata write failed")
+
+            def reconcile_process_exit(self, return_code):
+                self.reconciled.append(return_code)
+
+        callback = Callback()
+        local_exec = LocalExec(
+            self.python_command("pass"),
+            LocalExecInfo(hide_output=True, line_callback=callback),
+        )
+
+        self.assertEqual(callback.reported_return_code, 0)
+        self.assertEqual(callback.reconciled, [1])
+        self.assertEqual(local_exec.exit_code["localhost"], 1)
 
     def test_single_env_variable(self):
         """Test execution with a single environment variable"""

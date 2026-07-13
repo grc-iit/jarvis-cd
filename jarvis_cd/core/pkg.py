@@ -87,15 +87,42 @@ class _PackageProgressLineCallback:
 
     def finalize(self) -> None:
         """Flush the provider's final fragment once after output capture closes."""
+        self.finalize_process(None)
+
+    def finalize_process(self, return_code: int | None) -> None:
+        """Finalize using an optional JARVIS-owned process return code."""
         with self._lock:
             if self._finalized:
                 return
             if self._source != "structured_stdout" and self._provider is not None:
-                observations = self._provider.finalize_progress()
+                from jarvis_cd.progress import ProcessExitProgressProvider
+
+                if return_code is not None and isinstance(
+                    self._provider,
+                    ProcessExitProgressProvider,
+                ):
+                    observations = self._provider.finalize_progress_for_exit(
+                        return_code
+                    )
+                else:
+                    observations = self._provider.finalize_progress()
                 if observations:
                     self._source = "provider"
                     self._persist(observations)
+            if return_code is not None and return_code != 0:
+                from jarvis_cd.progress import ProgressStore
+
+                ProgressStore(self._progress_path).reconcile_process_exit(return_code)
             self._finalized = True
+
+    def reconcile_process_exit(self, return_code: int) -> None:
+        """Correct any terminal success after the effective process failure."""
+        if return_code == 0:
+            return
+        from jarvis_cd.progress import ProgressStore
+
+        with self._lock:
+            ProgressStore(self._progress_path).reconcile_process_exit(return_code)
 
     def _persist(self, observations: list["ProgressObservation"]) -> None:
         """Persist typed observations with JARVIS-owned identity and sequence."""
@@ -172,15 +199,42 @@ class _PackageArtifactLineCallback:
 
     def finalize(self) -> None:
         """Flush a provider's final fragment once after output capture closes."""
+        self.finalize_process(None)
+
+    def finalize_process(self, return_code: int | None) -> None:
+        """Finalize using an optional JARVIS-owned process return code."""
         with self._lock:
             if self._finalized:
                 return
             if self._source != "structured_stdout" and self._provider is not None:
-                observations = self._provider.finalize_artifacts()
+                from jarvis_cd.artifacts import ProcessExitArtifactProvider
+
+                if return_code is not None and isinstance(
+                    self._provider,
+                    ProcessExitArtifactProvider,
+                ):
+                    observations = self._provider.finalize_artifacts_for_exit(
+                        return_code
+                    )
+                else:
+                    observations = self._provider.finalize_artifacts()
                 if observations:
                     self._source = "provider"
                     self._persist(observations)
+            if return_code is not None and return_code != 0:
+                from jarvis_cd.artifacts import ArtifactStore
+
+                ArtifactStore(self._artifact_path).reconcile_process_exit(return_code)
             self._finalized = True
+
+    def reconcile_process_exit(self, return_code: int) -> None:
+        """Correct any terminal success after the effective process failure."""
+        if return_code == 0:
+            return
+        from jarvis_cd.artifacts import ArtifactStore
+
+        with self._lock:
+            ArtifactStore(self._artifact_path).reconcile_process_exit(return_code)
 
     def _persist(self, observations: list["ArtifactObservation"]) -> None:
         """Persist observations with JARVIS-owned execution identity."""
@@ -221,21 +275,49 @@ class _PackageRuntimeLineCallback:
 
     def finalize(self) -> None:
         """Finalize every configured provider exactly once."""
+        self.finalize_process(None)
+
+    def finalize_process(self, return_code: int | None) -> None:
+        """Finalize providers with an optional owned process return code."""
         with self._lock:
             if self._finalized:
                 return
             failures: list[Exception] = []
             for callback in self._callbacks:
+                process_finalizer = getattr(callback, "finalize_process", None)
                 finalizer = getattr(callback, "finalize", None)
-                if finalizer is not None and callable(finalizer):
+                if callable(process_finalizer) or callable(finalizer):
                     try:
-                        finalizer()
+                        if return_code is not None and callable(process_finalizer):
+                            cast(Callable[[int], None], process_finalizer)(return_code)
+                        elif callable(finalizer):
+                            cast(Callable[[], None], finalizer)()
                     except Exception as exc:
                         failures.append(exc)
             self._finalized = True
             if failures:
                 raise ExceptionGroup(
                     "package runtime callback finalization failed",
+                    failures,
+                )
+
+    def reconcile_process_exit(self, return_code: int) -> None:
+        """Correct every semantic stream using the effective process failure."""
+        if return_code == 0:
+            return
+        with self._lock:
+            failures: list[Exception] = []
+            for callback in self._callbacks:
+                reconciler = getattr(callback, "reconcile_process_exit", None)
+                if not callable(reconciler):
+                    continue
+                try:
+                    cast(Callable[[int], None], reconciler)(return_code)
+                except Exception as exc:
+                    failures.append(exc)
+            if failures:
+                raise ExceptionGroup(
+                    "package runtime callback reconciliation failed",
                     failures,
                 )
 

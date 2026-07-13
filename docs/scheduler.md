@@ -16,6 +16,12 @@ job script, and (by default) hands it off to the scheduler's submit command
 2. Writes it to that execution's private `hostfile.txt`
 3. Runs the execution's isolated `runtime/pipeline.yaml` working copy
 
+The generated script invokes JARVIS through the same Python interpreter that
+created the submission and binds the submitting `JARVIS_ROOT`. This preserves
+the submitting configuration boundary on compute nodes; an unrelated `jarvis`
+executable or a different user's default built-in checkout on the allocation's
+`PATH` cannot replace it.
+
 Changing or deleting the named pipeline after submission cannot change an
 already queued execution. Each execution directory contains:
 

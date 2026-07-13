@@ -74,6 +74,9 @@ jobs:
           uv run --frozen pyright \
             jarvis_cd/artifacts \
             jarvis_cd/core/execution.py \
+            jarvis_cd/core/scheduler.py \
+            jarvis_cd/progress \
+            ci/live_ares_gray_scott_probe.py \
             builtin/builtin/lammps/artifacts.py \
             builtin/builtin/paraview/artifacts.py \
             builtin/builtin/gray_scott/progress.py \
@@ -89,12 +92,18 @@ jobs:
             jarvis_cd/core/pipeline.py \
             jarvis_cd/core/pkg.py \
             jarvis_cd/core/cli.py \
+            jarvis_cd/core/scheduler.py \
+            jarvis_cd/progress \
+            ci/live_ares_gray_scott_probe.py \
             builtin/builtin/lammps/artifacts.py \
             builtin/builtin/paraview/artifacts.py \
             builtin/builtin/gray_scott \
             builtin/builtin/adios2_gray_scott
           uv run --frozen ruff format --check \
             jarvis_cd/artifacts \
+            jarvis_cd/core/scheduler.py \
+            jarvis_cd/progress \
+            ci/live_ares_gray_scott_probe.py \
             builtin/builtin/lammps/artifacts.py \
             builtin/builtin/paraview/artifacts.py \
             builtin/builtin/gray_scott/progress.py \

@@ -9,6 +9,7 @@ from .provider import (
     ArtifactObservation,
     ArtifactProviderFactory,
     PackageArtifactProvider,
+    ProcessExitArtifactProvider,
 )
 from .reporter import (
     ARTIFACT_LINE_PREFIX,
@@ -22,6 +23,7 @@ from .reporter import (
 )
 from .schema import (
     ARTIFACT_SCHEMA_VERSION,
+    PROCESS_EXIT_RECONCILIATION_KEY,
     ArtifactEvent,
     ArtifactLocation,
     ArtifactLocationKind,
@@ -42,6 +44,7 @@ __all__ = [
     "EXECUTION_ID_ENV",
     "PACKAGE_ID_ENV",
     "PACKAGE_NAME_ENV",
+    "PROCESS_EXIT_RECONCILIATION_KEY",
     "ArtifactEvent",
     "ArtifactLocation",
     "ArtifactLocationKind",
@@ -54,6 +57,7 @@ __all__ = [
     "ArtifactStore",
     "ArtifactStructure",
     "PackageArtifactProvider",
+    "ProcessExitArtifactProvider",
     "event_from_artifact_line",
     "load_artifacts_module",
     "new_artifact_id",

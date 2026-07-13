@@ -36,6 +36,8 @@ class Adios2GrayScottProgressAdapter:
     _last_step: int = 0
     _started: bool = False
     _completed: bool = False
+    _failed: bool = False
+    _pending_elapsed_milliseconds: int | None = None
 
     def observe_progress(self, text: str) -> list[ProgressObservation]:
         """Return progress based on native Gray-Scott lifecycle messages."""
@@ -43,7 +45,33 @@ class Adios2GrayScottProgressAdapter:
 
     def finalize_progress(self) -> list[ProgressObservation]:
         """Flush one final unterminated Gray-Scott output line."""
-        return self._observe("", finalize=True)
+        observations = self._observe("", finalize=True)
+        completed = self._pending_completed_observation()
+        if completed is not None:
+            observations.append(completed)
+        return observations
+
+    def finalize_progress_for_exit(self, return_code: int) -> list[ProgressObservation]:
+        """Finalize progress from the authoritative producer process status."""
+        observations = self._observe("", finalize=True)
+        if return_code != 0:
+            failed = self._failed_observation(return_code)
+            if failed is not None:
+                observations.append(failed)
+            return observations
+
+        completed = self._pending_completed_observation()
+        if completed is None and (
+            self._started
+            and self.total_steps is not None
+            and self._last_step == self.total_steps
+        ):
+            completed = self._completed_observation(
+                completion_signal="process_exit_zero_after_final_output"
+            )
+        if completed is not None:
+            observations.append(completed)
+        return observations
 
     def reset_progress(self) -> None:
         """Reset parsing when the application output stream is replaced."""
@@ -52,6 +80,8 @@ class Adios2GrayScottProgressAdapter:
         self._last_step = 0
         self._started = False
         self._completed = False
+        self._failed = False
+        self._pending_elapsed_milliseconds = None
 
     def _observe(self, text: str, *, finalize: bool) -> list[ProgressObservation]:
         observations: list[ProgressObservation] = []
@@ -62,6 +92,9 @@ class Adios2GrayScottProgressAdapter:
         return observations
 
     def _observe_line(self, line: str) -> ProgressObservation | None:
+        if self._completed or self._failed:
+            return None
+
         restart_match = _RESTART_RE.fullmatch(line)
         if restart_match is not None:
             self._restart_step = int(restart_match.group("step"))
@@ -133,30 +166,77 @@ class Adios2GrayScottProgressAdapter:
 
         completed_match = _COMPLETED_RE.fullmatch(line)
         if completed_match is not None:
-            if self._completed:
-                return None
-            self._completed = True
-            current = (
-                self.total_steps if self.total_steps is not None else self._last_step
-            )
-            return ProgressObservation(
-                label="simulation",
-                state=ProgressState.COMPLETED,
-                current=float(current),
-                total=(
-                    float(self.total_steps) if self.total_steps is not None else None
-                ),
-                unit="timestep",
-                message="ADIOS2 Gray-Scott simulation completed",
-                metadata={
-                    "application": "gray_scott",
-                    "io_backend": "adios2",
-                    "progress_kind": "simulation_timestep",
-                    "completion_signal": "writer_closed_and_timing_reported",
-                    "elapsed_milliseconds": int(completed_match.group("elapsed_ms")),
-                },
+            self._pending_elapsed_milliseconds = int(
+                completed_match.group("elapsed_ms")
             )
         return None
+
+    def _pending_completed_observation(self) -> ProgressObservation | None:
+        """Commit a deferred writer-close marker for legacy callers."""
+        if self._pending_elapsed_milliseconds is None:
+            return None
+        return self._completed_observation(
+            completion_signal="writer_closed_and_timing_reported",
+            elapsed_milliseconds=self._pending_elapsed_milliseconds,
+        )
+
+    def _completed_observation(
+        self,
+        *,
+        completion_signal: str,
+        elapsed_milliseconds: int | None = None,
+    ) -> ProgressObservation | None:
+        """Return one terminal success after its process status is accepted."""
+        if self._completed or self._failed:
+            return None
+        self._completed = True
+        current = self.total_steps if self.total_steps is not None else self._last_step
+        metadata: dict[str, str | int] = {
+            "application": "gray_scott",
+            "io_backend": "adios2",
+            "progress_kind": "simulation_timestep",
+            "completion_signal": completion_signal,
+        }
+        if elapsed_milliseconds is not None:
+            metadata["elapsed_milliseconds"] = elapsed_milliseconds
+        return ProgressObservation(
+            label="simulation",
+            state=ProgressState.COMPLETED,
+            current=float(current),
+            total=(float(self.total_steps) if self.total_steps is not None else None),
+            unit="timestep",
+            message="ADIOS2 Gray-Scott simulation completed",
+            metadata=metadata,
+        )
+
+    def _failed_observation(self, return_code: int) -> ProgressObservation | None:
+        """Return one terminal failure from an authoritative process status."""
+        if self._completed or self._failed:
+            return None
+        self._failed = True
+        metadata: dict[str, str | int] = {
+            "application": "gray_scott",
+            "io_backend": "adios2",
+            "progress_kind": "simulation_timestep",
+            "completion_signal": "process_exit_nonzero",
+            "return_code": return_code,
+        }
+        if self._pending_elapsed_milliseconds is not None:
+            metadata["application_completion_signal"] = (
+                "writer_closed_and_timing_reported"
+            )
+            metadata["elapsed_milliseconds"] = self._pending_elapsed_milliseconds
+        return ProgressObservation(
+            label="simulation",
+            state=ProgressState.FAILED,
+            current=float(self._last_step),
+            total=(float(self.total_steps) if self.total_steps is not None else None),
+            unit="timestep",
+            message=(
+                f"ADIOS2 Gray-Scott simulation failed with exit status {return_code}"
+            ),
+            metadata=metadata,
+        )
 
 
 def adapter_from_package(

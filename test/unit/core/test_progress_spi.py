@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import os
+import subprocess
+import sys
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +14,8 @@ from typing import Any, cast
 import pytest
 
 from jarvis_cd.core.pkg import Pkg
+from jarvis_cd.shell.core_exec import LocalExec
+from jarvis_cd.shell.exec_info import LocalExecInfo
 from jarvis_cd.progress import (
     PROGRESS_LINE_PREFIX,
     ProgressEvent,
@@ -314,6 +318,61 @@ def test_package_callback_persists_typed_final_observation(tmp_path: Path) -> No
     assert event.sequence == 1
 
 
+def test_package_callback_passes_owned_process_exit_to_provider(
+    tmp_path: Path,
+) -> None:
+    """The optional exit-aware SPI receives JARVIS's authoritative code."""
+
+    class Provider:
+        def observe_progress(self, text: str) -> list[ProgressObservation]:
+            del text
+            return [ProgressObservation(label="phase", current=1, total=1)]
+
+        def finalize_progress(self) -> list[ProgressObservation]:
+            raise AssertionError("exit-aware provider used legacy finalization")
+
+        def finalize_progress_for_exit(
+            self, return_code: int
+        ) -> list[ProgressObservation]:
+            return [
+                ProgressObservation(
+                    label="phase",
+                    state=(
+                        ProgressState.COMPLETED
+                        if return_code == 0
+                        else ProgressState.RUNNING
+                    ),
+                    current=1,
+                    total=1,
+                    metadata={"return_code": return_code},
+                )
+            ]
+
+        def reset_progress(self) -> None:
+            return None
+
+    path = (tmp_path / "exit-progress.jsonl").resolve()
+    package = object.__new__(Pkg)
+    package.mod_env = {
+        "JARVIS_EXECUTION_ID": "exec_exit",
+        "JARVIS_PACKAGE_ID": "app_a",
+        "JARVIS_PACKAGE_NAME": "site.application",
+        "JARVIS_PROGRESS_PATH": str(path),
+    }
+    package.get_progress_provider = lambda: Provider()  # type: ignore[method-assign]
+
+    callback = package.progress_line_callback()
+    assert callback is not None
+    callback("stdout", "finished work\n")
+    getattr(callback, "finalize_process")(0)
+
+    event = ProgressStore(path).latest()
+    assert event is not None
+    assert event.state is ProgressState.COMPLETED
+    assert event.metadata["return_code"] == 0
+    assert event.sequence == 2
+
+
 def test_container_callback_persists_structured_stdout_without_provider(
     tmp_path: Path,
 ) -> None:
@@ -348,6 +407,240 @@ def test_container_callback_persists_structured_stdout_without_provider(
     assert event.execution_id == "exec_container"
     assert event.package_id == "container_app"
     assert event.current == 1
+
+
+def test_structured_completion_is_corrected_after_nonzero_process_exit(
+    tmp_path: Path,
+) -> None:
+    """JARVIS process ownership overrides a premature application success."""
+    path = (tmp_path / "reconciled-progress.jsonl").resolve()
+    stream = io.StringIO()
+    child_reporter = ProgressReporter(
+        package_name="site.application",
+        package_id="container_app",
+        execution_id="exec_failed_container",
+        stream=stream,
+    )
+    completed = child_reporter.emit(
+        label="frame",
+        state=ProgressState.COMPLETED,
+        current=2,
+        total=2,
+        unit="frame",
+        message="Application reported completion",
+        metadata={"application_signal": "last_frame"},
+    )
+
+    package = object.__new__(Pkg)
+    package.mod_env = {
+        "JARVIS_EXECUTION_ID": "exec_failed_container",
+        "JARVIS_PACKAGE_ID": "container_app",
+        "JARVIS_PACKAGE_NAME": "site.application",
+        "JARVIS_PROGRESS_PATH": str(path),
+        "JARVIS_PROGRESS_TRANSPORT": "stdout",
+    }
+    package.get_progress_provider = lambda: None  # type: ignore[method-assign]
+
+    callback = package.progress_line_callback()
+    assert callback is not None
+    callback("stdout", stream.getvalue())
+    getattr(callback, "finalize_process")(23)
+    getattr(callback, "finalize_process")(23)
+
+    events = ProgressStore(path).read_all()
+    assert len(events) == 2
+    assert events[0] == completed
+    corrected = events[1]
+    assert corrected.state is ProgressState.FAILED
+    assert corrected.sequence == completed.sequence + 1
+    assert corrected.current == completed.current
+    assert corrected.total == completed.total
+    assert corrected.unit == completed.unit
+    assert corrected.metadata["jarvis_process_exit"] == {
+        "reported_state": "completed",
+        "return_code": 23,
+        "source": "jarvis_process_owner",
+    }
+
+
+def test_structured_completion_remains_terminal_after_zero_process_exit(
+    tmp_path: Path,
+) -> None:
+    """A zero JARVIS-owned return code leaves structured completion intact."""
+    path = (tmp_path / "successful-progress.jsonl").resolve()
+    stream = io.StringIO()
+    child_reporter = ProgressReporter(
+        package_name="site.application",
+        package_id="container_app",
+        execution_id="exec_successful_container",
+        stream=stream,
+    )
+    completed = child_reporter.emit(
+        label="frame",
+        state=ProgressState.COMPLETED,
+        current=2,
+        total=2,
+    )
+
+    package = object.__new__(Pkg)
+    package.mod_env = {
+        "JARVIS_EXECUTION_ID": "exec_successful_container",
+        "JARVIS_PACKAGE_ID": "container_app",
+        "JARVIS_PACKAGE_NAME": "site.application",
+        "JARVIS_PROGRESS_PATH": str(path),
+        "JARVIS_PROGRESS_TRANSPORT": "stdout",
+    }
+    package.get_progress_provider = lambda: None  # type: ignore[method-assign]
+
+    callback = package.progress_line_callback()
+    assert callback is not None
+    callback("stdout", stream.getvalue())
+    getattr(callback, "finalize_process")(0)
+
+    assert ProgressStore(path).read_all() == [completed]
+
+
+def test_line_callback_failure_reconciles_structured_completion(
+    tmp_path: Path,
+) -> None:
+    """A stream failure cannot leave an earlier structured success terminal."""
+    progress_path = (tmp_path / "line-failure-progress.jsonl").resolve()
+    stream = io.StringIO()
+    child_reporter = ProgressReporter(
+        package_name="site.application",
+        package_id="container_app",
+        execution_id="exec_line_failure",
+        stream=stream,
+    )
+    child_reporter.emit(
+        label="frame",
+        state=ProgressState.COMPLETED,
+        current=2,
+        total=2,
+    )
+    structured_line = stream.getvalue().strip()
+
+    package = object.__new__(Pkg)
+    package.mod_env = {
+        "JARVIS_EXECUTION_ID": "exec_line_failure",
+        "JARVIS_PACKAGE_ID": "container_app",
+        "JARVIS_PACKAGE_NAME": "site.application",
+        "JARVIS_PROGRESS_PATH": str(progress_path),
+        "JARVIS_PROGRESS_TRANSPORT": "stdout",
+    }
+    package.get_progress_provider = lambda: None  # type: ignore[method-assign]
+    package.get_artifact_provider = lambda: None  # type: ignore[method-assign]
+    runtime_callback = package.runtime_line_callback()
+    assert runtime_callback is not None
+
+    class FailAfterStructuredSuccess:
+        def __call__(self, stream_name: str, line: str) -> None:
+            runtime_callback(stream_name, line)
+            if line.strip() == "trigger-callback-failure":
+                raise RuntimeError("forced failure after structured success")
+
+        def finalize_process(self, return_code: int) -> None:
+            getattr(runtime_callback, "finalize_process")(return_code)
+
+    command = subprocess.list2cmdline(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import time; "
+                f"print({structured_line!r}, flush=True); "
+                "print('trigger-callback-failure', flush=True); "
+                "time.sleep(30)"
+            ),
+        ]
+    )
+    execution = LocalExec(
+        command,
+        LocalExecInfo(
+            hide_output=True,
+            line_callback=FailAfterStructuredSuccess(),
+        ),
+    )
+
+    assert execution.exit_code["localhost"] != 0
+    events = ProgressStore(progress_path).read_all()
+    assert [event.state for event in events] == [
+        ProgressState.COMPLETED,
+        ProgressState.FAILED,
+    ]
+    assert events[-1].metadata["jarvis_process_exit"]["return_code"] != 0
+
+
+def test_later_artifact_finalizer_failure_reconciles_progress_success(
+    tmp_path: Path,
+) -> None:
+    """A later semantic failure corrects progress finalized earlier in the batch."""
+
+    class CompletedProgressProvider:
+        def observe_progress(self, text: str) -> list[ProgressObservation]:
+            del text
+            return []
+
+        def finalize_progress(self) -> list[ProgressObservation]:
+            return [
+                ProgressObservation(
+                    label="phase",
+                    state=ProgressState.COMPLETED,
+                    current=1,
+                    total=1,
+                )
+            ]
+
+        def reset_progress(self) -> None:
+            return None
+
+    class FailingArtifactProvider:
+        def observe_artifacts(self, text: str) -> list[Any]:
+            del text
+            return []
+
+        def finalize_artifacts(self) -> list[Any]:
+            raise RuntimeError("artifact finalizer failed after progress")
+
+        def reset_artifacts(self) -> None:
+            return None
+
+    progress_path = (tmp_path / "ordered-progress.jsonl").resolve()
+    artifact_path = (tmp_path / "ordered-artifacts.jsonl").resolve()
+    package = object.__new__(Pkg)
+    package.mod_env = {
+        "JARVIS_EXECUTION_ID": "exec_ordered_failure",
+        "JARVIS_PACKAGE_ID": "application_a",
+        "JARVIS_PACKAGE_NAME": "site.application",
+        "JARVIS_PROGRESS_PATH": str(progress_path),
+        "JARVIS_ARTIFACT_PATH": str(artifact_path),
+    }
+    package.get_progress_provider = (  # type: ignore[method-assign]
+        lambda: CompletedProgressProvider()
+    )
+    package.get_artifact_provider = (  # type: ignore[method-assign]
+        lambda: FailingArtifactProvider()
+    )
+    runtime_callback = package.runtime_line_callback()
+    assert runtime_callback is not None
+
+    execution = LocalExec(
+        subprocess.list2cmdline([sys.executable, "-c", "pass"]),
+        LocalExecInfo(hide_output=True, line_callback=runtime_callback),
+    )
+
+    assert execution.exit_code["localhost"] == 1
+    assert "artifact finalizer failed" in execution.stderr["localhost"]
+    events = ProgressStore(progress_path).read_all()
+    assert [event.state for event in events] == [
+        ProgressState.COMPLETED,
+        ProgressState.FAILED,
+    ]
+    assert events[-1].metadata["jarvis_process_exit"] == {
+        "reported_state": "completed",
+        "return_code": 1,
+        "source": "jarvis_process_owner",
+    }
 
 
 def test_filesystem_repository_discovers_sibling_progress_module(

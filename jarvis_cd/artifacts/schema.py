@@ -25,6 +25,7 @@ _MEDIA_TYPE_PATTERN: Final = re.compile(
 )
 _URI_SCHEME_PATTERN: Final = re.compile(r"^[a-z][a-z0-9+.-]*$")
 _UNSAFE_URI_SCHEMES: Final = frozenset({"data", "file", "javascript"})
+PROCESS_EXIT_RECONCILIATION_KEY: Final = "jarvis_process_exit"
 _EVENT_FIELDS: Final = frozenset(
     {
         "schema_version",
@@ -273,7 +274,11 @@ class ArtifactEvent:
 
     @property
     def terminal(self) -> bool:
-        """Return whether no later lifecycle event may alter this artifact."""
+        """Return whether the producer declared this artifact terminal.
+
+        JARVIS may append one authoritative ``FINALIZED`` to ``INCOMPLETE``
+        correction if the owning package process subsequently exits nonzero.
+        """
         return self.state in {
             ArtifactState.FINALIZED,
             ArtifactState.INCOMPLETE,
@@ -453,7 +458,11 @@ def _validate_artifact_revision(
             ArtifactState.INCOMPLETE,
             ArtifactState.FAILED,
         },
-        ArtifactState.FINALIZED: set(),
+        ArtifactState.FINALIZED: (
+            {ArtifactState.INCOMPLETE}
+            if _is_process_exit_reconciliation(previous, event)
+            else set()
+        ),
         ArtifactState.INCOMPLETE: set(),
         ArtifactState.FAILED: set(),
     }[previous.state]
@@ -462,6 +471,37 @@ def _validate_artifact_revision(
             f"artifact state cannot transition from {previous.state.value!r} "
             f"to {event.state.value!r}"
         )
+
+
+def _is_process_exit_reconciliation(
+    previous: ArtifactEvent,
+    event: ArtifactEvent,
+) -> bool:
+    """Recognize the sole JARVIS-owned correction to a finalized artifact."""
+    if (
+        previous.state is not ArtifactState.FINALIZED
+        or event.state is not ArtifactState.INCOMPLETE
+    ):
+        return False
+    details = event.metadata.get(PROCESS_EXIT_RECONCILIATION_KEY)
+    if not isinstance(details, dict) or set(details) != {
+        "reported_state",
+        "return_code",
+        "source",
+    }:
+        return False
+    return_code = details.get("return_code")
+    if (
+        isinstance(return_code, bool)
+        or not isinstance(return_code, int)
+        or return_code == 0
+        or details.get("reported_state") != ArtifactState.FINALIZED.value
+        or details.get("source") != "jarvis_process_owner"
+    ):
+        return False
+    expected_metadata = dict(previous.metadata)
+    expected_metadata[PROCESS_EXIT_RECONCILIATION_KEY] = dict(details)
+    return dict(event.metadata) == expected_metadata
 
 
 def _validate_execution_relative_location(value: str) -> None:

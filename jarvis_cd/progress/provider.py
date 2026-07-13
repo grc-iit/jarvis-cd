@@ -62,6 +62,15 @@ class PackageProgressProvider(Protocol):
 
 
 @runtime_checkable
+class ProcessExitProgressProvider(Protocol):
+    """Optional provider extension for JARVIS-owned process completion."""
+
+    def finalize_progress_for_exit(self, return_code: int) -> list[ProgressObservation]:
+        """Finalize observations using the authoritative process return code."""
+        ...
+
+
+@runtime_checkable
 class RelayProgressAdapter(Protocol):
     """Legacy clio-relay adapter contract kept outside the JARVIS core SPI."""
 

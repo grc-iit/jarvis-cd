@@ -1,11 +1,12 @@
 import unittest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 import sys
 import os
 
 # Add the project root to the path so we can import jarvis_cd
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+from jarvis_cd.shell.core_exec import MpiVersion
 from jarvis_cd.shell.exec_factory import Exec as MpiExec
 from jarvis_cd.shell.mpi_exec import OpenMpiExec, MpichExec, CrayMpichExec, IntelMpiExec
 from jarvis_cd.shell.exec_info import MpiExecInfo, ExecType
@@ -13,10 +14,9 @@ from jarvis_cd.util.hostfile import Hostfile
 
 
 class TestMpiExec(unittest.TestCase):
-
     def setUp(self):
         """Set up test fixtures"""
-        self.hostfile = Hostfile(hosts=['localhost'], find_ips=False)
+        self.hostfile = Hostfile(hosts=["localhost"], find_ips=False)
 
     def test_single_command_format(self):
         """Test MPI execution with a single command string"""
@@ -24,198 +24,207 @@ class TestMpiExec(unittest.TestCase):
             nprocs=4,
             ppn=2,
             hostfile=self.hostfile,
-            env={'TEST_VAR': 'test_value'},
-            dry_run=True
+            env={"TEST_VAR": "test_value"},
+            dry_run=True,
         )
 
         mpi_exec = OpenMpiExec('echo "hello world"', exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify basic command structure
-        self.assertIn('mpiexec', cmd)
+        self.assertIn("mpiexec", cmd)
         self.assertIn('echo "hello world"', cmd)
+
+    @patch("jarvis_cd.shell.core_exec.LocalExec")
+    def test_mpi_detection_does_not_consume_application_callback(self, mock_local_exec):
+        """The internal version probe cannot own application stream state."""
+        callback = Mock()
+        probe = Mock()
+        probe.exit_code = {"localhost": 0}
+        probe.stdout = {"localhost": "Open MPI 5.0.5\n"}
+        probe.stderr = {"localhost": ""}
+        probe.processes = {}
+        probe.output_threads = {}
+        mock_local_exec.return_value = probe
+        exec_info = MpiExecInfo(
+            nprocs=1,
+            hostfile=self.hostfile,
+            line_callback=callback,
+        )
+
+        detected = MpiVersion(exec_info)
+
+        introspect_info = mock_local_exec.call_args.args[1]
+        self.assertIsNone(introspect_info.line_callback)
+        self.assertIs(exec_info.line_callback, callback)
+        self.assertEqual(detected.version, ExecType.OPENMPI)
 
     def test_multi_command_format(self):
         """Test MPI execution with multiple commands"""
-        exec_info = MpiExecInfo(
-            nprocs=10,
-            hostfile=self.hostfile,
-            dry_run=True
-        )
+        exec_info = MpiExecInfo(nprocs=10, hostfile=self.hostfile, dry_run=True)
 
         cmd_list = [
-            {'cmd': 'gdbserver :1234 ./myapp', 'nprocs': 1},
-            {'cmd': './myapp', 'nprocs': None}  # Should get remaining 9 procs
+            {"cmd": "gdbserver :1234 ./myapp", "nprocs": 1},
+            {"cmd": "./myapp", "nprocs": None},  # Should get remaining 9 procs
         ]
 
         mpi_exec = OpenMpiExec(cmd_list, exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify multi-command structure
-        self.assertIn('mpiexec', cmd)
-        self.assertIn('gdbserver', cmd)
-        self.assertIn('./myapp', cmd)
+        self.assertIn("mpiexec", cmd)
+        self.assertIn("gdbserver", cmd)
+        self.assertIn("./myapp", cmd)
 
     def test_multi_command_with_zero_nprocs(self):
         """Test that commands with 0 nprocs are skipped"""
-        exec_info = MpiExecInfo(
-            nprocs=4,
-            hostfile=self.hostfile,
-            dry_run=True
-        )
+        exec_info = MpiExecInfo(nprocs=4, hostfile=self.hostfile, dry_run=True)
 
         cmd_list = [
-            {'cmd': 'gdbserver :1234 ./myapp', 'nprocs': 0},  # Should be skipped
-            {'cmd': './myapp', 'nprocs': None}  # Should get all 4 procs
+            {"cmd": "gdbserver :1234 ./myapp", "nprocs": 0},  # Should be skipped
+            {"cmd": "./myapp", "nprocs": None},  # Should get all 4 procs
         ]
 
         mpi_exec = OpenMpiExec(cmd_list, exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify gdbserver command is not included
-        self.assertNotIn('gdbserver', cmd)
-        self.assertIn('./myapp', cmd)
+        self.assertNotIn("gdbserver", cmd)
+        self.assertIn("./myapp", cmd)
 
     def test_environment_variables(self):
         """Test that environment variables are properly forwarded"""
         exec_info = MpiExecInfo(
             nprocs=2,
             hostfile=self.hostfile,
-            env={'MY_VAR': 'my_value', 'ANOTHER_VAR': 'another_value'},
-            dry_run=True
+            env={"MY_VAR": "my_value", "ANOTHER_VAR": "another_value"},
+            dry_run=True,
         )
 
-        mpi_exec = OpenMpiExec('./myapp', exec_info)
+        mpi_exec = OpenMpiExec("./myapp", exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify environment variables are in the command
         # The exact format depends on MPI implementation
         self.assertTrue(
-            'MY_VAR' in cmd or 'ANOTHER_VAR' in cmd,
-            "Environment variables should be included in MPI command"
+            "MY_VAR" in cmd or "ANOTHER_VAR" in cmd,
+            "Environment variables should be included in MPI command",
         )
 
     def test_single_env_variable(self):
         """Test MPI execution with a single environment variable"""
-        test_binary = os.path.join(os.path.dirname(__file__), 'test_env_checker')
+        test_binary = os.path.join(os.path.dirname(__file__), "test_env_checker")
         exec_info = MpiExecInfo(
             nprocs=1,
             hostfile=self.hostfile,
-            env={'TEST_VAR': 'test_value'},
-            dry_run=True
+            env={"TEST_VAR": "test_value"},
+            dry_run=True,
         )
 
         if os.path.exists(test_binary):
-            mpi_exec = OpenMpiExec(f'{test_binary} TEST_VAR', exec_info)
+            mpi_exec = OpenMpiExec(f"{test_binary} TEST_VAR", exec_info)
             cmd = mpi_exec.get_cmd()
 
-            self.assertIn('TEST_VAR', cmd)
-            self.assertIn('test_value', cmd)
+            self.assertIn("TEST_VAR", cmd)
+            self.assertIn("test_value", cmd)
 
     def test_multiple_env_variables(self):
         """Test MPI execution with multiple environment variables"""
-        test_binary = os.path.join(os.path.dirname(__file__), 'test_env_checker')
+        test_binary = os.path.join(os.path.dirname(__file__), "test_env_checker")
         exec_info = MpiExecInfo(
             nprocs=1,
             hostfile=self.hostfile,
-            env={
-                'VAR1': 'value1',
-                'VAR2': 'value2',
-                'VAR3': 'value3'
-            },
-            dry_run=True
+            env={"VAR1": "value1", "VAR2": "value2", "VAR3": "value3"},
+            dry_run=True,
         )
 
         if os.path.exists(test_binary):
-            mpi_exec = OpenMpiExec(f'{test_binary} VAR1 VAR2 VAR3', exec_info)
+            mpi_exec = OpenMpiExec(f"{test_binary} VAR1 VAR2 VAR3", exec_info)
             cmd = mpi_exec.get_cmd()
 
-            self.assertIn('VAR1', cmd)
-            self.assertIn('value1', cmd)
-            self.assertIn('VAR2', cmd)
-            self.assertIn('value2', cmd)
-            self.assertIn('VAR3', cmd)
-            self.assertIn('value3', cmd)
+            self.assertIn("VAR1", cmd)
+            self.assertIn("value1", cmd)
+            self.assertIn("VAR2", cmd)
+            self.assertIn("value2", cmd)
+            self.assertIn("VAR3", cmd)
+            self.assertIn("value3", cmd)
 
     def test_env_with_special_characters(self):
         """Test environment variables with special characters"""
         exec_info = MpiExecInfo(
             nprocs=1,
             hostfile=self.hostfile,
-            env={'SPECIAL_VAR': 'value with "quotes" and spaces'},
-            dry_run=True
+            env={"SPECIAL_VAR": 'value with "quotes" and spaces'},
+            dry_run=True,
         )
 
-        mpi_exec = OpenMpiExec('echo $SPECIAL_VAR', exec_info)
+        mpi_exec = OpenMpiExec("echo $SPECIAL_VAR", exec_info)
         cmd = mpi_exec.get_cmd()
 
-        self.assertIn('SPECIAL_VAR', cmd)
+        self.assertIn("SPECIAL_VAR", cmd)
 
     def test_numeric_env_values(self):
         """Test environment variables with numeric values"""
         exec_info = MpiExecInfo(
             nprocs=1,
             hostfile=self.hostfile,
-            env={
-                'INT_VAR': 42,
-                'FLOAT_VAR': 3.14
-            },
-            dry_run=True
+            env={"INT_VAR": 42, "FLOAT_VAR": 3.14},
+            dry_run=True,
         )
 
-        mpi_exec = OpenMpiExec('echo test', exec_info)
+        mpi_exec = OpenMpiExec("echo test", exec_info)
         cmd = mpi_exec.get_cmd()
 
-        self.assertIn('INT_VAR', cmd)
-        self.assertIn('42', cmd)
-        self.assertIn('FLOAT_VAR', cmd)
-        self.assertIn('3.14', cmd)
+        self.assertIn("INT_VAR", cmd)
+        self.assertIn("42", cmd)
+        self.assertIn("FLOAT_VAR", cmd)
+        self.assertIn("3.14", cmd)
 
     def test_basic_env_without_ld_preload(self):
         """Test that basic_env removes LD_PRELOAD"""
         exec_info = MpiExecInfo(
             nprocs=1,
             hostfile=self.hostfile,
-            env={'LD_PRELOAD': '/lib/test.so', 'OTHER_VAR': 'value'},
-            dry_run=True
+            env={"LD_PRELOAD": "/lib/test.so", "OTHER_VAR": "value"},
+            dry_run=True,
         )
 
         # basic_env should not have LD_PRELOAD
-        self.assertNotIn('LD_PRELOAD', exec_info.basic_env)
-        self.assertIn('OTHER_VAR', exec_info.basic_env)
+        self.assertNotIn("LD_PRELOAD", exec_info.basic_env)
+        self.assertIn("OTHER_VAR", exec_info.basic_env)
 
     def test_multi_command_env_per_command(self):
         """Test environment variables in multi-command MPI execution"""
         exec_info = MpiExecInfo(
             nprocs=4,
             hostfile=self.hostfile,
-            env={'GLOBAL_VAR': 'global_value'},
-            dry_run=True
+            env={"GLOBAL_VAR": "global_value"},
+            dry_run=True,
         )
 
         cmd_list = [
-            {'cmd': 'echo cmd1', 'nprocs': 2},
-            {'cmd': 'echo cmd2', 'nprocs': 2}
+            {"cmd": "echo cmd1", "nprocs": 2},
+            {"cmd": "echo cmd2", "nprocs": 2},
         ]
 
         mpi_exec = OpenMpiExec(cmd_list, exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Environment should be included for both commands
-        self.assertIn('GLOBAL_VAR', cmd)
+        self.assertIn("GLOBAL_VAR", cmd)
 
     def test_disable_preload_in_multi_command(self):
         """Test that disable_preload removes LD_PRELOAD for specific commands"""
         exec_info = MpiExecInfo(
             nprocs=4,
             hostfile=self.hostfile,
-            env={'LD_PRELOAD': '/lib/test.so', 'OTHER_VAR': 'value'},
-            dry_run=True
+            env={"LD_PRELOAD": "/lib/test.so", "OTHER_VAR": "value"},
+            dry_run=True,
         )
 
         cmd_list = [
-            {'cmd': 'echo cmd1', 'nprocs': 2, 'disable_preload': True},
-            {'cmd': 'echo cmd2', 'nprocs': 2, 'disable_preload': False}
+            {"cmd": "echo cmd1", "nprocs": 2, "disable_preload": True},
+            {"cmd": "echo cmd2", "nprocs": 2, "disable_preload": False},
         ]
 
         mpi_exec = OpenMpiExec(cmd_list, exec_info)
@@ -226,72 +235,53 @@ class TestMpiExec(unittest.TestCase):
 
     def test_ppn_option(self):
         """Test processes per node option"""
-        exec_info = MpiExecInfo(
-            nprocs=8,
-            ppn=4,
-            hostfile=self.hostfile,
-            dry_run=True
-        )
+        exec_info = MpiExecInfo(nprocs=8, ppn=4, hostfile=self.hostfile, dry_run=True)
 
-        mpi_exec = OpenMpiExec('./myapp', exec_info)
+        mpi_exec = OpenMpiExec("./myapp", exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify ppn option is included (format varies by MPI)
         self.assertTrue(
-            'ppn' in cmd or 'npernode' in cmd,
-            "PPN option should be in MPI command"
+            "ppn" in cmd or "npernode" in cmd, "PPN option should be in MPI command"
         )
 
     def test_hostfile_option(self):
         """Test hostfile option with multiple hosts"""
-        multi_host = Hostfile(hosts=['host1', 'host2', 'host3'], find_ips=False)
-        exec_info = MpiExecInfo(
-            nprocs=6,
-            hostfile=multi_host,
-            dry_run=True
-        )
+        multi_host = Hostfile(hosts=["host1", "host2", "host3"], find_ips=False)
+        exec_info = MpiExecInfo(nprocs=6, hostfile=multi_host, dry_run=True)
 
-        mpi_exec = OpenMpiExec('./myapp', exec_info)
+        mpi_exec = OpenMpiExec("./myapp", exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify hostfile or host option is included
         self.assertTrue(
-            'host' in cmd.lower(),
-            "Hostfile option should be in MPI command"
+            "host" in cmd.lower(), "Hostfile option should be in MPI command"
         )
 
     def test_remainder_calculation(self):
         """Test that remainder nprocs are calculated correctly"""
-        exec_info = MpiExecInfo(
-            nprocs=10,
-            hostfile=self.hostfile,
-            dry_run=True
-        )
+        exec_info = MpiExecInfo(nprocs=10, hostfile=self.hostfile, dry_run=True)
 
         cmd_list = [
-            {'cmd': 'cmd1', 'nprocs': 2},
-            {'cmd': 'cmd2', 'nprocs': 3},
-            {'cmd': 'cmd3', 'nprocs': None}  # Should get 10 - 2 - 3 = 5
+            {"cmd": "cmd1", "nprocs": 2},
+            {"cmd": "cmd2", "nprocs": 3},
+            {"cmd": "cmd3", "nprocs": None},  # Should get 10 - 2 - 3 = 5
         ]
 
         mpi_exec = OpenMpiExec(cmd_list, exec_info)
 
         # Access internal cmd_list to verify calculation
         processed_list = mpi_exec.cmd_list
-        self.assertEqual(processed_list[2]['nprocs'], 5)
+        self.assertEqual(processed_list[2]["nprocs"], 5)
 
     def test_nprocs_overflow(self):
         """Test error when total nprocs exceeds available"""
-        exec_info = MpiExecInfo(
-            nprocs=5,
-            hostfile=self.hostfile,
-            dry_run=True
-        )
+        exec_info = MpiExecInfo(nprocs=5, hostfile=self.hostfile, dry_run=True)
 
         cmd_list = [
-            {'cmd': 'cmd1', 'nprocs': 3},
-            {'cmd': 'cmd2', 'nprocs': 3},  # Total = 6, exceeds 5
-            {'cmd': 'cmd3', 'nprocs': None}
+            {"cmd": "cmd1", "nprocs": 3},
+            {"cmd": "cmd2", "nprocs": 3},  # Total = 6, exceeds 5
+            {"cmd": "cmd3", "nprocs": None},
         ]
 
         with self.assertRaises(ValueError):
@@ -299,159 +289,129 @@ class TestMpiExec(unittest.TestCase):
 
 
 class TestOpenMpiExec(unittest.TestCase):
-
     def setUp(self):
         """Set up test fixtures"""
-        self.hostfile = Hostfile(hosts=['localhost'], find_ips=False)
+        self.hostfile = Hostfile(hosts=["localhost"], find_ips=False)
 
     def test_openmpi_specific_flags(self):
         """Test OpenMPI-specific flags"""
-        exec_info = MpiExecInfo(
-            nprocs=2,
-            hostfile=self.hostfile
-        )
+        exec_info = MpiExecInfo(nprocs=2, hostfile=self.hostfile)
 
-        mpi_exec = OpenMpiExec('./myapp', exec_info)
+        mpi_exec = OpenMpiExec("./myapp", exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify OpenMPI-specific flags
-        self.assertIn('--oversubscribe', cmd)
-        self.assertIn('--allow-run-as-root', cmd)
+        self.assertIn("--oversubscribe", cmd)
+        self.assertIn("--allow-run-as-root", cmd)
 
     def test_openmpi_env_format(self):
         """Test OpenMPI environment variable format"""
         exec_info = MpiExecInfo(
-            nprocs=2,
-            hostfile=self.hostfile,
-            env={'TEST_VAR': 'value'}
+            nprocs=2, hostfile=self.hostfile, env={"TEST_VAR": "value"}
         )
 
-        mpi_exec = OpenMpiExec('./myapp', exec_info)
+        mpi_exec = OpenMpiExec("./myapp", exec_info)
         cmd = mpi_exec.get_cmd()
 
         # OpenMPI uses -x for environment variables
-        self.assertIn('-x', cmd)
+        self.assertIn("-x", cmd)
 
 
 class TestMpichExec(unittest.TestCase):
-
     def setUp(self):
         """Set up test fixtures"""
-        self.hostfile = Hostfile(hosts=['localhost'], find_ips=False)
+        self.hostfile = Hostfile(hosts=["localhost"], find_ips=False)
 
     def test_mpich_env_format(self):
         """Test MPICH environment variable format"""
         exec_info = MpiExecInfo(
-            nprocs=2,
-            hostfile=self.hostfile,
-            env={'TEST_VAR': 'value'}
+            nprocs=2, hostfile=self.hostfile, env={"TEST_VAR": "value"}
         )
 
-        mpi_exec = MpichExec('./myapp', exec_info)
+        mpi_exec = MpichExec("./myapp", exec_info)
         cmd = mpi_exec.get_cmd()
 
         # MPICH uses -genv for environment variables
-        self.assertIn('-genv', cmd)
+        self.assertIn("-genv", cmd)
 
 
 class TestCrayMpichExec(unittest.TestCase):
-
     def setUp(self):
         """Set up test fixtures"""
-        self.hostfile = Hostfile(hosts=['localhost'], find_ips=False)
+        self.hostfile = Hostfile(hosts=["localhost"], find_ips=False)
 
     def test_cray_env_format(self):
         """Test Cray MPICH environment variable format"""
         exec_info = MpiExecInfo(
-            nprocs=2,
-            hostfile=self.hostfile,
-            env={'TEST_VAR': 'value'}
+            nprocs=2, hostfile=self.hostfile, env={"TEST_VAR": "value"}
         )
 
-        mpi_exec = CrayMpichExec('./myapp', exec_info)
+        mpi_exec = CrayMpichExec("./myapp", exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Cray MPICH uses --env for environment variables
-        self.assertIn('--env', cmd)
+        self.assertIn("--env", cmd)
 
     def test_cray_localhost_only_no_hostfile(self):
         """Test that Cray skips hostfile for localhost-only"""
-        localhost_only = Hostfile(hosts=['localhost'], find_ips=False)
-        exec_info = MpiExecInfo(
-            nprocs=2,
-            hostfile=localhost_only,
-            env={}
-        )
+        localhost_only = Hostfile(hosts=["localhost"], find_ips=False)
+        exec_info = MpiExecInfo(nprocs=2, hostfile=localhost_only, env={})
 
-        mpi_exec = CrayMpichExec('./myapp', exec_info)
+        mpi_exec = CrayMpichExec("./myapp", exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Should not include hostfile option for localhost-only
-        self.assertNotIn('--hostfile', cmd)
-        self.assertNotIn('--hosts', cmd)
+        self.assertNotIn("--hostfile", cmd)
+        self.assertNotIn("--hosts", cmd)
 
     def test_cray_multi_host(self):
         """Test Cray with multiple hosts"""
-        multi_host = Hostfile(hosts=['host1', 'host2'], find_ips=False)
-        exec_info = MpiExecInfo(
-            nprocs=4,
-            hostfile=multi_host,
-            env={}
-        )
+        multi_host = Hostfile(hosts=["host1", "host2"], find_ips=False)
+        exec_info = MpiExecInfo(nprocs=4, hostfile=multi_host, env={})
 
-        mpi_exec = CrayMpichExec('./myapp', exec_info)
+        mpi_exec = CrayMpichExec("./myapp", exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Should include hosts option
-        self.assertTrue('--hosts' in cmd or '--hostfile' in cmd)
+        self.assertTrue("--hosts" in cmd or "--hostfile" in cmd)
 
     def test_cray_ppn_option(self):
         """Test Cray MPICH ppn option"""
-        exec_info = MpiExecInfo(
-            nprocs=8,
-            ppn=4,
-            hostfile=self.hostfile,
-            env={}
-        )
+        exec_info = MpiExecInfo(nprocs=8, ppn=4, hostfile=self.hostfile, env={})
 
-        mpi_exec = CrayMpichExec('./myapp', exec_info)
+        mpi_exec = CrayMpichExec("./myapp", exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Cray uses --ppn
-        self.assertIn('--ppn', cmd)
+        self.assertIn("--ppn", cmd)
 
     def test_cray_multi_command(self):
         """Test Cray MPICH multi-command format"""
         exec_info = MpiExecInfo(
-            nprocs=4,
-            hostfile=self.hostfile,
-            env={'MY_VAR': 'value'}
+            nprocs=4, hostfile=self.hostfile, env={"MY_VAR": "value"}
         )
 
-        cmd_list = [
-            {'cmd': 'cmd1', 'nprocs': 2},
-            {'cmd': 'cmd2', 'nprocs': 2}
-        ]
+        cmd_list = [{"cmd": "cmd1", "nprocs": 2}, {"cmd": "cmd2", "nprocs": 2}]
 
         mpi_exec = CrayMpichExec(cmd_list, exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify multi-command structure with ' : ' separator
-        self.assertIn(':', cmd)
-        self.assertIn('cmd1', cmd)
-        self.assertIn('cmd2', cmd)
+        self.assertIn(":", cmd)
+        self.assertIn("cmd1", cmd)
+        self.assertIn("cmd2", cmd)
 
     def test_cray_multi_command_with_disable_preload(self):
         """Test Cray multi-command with disable_preload"""
         exec_info = MpiExecInfo(
             nprocs=4,
             hostfile=self.hostfile,
-            env={'LD_PRELOAD': '/lib/test.so', 'OTHER_VAR': 'value'}
+            env={"LD_PRELOAD": "/lib/test.so", "OTHER_VAR": "value"},
         )
 
         cmd_list = [
-            {'cmd': 'cmd1', 'nprocs': 2, 'disable_preload': True},
-            {'cmd': 'cmd2', 'nprocs': 2, 'disable_preload': False}
+            {"cmd": "cmd1", "nprocs": 2, "disable_preload": True},
+            {"cmd": "cmd2", "nprocs": 2, "disable_preload": False},
         ]
 
         mpi_exec = CrayMpichExec(cmd_list, exec_info)
@@ -462,101 +422,85 @@ class TestCrayMpichExec(unittest.TestCase):
     def test_cray_hostfile_path(self):
         """Test Cray MPICH with hostfile path"""
         import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.hosts') as f:
-            f.write('host1\nhost2\n')
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".hosts") as f:
+            f.write("host1\nhost2\n")
             hostfile_path = f.name
 
         try:
             hostfile = Hostfile(path=hostfile_path)
-            exec_info = MpiExecInfo(
-                nprocs=4,
-                hostfile=hostfile,
-                env={}
-            )
+            exec_info = MpiExecInfo(nprocs=4, hostfile=hostfile, env={})
 
-            mpi_exec = CrayMpichExec('./myapp', exec_info)
+            mpi_exec = CrayMpichExec("./myapp", exec_info)
             cmd = mpi_exec.get_cmd()
 
             # Should include hostfile path
-            self.assertIn('--hostfile', cmd)
+            self.assertIn("--hostfile", cmd)
             self.assertIn(hostfile_path, cmd)
         finally:
             os.unlink(hostfile_path)
 
 
 class TestIntelMpiExec(unittest.TestCase):
-
     def setUp(self):
         """Set up test fixtures"""
-        self.hostfile = Hostfile(hosts=['localhost'], find_ips=False)
+        self.hostfile = Hostfile(hosts=["localhost"], find_ips=False)
 
     def test_intel_mpi_inherits_mpich(self):
         """Test that Intel MPI uses MPICH-style commands"""
         exec_info = MpiExecInfo(
-            nprocs=2,
-            hostfile=self.hostfile,
-            env={'TEST_VAR': 'value'}
+            nprocs=2, hostfile=self.hostfile, env={"TEST_VAR": "value"}
         )
 
-        mpi_exec = IntelMpiExec('./myapp', exec_info)
+        mpi_exec = IntelMpiExec("./myapp", exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Intel MPI inherits from MPICH, so uses -genv
-        self.assertIn('-genv', cmd)
+        self.assertIn("-genv", cmd)
 
 
 class TestOpenMpiMultiCommand(unittest.TestCase):
-
     def setUp(self):
         """Set up test fixtures"""
-        self.hostfile = Hostfile(hosts=['localhost'], find_ips=False)
+        self.hostfile = Hostfile(hosts=["localhost"], find_ips=False)
 
     def test_openmpi_multi_command(self):
         """Test OpenMPI multi-command format"""
         exec_info = MpiExecInfo(
-            nprocs=6,
-            hostfile=self.hostfile,
-            env={'MY_VAR': 'value'}
+            nprocs=6, hostfile=self.hostfile, env={"MY_VAR": "value"}
         )
 
-        cmd_list = [
-            {'cmd': 'cmd1', 'nprocs': 2},
-            {'cmd': 'cmd2', 'nprocs': 4}
-        ]
+        cmd_list = [{"cmd": "cmd1", "nprocs": 2}, {"cmd": "cmd2", "nprocs": 4}]
 
         mpi_exec = OpenMpiExec(cmd_list, exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify multi-command structure with ' : ' separator
-        self.assertIn(':', cmd)
-        self.assertIn('cmd1', cmd)
-        self.assertIn('cmd2', cmd)
-        self.assertIn('-x', cmd)  # OpenMPI env format
+        self.assertIn(":", cmd)
+        self.assertIn("cmd1", cmd)
+        self.assertIn("cmd2", cmd)
+        self.assertIn("-x", cmd)  # OpenMPI env format
 
     def test_openmpi_ppn_with_hostfile_path(self):
         """Test OpenMPI with ppn and hostfile path"""
         # Create a temporary hostfile path
         import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.hosts') as f:
-            f.write('host1\nhost2\n')
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".hosts") as f:
+            f.write("host1\nhost2\n")
             hostfile_path = f.name
 
         try:
             hostfile = Hostfile(path=hostfile_path)
-            exec_info = MpiExecInfo(
-                nprocs=4,
-                ppn=2,
-                hostfile=hostfile,
-                env={}
-            )
+            exec_info = MpiExecInfo(nprocs=4, ppn=2, hostfile=hostfile, env={})
 
-            mpi_exec = OpenMpiExec('./myapp', exec_info)
+            mpi_exec = OpenMpiExec("./myapp", exec_info)
             cmd = mpi_exec.get_cmd()
 
             # Should include hostfile path
-            self.assertIn('--hostfile', cmd)
+            self.assertIn("--hostfile", cmd)
             self.assertIn(hostfile_path, cmd)
-            self.assertIn('-npernode', cmd)
+            self.assertIn("-npernode", cmd)
         finally:
             os.unlink(hostfile_path)
 
@@ -565,12 +509,12 @@ class TestOpenMpiMultiCommand(unittest.TestCase):
         exec_info = MpiExecInfo(
             nprocs=4,
             hostfile=self.hostfile,
-            env={'LD_PRELOAD': '/lib/test.so', 'OTHER_VAR': 'value'}
+            env={"LD_PRELOAD": "/lib/test.so", "OTHER_VAR": "value"},
         )
 
         cmd_list = [
-            {'cmd': 'cmd1', 'nprocs': 2, 'disable_preload': True},
-            {'cmd': 'cmd2', 'nprocs': 2, 'disable_preload': False}
+            {"cmd": "cmd1", "nprocs": 2, "disable_preload": True},
+            {"cmd": "cmd2", "nprocs": 2, "disable_preload": False},
         ]
 
         mpi_exec = OpenMpiExec(cmd_list, exec_info)
@@ -579,85 +523,70 @@ class TestOpenMpiMultiCommand(unittest.TestCase):
         # First command should not have LD_PRELOAD, second should have it
         # This tests the LD_PRELOAD deletion logic
         self.assertIsNotNone(cmd)
-        self.assertIn('cmd1', cmd)
-        self.assertIn('cmd2', cmd)
+        self.assertIn("cmd1", cmd)
+        self.assertIn("cmd2", cmd)
 
 
 class TestMpichMultiCommand(unittest.TestCase):
-
     def setUp(self):
         """Set up test fixtures"""
-        self.hostfile = Hostfile(hosts=['localhost'], find_ips=False)
+        self.hostfile = Hostfile(hosts=["localhost"], find_ips=False)
 
     def test_mpich_multi_command(self):
         """Test MPICH multi-command format"""
         exec_info = MpiExecInfo(
-            nprocs=6,
-            hostfile=self.hostfile,
-            env={'MY_VAR': 'value'}
+            nprocs=6, hostfile=self.hostfile, env={"MY_VAR": "value"}
         )
 
-        cmd_list = [
-            {'cmd': 'cmd1', 'nprocs': 2},
-            {'cmd': 'cmd2', 'nprocs': 4}
-        ]
+        cmd_list = [{"cmd": "cmd1", "nprocs": 2}, {"cmd": "cmd2", "nprocs": 4}]
 
         mpi_exec = MpichExec(cmd_list, exec_info)
         cmd = mpi_exec.get_cmd()
 
         # Verify multi-command structure with ' : ' separator
-        self.assertIn(':', cmd)
-        self.assertIn('cmd1', cmd)
-        self.assertIn('cmd2', cmd)
-        self.assertIn('-env', cmd)  # MPICH env format for multi-command
+        self.assertIn(":", cmd)
+        self.assertIn("cmd1", cmd)
+        self.assertIn("cmd2", cmd)
+        self.assertIn("-env", cmd)  # MPICH env format for multi-command
 
     def test_mpich_ppn_option(self):
         """Test MPICH ppn option"""
-        exec_info = MpiExecInfo(
-            nprocs=8,
-            ppn=4,
-            hostfile=self.hostfile,
-            env={}
-        )
+        exec_info = MpiExecInfo(nprocs=8, ppn=4, hostfile=self.hostfile, env={})
 
-        mpi_exec = MpichExec('./myapp', exec_info)
+        mpi_exec = MpichExec("./myapp", exec_info)
         cmd = mpi_exec.get_cmd()
 
         # MPICH uses -ppn
-        self.assertIn('-ppn', cmd)
+        self.assertIn("-ppn", cmd)
 
     def test_mpich_hostfile_path(self):
         """Test MPICH with hostfile path"""
         import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.hosts') as f:
-            f.write('host1\nhost2\n')
+
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".hosts") as f:
+            f.write("host1\nhost2\n")
             hostfile_path = f.name
 
         try:
             hostfile = Hostfile(path=hostfile_path)
-            exec_info = MpiExecInfo(
-                nprocs=4,
-                hostfile=hostfile,
-                env={}
-            )
+            exec_info = MpiExecInfo(nprocs=4, hostfile=hostfile, env={})
 
-            mpi_exec = MpichExec('./myapp', exec_info)
+            mpi_exec = MpichExec("./myapp", exec_info)
             cmd = mpi_exec.get_cmd()
 
             # Should include hostfile path
-            self.assertIn('--hostfile', cmd)
+            self.assertIn("--hostfile", cmd)
             self.assertIn(hostfile_path, cmd)
         finally:
             os.unlink(hostfile_path)
 
 
 class TestMpiExecFactory(unittest.TestCase):
-
     def setUp(self):
         """Set up test fixtures"""
-        self.hostfile = Hostfile(hosts=['localhost'], find_ips=False)
+        self.hostfile = Hostfile(hosts=["localhost"], find_ips=False)
 
-    @patch('jarvis_cd.shell.exec_factory.MpiVersion')
+    @patch("jarvis_cd.shell.exec_factory.MpiVersion")
     def test_factory_openmpi_detection(self, mock_mpi_version):
         """Test factory creates OpenMpiExec when OpenMPI is detected"""
         # Mock MPI version detection to return OpenMPI
@@ -665,20 +594,15 @@ class TestMpiExecFactory(unittest.TestCase):
         mock_version.version = ExecType.OPENMPI
         mock_mpi_version.return_value = mock_version
 
-        exec_info = MpiExecInfo(
-            nprocs=2,
-            hostfile=self.hostfile,
-            env={},
-            dry_run=True
-        )
+        exec_info = MpiExecInfo(nprocs=2, hostfile=self.hostfile, env={}, dry_run=True)
 
-        mpi_exec = MpiExec('./myapp', exec_info)
+        mpi_exec = MpiExec("./myapp", exec_info)
         mpi_exec.run()
 
         # Should be an instance of OpenMpiExec
         self.assertIsInstance(mpi_exec._delegate, OpenMpiExec)
 
-    @patch('jarvis_cd.shell.exec_factory.MpiVersion')
+    @patch("jarvis_cd.shell.exec_factory.MpiVersion")
     def test_factory_mpich_detection(self, mock_mpi_version):
         """Test factory creates MpichExec when MPICH is detected"""
         # Mock MPI version detection to return MPICH
@@ -686,20 +610,15 @@ class TestMpiExecFactory(unittest.TestCase):
         mock_version.version = ExecType.MPICH
         mock_mpi_version.return_value = mock_version
 
-        exec_info = MpiExecInfo(
-            nprocs=2,
-            hostfile=self.hostfile,
-            env={},
-            dry_run=True
-        )
+        exec_info = MpiExecInfo(nprocs=2, hostfile=self.hostfile, env={}, dry_run=True)
 
-        mpi_exec = MpiExec('./myapp', exec_info)
+        mpi_exec = MpiExec("./myapp", exec_info)
         mpi_exec.run()
 
         # Should be an instance of MpichExec
         self.assertIsInstance(mpi_exec._delegate, MpichExec)
 
-    @patch('jarvis_cd.shell.exec_factory.MpiVersion')
+    @patch("jarvis_cd.shell.exec_factory.MpiVersion")
     def test_factory_intel_mpi_detection(self, mock_mpi_version):
         """Test factory creates IntelMpiExec when Intel MPI is detected"""
         # Mock MPI version detection to return Intel MPI
@@ -707,20 +626,15 @@ class TestMpiExecFactory(unittest.TestCase):
         mock_version.version = ExecType.INTEL_MPI
         mock_mpi_version.return_value = mock_version
 
-        exec_info = MpiExecInfo(
-            nprocs=2,
-            hostfile=self.hostfile,
-            env={},
-            dry_run=True
-        )
+        exec_info = MpiExecInfo(nprocs=2, hostfile=self.hostfile, env={}, dry_run=True)
 
-        mpi_exec = MpiExec('./myapp', exec_info)
+        mpi_exec = MpiExec("./myapp", exec_info)
         mpi_exec.run()
 
         # Should be an instance of IntelMpiExec
         self.assertIsInstance(mpi_exec._delegate, IntelMpiExec)
 
-    @patch('jarvis_cd.shell.exec_factory.MpiVersion')
+    @patch("jarvis_cd.shell.exec_factory.MpiVersion")
     def test_factory_cray_mpich_detection(self, mock_mpi_version):
         """Test factory creates CrayMpichExec when Cray MPICH is detected"""
         # Mock MPI version detection to return Cray MPICH
@@ -728,20 +642,15 @@ class TestMpiExecFactory(unittest.TestCase):
         mock_version.version = ExecType.CRAY_MPICH
         mock_mpi_version.return_value = mock_version
 
-        exec_info = MpiExecInfo(
-            nprocs=2,
-            hostfile=self.hostfile,
-            env={},
-            dry_run=True
-        )
+        exec_info = MpiExecInfo(nprocs=2, hostfile=self.hostfile, env={}, dry_run=True)
 
-        mpi_exec = MpiExec('./myapp', exec_info)
+        mpi_exec = MpiExec("./myapp", exec_info)
         mpi_exec.run()
 
         # Should be an instance of CrayMpichExec
         self.assertIsInstance(mpi_exec._delegate, CrayMpichExec)
 
-    @patch('jarvis_cd.shell.exec_factory.MpiVersion')
+    @patch("jarvis_cd.shell.exec_factory.MpiVersion")
     def test_factory_unknown_mpi_defaults_to_mpich(self, mock_mpi_version):
         """Test factory defaults to MPICH for unknown MPI type"""
         # Mock MPI version detection to return unknown type
@@ -749,20 +658,16 @@ class TestMpiExecFactory(unittest.TestCase):
         mock_version.version = ExecType.LOCAL  # Unknown MPI type
         mock_mpi_version.return_value = mock_version
 
-        exec_info = MpiExecInfo(
-            nprocs=2,
-            hostfile=self.hostfile,
-            env={},
-            dry_run=True
-        )
+        exec_info = MpiExecInfo(nprocs=2, hostfile=self.hostfile, env={}, dry_run=True)
 
         # Capture print output
         import io
         import sys
+
         captured_output = io.StringIO()
         sys.stdout = captured_output
 
-        mpi_exec = MpiExec('./myapp', exec_info)
+        mpi_exec = MpiExec("./myapp", exec_info)
         mpi_exec.run()
 
         sys.stdout = sys.__stdout__
@@ -770,29 +675,24 @@ class TestMpiExecFactory(unittest.TestCase):
         # Should default to MpichExec
         self.assertIsInstance(mpi_exec._delegate, MpichExec)
         # Should print warning
-        self.assertIn('Unknown MPI type', captured_output.getvalue())
+        self.assertIn("Unknown MPI type", captured_output.getvalue())
 
 
 class TestEmptyCmdList(unittest.TestCase):
-
     def setUp(self):
         """Set up test fixtures"""
-        self.hostfile = Hostfile(hosts=['localhost'], find_ips=False)
+        self.hostfile = Hostfile(hosts=["localhost"], find_ips=False)
 
     def test_empty_cmd_list_error(self):
         """Test that empty command list raises ValueError"""
-        exec_info = MpiExecInfo(
-            nprocs=4,
-            hostfile=self.hostfile,
-            env={}
-        )
+        exec_info = MpiExecInfo(nprocs=4, hostfile=self.hostfile, env={})
 
         cmd_list = []
 
         with self.assertRaises(ValueError) as ctx:
             OpenMpiExec(cmd_list, exec_info)
-        self.assertIn('empty', str(ctx.exception).lower())
+        self.assertIn("empty", str(ctx.exception).lower())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

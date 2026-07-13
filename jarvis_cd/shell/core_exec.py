@@ -8,10 +8,31 @@ import time
 import os
 import signal
 from abc import ABC, abstractmethod
-from typing import Dict
+from typing import Callable, Dict, cast
 
 from .exec_info import ExecInfo, ExecType
 from .windows_job import WindowsJob, spawn_windows_job_process
+
+
+def _callback_failure_detail(error: Exception, limit: int = 4096) -> str:
+    """Return a bounded diagnostic including nested exception-group causes."""
+    details = [str(error) or type(error).__name__]
+    pending: list[BaseException] = list(
+        error.exceptions if isinstance(error, BaseExceptionGroup) else []
+    )
+    causes: list[str] = []
+    while pending and len(causes) < 16:
+        current = pending.pop(0)
+        if isinstance(current, BaseExceptionGroup):
+            pending[0:0] = list(current.exceptions)
+            continue
+        causes.append(str(current) or type(current).__name__)
+    if causes:
+        details.append("causes: " + "; ".join(causes))
+    detail = ": ".join(details)
+    if len(detail) > limit:
+        return detail[: limit - 3] + "..."
+    return detail
 
 
 class CoreExec(ABC):
@@ -63,7 +84,16 @@ class CoreExec(ABC):
             self.exit_code[hostname] = exit_code
 
             self._join_output_threads(hostname)
-            self._finalize_output_callback()
+            semantic_return_code = exit_code
+            if semantic_return_code == 0 and self._output_callback_failure.is_set():
+                semantic_return_code = 1
+            self._finalize_output_callback(semantic_return_code)
+            if semantic_return_code == 0 and self._output_callback_failure.is_set():
+                semantic_return_code = 1
+            if semantic_return_code != 0:
+                self._reconcile_output_callback(semantic_return_code)
+            exit_code = semantic_return_code
+            self.exit_code[hostname] = exit_code
 
             if self.output_callback_errors:
                 existing = self.stderr.get(hostname, "")
@@ -72,9 +102,6 @@ class CoreExec(ABC):
                     f"{existing}{separator}{''.join(self.output_callback_errors)}"
                 )
                 self.output_callback_errors.clear()
-                if exit_code == 0:
-                    exit_code = 1
-                    self.exit_code[hostname] = exit_code
 
             windows_job = self.windows_jobs.get(hostname)
             if windows_job is not None:
@@ -131,11 +158,14 @@ class CoreExec(ABC):
         should_terminate = False
         with self._output_callback_lock:
             if self._output_callback_failure.is_set():
+                if not terminate:
+                    detail = _callback_failure_detail(exc)
+                    self.output_callback_errors.append(
+                        f"Output line callback failed for {output_type}: {detail}\n"
+                    )
                 return
             self._output_callback_failure.set()
-            detail = str(exc)
-            if len(detail) > 4096:
-                detail = detail[:4093] + "..."
+            detail = _callback_failure_detail(exc)
             self.output_callback_errors.append(
                 f"Output line callback failed for {output_type}: {detail}\n"
             )
@@ -153,23 +183,39 @@ class CoreExec(ABC):
                         f"Could not terminate process after callback failure: {detail}\n"
                     )
 
-    def _finalize_output_callback(self) -> None:
-        """Finalize a stateful output callback once after both streams close."""
+    def _finalize_output_callback(self, return_code: int) -> None:
+        """Finalize a stateful callback with the owned process return code."""
         callback = getattr(getattr(self, "exec_info", None), "line_callback", None)
+        process_finalizer = getattr(callback, "finalize_process", None)
         finalizer = getattr(callback, "finalize", None)
-        if finalizer is None or not callable(finalizer):
+        if not callable(process_finalizer) and not callable(finalizer):
             return
         with self._output_callback_lock:
-            if (
-                self._output_callback_finalized
-                or self._output_callback_failure.is_set()
-            ):
+            if self._output_callback_finalized:
                 return
             self._output_callback_finalized = True
         try:
-            finalizer()
+            if callable(process_finalizer):
+                cast(Callable[[int], None], process_finalizer)(return_code)
+            elif callable(finalizer):
+                cast(Callable[[], None], finalizer)()
         except Exception as exc:
             self._record_output_callback_failure("finalization", exc, terminate=False)
+
+    def _reconcile_output_callback(self, return_code: int) -> None:
+        """Correct semantic success using the effective nonzero return code."""
+        callback = getattr(getattr(self, "exec_info", None), "line_callback", None)
+        reconciler = getattr(callback, "reconcile_process_exit", None)
+        if not callable(reconciler):
+            return
+        try:
+            cast(Callable[[int], None], reconciler)(return_code)
+        except Exception as exc:
+            self._record_output_callback_failure(
+                "reconciliation",
+                exc,
+                terminate=False,
+            )
 
     def wait_all(self) -> Dict[str, int]:
         """
@@ -461,6 +507,10 @@ class MpiVersion(LocalExec):
             exec_async=False,
             dry_run=False,
             container="none",
+            # MPI detection is an internal probe, not the application process.
+            # Reusing an application callback here would finalize its durable
+            # progress/artifact providers before the real MPI stream starts.
+            line_callback=None,
         )
 
         # If the hostfile points to remote nodes, run via SSH on the

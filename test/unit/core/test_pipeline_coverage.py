@@ -18,6 +18,7 @@ import sys
 import shutil
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 import yaml
 
@@ -210,6 +211,33 @@ class TestPipelineCoverage(unittest.TestCase):
         self.assertIsInstance(result, dict)
         self.assertGreater(len(result), 0)
 
+    def test_append_rejects_unknown_package_setting_atomically(self):
+        """Invalid package settings cannot leave a partially appended step."""
+        pipeline = self._make_pipeline("append_unknown")
+
+        with self.assertRaisesRegex(ValueError, "Unknown argument"):
+            pipeline.append(
+                "builtin.echo",
+                package_alias="echo",
+                config_args=["message=not-supported"],
+            )
+
+        self.assertEqual(pipeline.packages, [])
+        self.assertEqual(Pipeline("append_unknown").packages, [])
+
+    def test_append_persists_valid_package_setting(self):
+        """Package-owned settings are parsed and saved with an appended step."""
+        pipeline = self._make_pipeline("append_valid")
+
+        pipeline.append(
+            "builtin.echo",
+            package_alias="echo",
+            config_args=["retry_count=4"],
+        )
+
+        reloaded = Pipeline("append_valid")
+        self.assertEqual(reloaded.packages[0]["config"]["retry_count"], 4)
+
     # ------------------------------------------------------------------
     # configure_package()
     # ------------------------------------------------------------------
@@ -228,6 +256,140 @@ class TestPipelineCoverage(unittest.TestCase):
         # Reload pipeline and confirm nprocs was persisted
         pipeline2 = Pipeline("cfgpkg_test")
         self.assertEqual(pipeline2.packages[0]["config"].get("nprocs"), 8)
+
+    def test_configure_package_can_reset_a_value_to_its_default(self):
+        """Explicit default values replace an earlier non-default value."""
+        pipeline = self._make_pipeline("cfgpkg_reset_default")
+        pkg_def = self._make_ior_pkg_def("cfgpkg_reset_default")
+        pipeline.packages.append(pkg_def)
+        pipeline._propagate_deploy_mode()
+        pipeline.save()
+
+        pipeline.configure_package("ior", ["nprocs=8"])
+        pipeline.configure_package("ior", ["nprocs=1"])
+
+        reloaded = Pipeline("cfgpkg_reset_default")
+        self.assertEqual(reloaded.packages[0]["config"].get("nprocs"), 1)
+
+    def test_configure_package_accepts_spaced_boolean_values(self):
+        """Long boolean options retain the parser's documented value form."""
+        pipeline = self._make_pipeline("cfgpkg_spaced_bool")
+        pkg_def = self._make_ior_pkg_def("cfgpkg_spaced_bool")
+        pipeline.packages.append(pkg_def)
+        pipeline._propagate_deploy_mode()
+        pipeline.save()
+
+        pipeline.configure_package("ior", ["--container_cache", "false"])
+
+        reloaded = Pipeline("cfgpkg_spaced_bool")
+        self.assertIs(reloaded.packages[0]["config"].get("container_cache"), False)
+
+    def test_configure_package_rejects_unknown_key_without_persisting(self):
+        """Unknown key=value arguments fail closed and leave YAML unchanged."""
+        pipeline = self._make_pipeline("cfgpkg_unknown")
+        pkg_def = self._make_ior_pkg_def("cfgpkg_unknown")
+        pipeline.packages.append(pkg_def)
+        pipeline._propagate_deploy_mode()
+        pipeline.save()
+        pipeline_path = self.jarvis.get_pipeline_dir("cfgpkg_unknown") / "pipeline.yaml"
+        original = pipeline_path.read_bytes()
+
+        with self.assertRaisesRegex(ValueError, "Unknown argument"):
+            pipeline.configure_package("ior", ["message=not-supported"])
+
+        self.assertEqual(pipeline_path.read_bytes(), original)
+        self.assertNotIn("message", pipeline.packages[0]["config"])
+
+    def test_configure_package_failure_is_not_persisted(self):
+        """A package configuration failure cannot mutate durable pipeline state."""
+        from jarvis_cd.util import PkgArgParse
+
+        class FailingPackage:
+            def __init__(self, config):
+                self.config = config
+
+            @staticmethod
+            def configure_menu():
+                return [{"name": "count", "type": int, "default": 1}]
+
+            def get_argparse(self):
+                return PkgArgParse("failing", self.configure_menu())
+
+            def configure(self, **kwargs):
+                self.config["count"] = kwargs["count"]
+                self.config["leaked_default"] = True
+                raise RuntimeError(f"rejected count {kwargs['count']}")
+
+        pipeline = self._make_pipeline("cfgpkg_failure")
+        pipeline.packages.append(
+            {
+                "pkg_type": "builtin.test_pkg",
+                "pkg_id": "failing",
+                "pkg_name": "failing",
+                "global_id": "cfgpkg_failure.failing",
+                "config": {"count": 1},
+            }
+        )
+
+        with (
+            patch.object(
+                pipeline,
+                "_load_package_instance",
+                return_value=FailingPackage(pipeline.packages[0]["config"]),
+            ),
+            patch.object(pipeline, "save") as save,
+            self.assertRaisesRegex(ValueError, "rejected count 2"),
+        ):
+            pipeline.configure_package("failing", ["count=2"])
+
+        save.assert_not_called()
+        self.assertEqual(pipeline.packages[0]["config"], {"count": 1})
+
+    def test_configure_package_persists_package_derived_values(self):
+        """Successful package-owned configuration commits its derived settings."""
+        from jarvis_cd.util import PkgArgParse
+
+        class DerivedPackage:
+            def __init__(self):
+                self.config = {}
+
+            @staticmethod
+            def configure_menu():
+                return [{"name": "count", "type": int, "default": 1}]
+
+            def get_argparse(self):
+                return PkgArgParse("derived", self.configure_menu())
+
+            def configure(self, **kwargs):
+                self.config["count"] = kwargs["count"]
+                self.config["derived_path"] = f"/output/{kwargs['count']}"
+
+        pipeline = self._make_pipeline("cfgpkg_derived")
+        pipeline.packages.append(
+            {
+                "pkg_type": "builtin.test_pkg",
+                "pkg_id": "derived",
+                "pkg_name": "derived",
+                "global_id": "cfgpkg_derived.derived",
+                "config": {"count": 1},
+            }
+        )
+
+        with (
+            patch.object(
+                pipeline,
+                "_load_package_instance",
+                return_value=DerivedPackage(),
+            ),
+            patch.object(pipeline, "save") as save,
+        ):
+            pipeline.configure_package("derived", ["count=2"])
+
+        save.assert_called_once_with()
+        self.assertEqual(
+            pipeline.packages[0]["config"],
+            {"count": 2, "derived_path": "/output/2"},
+        )
 
     def test_configure_localhost_does_not_require_ssh(self):
         """Local IOR setup remains usable when localhost SSH is unavailable."""
@@ -305,6 +467,73 @@ class TestPipelineCoverage(unittest.TestCase):
 
         pipeline2 = Pipeline("di_test")
         self.assertEqual(pipeline2.container_image, "myimg:latest")
+
+    def test_container_stop_rejects_local_nonzero_exit(self):
+        """A local container teardown cannot report success after exit failure."""
+        pipeline = self._make_pipeline("container_stop_local_failure")
+        pipeline.container_engine = "docker"
+        pipeline.packages = []
+        pipeline.hostfile = Hostfile(hosts=["localhost"], find_ips=False)
+
+        result = SimpleNamespace(
+            exit_code={"localhost": 7},
+            stderr={"localhost": "compose teardown failed"},
+        )
+        with (
+            patch("jarvis_cd.shell.Exec") as executor,
+            self.assertRaises(ExceptionGroup) as raised,
+        ):
+            executor.return_value.run.return_value = result
+            pipeline._stop_containerized_pipeline()
+
+        self.assertIn("localhost=exit 7", str(raised.exception.exceptions[0]))
+        exec_info = executor.call_args.args[1]
+        self.assertEqual(exec_info.exec_type, ExecType.LOCAL)
+
+    def test_container_stop_rejects_one_remote_nonzero_exit(self):
+        """A PSSH teardown fails when any selected host returns nonzero."""
+        pipeline = self._make_pipeline("container_stop_remote_failure")
+        pipeline.container_engine = "podman"
+        pipeline.packages = []
+        pipeline.hostfile = Hostfile(
+            hosts=["node-a", "node-b"],
+            find_ips=False,
+        )
+
+        result = SimpleNamespace(
+            exit_code={"node-a": 0, "node-b": 9},
+            stderr={"node-a": "", "node-b": "podman unavailable"},
+        )
+        with (
+            patch("jarvis_cd.shell.Exec") as executor,
+            self.assertRaises(ExceptionGroup) as raised,
+        ):
+            executor.return_value.run.return_value = result
+            pipeline._stop_containerized_pipeline()
+
+        self.assertIn("node-b=exit 9", str(raised.exception.exceptions[0]))
+        exec_info = executor.call_args.args[1]
+        self.assertEqual(exec_info.exec_type, ExecType.PSSH)
+        self.assertEqual(exec_info.hostfile.hosts, ["node-a", "node-b"])
+
+    def test_container_force_kill_aggregates_executor_failure(self):
+        """Forced container cleanup exposes missing executor status."""
+        pipeline = self._make_pipeline("container_kill_failure")
+        pipeline.container_engine = "docker"
+        pipeline.packages = []
+        pipeline.hostfile = Hostfile(hosts=["localhost"], find_ips=False)
+
+        with (
+            patch("jarvis_cd.shell.Exec") as executor,
+            self.assertRaises(ExceptionGroup) as raised,
+        ):
+            executor.return_value.run.return_value = SimpleNamespace(
+                exit_code={},
+                stderr={},
+            )
+            pipeline._kill_containerized_pipeline()
+
+        self.assertIn("no per-host exit status", str(raised.exception.exceptions[0]))
 
     # ------------------------------------------------------------------
     # _generate_pipeline_container_yaml()

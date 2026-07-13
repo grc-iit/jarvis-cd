@@ -16,8 +16,9 @@ import sys
 import tempfile
 import yaml
 from contextlib import ExitStack
+from copy import deepcopy
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Mapping, Optional
 from uuid import uuid4
 from jarvis_cd.artifacts import (
     ArtifactLocation,
@@ -77,6 +78,41 @@ def _bounded_scheduler_stderr(result: Any, limit: int = 4096) -> Optional[str]:
     if len(diagnostic) <= limit:
         return diagnostic
     return "[truncated]\n" + diagnostic[-limit:]
+
+
+def _executor_status_error(
+    result: Any,
+    *,
+    operation: str,
+    limit: int = 4096,
+) -> Optional[RuntimeError]:
+    """Return an error when an executor omitted or failed a host status."""
+    exit_codes = getattr(result, "exit_code", None)
+    if not isinstance(exit_codes, Mapping) or not exit_codes:
+        return RuntimeError(f"{operation} returned no per-host exit status")
+
+    stderr = getattr(result, "stderr", {})
+    stderr_by_host = stderr if isinstance(stderr, Mapping) else {}
+    failures: list[str] = []
+    for raw_host, code in exit_codes.items():
+        host = str(raw_host)
+        if isinstance(code, bool) or not isinstance(code, int):
+            detail = f"{host}=invalid exit status {code!r}"
+        elif code != 0:
+            detail = f"{host}=exit {code}"
+        else:
+            continue
+        diagnostic = str(stderr_by_host.get(raw_host, "") or "").strip()
+        if diagnostic:
+            detail += f" stderr={diagnostic!r}"
+        failures.append(detail)
+
+    if not failures:
+        return None
+    message = f"{operation} failed: " + "; ".join(failures)
+    if len(message) > limit:
+        message = "[truncated]\n" + message[-limit:]
+    return RuntimeError(message)
 
 
 def _bounded_execution_error(error: BaseException, limit: int = 16_384) -> str:
@@ -1130,8 +1166,8 @@ class Pipeline:
         """Write the scheduler job script and (optionally) submit it.
 
         :param submit: when True, exec the scheduler's submit command
-            (e.g. ``sbatch``); when False, only write the script and
-            return its path so the caller can inspect it.
+            (e.g. ``sbatch``); when False, only write the script without
+            submitting it. The returned handle exposes it as ``script_path``.
         :param wait: when True (and submit is True), ask the scheduler
             to block until the job finishes. SLURM maps this to
             ``sbatch --wait``; backends without an equivalent ignore it.
@@ -1238,6 +1274,7 @@ class Pipeline:
                 execution_root,
                 pipeline_name=self.name,
                 pipeline_snapshot_dir=snapshot_dir,
+                jarvis_root=getattr(self.jarvis, "jarvis_root", None),
             )
             script_path = sched.write_script()
             try:
@@ -1664,6 +1701,15 @@ class Pipeline:
         provider = submission.get("provider")
         native_id = submission.get("scheduler_job_id")
         cluster = submission.get("scheduler_cluster")
+        submission_projection = dict(submission)
+        if cluster is None and current.cluster is not None:
+            cluster = current.cluster
+            submission["scheduler_cluster"] = cluster
+            submission["cluster_identity_source"] = "scheduler_runtime_environment"
+            submission_projection["scheduler_cluster"] = cluster
+            submission_projection["cluster_identity_source"] = (
+                "scheduler_runtime_environment"
+            )
         store.update(
             execution_id,
             state=canonical_state,
@@ -1679,7 +1725,7 @@ class Pipeline:
             return_code=return_code,
             error=scheduler_error,
             metadata={
-                "submission": dict(submission),
+                "submission": submission_projection,
                 "script_path": submission.get("script_path"),
             },
         )
@@ -2617,7 +2663,11 @@ class Pipeline:
             ("pipeline-input", "input/pipeline.yaml", ArtifactRole.PROVENANCE),
             ("environment-input", "input/environment.yaml", ArtifactRole.PROVENANCE),
             ("pipeline-runtime", "runtime/pipeline.yaml", ArtifactRole.PROVENANCE),
-            ("environment-runtime", "runtime/environment.yaml", ArtifactRole.PROVENANCE),
+            (
+                "environment-runtime",
+                "runtime/environment.yaml",
+                ArtifactRole.PROVENANCE,
+            ),
         ):
             self._register_execution_file(
                 store,
@@ -2637,7 +2687,7 @@ class Pipeline:
                 return instance
         return None
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop all packages in the pipeline"""
         from jarvis_cd.util.logger import logger
 
@@ -2649,6 +2699,7 @@ class Pipeline:
             self._stop_containerized_pipeline()
         else:
             # Standard deployment mode - stop each package individually
+            failures: list[Exception] = []
             for pkg_def in reversed(self.packages):
                 try:
                     # Print BEGIN message
@@ -2672,6 +2723,9 @@ class Pipeline:
 
                 except Exception as e:
                     logger.error(f"Error stopping package {pkg_def['pkg_id']}: {e}")
+                    failures.append(e)
+            if failures:
+                raise ExceptionGroup("pipeline package stop failed", failures)
 
     def kill(self):
         """Force kill all packages in the pipeline"""
@@ -3141,20 +3195,25 @@ class Pipeline:
             # Load package instance
             pkg_instance = self._load_package_instance(package_entry, self.env)
 
+            argparse = pkg_instance.get_argparse()
             try:
                 # Use PkgArgParse to parse and convert arguments
-                argparse = pkg_instance.get_argparse()
                 # Parse arguments - prepend 'configure' command
                 argparse.parse(["configure"] + config_args)
-                converted_args = argparse.kwargs
+                converted_args = argparse.kwargs.copy()
 
                 # Update package configuration with converted values
                 package_entry["config"].update(converted_args)
-            except Exception as e:
-                print(f"Warning: Error parsing configuration arguments: {e}")
-                # Show available configuration options
-                argparse = pkg_instance.get_argparse()
-                argparse.print_help("configure")
+            except SystemExit as exc:
+                detail = getattr(argparse, "error_message", None)
+                suffix = f": {detail}" if detail else ""
+                raise ValueError(
+                    f"Invalid configuration arguments for package {pkg_id}{suffix}"
+                ) from exc
+            except Exception as exc:
+                raise ValueError(
+                    f"Failed to parse configuration for package {pkg_id}: {exc}"
+                ) from exc
 
         # Validate that all required parameters have values (after applying config_args)
         self._validate_required_config(package_spec, package_entry["config"])
@@ -3224,12 +3283,13 @@ class Pipeline:
             except Exception as e:
                 logger.error(f"Error cleaning package {pkg_def['pkg_id']}: {e}")
 
-    def configure_package(self, pkg_id: str, config_args: List[str]):
+    def configure_package(self, pkg_id: str, config_args: List[str]) -> None:
         """
         Configure a specific package in the pipeline.
 
         :param pkg_id: Package ID to configure
         :param config_args: Configuration arguments as command-line args (e.g., ['--nprocs', '4', 'block=32m'])
+        :raises ValueError: If an argument is unknown or package configuration fails
         """
         # Find package in pipeline
         pkg_def = None
@@ -3241,47 +3301,52 @@ class Pipeline:
         if not pkg_def:
             raise ValueError(f"Package not found: {pkg_id}")
 
-        # Load package instance
+        original_config = deepcopy(pkg_def["config"])
+
+        # Loading historically aliases the package instance's config to the
+        # pipeline definition and may add defaults. Detach it so configuration
+        # is transactional until the package completes successfully.
         pkg_instance = self._load_package_instance(pkg_def, self.env)
+        working_config = deepcopy(pkg_instance.config)
+        pkg_instance.config = working_config
+        pkg_def["config"] = original_config
 
+        argparse = pkg_instance.get_argparse()
         try:
-            # Use PkgArgParse to parse and convert arguments
-            argparse = pkg_instance.get_argparse()
-
-            # Get defaults by parsing with no user args
-            argparse.parse(["configure"])
-            defaults = argparse.kwargs.copy()
-
-            # Parse with user args
             argparse.parse(["configure"] + config_args)
-            converted_args = argparse.kwargs
-
-            # Only keep args the user explicitly provided (differ from defaults)
+            converted_args = argparse.kwargs.copy()
+            explicit_names = set(argparse.provided_args)
+            missing = sorted(explicit_names - set(converted_args))
+            if missing:
+                raise ValueError(
+                    "configuration parser did not return explicit parameters: "
+                    + ", ".join(missing)
+                )
             explicit_args = {
-                k: v
-                for k, v in converted_args.items()
-                if k not in defaults or defaults[k] != v
+                name: converted_args[name] for name in sorted(explicit_names)
             }
 
-            # Update package configuration with only explicit values
-            pkg_def["config"].update(explicit_args)
+            if not hasattr(pkg_instance, "configure"):
+                raise ValueError(f"Package {pkg_id} has no configure method")
 
-            # Configure the package instance
-            if hasattr(pkg_instance, "configure"):
-                pkg_instance.configure(**explicit_args)
-                print(f"Configured package {pkg_id} successfully")
-            else:
-                print(f"Package {pkg_id} has no configure method")
-
-            # Save updated pipeline
+            # Package configuration may create files or validate cross-field state.
+            # Do not mutate the durable pipeline definition until it succeeds.
+            pkg_instance.configure(**explicit_args)
+            pkg_def["config"] = deepcopy(pkg_instance.config)
             self.save()
-            print(f"Saved configuration for {pkg_id}")
+        except SystemExit as exc:
+            pkg_def["config"] = original_config
+            detail = getattr(argparse, "error_message", None)
+            suffix = f": {detail}" if detail else ""
+            raise ValueError(
+                f"Invalid configuration arguments for package {pkg_id}{suffix}"
+            ) from exc
+        except Exception as exc:
+            pkg_def["config"] = original_config
+            raise ValueError(f"Failed to configure package {pkg_id}: {exc}") from exc
 
-        except Exception as e:
-            print(f"Error configuring package {pkg_id}: {e}")
-            # Show available configuration options
-            argparse = pkg_instance.get_argparse()
-            argparse.print_help("configure")
+        print(f"Configured package {pkg_id} successfully")
+        print(f"Saved configuration for {pkg_id}")
 
     def show_package_readme(self, pkg_id: str):
         """
@@ -4515,7 +4580,7 @@ class Pipeline:
         except OSError:
             pass
 
-    def _stop_containerized_pipeline(self):
+    def _stop_containerized_pipeline(self) -> None:
         """
         Stop containerized pipeline:
         1. Stop each package via its stop() method
@@ -4527,6 +4592,7 @@ class Pipeline:
         logger.info("Stopping containerized pipeline")
 
         # Stop packages in reverse order (same as non-containerized)
+        failures: list[Exception] = []
         for pkg_def in reversed(self.packages):
             try:
                 logger.success(f"[{pkg_def['pkg_type']}] [STOP] BEGIN")
@@ -4540,6 +4606,7 @@ class Pipeline:
                 logger.success(f"[{pkg_def['pkg_type']}] [STOP] END")
             except Exception as e:
                 logger.error(f"Error stopping package {pkg_def['pkg_id']}: {e}")
+                failures.append(e)
 
         # Bring down the containers
         engine = self.container_engine.lower()
@@ -4558,10 +4625,23 @@ class Pipeline:
         else:
             exec_info = PsshExecInfo(hostfile=hostfile)
 
-        Exec(stop_cmd, exec_info).run()
-        logger.success("Containers stopped")
+        try:
+            result = Exec(stop_cmd, exec_info).run()
+            status_error = _executor_status_error(
+                result,
+                operation="container stop",
+            )
+            if status_error is not None:
+                raise status_error
+            logger.success("Containers stopped")
+        except Exception as exc:
+            logger.error(f"Error stopping pipeline containers: {exc}")
+            failures.append(exc)
 
-    def _kill_containerized_pipeline(self):
+        if failures:
+            raise ExceptionGroup("containerized pipeline stop failed", failures)
+
+    def _kill_containerized_pipeline(self) -> None:
         """
         Force-kill containerized pipeline:
         1. Kill each package
@@ -4573,6 +4653,7 @@ class Pipeline:
         logger.info("Force-killing containerized pipeline")
 
         # Kill packages
+        failures: list[Exception] = []
         for pkg_def in self.packages:
             try:
                 logger.success(f"[{pkg_def['pkg_type']}] [KILL] BEGIN")
@@ -4583,6 +4664,7 @@ class Pipeline:
                 logger.success(f"[{pkg_def['pkg_type']}] [KILL] END")
             except Exception as e:
                 logger.error(f"Error killing package {pkg_def['pkg_id']}: {e}")
+                failures.append(e)
 
         # Force-remove containers
         engine = self.container_engine.lower()
@@ -4601,5 +4683,18 @@ class Pipeline:
         else:
             exec_info = PsshExecInfo(hostfile=hostfile)
 
-        Exec(kill_cmd, exec_info).run()
-        logger.success("Containers force-killed")
+        try:
+            result = Exec(kill_cmd, exec_info).run()
+            status_error = _executor_status_error(
+                result,
+                operation="container force-kill",
+            )
+            if status_error is not None:
+                raise status_error
+            logger.success("Containers force-killed")
+        except Exception as exc:
+            logger.error(f"Error force-killing pipeline containers: {exc}")
+            failures.append(exc)
+
+        if failures:
+            raise ExceptionGroup("containerized pipeline force-kill failed", failures)

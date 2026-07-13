@@ -6,14 +6,11 @@
         ============================================-->
 
     <io name="SimulationOutput">
-        <engine type="FileStream">
-            <!-- SST engine parameters -->
-            <parameter key="RendezvousReaderCount" value="0"/>
-            <parameter key="QueueLimit" value="1"/>
-            <parameter key="QueueFullPolicy" value="Discard"/>
-            <!-- BP4/SST engine parameters -->
-            <parameter key="OpenTimeoutSecs" value="10.0"/>
-        </engine>
+        <engine type="BP5"/>
+    </io>
+
+    <io name="SimulationCheckpoint">
+        <engine type="BP5"/>
     </io>
 
     <!--===========================================

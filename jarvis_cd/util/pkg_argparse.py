@@ -11,6 +11,7 @@ Supported types in configure_menu:
 - SizeType: Size specifications (e.g., "1k", "2M", "10G")
 - Custom types: Any type with a constructor that accepts string values
 """
+
 from .argparse import ArgParse
 from typing import List, Dict, Any
 
@@ -39,14 +40,13 @@ class PkgArgParse(ArgParse):
         :param configure_menu: List of argument specifications from configure_menu()
         """
         super().__init__()
+        self.strict_unknown_args = True
 
         self.pkg_name = pkg_name
 
         # Add the configure command
         self.add_cmd(
-            'configure',
-            msg=f'Configure {pkg_name} package',
-            keep_remainder=False
+            "configure", msg=f"Configure {pkg_name} package", keep_remainder=False
         )
 
         # Add arguments from configure_menu
@@ -59,7 +59,7 @@ class PkgArgParse(ArgParse):
 
         :param cmd_name: Command name (always 'configure' for packages)
         """
-        if cmd_name and cmd_name != 'configure':
+        if cmd_name and cmd_name != "configure":
             print(f"Unknown command: {cmd_name}")
             print("Only 'configure' command is available for packages")
             return
@@ -71,4 +71,4 @@ class PkgArgParse(ArgParse):
         print()
 
         # Print the configure command help
-        self.print_command_help('configure')
+        self.print_command_help("configure")

@@ -10,6 +10,7 @@ from enum import StrEnum
 from typing import Any, Final, Mapping, cast
 
 PROGRESS_SCHEMA_VERSION: Final = "jarvis.progress.v1"
+PROCESS_EXIT_RECONCILIATION_KEY: Final = "jarvis_process_exit"
 MAX_PROGRESS_EVENT_BYTES: Final = 64 * 1024
 MAX_IDENTITY_TEXT: Final = 256
 MAX_MESSAGE_TEXT: Final = 4096

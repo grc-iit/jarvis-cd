@@ -46,6 +46,7 @@ def make_scheduler(
     pipeline_yaml: Optional[str] = None,
     pipeline_name: Optional[str] = None,
     pipeline_snapshot_dir: Optional[Path] = None,
+    jarvis_root: Optional[Path] = None,
 ) -> "Scheduler":
     """Factory: build a Scheduler from a parsed YAML dict.
 
@@ -59,6 +60,8 @@ def make_scheduler(
     :param pipeline_snapshot_dir: immutable execution-scoped pipeline input
         directory. When provided, the scheduler runs that snapshot rather than
         reloading mutable named-pipeline state.
+    :param jarvis_root: configuration root whose repository selection must be
+        retained by a scheduled snapshot.
     """
     name = (spec or {}).get("name")
     if not name:
@@ -75,6 +78,7 @@ def make_scheduler(
         pipeline_yaml=pipeline_yaml,
         pipeline_name=pipeline_name,
         pipeline_snapshot_dir=pipeline_snapshot_dir,
+        jarvis_root=jarvis_root,
     )
 
 
@@ -95,6 +99,7 @@ class Scheduler:
         pipeline_yaml: Optional[str] = None,
         pipeline_name: Optional[str] = None,
         pipeline_snapshot_dir: Optional[Path] = None,
+        jarvis_root: Optional[Path] = None,
     ):
         self.spec = dict(spec or {})
         self.shared_dir = Path(pipeline_shared_dir)
@@ -103,6 +108,7 @@ class Scheduler:
         self.pipeline_snapshot_dir = (
             Path(pipeline_snapshot_dir) if pipeline_snapshot_dir is not None else None
         )
+        self.jarvis_root = Path(jarvis_root) if jarvis_root is not None else None
 
         default_hostfile = str(self.shared_dir / "hostfile.txt")
         hostfile = self.spec.get("hostfile") or default_hostfile
@@ -191,19 +197,28 @@ class Scheduler:
         supplied, falling back to ``jarvis ppl run`` against the
         currently-loaded pipeline otherwise.
         """
+        jarvis_cli = f"{shlex.quote(sys.executable)} -m jarvis_cd.core.cli"
         if self.pipeline_snapshot_dir is not None:
             snapshot = self.pipeline_snapshot_dir
             snapshot_yaml = snapshot / "pipeline.yaml"
+            environment = [
+                "env",
+                "JARVIS_PIPELINE_SNAPSHOT_DIR=" + shlex.quote(str(snapshot)),
+            ]
+            if self.jarvis_root is not None:
+                environment.append("JARVIS_ROOT=" + shlex.quote(str(self.jarvis_root)))
             return (
-                "env JARVIS_PIPELINE_SNAPSHOT_DIR="
-                f"{shlex.quote(str(snapshot))} "
-                f"jarvis ppl run yaml {shlex.quote(str(snapshot_yaml))}"
+                " ".join(environment)
+                + f" {jarvis_cli} ppl run yaml {shlex.quote(str(snapshot_yaml))}"
             )
         if self.pipeline_yaml:
-            return f"jarvis ppl run yaml {shlex.quote(self.pipeline_yaml)}"
+            return f"{jarvis_cli} ppl run yaml {shlex.quote(self.pipeline_yaml)}"
         if self.pipeline_name:
-            return f"jarvis cd {shlex.quote(self.pipeline_name)} && jarvis ppl run"
-        return "jarvis ppl run"
+            return (
+                f"{jarvis_cli} cd {shlex.quote(self.pipeline_name)} && "
+                f"{jarvis_cli} ppl run"
+            )
+        return f"{jarvis_cli} ppl run"
 
     def _execution_lifecycle_block(self) -> str:
         """Render an EXIT trap that durably finalizes scheduler script state."""

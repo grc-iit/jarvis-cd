@@ -1,12 +1,13 @@
 """
 Tests for pkg_argparse.py - Package-specific argument parser
 """
+
 import unittest
 import sys
 import os
 from io import StringIO
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 from jarvis_cd.util.pkg_argparse import PkgArgParse
 
@@ -17,37 +18,91 @@ class TestPkgArgParse(unittest.TestCase):
     def setUp(self):
         """Set up test parser with sample configure menu"""
         self.configure_menu = [
-            {'name': 'install_dir', 'msg': 'Installation directory', 'type': str, 'default': '/usr/local'},
-            {'name': 'num_threads', 'msg': 'Number of threads', 'type': int, 'default': 4},
-            {'name': 'enable_debug', 'msg': 'Enable debug mode', 'type': bool, 'default': False},
+            {
+                "name": "install_dir",
+                "msg": "Installation directory",
+                "type": str,
+                "default": "/usr/local",
+            },
+            {
+                "name": "num_threads",
+                "msg": "Number of threads",
+                "type": int,
+                "default": 4,
+            },
+            {
+                "name": "enable_debug",
+                "msg": "Enable debug mode",
+                "type": bool,
+                "default": False,
+            },
         ]
-        self.parser = PkgArgParse('test_package', self.configure_menu)
+        self.parser = PkgArgParse("test_package", self.configure_menu)
 
     def test_initialization(self):
         """Test PkgArgParse initialization"""
-        self.assertEqual(self.parser.pkg_name, 'test_package')
+        self.assertEqual(self.parser.pkg_name, "test_package")
         self.assertIsNotNone(self.parser.commands)
 
     def test_configure_command_exists(self):
         """Test that configure command is automatically added"""
-        self.assertIn('configure', self.parser.commands)
+        self.assertIn("configure", self.parser.commands)
 
     def test_parse_configure_with_args(self):
         """Test parsing configure command with arguments"""
-        args = ['configure', '--install_dir=/opt', '--num_threads=8']
+        args = ["configure", "--install_dir=/opt", "--num_threads=8"]
         self.parser.parse(args)
 
-        self.assertEqual(self.parser.kwargs['install_dir'], '/opt')
-        self.assertEqual(self.parser.kwargs['num_threads'], 8)
+        self.assertEqual(self.parser.kwargs["install_dir"], "/opt")
+        self.assertEqual(self.parser.kwargs["num_threads"], 8)
 
     def test_parse_configure_with_defaults(self):
         """Test that default values are used"""
-        args = ['configure']
+        args = ["configure"]
         self.parser.parse(args)
 
         # Should have defaults
-        self.assertIn('install_dir', self.parser.kwargs)
-        self.assertIn('num_threads', self.parser.kwargs)
+        self.assertIn("install_dir", self.parser.kwargs)
+        self.assertIn("num_threads", self.parser.kwargs)
+
+    def test_explicit_default_is_recorded_as_provided(self):
+        """Explicit values remain distinguishable when equal to defaults."""
+        self.parser.parse(["configure", "num_threads=4"])
+
+        self.assertEqual(self.parser.provided_args, {"num_threads"})
+
+    def test_unknown_key_value_fails_closed(self):
+        """Unknown structured arguments cannot be silently ignored."""
+        with self.assertRaises(SystemExit):
+            self.parser.parse(["configure", "message=unsupported"])
+
+    def test_positional_arguments_follow_parser_order_and_are_recorded(self):
+        """Positionals retain class/rank ordering and explicit-name tracking."""
+        parser = PkgArgParse(
+            "positional_package",
+            [
+                {
+                    "name": "later",
+                    "type": str,
+                    "pos": True,
+                    "class": "b",
+                    "rank": 0,
+                },
+                {
+                    "name": "first",
+                    "type": str,
+                    "pos": True,
+                    "class": "a",
+                    "rank": 0,
+                },
+            ],
+        )
+
+        parser.parse(["configure", "value=with-equals", "-5"])
+
+        self.assertEqual(parser.kwargs["first"], "value=with-equals")
+        self.assertEqual(parser.kwargs["later"], "-5")
+        self.assertEqual(parser.provided_args, {"first", "later"})
 
     def test_print_help(self):
         """Test print_help for package"""
@@ -59,9 +114,9 @@ class TestPkgArgParse(unittest.TestCase):
             output = sys.stdout.getvalue()
 
             # Should contain package name and parameters
-            self.assertIn('test_package', output)
-            self.assertIn('install_dir', output.lower())
-            self.assertIn('num_threads', output.lower())
+            self.assertIn("test_package", output)
+            self.assertIn("install_dir", output.lower())
+            self.assertIn("num_threads", output.lower())
 
         finally:
             sys.stdout = old_stdout
@@ -72,11 +127,11 @@ class TestPkgArgParse(unittest.TestCase):
         sys.stdout = StringIO()
 
         try:
-            self.parser.print_help('unknown_cmd')
+            self.parser.print_help("unknown_cmd")
             output = sys.stdout.getvalue()
 
             # Should indicate unknown command
-            self.assertIn('unknown', output.lower())
+            self.assertIn("unknown", output.lower())
 
         finally:
             sys.stdout = old_stdout
@@ -87,24 +142,24 @@ class TestPkgArgParse(unittest.TestCase):
         sys.stdout = StringIO()
 
         try:
-            self.parser.print_help('configure')
+            self.parser.print_help("configure")
             output = sys.stdout.getvalue()
 
             # Should show configure help
-            self.assertIn('test_package', output)
+            self.assertIn("test_package", output)
 
         finally:
             sys.stdout = old_stdout
 
     def test_empty_configure_menu(self):
         """Test PkgArgParse with empty configure menu"""
-        parser = PkgArgParse('empty_package', [])
-        args = ['configure']
+        parser = PkgArgParse("empty_package", [])
+        args = ["configure"]
         parser.parse(args)
 
         # Should not crash
         self.assertIsNotNone(parser.kwargs)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
