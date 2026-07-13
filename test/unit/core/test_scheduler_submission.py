@@ -266,10 +266,17 @@ def _run_execution_scheduler_script(
         elif initial_state != "submitting":
             raise ValueError(f"unsupported test execution state: {initial_state}")
     execution_root = store.executions_dir / execution_id
+    runtime_dir = execution_root / "runtime"
+    runtime_dir.mkdir()
+    (runtime_dir / "pipeline.yaml").write_text(
+        "name: example\npkgs: []\ninterceptors: []\n",
+        encoding="utf-8",
+    )
+    (runtime_dir / "environment.yaml").write_text("{}\n", encoding="utf-8")
     scheduler = SlurmScheduler(
         {"name": "slurm"},
         execution_root,
-        pipeline_snapshot_dir=execution_root / "runtime",
+        pipeline_snapshot_dir=runtime_dir,
     )
 
     executable_dir = tmp_path / "bin"
