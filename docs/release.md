@@ -97,7 +97,15 @@ git push origin "refs/tags/$tag"
 
 The workflow fails if the tag is not on `main`, artifact metadata differs from
 the tag, the remote tag moves, the published release is not immutable, or GitHub
-cannot verify the release attestation. After it completes, verify independently:
+cannot verify the release attestation. A rerun may resume a draft only when the
+paginated release list contains exactly one record for the tag and its title,
+body, author, draft state, prerelease state, and immutability state all match the
+workflow request. Duplicate or drifted records abort publication, and existing
+assets are compared byte for byte rather than overwritten. Draft assets and the
+publish transition are addressed by the validated release ID, not resolved from
+the tag a second time. The only automatic repair is deletion of an unambiguous
+zero-byte `starter` asset left by an interrupted GitHub upload; other asset-state
+or metadata drift aborts the release. After it completes, verify independently:
 
 ```bash
 gh release verify "v${version}" --repo grc-iit/jarvis-cd

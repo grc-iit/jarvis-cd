@@ -185,6 +185,7 @@ jobs:
             test/unit/core/test_paraview_artifacts.py \
             test/unit/core/test_scheduler_submission.py \
             test/unit/core/test_pipeline_hostfile.py \
+            test/unit/test_release_draft.py \
             test/unit/test_release_request.py \
             test/unit/test_release_workflow.py
 
@@ -493,9 +494,10 @@ jobs:
           trap 'rm -rf "$release_tmp"' EXIT
           release_json="$release_tmp/release.json"
           release_error="$release_tmp/release.error"
+          release_pages_json="$release_tmp/release-pages.json"
           release_body="JARVIS-CD $TAG_NAME immutable release."
 
-          fetch_release() {
+          fetch_published_release() {
             gh api "repos/$REPOSITORY/releases/tags/$TAG_NAME" >"$release_json"
             jq -e \
               --arg tag "$TAG_NAME" \
@@ -505,13 +507,56 @@ jobs:
                 and .body == $body
                 and .prerelease == false
                 and .author.login == "github-actions[bot]"
+                and (.id | type == "number" and . > 0)
+                and (.assets | type == "array")
               ' "$release_json" >/dev/null
           }
 
+          find_draft_release() {
+            if ! gh api --paginate --slurp \
+              "repos/$REPOSITORY/releases?per_page=100" \
+              >"$release_pages_json"; then
+              return 1
+            fi
+            python ci/release_draft.py \
+              --tag "$TAG_NAME" \
+              --title "$TAG_NAME" \
+              --body "$release_body" \
+              --author "github-actions[bot]" \
+              <"$release_pages_json" >"$release_json"
+          }
+
+          find_existing_release() {
+            if fetch_published_release 2>"$release_error"; then
+              return 0
+            fi
+            if ! grep -Fq 'HTTP 404' "$release_error"; then
+              cat "$release_error" >&2
+              return 1
+            fi
+            find_draft_release
+          }
+
+          refresh_exact_release() {
+            find_existing_release
+            test "$(jq -r .id "$release_json")" = "$release_id"
+          }
+
           load_and_verify_assets() {
-            local allow_missing="$1" id name declared_digest downloaded
+            local allow_missing="$1" id name declared_digest state size
+            local downloaded encoded_name
             declare -gA asset_ids=()
-            while IFS=$'\t' read -r id name declared_digest; do
+            jq -e '
+              [.assets[].name] as $names
+              | [.assets[].id] as $ids
+              | ($names | length) == ($names | unique | length)
+                and ($ids | length) == ($ids | unique | length)
+            ' "$release_json" >/dev/null
+            while IFS=$'\t' read -r id name declared_digest state size; do
+              if [ "$declared_digest" = - ]; then
+                declared_digest=""
+              fi
+              [[ "$id" =~ ^[1-9][0-9]*$ ]]
               [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]]
               if [[ ! -v "expected_sha[$name]" ]]; then
                 echo "unexpected release asset: $name" >&2
@@ -521,6 +566,23 @@ jobs:
                 echo "duplicate release asset: $name" >&2
                 return 1
               fi
+              if [ "$state" = starter ]; then
+                if [ "$allow_missing" != true ] || \
+                   [ -n "$declared_digest" ] || \
+                   [ "$size" != 0 ]; then
+                  echo "unsafe starter release asset: $name" >&2
+                  return 1
+                fi
+                gh api \
+                  --method DELETE \
+                  -H 'X-GitHub-Api-Version: 2022-11-28' \
+                  "repos/$REPOSITORY/releases/assets/$id"
+                continue
+              fi
+              if [ "$state" != uploaded ]; then
+                echo "unexpected release asset state: $name: $state" >&2
+                return 1
+              fi
               if [ -n "$declared_digest" ] && \
                  [ "$declared_digest" != "sha256:${expected_sha[$name]}" ]; then
                 echo "release asset digest mismatch: $name" >&2
@@ -528,14 +590,36 @@ jobs:
               fi
               asset_ids["$name"]="$id"
             done < <(
-              jq -r '.assets[] | [.id, .name, (.digest // "")] | @tsv' \
+              jq -r '
+                .assets[]
+                | [
+                    .id,
+                    .name,
+                    (.digest // "-"),
+                    (.state // ""),
+                    (.size // -1)
+                  ]
+                | @tsv
+              ' \
                 "$release_json"
             )
 
             for name in "${artifacts[@]}"; do
               if [[ ! -v "asset_ids[$name]" ]]; then
                 if [ "$allow_missing" = true ]; then
-                  gh release upload "$TAG_NAME" "dist/$name" --repo "$REPOSITORY"
+                  encoded_name="$(jq -rn --arg value "$name" '$value | @uri')"
+                  gh api \
+                    --method POST \
+                    -H 'Content-Type: application/octet-stream' \
+                    -H 'X-GitHub-Api-Version: 2022-11-28' \
+                    --input "dist/$name" \
+                    "https://uploads.github.com/repos/$REPOSITORY/releases/$release_id/assets?name=$encoded_name" \
+                    >"$release_tmp/upload-$name.json"
+                  jq -e --arg name "$name" '
+                    .name == $name
+                    and .state == "uploaded"
+                    and (.id | type == "number" and . > 0)
+                  ' "$release_tmp/upload-$name.json" >/dev/null
                   continue
                 fi
                 echo "missing release asset: $name" >&2
@@ -550,9 +634,9 @@ jobs:
             done
           }
 
-          if fetch_release 2>"$release_error"; then
-            :
-          elif grep -Fq 'HTTP 404' "$release_error"; then
+          lookup_status=0
+          find_existing_release || lookup_status=$?
+          if [ "$lookup_status" -eq 3 ]; then
             gh release create "$TAG_NAME" \
               --repo "$REPOSITORY" \
               --verify-tag \
@@ -560,31 +644,37 @@ jobs:
               --notes "$release_body" \
               --latest \
               --draft
-            fetch_release
-          else
-            cat "$release_error" >&2
-            exit 1
+            find_draft_release
+          elif [ "$lookup_status" -ne 0 ]; then
+            exit "$lookup_status"
           fi
+          release_id="$(jq -er '.id | select(type == "number" and . > 0)' \
+            "$release_json")"
 
           draft="$(jq -r .draft "$release_json")"
           immutable="$(jq -r .immutable "$release_json")"
           if [ "$draft" = true ]; then
             test "$immutable" = false
             load_and_verify_assets true
-            fetch_release
+            refresh_exact_release
             load_and_verify_assets false
             test "$(resolve_remote_tag)" = "$GITHUB_SHA"
-            gh release edit "$TAG_NAME" \
-              --repo "$REPOSITORY" \
-              --draft=false \
-              --latest
+            gh api \
+              --method PATCH \
+              -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              -F draft=false \
+              -f make_latest=true \
+              "repos/$REPOSITORY/releases/$release_id" \
+              >"$release_tmp/published.json"
           else
             test "$immutable" = true
             load_and_verify_assets false
           fi
 
           test "$(resolve_remote_tag)" = "$GITHUB_SHA"
-          fetch_release
+          fetch_published_release
+          test "$(jq -r .id "$release_json")" = "$release_id"
           test "$(jq -r .draft "$release_json")" = false
           test "$(jq -r .immutable "$release_json")" = true
           test "$(gh api "repos/$REPOSITORY/releases/latest" --jq .tag_name)" = \
