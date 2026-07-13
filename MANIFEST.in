@@ -1,0 +1,6 @@
+include builtin/builtin/adios2_gray_scott/artifacts.py
+include builtin/builtin/adios2_gray_scott/progress.py
+include builtin/builtin/gray_scott/artifacts.py
+include builtin/builtin/gray_scott/progress.py
+include builtin/builtin/lammps/artifacts.py
+include builtin/builtin/paraview/artifacts.py

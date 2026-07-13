@@ -16,6 +16,7 @@ record = handle.refresh()
 live = pipeline.run(wait=False)
 while not live.refresh().terminal:
     print(live.progress().to_dict())
+    print(live.artifacts().to_dict())
 
 scheduled = pipeline.submit(wait=False)
 print(scheduled.scheduler_provider)   # "slurm"
@@ -43,6 +44,7 @@ Python clients can query an exact ID or list a named pipeline's history:
 record = pipeline.get_execution(handle.execution_id)
 records = pipeline.list_executions()
 progress = handle.progress()
+artifacts = handle.artifacts()
 ```
 
 CLI queries accept `--pipeline-id`, so a handle remains queryable after the
@@ -55,17 +57,21 @@ jarvis ppl submit visualization.yaml --execution-id render-2018-asteroid +json
 jarvis execution get render-2018-asteroid --pipeline-id visualization +json
 jarvis execution list --pipeline-id visualization +json
 jarvis execution progress render-2018-asteroid --pipeline-id visualization +json
+jarvis execution artifacts render-2018-asteroid --pipeline-id visualization +json
 ```
 
 `execution get +json` and `execution list +json` emit clean machine-readable
 JSON. `execution progress +json` returns the latest identity-checked event and
-event count for each package alias without exposing storage paths. `ppl run
-+json` and `ppl submit +json` emit the handle JSON as their final
-line because package and scheduler logs remain visible before it.
+event count for each package alias. `execution artifacts +json` returns the
+current identity-checked artifact manifest. Neither query exposes its internal
+sidecar paths. `ppl run +json` and `ppl submit +json` emit the handle JSON as
+their final line because package and scheduler logs remain visible before it.
 
 During a run, JARVIS binds package shared/private paths to the owned execution
 root. It also exports authoritative `JARVIS_EXECUTION_ID`, `JARVIS_PACKAGE_ID`,
 `JARVIS_PACKAGE_NAME`, `JARVIS_PROGRESS_PATH`, and
-`JARVIS_PROGRESS_TRANSPORT` values before each package starts. Application
-packages may report through the selected sidecar/stdout transport, but cannot
-choose the authoritative execution or sidecar identity.
+`JARVIS_PROGRESS_TRANSPORT`, `JARVIS_ARTIFACT_PATH`, and
+`JARVIS_ARTIFACT_TRANSPORT` values before each package starts. Application
+packages may report through the selected sidecar/stdout transports, but cannot
+choose the authoritative execution or sidecar identity. See
+[Generated artifacts](artifacts.md) for the package contract.

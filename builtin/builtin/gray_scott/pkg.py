@@ -2,6 +2,7 @@
 This module provides classes and methods to launch the Gray-Scott application.
 Gray-Scott is a reaction-diffusion simulation.
 """
+
 from jarvis_cd.core.pkg import Application
 from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
@@ -20,88 +21,88 @@ class GrayScott(Application):
     """
 
     def _init(self):
-        self.adios2_xml_path = f'{self.shared_dir}/adios2.xml'
-        self.settings_json_path = f'{self.shared_dir}/settings-files.json'
+        self.adios2_xml_path = f"{self.shared_dir}/adios2.xml"
+        self.settings_json_path = f"{self.shared_dir}/settings-files.json"
 
     def _configure_menu(self):
         return [
             {
-                'name': 'nprocs',
-                'msg': 'Number of MPI processes',
-                'type': int,
-                'default': 4,
+                "name": "nprocs",
+                "msg": "Number of MPI processes",
+                "type": int,
+                "default": 4,
             },
             {
-                'name': 'ppn',
-                'msg': 'Processes per node',
-                'type': int,
-                'default': None,
+                "name": "ppn",
+                "msg": "Processes per node",
+                "type": int,
+                "default": None,
             },
             {
-                'name': 'width',
-                'msg': 'Global grid width (columns)',
-                'type': int,
-                'default': 512,
+                "name": "width",
+                "msg": "Global grid width (columns)",
+                "type": int,
+                "default": 512,
             },
             {
-                'name': 'height',
-                'msg': 'Global grid height (rows)',
-                'type': int,
-                'default': 512,
+                "name": "height",
+                "msg": "Global grid height (rows)",
+                "type": int,
+                "default": 512,
             },
             {
-                'name': 'steps',
-                'msg': 'Total number of time steps',
-                'type': int,
-                'default': 5000,
+                "name": "steps",
+                "msg": "Total number of time steps",
+                "type": int,
+                "default": 5000,
             },
             {
-                'name': 'out_every',
-                'msg': 'HDF5 output interval (steps between writes)',
-                'type': int,
-                'default': 500,
+                "name": "out_every",
+                "msg": "HDF5 output interval (steps between writes)",
+                "type": int,
+                "default": 500,
             },
             {
-                'name': 'outdir',
-                'msg': 'Output directory for HDF5 files',
-                'type': str,
-                'default': '/tmp/gray_scott_out',
+                "name": "outdir",
+                "msg": "Output directory for HDF5 files",
+                "type": str,
+                "default": "/tmp/gray_scott_out",
             },
             {
-                'name': 'F',
-                'msg': 'Feed rate',
-                'type': float,
-                'default': 0.035,
+                "name": "F",
+                "msg": "Feed rate",
+                "type": float,
+                "default": 0.035,
             },
             {
-                'name': 'k',
-                'msg': 'Kill rate',
-                'type': float,
-                'default': 0.060,
+                "name": "k",
+                "msg": "Kill rate",
+                "type": float,
+                "default": 0.060,
             },
             {
-                'name': 'Du',
-                'msg': 'Diffusion coefficient for u',
-                'type': float,
-                'default': 0.16,
+                "name": "Du",
+                "msg": "Diffusion coefficient for u",
+                "type": float,
+                "default": 0.16,
             },
             {
-                'name': 'Dv',
-                'msg': 'Diffusion coefficient for v',
-                'type': float,
-                'default': 0.08,
+                "name": "Dv",
+                "msg": "Diffusion coefficient for v",
+                "type": float,
+                "default": 0.08,
             },
             {
-                'name': 'cuda_arch',
-                'msg': 'CUDA architecture code (80=A100, 90=H100, 70=V100)',
-                'type': int,
-                'default': 80,
+                "name": "cuda_arch",
+                "msg": "CUDA architecture code (80=A100, 90=H100, 70=V100)",
+                "type": int,
+                "default": 80,
             },
             {
-                'name': 'base_image',
-                'msg': 'Base Docker image for build container',
-                'type': str,
-                'default': 'sci-hpc-base',
+                "name": "base_image",
+                "msg": "Base Docker image for build container",
+                "type": str,
+                "default": "sci-hpc-base",
             },
         ]
 
@@ -110,23 +111,29 @@ class GrayScott(Application):
     # ------------------------------------------------------------------
 
     def _build_phase(self):
-        if self.config.get('deploy_mode') != 'container':
+        if self.config.get("deploy_mode") != "container":
             return None
-        cuda_arch = self.config.get('cuda_arch', 80)
-        content = self._read_build_script('build.sh', {
-            'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
-            'CUDA_ARCH': cuda_arch,
-        })
-        return content, f'cuda-{cuda_arch}'
+        cuda_arch = self.config.get("cuda_arch", 80)
+        content = self._read_build_script(
+            "build.sh",
+            {
+                "BASE_IMAGE": self.config.get("base_image", "sci-hpc-base"),
+                "CUDA_ARCH": cuda_arch,
+            },
+        )
+        return content, f"cuda-{cuda_arch}"
 
     def _build_deploy_phase(self):
-        if self.config.get('deploy_mode') != 'container':
+        if self.config.get("deploy_mode") != "container":
             return None
-        suffix = getattr(self, '_build_suffix', '')
-        content = self._read_dockerfile('Dockerfile.deploy', {
-            'BUILD_IMAGE': self.build_image_name(),
-            'DEPLOY_BASE': 'nvidia/cuda:12.6.0-runtime-ubuntu24.04',
-        })
+        suffix = getattr(self, "_build_suffix", "")
+        content = self._read_dockerfile(
+            "Dockerfile.deploy",
+            {
+                "BUILD_IMAGE": self.build_image_name(),
+                "DEPLOY_BASE": "nvidia/cuda:12.6.0-runtime-ubuntu24.04",
+            },
+        )
         return content, suffix
 
     # ------------------------------------------------------------------
@@ -145,27 +152,28 @@ class GrayScott(Application):
         """
         super()._configure(**kwargs)
 
-        if self.config.get('deploy_mode') == 'default':
-            output = self.config.get('outdir', f'{self.shared_dir}/gray-scott-output')
-            self.config['outdir'] = output
+        if self.config.get("deploy_mode") == "default":
+            output = self.config.get("outdir", f"{self.shared_dir}/gray-scott-output")
+            self.config["outdir"] = output
             Mkdir(output, PsshExecInfo(hostfile=self.hostfile, env=self.env)).run()
 
             settings_json = {
-                'L': self.config.get('width', 512),
-                'Du': self.config.get('Du', 0.16),
-                'Dv': self.config.get('Dv', 0.08),
-                'F': self.config.get('F', 0.035),
-                'k': self.config.get('k', 0.060),
-                'dt': 2.0,
-                'plotgap': self.config.get('out_every', 500),
-                'steps': self.config.get('steps', 5000),
-                'noise': 0.01,
-                'output': output,
-                'adios_config': self.adios2_xml_path
+                "L": self.config.get("width", 512),
+                "Du": self.config.get("Du", 0.16),
+                "Dv": self.config.get("Dv", 0.08),
+                "F": self.config.get("F", 0.035),
+                "k": self.config.get("k", 0.060),
+                "dt": 2.0,
+                "plotgap": self.config.get("out_every", 500),
+                "steps": self.config.get("steps", 5000),
+                "noise": 0.01,
+                "output": output,
+                "adios_config": self.adios2_xml_path,
             }
             JsonFile(self.settings_json_path).save(settings_json)
-            self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
-                                    self.adios2_xml_path)
+            self.copy_template_file(
+                f"{self.pkg_dir}/config/adios2.xml", self.adios2_xml_path
+            )
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -178,42 +186,54 @@ class GrayScott(Application):
         Branches on deploy_mode: uses MpiExecInfo with container engine for
         container mode, MpiExecInfo with hostfile and ADIOS2 settings JSON for default mode.
         """
-        if self.config.get('deploy_mode') == 'container':
-            outdir = self.config.get('outdir', '/tmp/gray_scott_out')
+        line_callback = self.runtime_line_callback()
+        if self.config.get("deploy_mode") == "container":
+            outdir = self.config.get("outdir", "/tmp/gray_scott_out")
             Mkdir(outdir).run()
 
-            nprocs = self.config.get('nprocs', 4)
-            inner = ' '.join([
-                '/usr/bin/gray_scott',
-                f'--width {self.config["width"]}',
-                f'--height {self.config["height"]}',
-                f'--steps {self.config["steps"]}',
-                f'--out-every {self.config["out_every"]}',
-                f'--outdir {outdir}',
-                f'--F {self.config["F"]}',
-                f'--k {self.config["k"]}',
-                f'--Du {self.config["Du"]}',
-                f'--Dv {self.config["Dv"]}',
-            ])
-            Exec(inner, MpiExecInfo(
-                nprocs=nprocs,
-                ppn=self.config.get('ppn'),
-                container=self._container_engine,
-                container_image=self.deploy_image_name(),
-                shared_dir=self.shared_dir,
-                private_dir=self.private_dir,
-                gpu=True,
-                env=self.mod_env,
-            )).run()
+            nprocs = self.config.get("nprocs", 4)
+            inner = " ".join(
+                [
+                    "/usr/bin/gray_scott",
+                    f"--width {self.config['width']}",
+                    f"--height {self.config['height']}",
+                    f"--steps {self.config['steps']}",
+                    f"--out-every {self.config['out_every']}",
+                    f"--outdir {outdir}",
+                    f"--F {self.config['F']}",
+                    f"--k {self.config['k']}",
+                    f"--Du {self.config['Du']}",
+                    f"--Dv {self.config['Dv']}",
+                ]
+            )
+            Exec(
+                inner,
+                MpiExecInfo(
+                    nprocs=nprocs,
+                    ppn=self.config.get("ppn"),
+                    container=self._container_engine,
+                    container_image=self.deploy_image_name(),
+                    shared_dir=self.shared_dir,
+                    private_dir=self.private_dir,
+                    gpu=True,
+                    env=self.mod_env,
+                    line_callback=line_callback,
+                ),
+            ).run()
         else:
             start = time.time()
-            Exec(f'gray-scott {self.settings_json_path}',
-                 MpiExecInfo(nprocs=self.config['nprocs'],
-                             ppn=self.config['ppn'],
-                             hostfile=self.hostfile,
-                             env=self.mod_env)).run()
+            Exec(
+                f"gray-scott {self.settings_json_path}",
+                MpiExecInfo(
+                    nprocs=self.config["nprocs"],
+                    ppn=self.config["ppn"],
+                    hostfile=self.hostfile,
+                    env=self.mod_env,
+                    line_callback=line_callback,
+                ),
+            ).run()
             end = time.time()
-            self.log(f'TIME: {end - start:.2f} seconds', color=Color.GREEN)
+            self.log(f"TIME: {end - start:.2f} seconds", color=Color.GREEN)
 
     def stop(self):
         """Stop Gray-Scott (no-op — Gray-Scott runs to completion)."""
@@ -221,6 +241,6 @@ class GrayScott(Application):
 
     def clean(self):
         """Remove Gray-Scott output directory."""
-        output = self.config.get('outdir', '')
+        output = self.config.get("outdir", "")
         if output:
-            Rm(output + '*').run()
+            Rm(output + "*").run()

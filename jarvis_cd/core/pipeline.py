@@ -19,12 +19,21 @@ from contextlib import ExitStack
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from uuid import uuid4
+from jarvis_cd.artifacts import (
+    ArtifactLocation,
+    ArtifactOwnership,
+    ArtifactReporter,
+    ArtifactRole,
+    ArtifactState,
+    ArtifactStructure,
+)
 from jarvis_cd.core.config import load_class, Jarvis
 from jarvis_cd.core.execution import (
     LEGACY_RECORD_SCHEMA,
     RECORD_NAME,
     RECORD_SCHEMA,
     ExecutionHandle,
+    ExecutionArtifactSnapshot,
     ExecutionProgressSnapshot,
     ExecutionRecord,
     ExecutionStore,
@@ -1214,9 +1223,15 @@ class Pipeline:
             self.save()
             scheduler_spec = dict(self.scheduler)
             scheduler_spec["hostfile"] = str(execution_root / "hostfile.txt")
+            scheduler_spec.setdefault("output", str(execution_root / "stdout.log"))
+            scheduler_spec.setdefault("error", str(execution_root / "stderr.log"))
             snapshot_dir, input_dir, snapshot_sha256 = self._write_execution_snapshot(
                 execution_root,
                 scheduler_spec,
+            )
+            self._register_execution_snapshot_artifacts(
+                store,
+                resolved_execution_id,
             )
             sched = make_scheduler(
                 scheduler_spec,
@@ -1225,6 +1240,75 @@ class Pipeline:
                 pipeline_snapshot_dir=snapshot_dir,
             )
             script_path = sched.write_script()
+            try:
+                script_relative_path = script_path.relative_to(
+                    execution_root
+                ).as_posix()
+            except ValueError:
+                script_relative_path = None
+            if script_relative_path is not None:
+                self._register_execution_file(
+                    store,
+                    resolved_execution_id,
+                    logical_name="scheduler-script",
+                    relative_path=script_relative_path,
+                    kind="script",
+                    role=ArtifactRole.PROVENANCE,
+                    media_type="text/x-shellscript",
+                    format_name="slurm-shell",
+                )
+            if submit:
+                for logical_name, scheduler_key in (
+                    ("stdout", "output"),
+                    ("stderr", "error"),
+                ):
+                    configured_path = Path(str(scheduler_spec[scheduler_key]))
+                    try:
+                        relative_path = configured_path.relative_to(
+                            execution_root
+                        ).as_posix()
+                    except ValueError:
+                        if not configured_path.is_absolute():
+                            configured_path = (Path.cwd() / configured_path).resolve()
+                        if os.name == "nt":
+                            continue
+                        self._core_artifact_reporter(
+                            store,
+                            resolved_execution_id,
+                        ).emit(
+                            logical_name=logical_name,
+                            kind="log",
+                            role=ArtifactRole.LOG,
+                            structure=ArtifactStructure.STREAM,
+                            ownership=ArtifactOwnership.SHARED,
+                            state=ArtifactState.PRODUCING,
+                            location=ArtifactLocation.cluster_path(
+                                configured_path.as_posix()
+                            ),
+                            media_type="text/plain",
+                            format="log",
+                            message=(
+                                "Scheduler output stream; content may grow until "
+                                "execution ends"
+                            ),
+                        )
+                        continue
+                    self._register_execution_file(
+                        store,
+                        resolved_execution_id,
+                        logical_name=logical_name,
+                        relative_path=relative_path,
+                        kind="log",
+                        role=ArtifactRole.LOG,
+                        structure=ArtifactStructure.STREAM,
+                        state=ArtifactState.PRODUCING,
+                        media_type="text/plain",
+                        format_name="log",
+                        message=(
+                            "Scheduler output stream; content may grow until "
+                            "execution ends"
+                        ),
+                    )
         except BaseException as exc:
             try:
                 store.update(
@@ -1461,6 +1545,13 @@ class Pipeline:
     ) -> ExecutionProgressSnapshot:
         """Return validated package progress for one exact execution."""
         return self._execution_store().progress(execution_id)
+
+    def get_execution_artifacts(
+        self,
+        execution_id: str,
+    ) -> ExecutionArtifactSnapshot:
+        """Return generated artifacts for one exact execution."""
+        return self._execution_store().artifacts(execution_id)
 
     def _pipeline_storage_dir(self) -> Path:
         """Return the directory this Pipeline instance is allowed to mutate."""
@@ -2401,7 +2492,7 @@ class Pipeline:
                     ) from e
 
     def _bind_package_execution_environment(self, pkg_def: Dict[str, Any]) -> None:
-        """Bind authoritative per-package progress paths to the active execution."""
+        """Bind authoritative package runtime sidecars to the active execution."""
         execution_root = getattr(self, "_execution_root", None)
         execution_id = getattr(self, "_execution_id", None)
         if execution_root is None or not isinstance(execution_id, str):
@@ -2417,6 +2508,11 @@ class Pipeline:
         if os.name != "nt":
             progress_dir.chmod(0o700)
         progress_path = progress_dir / f"{prefix}-{digest}.jsonl"
+        artifact_dir = Path(execution_root) / "artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name != "nt":
+            artifact_dir.chmod(0o700)
+        artifact_path = artifact_dir / f"{prefix}-{digest}.jsonl"
         package_config = pkg_def.get("config", {})
         package_containerized = isinstance(package_config, dict) and (
             package_config.get("deploy_mode") == "container"
@@ -2431,6 +2527,8 @@ class Pipeline:
                 "JARVIS_PACKAGE_NAME": package_name,
                 "JARVIS_PROGRESS_PATH": str(progress_path),
                 "JARVIS_PROGRESS_TRANSPORT": progress_transport,
+                "JARVIS_ARTIFACT_PATH": str(artifact_path),
+                "JARVIS_ARTIFACT_TRANSPORT": progress_transport,
             }
         )
         record = self._execution_store().get(execution_id)
@@ -2439,10 +2537,105 @@ class Pipeline:
             "filename": progress_path.name,
             "package_name": package_name,
         }
+        artifact_files = dict(record.metadata.get("artifact_files", {}))
+        artifact_files[f"package-{prefix}-{digest}"] = {
+            "filename": artifact_path.name,
+            "package_id": package_id,
+            "package_name": package_name,
+        }
         self._execution_store().update(
             execution_id,
-            metadata={"progress_files": progress_files},
+            metadata={
+                "progress_files": progress_files,
+                "artifact_files": artifact_files,
+            },
         )
+
+    def _core_artifact_reporter(
+        self,
+        store: ExecutionStore,
+        execution_id: str,
+    ) -> ArtifactReporter:
+        """Return the JARVIS-owned reporter for execution infrastructure files."""
+        execution_root = store.executions_dir / execution_id
+        artifact_dir = execution_root / "artifacts"
+        artifact_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name != "nt":
+            artifact_dir.chmod(0o700)
+        artifact_path = artifact_dir / "jarvis-core.jsonl"
+        record = store.get(execution_id)
+        artifact_files = dict(record.metadata.get("artifact_files", {}))
+        artifact_files["jarvis-core"] = {
+            "filename": artifact_path.name,
+            "package_id": "jarvis-core",
+            "package_name": "jarvis.core",
+        }
+        store.update(execution_id, metadata={"artifact_files": artifact_files})
+        return ArtifactReporter(
+            package_name="jarvis.core",
+            package_id="jarvis-core",
+            execution_id=execution_id,
+            path=artifact_path,
+        )
+
+    def _register_execution_file(
+        self,
+        store: ExecutionStore,
+        execution_id: str,
+        *,
+        logical_name: str,
+        relative_path: str,
+        kind: str,
+        role: ArtifactRole,
+        structure: ArtifactStructure = ArtifactStructure.FILE,
+        state: ArtifactState = ArtifactState.FINALIZED,
+        media_type: Optional[str] = None,
+        format_name: Optional[str] = None,
+        message: Optional[str] = None,
+    ) -> None:
+        """Register one core-owned path without exposing host filesystem authority."""
+        self._core_artifact_reporter(store, execution_id).emit(
+            logical_name=logical_name,
+            kind=kind,
+            role=role,
+            structure=structure,
+            ownership=ArtifactOwnership.EXECUTION,
+            state=state,
+            location=ArtifactLocation.execution_relative(relative_path),
+            media_type=media_type,
+            format=format_name,
+            message=message,
+        )
+
+    def _register_execution_snapshot_artifacts(
+        self,
+        store: ExecutionStore,
+        execution_id: str,
+    ) -> None:
+        """Publish the immutable input and runnable pipeline snapshots."""
+        for logical_name, relative_path, role in (
+            ("pipeline-input", "input/pipeline.yaml", ArtifactRole.PROVENANCE),
+            ("environment-input", "input/environment.yaml", ArtifactRole.PROVENANCE),
+            ("pipeline-runtime", "runtime/pipeline.yaml", ArtifactRole.PROVENANCE),
+            ("environment-runtime", "runtime/environment.yaml", ArtifactRole.PROVENANCE),
+        ):
+            self._register_execution_file(
+                store,
+                execution_id,
+                logical_name=logical_name,
+                relative_path=relative_path,
+                kind="configuration",
+                role=role,
+                media_type="application/yaml",
+                format_name="yaml",
+            )
+
+    def _started_package_instance(self, package_id: str) -> Optional[Any]:
+        """Return the exact instance started for a package alias, if retained."""
+        for instance in reversed(getattr(self, "_started_instances", [])):
+            if str(getattr(instance, "pkg_id", "")) == package_id:
+                return instance
+        return None
 
     def stop(self):
         """Stop all packages in the pipeline"""
@@ -2462,7 +2655,10 @@ class Pipeline:
                     logger.success(f"[{pkg_def['pkg_type']}] [STOP] BEGIN")
 
                     self._bind_package_execution_environment(pkg_def)
-                    pkg_instance = self._load_package_instance(pkg_def, self.env)
+                    package_id = str(pkg_def["pkg_id"])
+                    pkg_instance = self._started_package_instance(package_id)
+                    if pkg_instance is None:
+                        pkg_instance = self._load_package_instance(pkg_def, self.env)
 
                     if hasattr(pkg_instance, "stop"):
                         pkg_instance.stop()
@@ -2495,7 +2691,10 @@ class Pipeline:
                     logger.success(f"[{pkg_def['pkg_type']}] [KILL] BEGIN")
 
                     self._bind_package_execution_environment(pkg_def)
-                    pkg_instance = self._load_package_instance(pkg_def, self.env)
+                    package_id = str(pkg_def["pkg_id"])
+                    pkg_instance = self._started_package_instance(package_id)
+                    if pkg_instance is None:
+                        pkg_instance = self._load_package_instance(pkg_def, self.env)
 
                     if hasattr(pkg_instance, "kill"):
                         pkg_instance.kill()
@@ -2575,6 +2774,8 @@ class Pipeline:
                 "JARVIS_PACKAGE_NAME",
                 "JARVIS_PROGRESS_PATH",
                 "JARVIS_PROGRESS_TRANSPORT",
+                "JARVIS_ARTIFACT_PATH",
+                "JARVIS_ARTIFACT_TRANSPORT",
             )
         }
         snapshot_execution_id = getattr(self, "_execution_id", None)
@@ -2700,9 +2901,30 @@ class Pipeline:
                 execution_root,
                 {},
             )
+            self._register_execution_snapshot_artifacts(
+                store,
+                resolved_execution_id,
+            )
             prepare_direct_execution_lease(execution_root)
             stdout_path = execution_root / "stdout.log"
             stderr_path = execution_root / "stderr.log"
+            for logical_name, path in (
+                ("stdout", stdout_path),
+                ("stderr", stderr_path),
+            ):
+                self._register_execution_file(
+                    store,
+                    resolved_execution_id,
+                    logical_name=logical_name,
+                    relative_path=path.relative_to(execution_root).as_posix(),
+                    kind="log",
+                    role=ArtifactRole.LOG,
+                    structure=ArtifactStructure.STREAM,
+                    state=ArtifactState.AVAILABLE,
+                    media_type="text/plain",
+                    format_name="log",
+                    message="Execution output stream; content may grow until execution ends",
+                )
             direct_launch = {**direct_launch, "phase": "prepared"}
             store.update(
                 resolved_execution_id,
@@ -4309,7 +4531,10 @@ class Pipeline:
             try:
                 logger.success(f"[{pkg_def['pkg_type']}] [STOP] BEGIN")
                 self._bind_package_execution_environment(pkg_def)
-                pkg_instance = self._load_package_instance(pkg_def, self.env)
+                package_id = str(pkg_def["pkg_id"])
+                pkg_instance = self._started_package_instance(package_id)
+                if pkg_instance is None:
+                    pkg_instance = self._load_package_instance(pkg_def, self.env)
                 if hasattr(pkg_instance, "stop"):
                     pkg_instance.stop()
                 logger.success(f"[{pkg_def['pkg_type']}] [STOP] END")

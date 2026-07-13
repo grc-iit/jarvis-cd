@@ -89,6 +89,33 @@ def test_execution_progress_json_can_query_noncurrent_pipeline(
     constructor.assert_called_once_with("example")
 
 
+def test_execution_artifacts_json_can_query_noncurrent_pipeline(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    """Agents can discover outputs after the current pipeline changes."""
+    store = ExecutionStore(tmp_path / "executions", "example")
+    record = store.create("run-1", mode="direct")
+    snapshot = store.artifacts("run-1")
+    pipeline = SimpleNamespace(
+        get_execution_artifacts=Mock(return_value=snapshot),
+    )
+    cli = JarvisCLI()
+    cli.kwargs = {
+        "execution_id": record.execution_id,
+        "pipeline_id": "example",
+        "json": True,
+    }
+    cli._ensure_initialized = Mock()
+
+    with patch("jarvis_cd.core.cli.Pipeline", return_value=pipeline) as constructor:
+        cli.execution_artifacts()
+
+    assert json.loads(capsys.readouterr().out) == snapshot.to_dict()
+    pipeline.get_execution_artifacts.assert_called_once_with("run-1")
+    constructor.assert_called_once_with("example")
+
+
 def test_json_handle_is_emitted_as_one_final_line(capsys) -> None:
     """Run and submit handlers share the exact handle serialization."""
     handle = ExecutionHandle(
@@ -126,6 +153,7 @@ def test_submit_parser_accepts_execution_id_spellings(option: str) -> None:
         (["execution", "get", "run-1"], "execution_get"),
         (["execution", "list"], "execution_list"),
         (["execution", "progress", "run-1"], "execution_progress"),
+        (["execution", "artifacts", "run-1"], "execution_artifacts"),
     ],
 )
 @pytest.mark.parametrize("option", ["--pipeline-id", "--pipeline_id"])

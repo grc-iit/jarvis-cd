@@ -74,8 +74,9 @@ jobs:
             and (
               .protection_rules[]
               | select(.type == "required_reviewers")
-              | .prevent_self_review == true
+              | .prevent_self_review == false
               and ([.reviewers[].reviewer.login] | sort) == [
+                "JaimeCernuda",
                 "akougkas",
                 "iameneko",
                 "lukemartinlogan"
@@ -174,8 +175,14 @@ jobs:
         run: |
           uv lock --check
           uv run --frozen pytest -q \
+            test/unit/core/test_artifact_spi.py \
+            test/unit/core/test_execution.py \
+            test/unit/core/test_gray_scott_artifacts.py \
+            test/unit/core/test_adios2_gray_scott_artifacts.py \
+            test/unit/core/test_lammps_artifacts.py \
             test/unit/core/test_lammps_progress.py \
             test/unit/core/test_lammps_package_runtime.py \
+            test/unit/core/test_paraview_artifacts.py \
             test/unit/core/test_scheduler_submission.py \
             test/unit/core/test_pipeline_hostfile.py \
             test/unit/test_release_request.py \
@@ -222,7 +229,7 @@ jobs:
               )
           PY
 
-      - name: Smoke installed wheel and progress entry point
+      - name: Smoke installed wheel and runtime contracts
         shell: bash
         run: |
           wheel="$(find dist -maxdepth 1 -type f -name '*.whl' -print -quit)"
@@ -236,8 +243,31 @@ jobs:
           cd .release-smoke
           bin/python - <<'PY'
           from importlib.metadata import entry_points
+          from pathlib import Path
 
+          import jarvis_cd
+          from jarvis_cd.artifacts import ARTIFACT_SCHEMA_VERSION, ArtifactReporter
           from jarvis_cd.progress.lammps import adapter_from_package
+
+          if ARTIFACT_SCHEMA_VERSION != 'jarvis.artifact.v1':
+              raise SystemExit('installed artifact schema is not functional')
+          if ArtifactReporter.__module__ != 'jarvis_cd.artifacts.reporter':
+              raise SystemExit('installed artifact reporter is not functional')
+          distribution_root = Path(jarvis_cd.__file__).resolve().parent.parent
+          required_providers = [
+              distribution_root / 'builtin' / 'builtin' / package / filename
+              for package, filename in (
+                  ('adios2_gray_scott', 'artifacts.py'),
+                  ('adios2_gray_scott', 'progress.py'),
+                  ('gray_scott', 'artifacts.py'),
+                  ('gray_scott', 'progress.py'),
+                  ('lammps', 'artifacts.py'),
+                  ('paraview', 'artifacts.py'),
+              )
+          ]
+          missing_providers = [str(path) for path in required_providers if not path.is_file()]
+          if missing_providers:
+              raise SystemExit(f'installed package providers are missing: {missing_providers}')
 
           selected = entry_points().select(
               group='clio_relay.package_progress_adapters',
@@ -283,6 +313,16 @@ jobs:
                           'group': 'clio_relay.package_progress_adapters',
                           'name': 'lammps',
                           'value': 'jarvis_cd.progress.lammps:adapter_from_package',
+                      },
+                      'artifact_contract': {
+                          'schema_version': 'jarvis.artifact.v1',
+                          'query': 'jarvis execution artifacts',
+                          'package_providers': [
+                              'builtin.adios2_gray_scott',
+                              'builtin.gray_scott',
+                              'builtin.lammps',
+                              'builtin.paraview',
+                          ],
                       },
                       'runtime_lock': 'runtime-requirements.txt',
                   },
