@@ -14,6 +14,11 @@ from jarvis_cd.core.config import Jarvis
 from jarvis_cd.util.hostfile import Hostfile
 
 if TYPE_CHECKING:
+    from jarvis_cd.artifacts import (
+        ArtifactObservation,
+        ArtifactReporter,
+        PackageArtifactProvider,
+    )
     from jarvis_cd.progress import (
         PackageProgressProvider,
         ProgressObservation,
@@ -104,6 +109,135 @@ class _PackageProgressLineCallback:
                 message=observation.message,
                 metadata=dict(observation.metadata),
             )
+
+
+class _PackageArtifactLineCallback:
+    """Persist structured or package-interpreted artifact observations."""
+
+    def __init__(
+        self,
+        provider: Optional["PackageArtifactProvider"],
+        reporter: "ArtifactReporter",
+        *,
+        artifact_path: Path,
+        execution_id: str,
+        package_name: str,
+        package_id: str,
+    ) -> None:
+        self._provider = provider
+        self._reporter = reporter
+        self._artifact_path = artifact_path
+        self._expected_identity = (execution_id, package_name, package_id)
+        self._lock = threading.Lock()
+        self._finalized = False
+        self._source: Optional[str] = None
+
+    def __call__(self, stream_name: str, line: str) -> None:
+        """Interpret one stdout line and persist validated artifacts."""
+        if stream_name != "stdout":
+            return
+        with self._lock:
+            if self._finalized:
+                raise RuntimeError("package artifact callback is already finalized")
+            from jarvis_cd.artifacts import (
+                ARTIFACT_LINE_PREFIX,
+                ArtifactStore,
+                event_from_artifact_line,
+            )
+
+            if line.strip().startswith(ARTIFACT_LINE_PREFIX):
+                if self._source == "provider":
+                    raise ValueError(
+                        "package artifacts cannot mix provider and structured sources"
+                    )
+                event = event_from_artifact_line(line)
+                if event is None:
+                    raise ValueError("structured package artifact line was empty")
+                identity = (
+                    event.execution_id,
+                    event.package_name,
+                    event.package_id,
+                )
+                if identity != self._expected_identity:
+                    raise ValueError("structured package artifact identity mismatch")
+                ArtifactStore(self._artifact_path).append(event)
+                self._source = "structured_stdout"
+                return
+            if self._source == "structured_stdout" or self._provider is None:
+                return
+            observations = self._provider.observe_artifacts(line)
+            if observations:
+                self._source = "provider"
+                self._persist(observations)
+
+    def finalize(self) -> None:
+        """Flush a provider's final fragment once after output capture closes."""
+        with self._lock:
+            if self._finalized:
+                return
+            if self._source != "structured_stdout" and self._provider is not None:
+                observations = self._provider.finalize_artifacts()
+                if observations:
+                    self._source = "provider"
+                    self._persist(observations)
+            self._finalized = True
+
+    def _persist(self, observations: list["ArtifactObservation"]) -> None:
+        """Persist observations with JARVIS-owned execution identity."""
+        for observation in observations:
+            self._reporter.emit(
+                logical_name=observation.logical_name,
+                kind=observation.kind,
+                role=observation.role,
+                structure=observation.structure,
+                ownership=observation.ownership,
+                state=observation.state,
+                artifact_id=observation.artifact_id,
+                location=observation.location,
+                media_type=observation.media_type,
+                format=observation.format,
+                size_bytes=observation.size_bytes,
+                checksum=observation.checksum,
+                message=observation.message,
+                metadata=dict(observation.metadata),
+            )
+
+
+class _PackageRuntimeLineCallback:
+    """Fan one application stream into progress and artifact semantics."""
+
+    def __init__(self, *callbacks: Callable[[str, str], None]) -> None:
+        self._callbacks = callbacks
+        self._finalized = False
+        self._lock = threading.Lock()
+
+    def __call__(self, stream_name: str, line: str) -> None:
+        """Deliver one output line to every configured semantic provider."""
+        with self._lock:
+            if self._finalized:
+                raise RuntimeError("package runtime callback is already finalized")
+            for callback in self._callbacks:
+                callback(stream_name, line)
+
+    def finalize(self) -> None:
+        """Finalize every configured provider exactly once."""
+        with self._lock:
+            if self._finalized:
+                return
+            failures: list[Exception] = []
+            for callback in self._callbacks:
+                finalizer = getattr(callback, "finalize", None)
+                if finalizer is not None and callable(finalizer):
+                    try:
+                        finalizer()
+                    except Exception as exc:
+                        failures.append(exc)
+            self._finalized = True
+            if failures:
+                raise ExceptionGroup(
+                    "package runtime callback finalization failed",
+                    failures,
+                )
 
 
 class Pkg:
@@ -255,6 +389,15 @@ class Pkg:
 
         return provider_from_package(self)
 
+    def get_artifact_provider(self) -> Optional["PackageArtifactProvider"]:
+        """Load this package's optional sibling ``artifacts.py`` provider.
+
+        :return: A package artifact provider, or ``None`` when not implemented.
+        """
+        from jarvis_cd.artifacts import provider_from_package
+
+        return provider_from_package(self)
+
     def bind_execution_progress(
         self,
         execution_id: str,
@@ -284,8 +427,33 @@ class Pkg:
         self.env.update(values)
         self.mod_env.update(values)
 
-    def progress_line_callback(self) -> Optional[Callable[[str, str], None]]:
-        """Build a generic stdout-to-sidecar callback for this package.
+    def bind_execution_artifacts(
+        self,
+        execution_id: str,
+        path: str | os.PathLike[str],
+    ) -> None:
+        """Bind package artifact reporting to a JARVIS-owned sidecar.
+
+        :param execution_id: Stable JARVIS execution identifier.
+        :param path: Absolute JSONL path inside the owned execution root.
+        """
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError("execution artifacts require a non-empty execution ID")
+        artifact_path = Path(path)
+        if not artifact_path.is_absolute():
+            raise ValueError("execution artifact path must be absolute")
+        values = {
+            "JARVIS_EXECUTION_ID": execution_id,
+            "JARVIS_ARTIFACT_PATH": str(artifact_path),
+            "JARVIS_PACKAGE_NAME": str(self.pkg_type),
+            "JARVIS_PACKAGE_ID": str(self.pkg_id),
+            "JARVIS_ARTIFACT_TRANSPORT": "sidecar",
+        }
+        self.env.update(values)
+        self.mod_env.update(values)
+
+    def _progress_line_callback(self) -> Optional[Callable[[str, str], None]]:
+        """Build the progress half of the package runtime callback.
 
         Package-local providers interpret application output. Already
         structured ``JARVIS_PROGRESS`` lines are accepted without a provider.
@@ -327,6 +495,59 @@ class Pkg:
             package_name=cast(str, package_name),
             package_id=cast(str, package_id),
         )
+
+    def _artifact_line_callback(self) -> Optional[Callable[[str, str], None]]:
+        """Build the artifact half of the package runtime callback."""
+        execution_id = self.mod_env.get("JARVIS_EXECUTION_ID")
+        artifact_path = self.mod_env.get("JARVIS_ARTIFACT_PATH")
+        package_name = self.mod_env.get("JARVIS_PACKAGE_NAME")
+        package_id = self.mod_env.get("JARVIS_PACKAGE_ID")
+        transport = self.mod_env.get("JARVIS_ARTIFACT_TRANSPORT", "sidecar")
+        if not all(
+            isinstance(value, str) and value
+            for value in (execution_id, artifact_path, package_name, package_id)
+        ):
+            return None
+        if transport not in {"sidecar", "stdout"}:
+            raise ValueError("package artifact transport must be sidecar or stdout")
+        provider = self.get_artifact_provider()
+        if provider is None and transport != "stdout":
+            return None
+
+        from jarvis_cd.artifacts import ArtifactReporter
+
+        reporter = ArtifactReporter(
+            package_name=cast(str, package_name),
+            package_id=cast(str, package_id),
+            execution_id=cast(str, execution_id),
+            path=cast(str, artifact_path),
+        )
+        return _PackageArtifactLineCallback(
+            provider,
+            reporter,
+            artifact_path=Path(cast(str, artifact_path)),
+            execution_id=cast(str, execution_id),
+            package_name=cast(str, package_name),
+            package_id=cast(str, package_id),
+        )
+
+    def runtime_line_callback(self) -> Optional[Callable[[str, str], None]]:
+        """Build one callback for generic progress and artifact semantics."""
+        callbacks = tuple(
+            callback
+            for callback in (
+                self._progress_line_callback(),
+                self._artifact_line_callback(),
+            )
+            if callback is not None
+        )
+        if not callbacks:
+            return None
+        return _PackageRuntimeLineCallback(*callbacks)
+
+    def progress_line_callback(self) -> Optional[Callable[[str, str], None]]:
+        """Return the combined runtime callback under the legacy method name."""
+        return self.runtime_line_callback()
 
     def _init(self):
         """

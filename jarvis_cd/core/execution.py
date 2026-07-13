@@ -16,6 +16,7 @@ from time import monotonic, sleep
 from typing import Any, Iterator, Literal, Mapping, Optional, cast
 from uuid import uuid4
 
+from jarvis_cd.artifacts import ArtifactEvent, ArtifactState, ArtifactStore
 from jarvis_cd.progress import ProgressEvent, ProgressStore
 from jarvis_cd.util.private_path import (
     ensure_private_descriptor,
@@ -30,6 +31,7 @@ LEGACY_RECORD_SCHEMA = "jarvis.execution.v1"
 RECORD_NAME = ".jarvis-execution.json"
 MAX_RECORD_BYTES = 65_536
 PROGRESS_SNAPSHOT_SCHEMA = "jarvis.execution.progress.v1"
+ARTIFACT_SNAPSHOT_SCHEMA = "jarvis.execution.artifacts.v1"
 DIRECT_LAUNCH_SCHEMA = "jarvis.direct-launch.v1"
 DIRECT_LEASE_NAME = ".jarvis-direct-execution.lease"
 
@@ -113,6 +115,28 @@ class ExecutionProgressSnapshot:
             "execution_state": self.execution_state,
             "terminal": self.terminal,
             "packages": [package.to_dict() for package in self.packages],
+        }
+
+
+@dataclass(frozen=True)
+class ExecutionArtifactSnapshot:
+    """Queryable current artifact manifest for one durable execution."""
+
+    execution_id: str
+    pipeline_id: str
+    execution_state: str
+    terminal: bool
+    artifacts: tuple[ArtifactEvent, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the stable agent-facing artifact snapshot schema."""
+        return {
+            "schema_version": ARTIFACT_SNAPSHOT_SCHEMA,
+            "execution_id": self.execution_id,
+            "pipeline_id": self.pipeline_id,
+            "execution_state": self.execution_state,
+            "terminal": self.terminal,
+            "artifacts": [artifact.as_dict() for artifact in self.artifacts],
         }
 
 
@@ -314,6 +338,13 @@ class ExecutionHandle:
         assert record._record_path is not None
         store = ExecutionStore(record._record_path.parent.parent, self.pipeline_id)
         return store.progress(self.execution_id)
+
+    def artifacts(self) -> ExecutionArtifactSnapshot:
+        """Return the current generated artifacts for this exact execution."""
+        record = self.refresh()
+        assert record._record_path is not None
+        store = ExecutionStore(record._record_path.parent.parent, self.pipeline_id)
+        return store.artifacts(self.execution_id)
 
 
 @dataclass(frozen=True)
@@ -1184,6 +1215,132 @@ class ExecutionStore:
             packages=tuple(snapshots),
         )
 
+    def artifacts(self, execution_id: str) -> ExecutionArtifactSnapshot:
+        """Return the current identity-checked artifact manifest."""
+        record = self.get(execution_id)
+        artifact_files = record.metadata.get("artifact_files", {})
+        if not isinstance(artifact_files, dict):
+            raise RuntimeError("execution artifact index is invalid")
+        execution_root = self.executions_dir / record.execution_id
+        artifact_root = execution_root / "artifacts"
+        if artifact_root.exists() or artifact_root.is_symlink():
+            status = artifact_root.lstat()
+            if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
+                raise RuntimeError("execution artifact path is not a real directory")
+        latest: list[ArtifactEvent] = []
+        seen_ids: set[str] = set()
+        for artifact_key, entry in sorted(artifact_files.items()):
+            if (
+                not isinstance(artifact_key, str)
+                or not artifact_key
+                or not isinstance(entry, dict)
+                or set(entry) != {"filename", "package_id", "package_name"}
+                or not isinstance(entry.get("filename"), str)
+                or not entry["filename"]
+                or not isinstance(entry.get("package_id"), str)
+                or not entry["package_id"]
+                or not isinstance(entry.get("package_name"), str)
+                or not entry["package_name"]
+            ):
+                raise RuntimeError("execution artifact index is invalid")
+            filename = entry["filename"]
+            package_id = entry["package_id"]
+            package_name = entry["package_name"]
+            relative = Path(filename)
+            if (
+                relative.name != filename
+                or relative.is_absolute()
+                or relative.suffix != ".jsonl"
+            ):
+                raise RuntimeError("execution artifact index contains an invalid path")
+            sidecar = artifact_root / filename
+            try:
+                current = ArtifactStore(sidecar).current()
+            except (OSError, PermissionError, ValueError) as exc:
+                raise RuntimeError(
+                    f"invalid artifact sidecar for package {package_id!r}"
+                ) from exc
+            for event in current.values():
+                if (
+                    event.execution_id != record.execution_id
+                    or event.package_id != package_id
+                    or event.package_name != package_name
+                ):
+                    raise RuntimeError(
+                        f"artifact identity mismatch for package {package_id!r}"
+                    )
+                if event.artifact_id in seen_ids:
+                    raise RuntimeError("artifact ID is duplicated across package manifests")
+                seen_ids.add(event.artifact_id)
+                latest.append(event)
+        return ExecutionArtifactSnapshot(
+            execution_id=record.execution_id,
+            pipeline_id=record.pipeline_id,
+            execution_state=record.state,
+            terminal=record.terminal,
+            artifacts=tuple(
+                sorted(
+                    latest,
+                    key=lambda event: (
+                        event.package_id,
+                        event.logical_name,
+                        event.artifact_id,
+                    ),
+                )
+            ),
+        )
+
+    def finalize_artifacts(
+        self,
+        execution_id: str,
+        *,
+        failed: bool = False,
+    ) -> list[ArtifactEvent]:
+        """Seal every producing artifact before execution terminalization."""
+        validated_id = validate_execution_id(execution_id)
+        record = read_execution_record(
+            self.executions_dir / validated_id,
+            expected_execution_id=validated_id,
+        )
+        artifact_files = record.metadata.get("artifact_files", {})
+        if not isinstance(artifact_files, dict):
+            raise RuntimeError("execution artifact index is invalid")
+        artifact_root = self.executions_dir / record.execution_id / "artifacts"
+        sealed: list[ArtifactEvent] = []
+        for artifact_key, entry in artifact_files.items():
+            if (
+                not isinstance(artifact_key, str)
+                or not artifact_key
+                or not isinstance(entry, dict)
+                or set(entry) != {"filename", "package_id", "package_name"}
+                or not isinstance(entry.get("filename"), str)
+                or not isinstance(entry.get("package_id"), str)
+                or not entry["package_id"]
+                or not isinstance(entry.get("package_name"), str)
+                or not entry["package_name"]
+            ):
+                raise RuntimeError("execution artifact index is invalid")
+            filename = entry["filename"]
+            relative = Path(filename)
+            if relative.name != filename or relative.suffix != ".jsonl":
+                raise RuntimeError("execution artifact index contains an invalid path")
+            sealed.extend(
+                ArtifactStore(artifact_root / filename).finalize_open(
+                    ArtifactState.FINALIZED
+                    if (
+                        artifact_key == "jarvis-core"
+                        and entry["package_id"] == "jarvis-core"
+                        and entry["package_name"] == "jarvis.core"
+                    )
+                    else (
+                        ArtifactState.FAILED
+                        if failed
+                        else ArtifactState.INCOMPLETE
+                    )
+                )
+            )
+        return sealed
+
     def update(
         self,
         execution_id: str,
@@ -1278,6 +1435,15 @@ class ExecutionStore:
                 metadata=merged_metadata,
                 _record_path=execution_root / RECORD_NAME,
             )
+            if (
+                not current.terminal
+                and updated.terminal
+                and updated.state != "scripted"
+            ):
+                self.finalize_artifacts(
+                    validated_id,
+                    failed=updated.state == "failed",
+                )
             _atomic_write_record(execution_root / RECORD_NAME, updated)
             return updated
 

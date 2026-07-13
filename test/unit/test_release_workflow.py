@@ -37,11 +37,16 @@ def test_exact_release_request_gates_artifact_build() -> None:
     assert 'gh api "repos/$REPOSITORY/immutable-releases"' not in WORKFLOW
     assert "Verify protected release controls" in WORKFLOW
     assert ".can_admins_bypass == false" in WORKFLOW
+    assert ".prevent_self_review == false" in WORKFLOW
+    assert '"JaimeCernuda",' in WORKFLOW
     assert '"type": "tag"' in WORKFLOW
     assert "Restrict immutable version tag creation" in WORKFLOW
     assert "tag actor is not an approved release administrator" in WORKFLOW
     assert "collaborators/$release_admin/permission" in WORKFLOW
     assert '.permission == "admin" and .role_name == "admin"' in WORKFLOW
+    assert "test/unit/core/test_artifact_spi.py" in WORKFLOW
+    assert "'schema_version': 'jarvis.artifact.v1'" in WORKFLOW
+    assert "jarvis execution artifacts" in WORKFLOW
     build_block = WORKFLOW[build_index : WORKFLOW.index("  release:")]
     assert "    needs: release-preflight" in build_block
     assert "release_request" in build_block

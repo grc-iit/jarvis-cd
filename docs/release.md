@@ -23,16 +23,19 @@ The workflow accepts only a request bound to the repository, intended tag, exact
 current `main` commit, observed setting, and verification time. It rejects future
 records, records older than one hour, unknown fields, and reuse for a different
 tag or commit. Repository variables are an audit transport, not an administrator
-boundary. Publication is separately gated by the protected
-`immutable-release` environment, whose independent reviewer must repeat the
-immutable-release setting check and verify the exact tag and commit before
-approving the deployment.
+boundary. Publication is separately gated by the protected `immutable-release`
+environment. An explicitly listed release administrator must still review the
+waiting deployment and approve the exact tag and commit. Self-review is allowed
+so a designated maintainer can release when a second maintainer is unavailable;
+GitHub still records the approval event and administrators cannot bypass the
+environment gate.
 
 The tag workflow reads the live environment and tag rulesets before building.
-It requires `can_admins_bypass=false`, self-review prevention, explicit admin
-reviewers, a `v*` tag-only deployment policy, admin-only version-tag creation,
-and no-bypass tag update/deletion protection. Do not tag if those controls have
-been removed or changed. Inspect them directly before proceeding:
+It requires `can_admins_bypass=false`, an explicit release-administrator
+reviewer list that includes the initiating maintainer, a `v*` tag-only
+deployment policy, admin-only version-tag creation, and no-bypass tag
+update/deletion protection. Do not tag if those controls have been removed or
+changed. Inspect them directly before proceeding:
 
 ```bash
 gh api repos/grc-iit/jarvis-cd/environments/immutable-release

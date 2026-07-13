@@ -17,7 +17,17 @@ import jarvis_cd.core.pipeline as pipeline_module
 import jarvis_cd.shell
 import pytest
 
+from jarvis_cd.artifacts import (
+    ArtifactLocation,
+    ArtifactOwnership,
+    ArtifactReporter,
+    ArtifactRole,
+    ArtifactState,
+    ArtifactStore,
+    ArtifactStructure,
+)
 from jarvis_cd.core.execution import (
+    ARTIFACT_SNAPSHOT_SCHEMA,
     HANDLE_SCHEMA,
     MAX_RECORD_BYTES,
     PROGRESS_SNAPSHOT_SCHEMA,
@@ -1076,3 +1086,298 @@ def test_slurm_script_installs_durable_exit_finalizer(tmp_path: Path) -> None:
     assert "trap jarvis_finalize_execution EXIT" in rendered
     assert "-m jarvis_cd.core.execution finalize" in rendered
     assert "--execution-id scheduled" in rendered
+
+
+def test_execution_artifacts_aggregate_package_manifests(
+    tmp_path: Path,
+) -> None:
+    """A handle returns current typed outputs without storage sidecar paths."""
+    store = ExecutionStore(tmp_path / "executions", "example")
+    record = store.create("artifacts", mode="direct")
+    artifact_root = store.executions_dir / record.execution_id / "artifacts"
+    render_path = artifact_root / "render.jsonl"
+    simulation_path = artifact_root / "simulation.jsonl"
+    ArtifactReporter(
+        package_name="builtin.paraview",
+        package_id="render",
+        execution_id=record.execution_id,
+        path=render_path,
+    ).emit(
+        logical_name="frame-1",
+        kind="image",
+        role=ArtifactRole.OUTPUT,
+        structure=ArtifactStructure.FILE,
+        ownership=ArtifactOwnership.EXECUTION,
+        state=ArtifactState.FINALIZED,
+        location=ArtifactLocation.execution_relative("shared/frame-1.png"),
+        media_type="image/png",
+        format="png",
+    )
+    ArtifactReporter(
+        package_name="builtin.gray_scott",
+        package_id="simulation",
+        execution_id=record.execution_id,
+        path=simulation_path,
+    ).emit(
+        logical_name="timesteps",
+        kind="scientific_dataset",
+        role=ArtifactRole.INTERMEDIATE,
+        structure=ArtifactStructure.COLLECTION,
+        ownership=ArtifactOwnership.SHARED,
+        state=ArtifactState.PRODUCING,
+        location=ArtifactLocation.cluster_path("/scratch/example/gs.bp"),
+        media_type="application/x-adios2-bp",
+        format="adios2-bp5",
+    )
+    store.update(
+        record.execution_id,
+        metadata={
+            "artifact_files": {
+                "render": {
+                    "filename": render_path.name,
+                    "package_id": "render",
+                    "package_name": "builtin.paraview",
+                },
+                "simulation": {
+                    "filename": simulation_path.name,
+                    "package_id": "simulation",
+                    "package_name": "builtin.gray_scott",
+                },
+            }
+        },
+    )
+
+    snapshot = record.handle.artifacts()
+
+    assert snapshot.to_dict()["schema_version"] == ARTIFACT_SNAPSHOT_SCHEMA
+    assert snapshot.execution_id == record.execution_id
+    assert [artifact.package_id for artifact in snapshot.artifacts] == [
+        "render",
+        "simulation",
+    ]
+    assert "filename" not in json.dumps(snapshot.to_dict())
+
+
+@pytest.mark.parametrize(
+    ("failed", "expected_state"),
+    [
+        (False, ArtifactState.INCOMPLETE),
+        (True, ArtifactState.FAILED),
+    ],
+)
+def test_execution_terminalization_seals_producing_artifacts(
+    tmp_path: Path,
+    failed: bool,
+    expected_state: ArtifactState,
+) -> None:
+    """A terminal execution cannot leave a manifest claiming active output."""
+    store = ExecutionStore(tmp_path / "executions", "example")
+    record = store.create("seal-artifacts", mode="direct")
+    artifact_path = store.executions_dir / record.execution_id / "artifacts/pkg.jsonl"
+    ArtifactReporter(
+        package_name="builtin.gray_scott",
+        package_id="simulation",
+        execution_id=record.execution_id,
+        path=artifact_path,
+    ).emit(
+        logical_name="timesteps",
+        kind="scientific_dataset",
+        role=ArtifactRole.OUTPUT,
+        structure=ArtifactStructure.COLLECTION,
+        ownership=ArtifactOwnership.SHARED,
+        state=ArtifactState.PRODUCING,
+        location=ArtifactLocation.cluster_path("/scratch/example/gs.bp"),
+    )
+    store.update(
+        record.execution_id,
+        metadata={
+            "artifact_files": {
+                "simulation": {
+                    "filename": artifact_path.name,
+                    "package_id": "simulation",
+                    "package_name": "builtin.gray_scott",
+                }
+            }
+        },
+    )
+
+    sealed = store.finalize_artifacts(record.execution_id, failed=failed)
+
+    assert len(sealed) == 1
+    assert sealed[0].state is expected_state
+    assert store.artifacts(record.execution_id).artifacts[0].state is expected_state
+
+
+def test_pipeline_stop_reuses_the_started_async_package_instance() -> None:
+    """Stopping waits on the process-bearing instance rather than a reload."""
+    pipeline = Pipeline.__new__(Pipeline)
+    pipeline.name = "example"
+    pipeline.packages = [
+        {
+            "pkg_id": "simulation",
+            "pkg_type": "builtin.adios2_gray_scott",
+            "config": {},
+        }
+    ]
+    pipeline.env = {}
+    pipeline._execution_root = None
+    pipeline._execution_id = None
+    pipeline.is_containerized = Mock(return_value=False)
+    started = SimpleNamespace(pkg_id="simulation", stop=Mock())
+    pipeline._started_instances = [started]
+    pipeline._load_package_instance = Mock()
+
+    pipeline.stop()
+
+    started.stop.assert_called_once_with()
+    pipeline._load_package_instance.assert_not_called()
+
+
+def test_terminal_record_update_seals_and_finalizes_core_logs(tmp_path: Path) -> None:
+    """Every terminal transition seals manifests while closing owned logs."""
+    store = ExecutionStore(tmp_path / "executions", "example")
+    record = store.create("core-log", mode="direct")
+    artifact_path = store.executions_dir / record.execution_id / "artifacts/core.jsonl"
+    ArtifactReporter(
+        package_name="jarvis.core",
+        package_id="jarvis-core",
+        execution_id=record.execution_id,
+        path=artifact_path,
+    ).emit(
+        logical_name="stdout",
+        kind="log",
+        role=ArtifactRole.LOG,
+        structure=ArtifactStructure.STREAM,
+        ownership=ArtifactOwnership.EXECUTION,
+        state=ArtifactState.PRODUCING,
+        location=ArtifactLocation.execution_relative("stdout.log"),
+    )
+    store.update(
+        record.execution_id,
+        state="running",
+        metadata={
+            "artifact_files": {
+                "jarvis-core": {
+                    "filename": artifact_path.name,
+                    "package_id": "jarvis-core",
+                    "package_name": "jarvis.core",
+                }
+            }
+        },
+    )
+
+    store.update(
+        record.execution_id,
+        state="completed",
+        terminal=True,
+        return_code=0,
+    )
+
+    artifact = store.artifacts(record.execution_id).artifacts[0]
+    assert artifact.state is ArtifactState.FINALIZED
+    assert artifact.terminal is True
+    assert ArtifactStore(artifact_path).is_sealed() is True
+
+
+def test_scheduler_preparation_failure_seals_package_manifest(tmp_path: Path) -> None:
+    """Pre-submit terminal failures cannot leave application output writable."""
+    store = ExecutionStore(tmp_path / "executions", "example")
+    record = store.create(
+        "scheduler-failure",
+        mode="scheduler",
+        scheduler_provider="slurm",
+    )
+    artifact_path = store.executions_dir / record.execution_id / "artifacts/app.jsonl"
+    ArtifactReporter(
+        package_name="site.application",
+        package_id="app",
+        execution_id=record.execution_id,
+        path=artifact_path,
+    ).emit(
+        logical_name="partial-output",
+        kind="scientific_dataset",
+        role=ArtifactRole.OUTPUT,
+        structure=ArtifactStructure.COLLECTION,
+        ownership=ArtifactOwnership.SHARED,
+        state=ArtifactState.PRODUCING,
+        location=ArtifactLocation.cluster_path("/scratch/partial.bp"),
+    )
+    store.update(
+        record.execution_id,
+        metadata={
+            "artifact_files": {
+                "app": {
+                    "filename": artifact_path.name,
+                    "package_id": "app",
+                    "package_name": "site.application",
+                }
+            }
+        },
+    )
+
+    store.update(
+        record.execution_id,
+        state="failed",
+        terminal=True,
+        return_code=1,
+        error="scheduler preparation failed",
+    )
+
+    artifact = store.artifacts(record.execution_id).artifacts[0]
+    assert artifact.state is ArtifactState.FAILED
+    assert ArtifactStore(artifact_path).is_sealed() is True
+
+
+def test_package_alias_cannot_overwrite_core_artifact_index(tmp_path: Path) -> None:
+    """Artifact index keys remain separate from operator-selected aliases."""
+    store = ExecutionStore(tmp_path / "executions", "example")
+    record = store.create("alias-collision", mode="direct")
+    artifact_root = store.executions_dir / record.execution_id / "artifacts"
+    core_path = artifact_root / "core.jsonl"
+    package_path = artifact_root / "package.jsonl"
+    for package_name, path, logical_name in (
+        ("jarvis.core", core_path, "stdout"),
+        ("site.application", package_path, "result"),
+    ):
+        ArtifactReporter(
+            package_name=package_name,
+            package_id="jarvis-core",
+            execution_id=record.execution_id,
+            path=path,
+        ).emit(
+            logical_name=logical_name,
+            kind="log" if logical_name == "stdout" else "result",
+            role=(
+                ArtifactRole.LOG
+                if logical_name == "stdout"
+                else ArtifactRole.OUTPUT
+            ),
+            structure=ArtifactStructure.FILE,
+            ownership=ArtifactOwnership.EXECUTION,
+            state=ArtifactState.FINALIZED,
+            location=ArtifactLocation.execution_relative(f"{logical_name}.dat"),
+        )
+    store.update(
+        record.execution_id,
+        metadata={
+            "artifact_files": {
+                "jarvis-core": {
+                    "filename": core_path.name,
+                    "package_id": "jarvis-core",
+                    "package_name": "jarvis.core",
+                },
+                "package-operator-alias": {
+                    "filename": package_path.name,
+                    "package_id": "jarvis-core",
+                    "package_name": "site.application",
+                },
+            }
+        },
+    )
+
+    artifacts = store.artifacts(record.execution_id).artifacts
+
+    assert {artifact.package_name for artifact in artifacts} == {
+        "jarvis.core",
+        "site.application",
+    }

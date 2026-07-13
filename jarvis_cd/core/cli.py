@@ -381,6 +381,36 @@ class JarvisCLI(ArgParse):
             ]
         )
 
+        self.add_cmd(
+            "execution artifacts",
+            msg="List generated artifacts for one execution",
+        )
+        self.add_args(
+            [
+                {
+                    "name": "execution_id",
+                    "msg": "JARVIS execution identity",
+                    "type": str,
+                    "required": True,
+                    "pos": True,
+                },
+                {
+                    "name": "pipeline_id",
+                    "aliases": ["pipeline-id"],
+                    "msg": "Pipeline identity (defaults to current pipeline)",
+                    "type": str,
+                    "required": False,
+                },
+                {
+                    "name": "json",
+                    "msg": "Print the complete artifact snapshot as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
         self.add_cmd("ppl update", msg="Update current pipeline")
         self.add_args(
             [
@@ -1503,6 +1533,27 @@ class JarvisCLI(ArgParse):
                 if latest.unit:
                     amount += f" {latest.unit}"
             print(f"  {package.package_id}: {amount}")
+
+    def execution_artifacts(self) -> None:
+        """Print generated artifacts for a named or current pipeline."""
+        self._ensure_initialized()
+        pipeline_id = self.kwargs.get("pipeline_id")
+        pipeline = (
+            Pipeline(pipeline_id) if pipeline_id else self._require_current_pipeline()
+        )
+        snapshot = pipeline.get_execution_artifacts(self.kwargs["execution_id"])
+        if self.kwargs.get("json", False):
+            print(json.dumps(snapshot.to_dict(), separators=(",", ":"), sort_keys=True))
+            return
+        print(
+            f"{snapshot.execution_id}: {snapshot.execution_state} "
+            f"({len(snapshot.artifacts)} artifacts)"
+        )
+        for artifact in snapshot.artifacts:
+            print(
+                f"  {artifact.package_id}/{artifact.logical_name}: "
+                f"{artifact.state.value} {artifact.kind} ({artifact.artifact_id})"
+            )
 
     def ppl_start(self):
         """Start current pipeline"""

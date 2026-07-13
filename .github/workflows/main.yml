@@ -69,6 +69,39 @@ jobs:
       - name: Install Jarvis
         run: bash ci/install_jarvis.sh
 
+      - name: Type-check runtime contracts
+        run: |
+          uv run --frozen pyright \
+            jarvis_cd/artifacts \
+            jarvis_cd/core/execution.py \
+            builtin/builtin/lammps/artifacts.py \
+            builtin/builtin/paraview/artifacts.py \
+            builtin/builtin/gray_scott/progress.py \
+            builtin/builtin/gray_scott/artifacts.py \
+            builtin/builtin/adios2_gray_scott/progress.py \
+            builtin/builtin/adios2_gray_scott/artifacts.py
+
+      - name: Lint runtime contracts
+        run: |
+          uv run --frozen ruff check \
+            jarvis_cd/artifacts \
+            jarvis_cd/core/execution.py \
+            jarvis_cd/core/pipeline.py \
+            jarvis_cd/core/pkg.py \
+            jarvis_cd/core/cli.py \
+            builtin/builtin/lammps/artifacts.py \
+            builtin/builtin/paraview/artifacts.py \
+            builtin/builtin/gray_scott \
+            builtin/builtin/adios2_gray_scott
+          uv run --frozen ruff format --check \
+            jarvis_cd/artifacts \
+            builtin/builtin/lammps/artifacts.py \
+            builtin/builtin/paraview/artifacts.py \
+            builtin/builtin/gray_scott/progress.py \
+            builtin/builtin/gray_scott/artifacts.py \
+            builtin/builtin/adios2_gray_scott/progress.py \
+            builtin/builtin/adios2_gray_scott/artifacts.py
+
       - name: Run tests with coverage
         run: bash ci/run_tests.sh
 
