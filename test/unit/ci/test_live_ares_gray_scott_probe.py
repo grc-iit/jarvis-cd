@@ -36,6 +36,7 @@ assert_installed_package_source = PROBE._assert_installed_package_source
 assert_fresh_install_root = PROBE._assert_fresh_install_root
 configured_pipeline = PROBE._configured_pipeline
 assert_expected_release_artifact = PROBE._assert_expected_release_artifact
+execution_log_evidence = PROBE._execution_log_evidence
 
 
 def _record() -> dict[str, Any]:
@@ -163,6 +164,138 @@ def test_digest_and_atomic_report_are_deterministic(tmp_path: Path) -> None:
         "schema_version": REPORT_SCHEMA,
         "success": True,
     }
+
+
+def test_execution_log_evidence_reads_the_artifact_references(tmp_path: Path) -> None:
+    """The live gate proves the physical files named by JARVIS core artifacts."""
+    execution_root = tmp_path / "execution"
+    execution_root.mkdir()
+    stdout = execution_root / "stdout-41.log"
+    stderr = tmp_path / "cluster-stderr-41.log"
+    stdout.write_text("standard output\n", encoding="utf-8")
+    stderr.write_text("standard error\n", encoding="utf-8")
+    artifacts = {
+        "artifacts": [
+            {
+                "artifact_id": "art_0123456789abcdef0123456789abcdef",
+                "package_id": "jarvis-core",
+                "logical_name": "stdout",
+                "state": "finalized",
+                "location": {
+                    "kind": "execution_path",
+                    "value": stdout.relative_to(execution_root).as_posix(),
+                },
+            },
+            {
+                "artifact_id": "art_fedcba9876543210fedcba9876543210",
+                "package_id": "jarvis-core",
+                "logical_name": "stderr",
+                "state": "finalized",
+                "location": {
+                    "kind": "cluster_path",
+                    "value": stderr.as_posix(),
+                },
+            },
+        ]
+    }
+
+    evidence = execution_log_evidence(
+        {"execution_root_path": str(execution_root)},
+        artifacts,
+        "41",
+    )
+
+    assert evidence["stdout"]["path"] == str(stdout)
+    assert evidence["stdout"]["location"]["kind"] == "execution_path"
+    assert evidence["stderr"]["path"] == str(stderr)
+    assert evidence["stderr"]["artifact_state"] == "finalized"
+
+
+def test_execution_log_evidence_rejects_a_missing_referenced_file(
+    tmp_path: Path,
+) -> None:
+    """A plausible log name cannot pass unless its referenced file exists."""
+    execution_root = tmp_path / "execution"
+    execution_root.mkdir()
+    artifacts = {
+        "artifacts": [
+            {
+                "artifact_id": "art_0123456789abcdef0123456789abcdef",
+                "package_id": "jarvis-core",
+                "logical_name": "stdout",
+                "state": "finalized",
+                "location": {
+                    "kind": "execution_path",
+                    "value": "missing-41.log",
+                },
+            },
+            {
+                "artifact_id": "art_fedcba9876543210fedcba9876543210",
+                "package_id": "jarvis-core",
+                "logical_name": "stderr",
+                "state": "finalized",
+                "location": {
+                    "kind": "execution_path",
+                    "value": "also-missing-41.log",
+                },
+            },
+        ]
+    }
+
+    with pytest.raises(FileNotFoundError):
+        execution_log_evidence(
+            {"execution_root_path": str(execution_root)},
+            artifacts,
+            "41",
+        )
+
+
+@pytest.mark.parametrize(
+    ("location_value", "message"),
+    [
+        ("stdout-%j.log", "retains a Slurm token"),
+        ("stdout.log", "does not contain the execution scheduler-native ID"),
+    ],
+)
+def test_execution_log_evidence_rejects_unbound_log_locations(
+    tmp_path: Path,
+    location_value: str,
+    message: str,
+) -> None:
+    """The live gate binds every resolved log reference to its native job ID."""
+    execution_root = tmp_path / "execution"
+    execution_root.mkdir()
+    artifacts = {
+        "artifacts": [
+            {
+                "artifact_id": "art_0123456789abcdef0123456789abcdef",
+                "package_id": "jarvis-core",
+                "logical_name": "stdout",
+                "state": "finalized",
+                "location": {
+                    "kind": "execution_path",
+                    "value": location_value,
+                },
+            },
+            {
+                "artifact_id": "art_fedcba9876543210fedcba9876543210",
+                "package_id": "jarvis-core",
+                "logical_name": "stderr",
+                "state": "finalized",
+                "location": {
+                    "kind": "execution_path",
+                    "value": "stderr-41.log",
+                },
+            },
+        ]
+    }
+
+    with pytest.raises(RuntimeError, match=message):
+        execution_log_evidence(
+            {"execution_root_path": str(execution_root)},
+            artifacts,
+            "41",
+        )
 
 
 def test_release_artifact_assertions_bind_digest_and_version(tmp_path: Path) -> None:
@@ -340,6 +473,13 @@ def test_live_pipeline_uses_base_default_instead_of_private_package_argument(
     assert report["pipeline"]["package"]["effective_deploy_mode"] == "default"
     assert report["pipeline"]["package"]["config"]["checkpoint"] is True
     assert report["pipeline"]["package"]["config"]["checkpoint_freq"] == 1
+    scheduler = report["pipeline"]["scheduler"]
+    for key in ("output", "error"):
+        pattern = Path(scheduler[key])
+        assert pattern.is_absolute()
+        assert "%j" in pattern.name
+        assert pattern.parent == tmp_path / "scheduler-logs"
+        assert pattern.parent.is_dir()
     source_path = Path(report["pipeline"]["package"]["source_path"])
     assert source_path.parts[-4:] == ("builtin", "builtin", "gray_scott", "pkg.py")
 

@@ -13,10 +13,16 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic, sleep
-from typing import Any, Iterator, Literal, Mapping, Optional, cast
+from typing import Any, Iterator, List, Literal, Mapping, Optional, cast
 from uuid import uuid4
 
-from jarvis_cd.artifacts import ArtifactEvent, ArtifactState, ArtifactStore
+from jarvis_cd.artifacts import (
+    ArtifactEvent,
+    ArtifactLocation,
+    ArtifactReporter,
+    ArtifactState,
+    ArtifactStore,
+)
 from jarvis_cd.progress import ProgressEvent, ProgressStore
 from jarvis_cd.util.private_path import (
     ensure_private_descriptor,
@@ -34,6 +40,13 @@ PROGRESS_SNAPSHOT_SCHEMA = "jarvis.execution.progress.v1"
 ARTIFACT_SNAPSHOT_SCHEMA = "jarvis.execution.artifacts.v1"
 DIRECT_LAUNCH_SCHEMA = "jarvis.direct-launch.v1"
 DIRECT_LEASE_NAME = ".jarvis-direct-execution.lease"
+SCHEDULER_ARTIFACT_PATH_SCHEMA = "jarvis.scheduler.artifact-path.v1"
+SCHEDULER_ARTIFACT_PATH_METADATA_KEY = "jarvis_scheduler_path"
+SCHEDULER_ARTIFACT_PATH_UNRESOLVED_CODE = "scheduler_artifact_path_unresolved"
+SCHEDULER_ARTIFACT_PATH_TERMINAL_DIAGNOSTIC = (
+    "JARVIS reached execution terminalization before the scheduler artifact "
+    "path was resolved"
+)
 
 ExecutionMode = Literal["direct", "scheduler"]
 
@@ -1270,7 +1283,9 @@ class ExecutionStore:
                         f"artifact identity mismatch for package {package_id!r}"
                     )
                 if event.artifact_id in seen_ids:
-                    raise RuntimeError("artifact ID is duplicated across package manifests")
+                    raise RuntimeError(
+                        "artifact ID is duplicated across package manifests"
+                    )
                 seen_ids.add(event.artifact_id)
                 latest.append(event)
         return ExecutionArtifactSnapshot(
@@ -1295,7 +1310,7 @@ class ExecutionStore:
         execution_id: str,
         *,
         failed: bool = False,
-    ) -> list[ArtifactEvent]:
+    ) -> List[ArtifactEvent]:
         """Seal every producing artifact before execution terminalization."""
         validated_id = validate_execution_id(execution_id)
         record = read_execution_record(
@@ -1306,7 +1321,7 @@ class ExecutionStore:
         if not isinstance(artifact_files, dict):
             raise RuntimeError("execution artifact index is invalid")
         artifact_root = self.executions_dir / record.execution_id / "artifacts"
-        sealed: list[ArtifactEvent] = []
+        sealed: List[ArtifactEvent] = []
         for artifact_key, entry in artifact_files.items():
             if (
                 not isinstance(artifact_key, str)
@@ -1324,22 +1339,291 @@ class ExecutionStore:
             relative = Path(filename)
             if relative.name != filename or relative.suffix != ".jsonl":
                 raise RuntimeError("execution artifact index contains an invalid path")
+            artifact_path = artifact_root / filename
+            core_artifacts = (
+                artifact_key == "jarvis-core"
+                and entry["package_id"] == "jarvis-core"
+                and entry["package_name"] == "jarvis.core"
+            )
+            if core_artifacts:
+                sealed.extend(
+                    self._terminalize_pending_scheduler_artifact_paths(
+                        artifact_path,
+                        execution_id=validated_id,
+                    )
+                )
             sealed.extend(
-                ArtifactStore(artifact_root / filename).finalize_open(
+                ArtifactStore(artifact_path).finalize_open(
                     ArtifactState.FINALIZED
-                    if (
-                        artifact_key == "jarvis-core"
-                        and entry["package_id"] == "jarvis-core"
-                        and entry["package_name"] == "jarvis.core"
-                    )
-                    else (
-                        ArtifactState.FAILED
-                        if failed
-                        else ArtifactState.INCOMPLETE
-                    )
+                    if core_artifacts
+                    else (ArtifactState.FAILED if failed else ArtifactState.INCOMPLETE),
+                    state_without_location=(
+                        ArtifactState.INCOMPLETE if core_artifacts else None
+                    ),
                 )
             )
         return sealed
+
+    def _terminalize_pending_scheduler_artifact_paths(
+        self,
+        artifact_path: Path,
+        *,
+        execution_id: str,
+    ) -> List[ArtifactEvent]:
+        """Give unresolved scheduler logs coherent fail-closed terminal metadata."""
+        current = ArtifactStore(artifact_path).current()
+        reporter = ArtifactReporter(
+            package_name="jarvis.core",
+            package_id="jarvis-core",
+            execution_id=execution_id,
+            path=artifact_path,
+        )
+        revised: List[ArtifactEvent] = []
+        for event in current.values():
+            details_value = event.metadata.get(SCHEDULER_ARTIFACT_PATH_METADATA_KEY)
+            if details_value is None:
+                continue
+            if not isinstance(details_value, dict):
+                raise RuntimeError("scheduler artifact path metadata is invalid")
+            if details_value.get("status") != "pending":
+                continue
+            if (
+                set(details_value)
+                != {
+                    "schema_version",
+                    "provider",
+                    "path_pattern",
+                    "scope",
+                    "array_requested",
+                    "status",
+                }
+                or details_value.get("schema_version") != SCHEDULER_ARTIFACT_PATH_SCHEMA
+                or not isinstance(details_value.get("provider"), str)
+                or not isinstance(details_value.get("path_pattern"), str)
+                or details_value.get("scope") not in {"execution", "cluster"}
+                or not isinstance(details_value.get("array_requested"), bool)
+                or event.location is not None
+                or event.state is not ArtifactState.PRODUCING
+            ):
+                raise RuntimeError("pending scheduler artifact path is invalid")
+            details = dict(details_value)
+            details.update(
+                {
+                    "status": "incomplete",
+                    "diagnostic_code": SCHEDULER_ARTIFACT_PATH_UNRESOLVED_CODE,
+                    "diagnostic": SCHEDULER_ARTIFACT_PATH_TERMINAL_DIAGNOSTIC,
+                }
+            )
+            metadata = dict(event.metadata)
+            metadata[SCHEDULER_ARTIFACT_PATH_METADATA_KEY] = details
+            revised.append(
+                reporter.emit(
+                    artifact_id=event.artifact_id,
+                    logical_name=event.logical_name,
+                    kind=event.kind,
+                    role=event.role,
+                    structure=event.structure,
+                    ownership=event.ownership,
+                    state=ArtifactState.INCOMPLETE,
+                    location=None,
+                    media_type=event.media_type,
+                    format=event.format,
+                    size_bytes=event.size_bytes,
+                    checksum=event.checksum,
+                    message=SCHEDULER_ARTIFACT_PATH_TERMINAL_DIAGNOSTIC,
+                    metadata=metadata,
+                )
+            )
+        return revised
+
+    def resolve_scheduler_artifact_paths(
+        self,
+        execution_id: str,
+        *,
+        provider: str,
+        native_id: str,
+    ) -> List[ArtifactEvent]:
+        """Resolve pending core log paths through trusted scheduler identity.
+
+        Resolution is serialized with execution terminalization. A provider
+        that cannot prove one concrete path produces a terminal, location-less
+        ``INCOMPLETE`` revision instead of an invented filesystem reference.
+        Repeated submitter/runtime calls are idempotent.
+        """
+        from jarvis_cd.core.scheduler import resolve_scheduler_artifact_path
+
+        validated_id = validate_execution_id(execution_id)
+        validated_provider = _validated_text(
+            provider,
+            field_name="scheduler_provider",
+            maximum=64,
+        )
+        validated_native_id = _validated_text(
+            native_id,
+            field_name="scheduler_native_id",
+            maximum=256,
+        )
+        assert validated_provider is not None and validated_native_id is not None
+        if validated_provider == "slurm" and (
+            _SLURM_NATIVE_ID_PATTERN.fullmatch(validated_native_id) is None
+        ):
+            raise ValueError("SLURM native execution identity must be numeric")
+        execution_root = self.executions_dir / validated_id
+        with execution_transaction_lock(self.executions_dir, validated_id):
+            record = read_execution_record(
+                execution_root,
+                expected_execution_id=validated_id,
+            )
+            if record.pipeline_id != self.pipeline_id or record.mode != "scheduler":
+                raise RuntimeError(
+                    "scheduler artifact resolution identity did not match"
+                )
+            if record.scheduler_provider not in {None, validated_provider}:
+                raise RuntimeError("scheduler artifact provider identity did not match")
+            if record.scheduler_native_id != validated_native_id:
+                raise RuntimeError("scheduler artifact native identity did not match")
+            artifact_files = record.metadata.get("artifact_files", {})
+            if not isinstance(artifact_files, dict):
+                raise RuntimeError("execution artifact index is invalid")
+            entry = artifact_files.get("jarvis-core")
+            if entry is None:
+                return []
+            if (
+                not isinstance(entry, dict)
+                or set(entry) != {"filename", "package_id", "package_name"}
+                or entry.get("package_id") != "jarvis-core"
+                or entry.get("package_name") != "jarvis.core"
+                or not isinstance(entry.get("filename"), str)
+            ):
+                raise RuntimeError("JARVIS core artifact index is invalid")
+            filename = entry["filename"]
+            relative = Path(filename)
+            if relative.name != filename or relative.suffix != ".jsonl":
+                raise RuntimeError("JARVIS core artifact path is invalid")
+            artifact_path = execution_root / "artifacts" / filename
+            current = ArtifactStore(artifact_path).current()
+            pending: List[ArtifactEvent] = []
+            for event in current.values():
+                details_value = event.metadata.get(SCHEDULER_ARTIFACT_PATH_METADATA_KEY)
+                if details_value is None:
+                    continue
+                if not isinstance(details_value, dict):
+                    raise RuntimeError("scheduler artifact path metadata is invalid")
+                if details_value.get("provider") != validated_provider:
+                    raise RuntimeError("scheduler artifact path provider did not match")
+                status = details_value.get("status")
+                if status in {"resolved", "incomplete"}:
+                    continue
+                if (
+                    status == "pending"
+                    and event.state is ArtifactState.INCOMPLETE
+                    and record.terminal
+                    and event.location is None
+                ):
+                    continue
+                if (
+                    status != "pending"
+                    or set(details_value)
+                    != {
+                        "schema_version",
+                        "provider",
+                        "path_pattern",
+                        "scope",
+                        "array_requested",
+                        "status",
+                    }
+                    or details_value.get("schema_version")
+                    != SCHEDULER_ARTIFACT_PATH_SCHEMA
+                    or details_value.get("scope") not in {"execution", "cluster"}
+                    or not isinstance(details_value.get("path_pattern"), str)
+                    or not isinstance(details_value.get("array_requested"), bool)
+                    or event.location is not None
+                    or event.state is not ArtifactState.PRODUCING
+                ):
+                    raise RuntimeError("pending scheduler artifact path is invalid")
+                pending.append(event)
+            if not pending:
+                return []
+
+            reporter = ArtifactReporter(
+                package_name="jarvis.core",
+                package_id="jarvis-core",
+                execution_id=validated_id,
+                path=artifact_path,
+            )
+            revised: List[ArtifactEvent] = []
+            for event in pending:
+                details_value = event.metadata[SCHEDULER_ARTIFACT_PATH_METADATA_KEY]
+                assert isinstance(details_value, dict)
+                details = dict(details_value)
+                resolution = resolve_scheduler_artifact_path(
+                    validated_provider,
+                    str(details["path_pattern"]),
+                    native_id=validated_native_id,
+                    array_requested=bool(details["array_requested"]),
+                )
+                location = None
+                state = ArtifactState.INCOMPLETE
+                diagnostic_code = resolution.diagnostic_code
+                diagnostic = resolution.diagnostic
+                if resolution.path is not None:
+                    try:
+                        location = (
+                            ArtifactLocation.execution_relative(resolution.path)
+                            if details["scope"] == "execution"
+                            else ArtifactLocation.cluster_path(resolution.path)
+                        )
+                    except ValueError:
+                        diagnostic_code = "scheduler_artifact_path_invalid"
+                        diagnostic = (
+                            "JARVIS could not validate the resolved scheduler "
+                            "artifact path"
+                        )
+                    else:
+                        state = ArtifactState.PRODUCING
+                metadata = dict(event.metadata)
+                if location is None:
+                    diagnostic_code = (
+                        diagnostic_code or "scheduler_artifact_path_unresolved"
+                    )
+                    diagnostic = diagnostic or (
+                        "JARVIS could not resolve the scheduler artifact path"
+                    )
+                    details.update(
+                        {
+                            "status": "incomplete",
+                            "diagnostic_code": diagnostic_code,
+                            "diagnostic": diagnostic,
+                        }
+                    )
+                else:
+                    details.update(
+                        {
+                            "status": "resolved",
+                            "native_id": validated_native_id,
+                            "resolved_path": resolution.path,
+                        }
+                    )
+                metadata[SCHEDULER_ARTIFACT_PATH_METADATA_KEY] = details
+                revised.append(
+                    reporter.emit(
+                        artifact_id=event.artifact_id,
+                        logical_name=event.logical_name,
+                        kind=event.kind,
+                        role=event.role,
+                        structure=event.structure,
+                        ownership=event.ownership,
+                        state=state,
+                        location=location,
+                        media_type=event.media_type,
+                        format=event.format,
+                        size_bytes=event.size_bytes,
+                        checksum=event.checksum,
+                        message=(event.message if location is not None else diagnostic),
+                        metadata=metadata,
+                    )
+                )
+            return revised
 
     def update(
         self,
@@ -1606,12 +1890,19 @@ def activate_scheduler_execution(
     current = read_execution_record(root, expected_execution_id=validated_id)
     if current.mode != "scheduler":
         raise RuntimeError("scheduler activation cannot update a direct execution")
-    return ExecutionStore(root.parent, current.pipeline_id).activate_scheduler(
+    store = ExecutionStore(root.parent, current.pipeline_id)
+    store.activate_scheduler(
         validated_id,
         provider=provider,
         native_id=native_id,
         cluster=cluster,
     )
+    store.resolve_scheduler_artifact_paths(
+        validated_id,
+        provider=provider,
+        native_id=native_id,
+    )
+    return store.get(validated_id)
 
 
 def _main(argv: Optional[list[str]] = None) -> int:

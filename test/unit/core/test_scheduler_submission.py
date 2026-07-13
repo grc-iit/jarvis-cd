@@ -15,10 +15,18 @@ from unittest.mock import Mock, patch
 import pytest
 import yaml
 
+from jarvis_cd.artifacts import ArtifactLocationKind, ArtifactState, ArtifactStore
 from jarvis_cd.core.config import Jarvis
-from jarvis_cd.core.execution import ExecutionStore
+from jarvis_cd.core.execution import (
+    SCHEDULER_ARTIFACT_PATH_TERMINAL_DIAGNOSTIC,
+    SCHEDULER_ARTIFACT_PATH_UNRESOLVED_CODE,
+    ExecutionStore,
+    activate_scheduler_execution,
+    finalize_execution,
+)
 from jarvis_cd.core.pipeline import (
     Pipeline,
+    _absolute_scheduler_log_path,
     _atomic_yaml_dump,
     _remove_execution_tree,
     _unlock_execution_input_for_cleanup,
@@ -70,6 +78,27 @@ def _real_pipeline(tmp_path: Path) -> Pipeline:
     return pipeline
 
 
+def _core_artifact_history(
+    pipeline: Pipeline,
+    execution_id: str,
+) -> list[Any]:
+    """Return the append-only JARVIS core artifact history for one execution."""
+    record = pipeline.get_execution(execution_id)
+    artifact_files = record.metadata["artifact_files"]
+    filename = artifact_files["jarvis-core"]["filename"]
+    execution_root = Path(record.metadata["submission"]["execution_root_path"])
+    return ArtifactStore(execution_root / "artifacts" / filename).read_all()
+
+
+def _current_artifacts_by_name(
+    pipeline: Pipeline,
+    execution_id: str,
+) -> dict[str, Any]:
+    """Index the current execution artifact snapshot by logical name."""
+    snapshot = pipeline.get_execution_artifacts(execution_id)
+    return {artifact.logical_name: artifact for artifact in snapshot.artifacts}
+
+
 def _load_real_scheduler_snapshot(
     jarvis_root: str,
     runtime_dir: str,
@@ -92,11 +121,17 @@ def test_slurm_submission_uses_and_parses_parsable_identity(tmp_path: Path) -> N
     )
 
     assert scheduler.submit_command() == [
+        "env",
+        "-u",
+        "SBATCH_ARRAY_INX",
         "sbatch",
         "--parsable",
         str(tmp_path / "submit.slurm"),
     ]
     assert scheduler.submit_command(wait=True) == [
+        "env",
+        "-u",
+        "SBATCH_ARRAY_INX",
         "sbatch",
         "--parsable",
         "--wait",
@@ -108,6 +143,138 @@ def test_slurm_submission_uses_and_parses_parsable_identity(tmp_path: Path) -> N
         "scheduler_cluster": "ares",
         "identity_source": "scheduler_submit_api",
     }
+
+
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        ("/logs/job-%j.out", "/logs/job-7.out"),
+        ("/logs/job-%4j.out", "/logs/job-0007.out"),
+        ("/logs/job-%05j.out", "/logs/job-00007.out"),
+        ("/logs/job-%11j.out", "/logs/job-0000000007.out"),
+        ("/logs/job-%0001j.out", "/logs/job-7.out"),
+        ("/logs/rate-100%%-%%j.out", "/logs/rate-100%-%j.out"),
+        ("/logs/static.out", "/logs/static.out"),
+    ],
+)
+def test_slurm_resolves_only_proven_scalar_artifact_paths(
+    pattern: str,
+    expected: str,
+) -> None:
+    resolution = SlurmScheduler.resolve_artifact_path(pattern, native_id="7")
+
+    assert resolution.path == expected
+    assert resolution.diagnostic_code is None
+    assert resolution.diagnostic is None
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "/logs/job-%.out",
+        "/logs/job-%42",
+        "/logs/job-%4.out",
+        "/logs/job-%N.out",
+        "/logs/job-%²j.out",
+        "/logs/job-%４j.out",
+        r"/logs/job-\%j.out",
+    ],
+)
+def test_slurm_leaves_unprovable_artifact_paths_unresolved(pattern: str) -> None:
+    resolution = SlurmScheduler.resolve_artifact_path(pattern, native_id="7")
+
+    assert resolution.path is None
+    assert resolution.diagnostic_code == "slurm_artifact_path_unresolved"
+    assert isinstance(resolution.diagnostic, str) and resolution.diagnostic
+
+
+def test_slurm_array_identity_does_not_claim_one_percent_j_path() -> None:
+    resolution = SlurmScheduler.resolve_artifact_path(
+        "/logs/job-%j.out",
+        native_id="7",
+        array_requested=True,
+    )
+
+    assert resolution.path is None
+    assert resolution.diagnostic_code == "slurm_artifact_path_unresolved"
+
+
+@pytest.mark.parametrize(
+    "argument",
+    [
+        "--output",
+        "--output=/tmp/other.out",
+        "--error",
+        "--error=/tmp/other.err",
+    ],
+)
+def test_slurm_rejects_raw_log_directive_overrides(
+    tmp_path: Path,
+    argument: str,
+) -> None:
+    with pytest.raises(ValueError, match="cannot override output or error"):
+        SlurmScheduler(
+            {"name": "slurm", "sbatch_args": [argument]},
+            tmp_path,
+        )
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        {"name": "slurm", "array": "1-2"},
+        {"name": "slurm", "array": 0},
+        {"name": "slurm", "sbatch_args": ["--array=1-2"]},
+    ],
+)
+def test_slurm_detects_spec_and_raw_array_requests(
+    tmp_path: Path,
+    spec: dict[str, Any],
+) -> None:
+    assert SlurmScheduler(spec, tmp_path).array_requested is True
+
+
+def test_scheduler_log_path_normalization_does_not_resolve_symlinks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Relative scheduler paths become lexical absolutes without filesystem IO."""
+    monkeypatch.chdir(tmp_path)
+    configured = os.path.join("linked-logs", "stdout-%j.log")
+    expected = os.path.normpath(os.path.abspath(configured))
+
+    with patch(
+        "jarvis_cd.core.pipeline.Path.resolve",
+        side_effect=AssertionError("scheduler paths must not dereference symlinks"),
+    ):
+        resolved = _absolute_scheduler_log_path(configured)
+
+    assert resolved == expected
+
+
+def test_slurm_submission_cli_overrides_inherited_log_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "logs" / "stdout-%j.log"
+    error = tmp_path / "logs" / "stderr-%j.log"
+    monkeypatch.setenv("SBATCH_OUTPUT", "/forged/stdout.log")
+    monkeypatch.setenv("SBATCH_ERROR", "/forged/stderr.log")
+    scheduler = SlurmScheduler(
+        {"name": "slurm", "output": str(output), "error": str(error)},
+        tmp_path,
+    )
+
+    assert scheduler.submit_command() == [
+        "env",
+        "-u",
+        "SBATCH_ARRAY_INX",
+        "sbatch",
+        "--parsable",
+        f"--output={output}",
+        f"--error={error}",
+        str(tmp_path / "submit.slurm"),
+    ]
 
 
 def test_jarvis_root_environment_selects_scheduler_configuration(
@@ -545,6 +712,7 @@ def test_pipeline_persists_provider_owned_submission_identity(tmp_path: Path) ->
     script_path.write_text("#!/bin/bash\n", encoding="utf-8")
     scheduler = SimpleNamespace(
         NAME="slurm",
+        array_requested=False,
         hostfile=str(tmp_path / "hostfile.txt"),
         write_script=Mock(return_value=script_path),
         submit_command=Mock(return_value=["sbatch", "--parsable", str(script_path)]),
@@ -610,6 +778,377 @@ def test_pipeline_persists_provider_owned_submission_identity(tmp_path: Path) ->
     assert saved_submissions[2]["scheduler_job_id"] == "24680"
     assert saved_submissions[2]["submitted"] is True
     assert saved_submissions[3]["state"] == "submitted"
+
+
+def test_scheduler_log_artifacts_resolve_same_ids_and_finalize(
+    tmp_path: Path,
+) -> None:
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.scheduler.update(
+        {
+            "output": "/cluster/logs/stdout-%j.log",
+            "error": "/cluster/logs/stderr-100%%.log",
+        }
+    )
+    pipeline.save()
+    execution = SimpleNamespace(
+        exit_code={"localhost": 0},
+        stdout={"localhost": "24680;ares\n"},
+        stderr={"localhost": ""},
+    )
+    executor = Mock()
+    executor.run.return_value = execution
+
+    with patch("jarvis_cd.shell.Exec", return_value=executor) as execute:
+        handle = pipeline.submit(
+            submit=True,
+            wait=False,
+            execution_id="resolved-logs",
+        )
+
+    command = execute.call_args.args[0]
+    assert "--output=/cluster/logs/stdout-%j.log" in command
+    assert "--error=/cluster/logs/stderr-100%%.log" in command
+    current = _current_artifacts_by_name(pipeline, handle.execution_id)
+    stdout = current["stdout"]
+    stderr = current["stderr"]
+    assert stdout.state is ArtifactState.PRODUCING
+    assert stdout.revision == 2
+    assert stdout.location is not None
+    assert stdout.location.kind is ArtifactLocationKind.CLUSTER_PATH
+    assert stdout.location.value == "/cluster/logs/stdout-24680.log"
+    assert stderr.state is ArtifactState.PRODUCING
+    assert stderr.revision == 2
+    assert stderr.location is not None
+    assert stderr.location.value == "/cluster/logs/stderr-100%.log"
+    for artifact in (stdout, stderr):
+        path_metadata = artifact.metadata["jarvis_scheduler_path"]
+        assert path_metadata["status"] == "resolved"
+        assert path_metadata["native_id"] == "24680"
+
+    history = _core_artifact_history(pipeline, handle.execution_id)
+    for logical_name in ("stdout", "stderr"):
+        revisions = [event for event in history if event.logical_name == logical_name]
+        assert [event.revision for event in revisions] == [1, 2]
+        assert revisions[0].artifact_id == revisions[1].artifact_id
+        assert revisions[0].location is None
+
+    pipeline._execution_store().update(
+        handle.execution_id,
+        state="completed",
+        terminal=True,
+        return_code=0,
+    )
+    finalized = _current_artifacts_by_name(pipeline, handle.execution_id)
+    assert finalized["stdout"].state is ArtifactState.FINALIZED
+    assert finalized["stdout"].revision == 3
+    assert finalized["stderr"].state is ArtifactState.FINALIZED
+    assert finalized["stderr"].revision == 3
+
+
+@pytest.mark.parametrize(
+    "scheduler_update",
+    [
+        {"output": "/cluster/logs/stdout-%N.log"},
+        {"output": "/cluster/logs/stdout-%j.log", "array": "1-2"},
+    ],
+)
+def test_unprovable_scheduler_log_path_is_incomplete_without_failing_workload(
+    tmp_path: Path,
+    scheduler_update: dict[str, str],
+) -> None:
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.scheduler.update(scheduler_update)
+    pipeline.scheduler["error"] = "/cluster/logs/stderr-%j.log"
+    pipeline.save()
+    executor = Mock()
+    executor.run.return_value = SimpleNamespace(
+        exit_code={"localhost": 0},
+        stdout={"localhost": "31415;ares\n"},
+        stderr={"localhost": ""},
+    )
+
+    with patch("jarvis_cd.shell.Exec", return_value=executor):
+        handle = pipeline.submit(
+            submit=True,
+            wait=False,
+            execution_id=f"unresolved-{len(scheduler_update)}",
+        )
+
+    assert handle.refresh().state == "submitted"
+    current = _current_artifacts_by_name(pipeline, handle.execution_id)
+    stdout = current["stdout"]
+    assert stdout.state is ArtifactState.INCOMPLETE
+    assert stdout.location is None
+    assert stdout.revision == 2
+    metadata = stdout.metadata["jarvis_scheduler_path"]
+    assert metadata["status"] == "incomplete"
+    assert metadata["diagnostic_code"] == "slurm_artifact_path_unresolved"
+    assert isinstance(metadata["diagnostic"], str) and metadata["diagnostic"]
+
+    pipeline._execution_store().update(
+        handle.execution_id,
+        state="completed",
+        terminal=True,
+        return_code=0,
+    )
+    terminal = _current_artifacts_by_name(pipeline, handle.execution_id)
+    assert terminal["stdout"].state is ArtifactState.INCOMPLETE
+    assert terminal["stdout"].revision == 2
+    assert terminal["stderr"].state is (
+        ArtifactState.INCOMPLETE
+        if "array" in scheduler_update
+        else ArtifactState.FINALIZED
+    )
+
+
+def test_fast_wait_runtime_resolution_is_idempotent_for_submitter(
+    tmp_path: Path,
+) -> None:
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.scheduler.update(
+        {
+            "output": "/cluster/logs/stdout-%j.log",
+            "error": "/cluster/logs/stderr-%j.log",
+        }
+    )
+    pipeline.save()
+    executor = Mock()
+
+    def finish_before_sbatch_returns() -> SimpleNamespace:
+        submission = pipeline.last_submission
+        execution_root = Path(submission["execution_root_path"])
+        execution_id = str(submission["execution_id"])
+        activate_scheduler_execution(
+            execution_root,
+            execution_id,
+            "slurm",
+            "41",
+            "ares",
+        )
+        finalize_execution(execution_root, execution_id, 0)
+        return SimpleNamespace(
+            exit_code={"localhost": 0},
+            stdout={"localhost": "41;ares\n"},
+            stderr={"localhost": ""},
+        )
+
+    executor.run.side_effect = finish_before_sbatch_returns
+    with patch("jarvis_cd.shell.Exec", return_value=executor):
+        handle = pipeline.submit(
+            submit=True,
+            wait=True,
+            execution_id="fast-wait",
+        )
+
+    assert handle.refresh().state == "completed"
+    history = _core_artifact_history(pipeline, handle.execution_id)
+    for logical_name in ("stdout", "stderr"):
+        revisions = [event for event in history if event.logical_name == logical_name]
+        assert [event.revision for event in revisions] == [1, 2, 3]
+        assert len({event.artifact_id for event in revisions}) == 1
+        assert revisions[-1].state is ArtifactState.FINALIZED
+        assert revisions[-1].location is not None
+        assert revisions[-1].location.value.endswith(f"-{41}.log")
+
+
+def test_runtime_unresolved_log_does_not_fail_fast_wait_workload(
+    tmp_path: Path,
+) -> None:
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.scheduler.update(
+        {
+            "output": "/cluster/logs/stdout-%N.log",
+            "error": "/cluster/logs/stderr-%j.log",
+        }
+    )
+    pipeline.save()
+    executor = Mock()
+
+    def finish_before_sbatch_returns() -> SimpleNamespace:
+        submission = pipeline.last_submission
+        execution_root = Path(submission["execution_root_path"])
+        execution_id = str(submission["execution_id"])
+        activate_scheduler_execution(
+            execution_root,
+            execution_id,
+            "slurm",
+            "52",
+            "ares",
+        )
+        completed = finalize_execution(execution_root, execution_id, 0)
+        assert completed.state == "completed"
+        return SimpleNamespace(
+            exit_code={"localhost": 0},
+            stdout={"localhost": "52;ares\n"},
+            stderr={"localhost": ""},
+        )
+
+    executor.run.side_effect = finish_before_sbatch_returns
+    with patch("jarvis_cd.shell.Exec", return_value=executor):
+        handle = pipeline.submit(
+            submit=True,
+            wait=True,
+            execution_id="runtime-unresolved",
+        )
+
+    assert handle.refresh().state == "completed"
+    current = _current_artifacts_by_name(pipeline, handle.execution_id)
+    stdout = current["stdout"]
+    stderr = current["stderr"]
+    assert stdout.state is ArtifactState.INCOMPLETE
+    assert stdout.location is None
+    assert stdout.revision == 2
+    assert stdout.metadata["jarvis_scheduler_path"]["diagnostic_code"] == (
+        "slurm_artifact_path_unresolved"
+    )
+    assert stderr.state is ArtifactState.FINALIZED
+    assert stderr.location is not None
+    assert stderr.location.value == "/cluster/logs/stderr-52.log"
+    assert stderr.revision == 3
+
+
+def test_scheduler_artifact_resolution_rejects_mismatched_bound_identity(
+    tmp_path: Path,
+) -> None:
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.scheduler["output"] = "/cluster/logs/stdout-%j.log"
+    pipeline.save()
+    executor = Mock()
+    executor.run.side_effect = RuntimeError("submit transport disappeared")
+    with patch("jarvis_cd.shell.Exec", return_value=executor):
+        with pytest.raises(RuntimeError, match="submit transport disappeared"):
+            pipeline.submit(
+                submit=True,
+                execution_id="identity-mismatch",
+            )
+
+    store = pipeline._execution_store()
+    with pytest.raises(RuntimeError, match="native identity did not match"):
+        store.resolve_scheduler_artifact_paths(
+            "identity-mismatch",
+            provider="slurm",
+            native_id="41",
+        )
+    store.activate_scheduler(
+        "identity-mismatch",
+        provider="slurm",
+        native_id="41",
+        cluster="ares",
+    )
+    with pytest.raises(RuntimeError, match="native identity did not match"):
+        store.resolve_scheduler_artifact_paths(
+            "identity-mismatch",
+            provider="slurm",
+            native_id="42",
+        )
+
+    stdout = _current_artifacts_by_name(pipeline, "identity-mismatch")["stdout"]
+    assert stdout.state is ArtifactState.PRODUCING
+    assert stdout.location is None
+    assert stdout.revision == 1
+
+
+def test_artifact_resolution_failure_preserves_durable_submission_identity(
+    tmp_path: Path,
+) -> None:
+    """An artifact-store failure cannot reopen the accepted-job orphan gap."""
+    pipeline = _real_pipeline(tmp_path)
+    pipeline.scheduler["output"] = "/cluster/logs/stdout-%j.log"
+    pipeline.save()
+    executor = Mock()
+    executor.run.return_value = SimpleNamespace(
+        exit_code={"localhost": 0},
+        stdout={"localhost": "41;ares\n"},
+        stderr={"localhost": ""},
+    )
+    observed_identity: dict[str, str | None] = {}
+
+    def fail_after_identity(
+        store: ExecutionStore,
+        execution_id: str,
+        *,
+        provider: str,
+        native_id: str,
+    ) -> list[Any]:
+        record = store.get(execution_id)
+        observed_identity.update(
+            {
+                "provider": record.scheduler_provider,
+                "native_id": record.scheduler_native_id,
+                "cluster": record.cluster,
+            }
+        )
+        raise RuntimeError("artifact store failed")
+
+    with patch("jarvis_cd.shell.Exec", return_value=executor):
+        with patch.object(
+            ExecutionStore,
+            "resolve_scheduler_artifact_paths",
+            new=fail_after_identity,
+        ):
+            with pytest.raises(RuntimeError, match="persisted its identity"):
+                pipeline.submit(
+                    submit=True,
+                    execution_id="artifact-resolution-failure",
+                )
+
+    assert observed_identity == {
+        "provider": "slurm",
+        "native_id": "41",
+        "cluster": "ares",
+    }
+    record = pipeline.get_execution("artifact-resolution-failure")
+    assert record.state == "unknown"
+    assert record.submitted is True
+    assert record.terminal is False
+    assert record.scheduler_provider == "slurm"
+    assert record.scheduler_native_id == "41"
+    assert record.cluster == "ares"
+    assert record.metadata["failure_stage"] == "scheduler_artifact_resolution"
+    stdout = _current_artifacts_by_name(
+        pipeline,
+        "artifact-resolution-failure",
+    )["stdout"]
+    assert stdout.revision == 1
+    assert stdout.state is ArtifactState.PRODUCING
+    assert stdout.location is None
+    assert stdout.metadata["jarvis_scheduler_path"]["status"] == "pending"
+
+
+def test_rejected_submission_terminalizes_pending_logs_with_diagnostic(
+    tmp_path: Path,
+) -> None:
+    """Terminal sealing replaces pending scheduler-log claims with diagnostics."""
+    pipeline = _real_pipeline(tmp_path)
+    executor = Mock()
+    executor.run.return_value = SimpleNamespace(
+        exit_code={"localhost": 1},
+        stdout={"localhost": ""},
+        stderr={"localhost": "sbatch: submission rejected"},
+    )
+
+    with patch("jarvis_cd.shell.Exec", return_value=executor):
+        with pytest.raises(RuntimeError, match="Scheduler submission failed"):
+            pipeline.submit(
+                submit=True,
+                execution_id="rejected-submission",
+            )
+
+    record = pipeline.get_execution("rejected-submission")
+    assert record.state == "failed"
+    assert record.terminal is True
+    current = _current_artifacts_by_name(pipeline, "rejected-submission")
+    for logical_name in ("stdout", "stderr"):
+        event = current[logical_name]
+        assert event.revision == 2
+        assert event.state is ArtifactState.INCOMPLETE
+        assert event.location is None
+        assert event.message == SCHEDULER_ARTIFACT_PATH_TERMINAL_DIAGNOSTIC
+        metadata = event.metadata["jarvis_scheduler_path"]
+        assert metadata["status"] == "incomplete"
+        assert metadata["diagnostic_code"] == (SCHEDULER_ARTIFACT_PATH_UNRESOLVED_CODE)
+        assert metadata["diagnostic"] == (SCHEDULER_ARTIFACT_PATH_TERMINAL_DIAGNOSTIC)
 
 
 def test_pre_submit_persistence_failure_is_terminal_without_scheduler_effect(
@@ -681,6 +1220,7 @@ def test_pipeline_never_accepts_unstructured_submission_stdout(tmp_path: Path) -
     script_path = tmp_path / "submit.slurm"
     scheduler = SimpleNamespace(
         NAME="slurm",
+        array_requested=False,
         hostfile=str(tmp_path / "hostfile.txt"),
         write_script=Mock(return_value=script_path),
         submit_command=Mock(return_value=["sbatch", "--parsable", str(script_path)]),
@@ -716,6 +1256,7 @@ def test_pipeline_preserves_waited_job_identity_when_workload_fails(
     script_path = tmp_path / "submit.slurm"
     scheduler = SimpleNamespace(
         NAME="slurm",
+        array_requested=False,
         hostfile=str(tmp_path / "hostfile.txt"),
         write_script=Mock(return_value=script_path),
         submit_command=Mock(
@@ -767,6 +1308,7 @@ def test_pipeline_records_true_submission_failure_without_job_identity(
     script_path = tmp_path / "submit.slurm"
     scheduler = SimpleNamespace(
         NAME="slurm",
+        array_requested=False,
         hostfile=str(tmp_path / "hostfile.txt"),
         write_script=Mock(return_value=script_path),
         submit_command=Mock(return_value=["sbatch", "--parsable", str(script_path)]),
