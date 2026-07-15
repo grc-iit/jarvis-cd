@@ -39,6 +39,7 @@ from jarvis_cd.core.execution import (
     ExecutionHandle,
     ExecutionArtifactSnapshot,
     ExecutionProgressSnapshot,
+    ExecutionServiceRuntimeSnapshot,
     ExecutionRecord,
     ExecutionStore,
     is_execution_transaction_lock,
@@ -1607,6 +1608,13 @@ class Pipeline:
         """Return generated artifacts for one exact execution."""
         return self._execution_store().artifacts(execution_id)
 
+    def get_execution_service_runtimes(
+        self,
+        execution_id: str,
+    ) -> ExecutionServiceRuntimeSnapshot:
+        """Return current service runtimes for one exact execution."""
+        return self._execution_store().service_runtimes(execution_id)
+
     def _pipeline_storage_dir(self) -> Path:
         """Return the directory this Pipeline instance is allowed to mutate."""
         return self.get_pipeline_config_dir()
@@ -2576,6 +2584,11 @@ class Pipeline:
         if os.name != "nt":
             artifact_dir.chmod(0o700)
         artifact_path = artifact_dir / f"{prefix}-{digest}.jsonl"
+        runtime_dir = Path(execution_root) / "service-runtimes"
+        runtime_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name != "nt":
+            runtime_dir.chmod(0o700)
+        runtime_path = runtime_dir / f"{prefix}-{digest}.jsonl"
         package_config = pkg_def.get("config", {})
         package_containerized = isinstance(package_config, dict) and (
             package_config.get("deploy_mode") == "container"
@@ -2592,6 +2605,7 @@ class Pipeline:
                 "JARVIS_PROGRESS_TRANSPORT": progress_transport,
                 "JARVIS_ARTIFACT_PATH": str(artifact_path),
                 "JARVIS_ARTIFACT_TRANSPORT": progress_transport,
+                "JARVIS_SERVICE_RUNTIME_PATH": str(runtime_path),
             }
         )
         record = self._execution_store().get(execution_id)
@@ -2606,11 +2620,18 @@ class Pipeline:
             "package_id": package_id,
             "package_name": package_name,
         }
+        runtime_files = dict(record.metadata.get("service_runtime_files", {}))
+        runtime_files[f"package-{prefix}-{digest}"] = {
+            "filename": runtime_path.name,
+            "package_id": package_id,
+            "package_name": package_name,
+        }
         self._execution_store().update(
             execution_id,
             metadata={
                 "progress_files": progress_files,
                 "artifact_files": artifact_files,
+                "service_runtime_files": runtime_files,
             },
         )
 
@@ -2896,6 +2917,7 @@ class Pipeline:
                 "JARVIS_PROGRESS_TRANSPORT",
                 "JARVIS_ARTIFACT_PATH",
                 "JARVIS_ARTIFACT_TRANSPORT",
+                "JARVIS_SERVICE_RUNTIME_PATH",
             )
         }
         snapshot_execution_id = getattr(self, "_execution_id", None)

@@ -4,3 +4,6 @@ include builtin/builtin/gray_scott/artifacts.py
 include builtin/builtin/gray_scott/progress.py
 include builtin/builtin/lammps/artifacts.py
 include builtin/builtin/paraview/artifacts.py
+include builtin/builtin/paraview/service.py
+include builtin/builtin/paraview/service_http.py
+include builtin/builtin/paraview/service_supervisor.py

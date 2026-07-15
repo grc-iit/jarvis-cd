@@ -1,5 +1,40 @@
-# paraview 
-ParaView is an open-source data analysis and visualization application designed to handle large-scale scientific datasets. It supports interactive and batch processing for visualizing complex simulations and performing quantitative analysis.
+# ParaView
 
+`builtin.paraview` supports three explicit modes:
 
+- `server` launches `pvserver` for a native ParaView client;
+- `batch` launches a user/site-owned `pvbatch` script and records structured
+  progress and generated artifacts;
+- `service` launches the generic JARVIS HTTP/SSE runtime for relay and agentic
+  clients.
 
+Service mode requires a `jarvis.dataset-descriptor.v1` JSON document. The
+descriptor contains intrinsic identity, bounded source members, optional time
+and array facts, and a SHA-256 fingerprint. It cannot contain a camera,
+threshold, filter, colormap, or scene recipe. Those are explicit versioned
+commands sent to the running service.
+
+`inspect_selection` supports either an explicit point/cell index or a
+normalized human viewport drag box. Viewport selection is resolved by
+ParaView's real visible-cell picker and returns bounded IDs, an explicit empty
+result, or an explicit unsupported result; it never guesses a world-space
+location from browser coordinates.
+
+```bash
+jarvis ppl append paraview \
+  mode=service \
+  dataset_descriptor=/site/descriptors/asteroid-subset.json \
+  pvpython_bin=/opt/ParaView/bin/pvpython \
+  service_bind_host=127.0.0.1 \
+  service_advertise_host=127.0.0.1 \
+  nprocs=1
+jarvis ppl submit +no_wait +json
+jarvis execution service-runtimes <execution-id> +json
+```
+
+JARVIS reports the actual service host/port and lifecycle through the durable
+execution handle. A relay owns authenticated desktop routing; direct SSH
+tunnel instructions are intentionally not part of the package contract.
+
+See [`docs/service-runtimes.md`](../../../docs/service-runtimes.md) for the
+exact report, state, command, SSE, and artifact schemas.

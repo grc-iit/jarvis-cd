@@ -1,33 +1,16 @@
-## how to use it with Jarvis in cluster
+# Using `builtin.paraview`
 
-### set the environment
-load paraview and openmpi
-```
-module load paraview
-spack load openmpi
+Use `server` mode for a native ParaView client, `batch` for a site-owned
+`pvbatch` script, and `service` for an execution-owned agent/relay runtime.
 
-```
-### create jarvis pipeline
-```
-jarvis ppl create paraview
-jarvis ppl env build
-jarvis ppl append paraview port_id=11111
-```
-Note: If the connect has issues, try change the port_id first, for example change the port_id to 11112. 
-### run the application
-```
-jarvis ppl run
+The service itself publishes cluster endpoints only. Obtain desktop-local URLs
+through the configured relay/gateway instead of creating an undocumented SSH
+tunnel. Query the durable JARVIS handle to discover readiness:
+
+```bash
+jarvis execution service-runtimes <execution-id> \
+  --pipeline-id <pipeline> +json
 ```
 
-## How to use it in local computer 
-###
-Run this command in local terminal:
-```
-ssh -N -L 11111:localhost:11111 your_id@ares.cs.iit.edu
-```
-In local paraview, following these instructions:
-File -> connect </br>
-![Simulation Diagram](server_setup.png)
-
-Once coonect the server, The remote paraview are good to go.
-
+See [the service-runtime reference](../../../docs/service-runtimes.md) for
+configuration and command examples.

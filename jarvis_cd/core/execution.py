@@ -24,6 +24,11 @@ from jarvis_cd.artifacts import (
     ArtifactStore,
 )
 from jarvis_cd.progress import ProgressEvent, ProgressStore
+from jarvis_cd.service_runtime import (
+    SERVICE_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+    ServiceRuntimeReport,
+    ServiceRuntimeStore,
+)
 from jarvis_cd.util.private_path import (
     ensure_private_descriptor,
     ensure_private_path,
@@ -38,6 +43,7 @@ RECORD_NAME = ".jarvis-execution.json"
 MAX_RECORD_BYTES = 65_536
 PROGRESS_SNAPSHOT_SCHEMA = "jarvis.execution.progress.v1"
 ARTIFACT_SNAPSHOT_SCHEMA = "jarvis.execution.artifacts.v1"
+SERVICE_RUNTIME_SNAPSHOT_SCHEMA = SERVICE_RUNTIME_SNAPSHOT_SCHEMA_VERSION
 DIRECT_LAUNCH_SCHEMA = "jarvis.direct-launch.v1"
 DIRECT_LEASE_NAME = ".jarvis-direct-execution.lease"
 SCHEDULER_ARTIFACT_PATH_SCHEMA = "jarvis.scheduler.artifact-path.v1"
@@ -150,6 +156,30 @@ class ExecutionArtifactSnapshot:
             "execution_state": self.execution_state,
             "terminal": self.terminal,
             "artifacts": [artifact.as_dict() for artifact in self.artifacts],
+        }
+
+
+@dataclass(frozen=True)
+class ExecutionServiceRuntimeSnapshot:
+    """Queryable current service runtimes for one durable execution."""
+
+    execution_id: str
+    pipeline_id: str
+    execution_state: str
+    terminal: bool
+    service_runtimes: tuple[ServiceRuntimeReport, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the stable agent-facing service-runtime snapshot."""
+        return {
+            "schema_version": SERVICE_RUNTIME_SNAPSHOT_SCHEMA,
+            "execution_id": self.execution_id,
+            "pipeline_id": self.pipeline_id,
+            "execution_state": self.execution_state,
+            "terminal": self.terminal,
+            "service_runtimes": [
+                runtime.to_dict() for runtime in self.service_runtimes
+            ],
         }
 
 
@@ -358,6 +388,13 @@ class ExecutionHandle:
         assert record._record_path is not None
         store = ExecutionStore(record._record_path.parent.parent, self.pipeline_id)
         return store.artifacts(self.execution_id)
+
+    def service_runtimes(self) -> ExecutionServiceRuntimeSnapshot:
+        """Return current services owned by this exact execution."""
+        record = self.refresh()
+        assert record._record_path is not None
+        store = ExecutionStore(record._record_path.parent.parent, self.pipeline_id)
+        return store.service_runtimes(self.execution_id)
 
 
 @dataclass(frozen=True)
@@ -1305,6 +1342,89 @@ class ExecutionStore:
             ),
         )
 
+    def service_runtimes(
+        self,
+        execution_id: str,
+    ) -> ExecutionServiceRuntimeSnapshot:
+        """Return the current identity-checked service runtime set."""
+        record = self.get(execution_id)
+        runtime_files = record.metadata.get("service_runtime_files", {})
+        if not isinstance(runtime_files, dict):
+            raise RuntimeError("execution service runtime index is invalid")
+        execution_root = self.executions_dir / record.execution_id
+        runtime_root = execution_root / "service-runtimes"
+        if runtime_root.exists() or runtime_root.is_symlink():
+            status = runtime_root.lstat()
+            if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
+                raise RuntimeError(
+                    "execution service runtime path is not a real directory"
+                )
+        current: list[ServiceRuntimeReport] = []
+        seen_instances: set[str] = set()
+        for runtime_key, entry in sorted(runtime_files.items()):
+            if (
+                not isinstance(runtime_key, str)
+                or not runtime_key
+                or not isinstance(entry, dict)
+                or set(entry) != {"filename", "package_id", "package_name"}
+                or not isinstance(entry.get("filename"), str)
+                or not entry["filename"]
+                or not isinstance(entry.get("package_id"), str)
+                or not entry["package_id"]
+                or not isinstance(entry.get("package_name"), str)
+                or not entry["package_name"]
+            ):
+                raise RuntimeError("execution service runtime index is invalid")
+            filename = entry["filename"]
+            package_id = entry["package_id"]
+            package_name = entry["package_name"]
+            relative = Path(filename)
+            if (
+                relative.name != filename
+                or relative.is_absolute()
+                or relative.suffix != ".jsonl"
+            ):
+                raise RuntimeError(
+                    "execution service runtime index contains an invalid path"
+                )
+            sidecar = runtime_root / filename
+            try:
+                reports = ServiceRuntimeStore(sidecar).current().values()
+            except (OSError, PermissionError, ValueError) as exc:
+                raise RuntimeError(
+                    f"invalid service runtime sidecar for package {package_id!r}"
+                ) from exc
+            for report in reports:
+                if (
+                    report.execution_id != record.execution_id
+                    or report.package_id != package_id
+                    or report.package_name != package_name
+                ):
+                    raise RuntimeError(
+                        f"service runtime identity mismatch for package {package_id!r}"
+                    )
+                if report.service_instance_id in seen_instances:
+                    raise RuntimeError(
+                        "service instance ID is duplicated across package runtimes"
+                    )
+                seen_instances.add(report.service_instance_id)
+                current.append(report)
+        return ExecutionServiceRuntimeSnapshot(
+            execution_id=record.execution_id,
+            pipeline_id=record.pipeline_id,
+            execution_state=record.state,
+            terminal=record.terminal,
+            service_runtimes=tuple(
+                sorted(
+                    current,
+                    key=lambda report: (
+                        report.package_id,
+                        report.service_instance_id,
+                    ),
+                )
+            ),
+        )
+
     def finalize_artifacts(
         self,
         execution_id: str,
@@ -1363,6 +1483,49 @@ class ExecutionStore:
                 )
             )
         return sealed
+
+    def finalize_service_runtimes(
+        self,
+        execution_id: str,
+        *,
+        failed: bool = False,
+    ) -> list[ServiceRuntimeReport]:
+        """Close every active service before execution terminalization."""
+        validated_id = validate_execution_id(execution_id)
+        record = read_execution_record(
+            self.executions_dir / validated_id,
+            expected_execution_id=validated_id,
+        )
+        runtime_files = record.metadata.get("service_runtime_files", {})
+        if not isinstance(runtime_files, dict):
+            raise RuntimeError("execution service runtime index is invalid")
+        runtime_root = self.executions_dir / validated_id / "service-runtimes"
+        finalized: list[ServiceRuntimeReport] = []
+        for runtime_key, entry in runtime_files.items():
+            if (
+                not isinstance(runtime_key, str)
+                or not runtime_key
+                or not isinstance(entry, dict)
+                or set(entry) != {"filename", "package_id", "package_name"}
+                or not isinstance(entry.get("filename"), str)
+                or not isinstance(entry.get("package_id"), str)
+                or not entry["package_id"]
+                or not isinstance(entry.get("package_name"), str)
+                or not entry["package_name"]
+            ):
+                raise RuntimeError("execution service runtime index is invalid")
+            filename = entry["filename"]
+            relative = Path(filename)
+            if relative.name != filename or relative.suffix != ".jsonl":
+                raise RuntimeError(
+                    "execution service runtime index contains an invalid path"
+                )
+            finalized.extend(
+                ServiceRuntimeStore(runtime_root / filename).finalize_active(
+                    failed=failed
+                )
+            )
+        return finalized
 
     def _terminalize_pending_scheduler_artifact_paths(
         self,
@@ -1724,6 +1887,10 @@ class ExecutionStore:
                 and updated.terminal
                 and updated.state != "scripted"
             ):
+                self.finalize_service_runtimes(
+                    validated_id,
+                    failed=updated.state == "failed",
+                )
                 self.finalize_artifacts(
                     validated_id,
                     failed=updated.state == "failed",
