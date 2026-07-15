@@ -134,7 +134,8 @@ python() {
     --arg tag "$TAG_NAME" \
     --arg body "JARVIS-CD $TAG_NAME immutable release." '
       [.[][] | select(.tag_name == $tag)] as $matches
-      | if (
+      | if ($matches | length) == 0 then halt_error(3)
+        elif (
           ($matches | length) == 1
           and $matches[0].name == $tag
           and $matches[0].body == $body
@@ -146,6 +147,11 @@ python() {
     '
 }
 
+sleep() {
+  [ "$1" = 5 ]
+  printf '%s\n' "$1" >>"$STATE/sleep-log"
+}
+
 gh() {
   local group="$1" operation="${2:-}" method=GET input='' endpoint='' id name file
   local content_type=false api_version=false accept_json=false
@@ -154,6 +160,11 @@ gh() {
   if [ "$group" = release ]; then
     shift
     if [ "$operation" = verify ] && [ -f "$STATE/published" ]; then
+      return 0
+    fi
+    if [ "$operation" = create ] && [ -f "$STATE/create-race" ]; then
+      printf '%s\n' "$TAG_NAME" >>"$STATE/create-log"
+      touch "$STATE/draft-created"
       return 0
     fi
     echo "unexpected gh release operation: $operation" >&2
@@ -196,6 +207,17 @@ gh() {
       if [ -f "$STATE/fail-pagination" ]; then
         echo 'pagination failed' >&2
         return 1
+      fi
+      if [ -f "$STATE/create-race" ]; then
+        if [ ! -f "$STATE/draft-created" ]; then
+          printf '[[]]\n'
+          return 0
+        fi
+        if [ ! -f "$STATE/draft-list-delay-complete" ]; then
+          touch "$STATE/draft-list-delay-complete"
+          printf '[[]]\n'
+          return 0
+        fi
       fi
       release="$(emit_release true false)"
       jq -cn --argjson release "$release" '[[$release]]'
@@ -363,6 +385,37 @@ def test_release_resume_is_exact_byte_and_fail_closed() -> None:
     assert '--notes "$release_body"' in WORKFLOW
     assert "--generate-notes" not in WORKFLOW
     assert "--clobber" not in WORKFLOW
+
+
+def test_new_draft_release_waits_for_bounded_list_consistency() -> None:
+    """A newly created draft may take time to appear in the list endpoint."""
+    release_block = WORKFLOW[WORKFLOW.index("  release:") :]
+    create_index = release_block.index('gh release create "$TAG_NAME"')
+    wait_index = release_block.index("wait_for_draft_release", create_index)
+
+    assert "wait_for_draft_release()" in release_block
+    assert "for attempt in {1..12}; do" in release_block
+    assert "if find_draft_release; then" in release_block
+    assert 'else\n                status="$?"' in release_block
+    assert 'if [ "$status" -ne 3 ]; then' in release_block
+    assert "sleep 5" in release_block
+    assert "did not become list-visible after 12 attempts" in release_block
+    assert release_block.count('gh release create "$TAG_NAME"') == 1
+    assert create_index < wait_index
+
+
+def test_release_shell_retries_new_draft_visibility_race(tmp_path: Path) -> None:
+    """Publishing resumes after a newly created draft becomes list-visible."""
+    race_root = tmp_path / "create-race"
+    state, _ = _prepare_release_tree(race_root)
+    (state / "create-race").touch()
+
+    result = _run_publish_script(race_root)
+
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    assert (state / "published").is_file()
+    assert (state / "create-log").read_text(encoding="utf-8").splitlines() == [TAG]
+    assert (state / "sleep-log").read_text(encoding="utf-8").splitlines() == ["5"]
 
 
 def test_release_shell_resumes_exact_partial_draft_and_fails_closed(

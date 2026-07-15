@@ -534,6 +534,26 @@ jobs:
               <"$release_pages_json" >"$release_json"
           }
 
+          wait_for_draft_release() {
+            local attempt status
+            for attempt in {1..12}; do
+              if find_draft_release; then
+                return 0
+              else
+                status="$?"
+              fi
+              if [ "$status" -ne 3 ]; then
+                return "$status"
+              fi
+              if [ "$attempt" -lt 12 ]; then
+                echo "draft release is not list-visible yet (attempt $attempt/12)" >&2
+                sleep 5
+              fi
+            done
+            echo "draft release did not become list-visible after 12 attempts" >&2
+            return 3
+          }
+
           find_existing_release() {
             if fetch_published_release 2>"$release_error"; then
               return 0
@@ -652,7 +672,7 @@ jobs:
               --notes "$release_body" \
               --latest \
               --draft
-            find_draft_release
+            wait_for_draft_release
           elif [ "$lookup_status" -ne 0 ]; then
             exit "$lookup_status"
           fi
