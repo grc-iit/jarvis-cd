@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -14,11 +15,25 @@ from types import SimpleNamespace
 from typing import Any, Mapping, cast
 
 import pytest
+from jarvis_cd.artifacts import ArtifactStore
+from jarvis_cd.service_runtime import (
+    DatasetDescriptor,
+    DatasetMember,
+    ServiceLifecycle,
+    calculate_dataset_fingerprint,
+)
 
-from builtin.builtin.paraview import service as service_module
-from builtin.builtin.paraview import pkg as package_module
-from builtin.builtin.paraview import service_supervisor as supervisor_module
-from builtin.builtin.paraview.service_http import (
+# Match JARVIS's runtime repository loader: the directory containing the inner
+# ``builtin`` package is the import root. Importing ``builtin.builtin`` from the
+# checkout root would preload the outer namespace and make every later
+# ``builtin.<package>`` dynamic import fail during full-suite collection.
+_BUILTIN_REPOSITORY_ROOT = Path(__file__).resolve().parents[3] / "builtin"
+sys.path.insert(0, str(_BUILTIN_REPOSITORY_ROOT))
+
+from builtin.paraview import service as service_module  # noqa: E402
+from builtin.paraview import pkg as package_module  # noqa: E402
+from builtin.paraview import service_supervisor as supervisor_module  # noqa: E402
+from builtin.paraview.service_http import (  # noqa: E402
     COMMAND_RESULT_SCHEMA,
     COMMAND_SCHEMA,
     FRAME_SCHEMA,
@@ -26,13 +41,6 @@ from builtin.builtin.paraview.service_http import (
     CommandError,
     ServiceStateController,
     create_server,
-)
-from jarvis_cd.artifacts import ArtifactStore
-from jarvis_cd.service_runtime import (
-    DatasetDescriptor,
-    DatasetMember,
-    ServiceLifecycle,
-    calculate_dataset_fingerprint,
 )
 
 _PNG = b"\x89PNG\r\n\x1a\nreal-test-frame"
