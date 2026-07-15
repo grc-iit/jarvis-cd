@@ -617,6 +617,9 @@ def test_direct_run_returns_handle_and_restores_named_context(tmp_path: Path) ->
     def inspect_running_record() -> None:
         observed["root"] = pipeline._execution_root
         observed["record"] = pipeline.get_execution("direct-run")
+        pipeline.env["JARVIS_SERVICE_RUNTIME_PATH"] = str(
+            tmp_path / "execution" / "service-runtimes" / "viewer.jsonl"
+        )
 
     pipeline.start.side_effect = inspect_running_record
 

@@ -411,6 +411,37 @@ class JarvisCLI(ArgParse):
             ]
         )
 
+        self.add_cmd(
+            "execution service-runtimes",
+            msg="List current network services for one execution",
+            aliases=["execution services"],
+        )
+        self.add_args(
+            [
+                {
+                    "name": "execution_id",
+                    "msg": "JARVIS execution identity",
+                    "type": str,
+                    "required": True,
+                    "pos": True,
+                },
+                {
+                    "name": "pipeline_id",
+                    "aliases": ["pipeline-id"],
+                    "msg": "Pipeline identity (defaults to current pipeline)",
+                    "type": str,
+                    "required": False,
+                },
+                {
+                    "name": "json",
+                    "msg": "Print the complete service-runtime snapshot as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
         self.add_cmd("ppl update", msg="Update current pipeline")
         self.add_args(
             [
@@ -1553,6 +1584,27 @@ class JarvisCLI(ArgParse):
             print(
                 f"  {artifact.package_id}/{artifact.logical_name}: "
                 f"{artifact.state.value} {artifact.kind} ({artifact.artifact_id})"
+            )
+
+    def execution_service_runtimes(self) -> None:
+        """Print current services for a named or current pipeline execution."""
+        self._ensure_initialized()
+        pipeline_id = self.kwargs.get("pipeline_id")
+        pipeline = (
+            Pipeline(pipeline_id) if pipeline_id else self._require_current_pipeline()
+        )
+        snapshot = pipeline.get_execution_service_runtimes(self.kwargs["execution_id"])
+        if self.kwargs.get("json", False):
+            print(json.dumps(snapshot.to_dict(), separators=(",", ":"), sort_keys=True))
+            return
+        print(
+            f"{snapshot.execution_id}: {snapshot.execution_state} "
+            f"({len(snapshot.service_runtimes)} services)"
+        )
+        for runtime in snapshot.service_runtimes:
+            print(
+                f"  {runtime.package_id}/{runtime.service_instance_id}: "
+                f"{runtime.lifecycle.value} {runtime.base_url}"
             )
 
     def ppl_start(self):

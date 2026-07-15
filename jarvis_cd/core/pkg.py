@@ -534,6 +534,32 @@ class Pkg:
         self.env.update(values)
         self.mod_env.update(values)
 
+    def bind_execution_service_runtime(
+        self,
+        execution_id: str,
+        path: str | os.PathLike[str],
+    ) -> None:
+        """Bind service reporting to a JARVIS-owned runtime sidecar.
+
+        :param execution_id: Stable JARVIS execution identifier.
+        :param path: Absolute JSONL path inside the owned execution root.
+        """
+        if not isinstance(execution_id, str) or not execution_id.strip():
+            raise ValueError(
+                "execution service runtime requires a non-empty execution ID"
+            )
+        runtime_path = Path(path)
+        if not runtime_path.is_absolute():
+            raise ValueError("execution service runtime path must be absolute")
+        values = {
+            "JARVIS_EXECUTION_ID": execution_id,
+            "JARVIS_SERVICE_RUNTIME_PATH": str(runtime_path),
+            "JARVIS_PACKAGE_NAME": str(self.pkg_type),
+            "JARVIS_PACKAGE_ID": str(self.pkg_id),
+        }
+        self.env.update(values)
+        self.mod_env.update(values)
+
     def _progress_line_callback(self) -> Optional[Callable[[str, str], None]]:
         """Build the progress half of the package runtime callback.
 
