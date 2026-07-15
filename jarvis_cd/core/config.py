@@ -7,6 +7,28 @@ from jarvis_cd.util.hostfile import Hostfile
 
 
 _JARVIS_ROOT_ENVIRONMENT = "JARVIS_ROOT"
+_STATE_ROOT_FIELDS = ("config_dir", "private_dir", "shared_dir")
+
+
+def _canonicalize_state_roots(config: Dict[str, Any]) -> Dict[str, Any]:
+    """Map the OS logical-home prefix without resolving state descendants."""
+    normalized = config.copy()
+    logical_home = Path(os.path.abspath(Path.home()))
+    canonical_home = logical_home.resolve()
+    for field_name in _STATE_ROOT_FIELDS:
+        value = normalized.get(field_name)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"JARVIS {field_name} must be a non-empty path string")
+        absolute = Path(os.path.abspath(Path(value).expanduser()))
+        try:
+            relative = absolute.relative_to(logical_home)
+        except ValueError:
+            normalized[field_name] = str(absolute)
+        else:
+            normalized[field_name] = str(canonical_home / relative)
+    return normalized
 
 
 def load_class(import_str: str, path: str, class_name: str):
@@ -83,7 +105,7 @@ class Jarvis:
         if configured_root is None:
             configured_root = os.environ.get(_JARVIS_ROOT_ENVIRONMENT)
         if configured_root is None:
-            self.jarvis_root = Path.home() / ".ppi-jarvis"
+            self.jarvis_root = (Path.home() / ".ppi-jarvis").resolve()
         else:
             if not configured_root or any(
                 ord(character) < 32 or ord(character) == 127
@@ -105,9 +127,9 @@ class Jarvis:
         self._hostfile = None
 
         # Directory paths
-        self.config_dir = None
-        self.private_dir = None
-        self.shared_dir = None
+        self.config_dir: Optional[str] = None
+        self.private_dir: Optional[str] = None
+        self.shared_dir: Optional[str] = None
 
         # Try to automatically load configuration if it exists
         if self.is_initialized():
@@ -143,16 +165,21 @@ class Jarvis:
         # Create jarvis root directory
         self.jarvis_root.mkdir(parents=True, exist_ok=True)
 
-        # Create required directories
-        Path(config_dir).mkdir(parents=True, exist_ok=True)
-        Path(private_dir).mkdir(parents=True, exist_ok=True)
-        Path(shared_dir).mkdir(parents=True, exist_ok=True)
+        # Create required directories before canonicalizing them. This keeps
+        # administrator-managed aliases such as /home -> /mnt/common outside
+        # the private-state path boundary without relaxing its no-link checks.
+        config_path = Path(config_dir).expanduser()
+        private_path = Path(private_dir).expanduser()
+        shared_path = Path(shared_dir).expanduser()
+        config_path.mkdir(parents=True, exist_ok=True)
+        private_path.mkdir(parents=True, exist_ok=True)
+        shared_path.mkdir(parents=True, exist_ok=True)
 
         # Initialize default configuration
         default_config = {
-            "config_dir": str(Path(config_dir).absolute()),
-            "private_dir": str(Path(private_dir).absolute()),
-            "shared_dir": str(Path(shared_dir).absolute()),
+            "config_dir": str(config_path.resolve()),
+            "private_dir": str(private_path.resolve()),
+            "shared_dir": str(shared_path.resolve()),
             "current_pipeline": None,
             "hostfile": None,
         }
@@ -246,12 +273,13 @@ class Jarvis:
         return self._hostfile
 
     def load_config(self) -> Dict[str, Any]:
-        """Load jarvis configuration from file"""
+        """Load configuration and migrate legacy logical state roots in memory."""
         if not self.config_file.exists():
             raise FileNotFoundError("Jarvis not initialized. Run 'jarvis init' first.")
 
         with open(self.config_file, "r") as f:
-            return yaml.safe_load(f) or {}
+            config = yaml.safe_load(f) or {}
+        return _canonicalize_state_roots(config)
 
     def load_repos(self) -> Dict[str, Any]:
         """Load repos configuration from file"""
@@ -270,11 +298,12 @@ class Jarvis:
             return yaml.safe_load(f) or {"storage": {}, "network": {}}
 
     def save_config(self, config: Dict[str, Any]):
-        """Save jarvis configuration to file"""
+        """Save jarvis configuration with canonical state-root paths."""
+        normalized = _canonicalize_state_roots(config)
         self.jarvis_root.mkdir(parents=True, exist_ok=True)
         with open(self.config_file, "w") as f:
-            yaml.dump(config, f, default_flow_style=False)
-        self._config = config
+            yaml.dump(normalized, f, default_flow_style=False)
+        self._config = normalized
 
     def save_repos(self, repos: Dict[str, Any]):
         """Save repos configuration to file"""
@@ -423,11 +452,17 @@ class Jarvis:
 
     def get_pipeline_dir(self, pipeline_name: str) -> Path:
         """Get the config directory for a specific pipeline"""
-        return Path(self.config_dir) / "pipelines" / validate_pipeline_id(pipeline_name)
+        return (
+            self._require_state_root(self.config_dir, "config_dir")
+            / "pipelines"
+            / validate_pipeline_id(pipeline_name)
+        )
 
     def get_pipeline_shared_dir(self, pipeline_name: str) -> Path:
         """Get the shared directory for a specific pipeline"""
-        return Path(self.shared_dir) / validate_pipeline_id(pipeline_name)
+        return self._require_state_root(
+            self.shared_dir, "shared_dir"
+        ) / validate_pipeline_id(pipeline_name)
 
     def get_containers_dir(self) -> Path:
         """Centralized SIF cache shared by every pipeline.
@@ -437,11 +472,20 @@ class Jarvis:
         pipelines reuse the same image without rebuilding or
         re-pulling.
         """
-        return Path(self.shared_dir) / "containers"
+        return self._require_state_root(self.shared_dir, "shared_dir") / "containers"
 
     def get_pipeline_private_dir(self, pipeline_name: str) -> Path:
         """Get the private directory for a specific pipeline"""
-        return Path(self.private_dir) / validate_pipeline_id(pipeline_name)
+        return self._require_state_root(
+            self.private_dir, "private_dir"
+        ) / validate_pipeline_id(pipeline_name)
+
+    @staticmethod
+    def _require_state_root(value: Optional[str], field_name: str) -> Path:
+        """Return one initialized state root or fail before using the CWD."""
+        if value is None:
+            raise RuntimeError(f"JARVIS {field_name} is not initialized")
+        return Path(value)
 
     def get_current_pipeline_dir(self) -> Optional[Path]:
         """Get the config directory for the current pipeline"""
