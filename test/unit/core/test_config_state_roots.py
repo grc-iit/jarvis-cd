@@ -10,6 +10,7 @@ import yaml
 
 from jarvis_cd.core.config import Jarvis
 from jarvis_cd.core.execution import ExecutionStore
+from jarvis_cd.core.pkg import Pkg
 from jarvis_cd.util.private_path import reject_private_path_redirection
 
 
@@ -147,5 +148,101 @@ def test_default_jarvis_root_canonicalizes_home_alias(
     try:
         jarvis = Jarvis()
         assert jarvis.jarvis_root == (canonical_home / ".ppi-jarvis").resolve()
+    finally:
+        Jarvis._instance = None
+
+
+def test_stale_managed_builtin_repo_binds_to_running_distribution(
+    tmp_path: Path,
+) -> None:
+    """A wheel upgrade must not keep describing an old copied builtin tree."""
+    jarvis_root = tmp_path / ".ppi-jarvis"
+    legacy_builtin = jarvis_root / "builtin"
+    legacy_package = legacy_builtin / "builtin" / "paraview" / "pkg.py"
+    legacy_package.parent.mkdir(parents=True)
+    legacy_package.write_text(
+        "# stale managed copy intentionally lacks pvpython_bin\n",
+        encoding="utf-8",
+    )
+    operator_repo = tmp_path / "operator-packages"
+    operator_repo.mkdir()
+
+    Jarvis._instance = None
+    try:
+        jarvis = Jarvis(jarvis_root=str(jarvis_root))
+        jarvis.initialize(
+            config_dir=str(tmp_path / "config"),
+            private_dir=str(tmp_path / "private"),
+            shared_dir=str(tmp_path / "shared"),
+        )
+        persisted_repositories = {"repos": [str(operator_repo), str(legacy_builtin)]}
+        jarvis.save_repos(persisted_repositories)
+        active_distribution_builtin = jarvis._distribution_builtin_repository()
+        assert active_distribution_builtin is not None
+        assert jarvis.repos == {
+            "repos": [str(operator_repo), str(active_distribution_builtin)]
+        }
+
+        Jarvis._instance = None
+        reloaded = Jarvis(jarvis_root=str(jarvis_root))
+        distribution_builtin = reloaded._distribution_builtin_repository()
+        assert distribution_builtin is not None
+        assert reloaded.repos == {
+            "repos": [str(operator_repo), str(distribution_builtin)]
+        }
+        assert yaml.safe_load(reloaded.repos_file.read_text(encoding="utf-8")) == (
+            persisted_repositories
+        )
+        assert legacy_package.read_text(encoding="utf-8").startswith(
+            "# stale managed copy"
+        )
+
+        package = Pkg.load_standalone("builtin.paraview")
+        setting = next(
+            item
+            for item in package.configure_menu()
+            if item.get("name") == "pvpython_bin"
+        )
+        assert setting == {
+            "name": "pvpython_bin",
+            "msg": "Path or command used to launch the ParaView service",
+            "type": str,
+            "default": "pvpython",
+        }
+        assert (
+            Path(package.pkg_dir)
+            .resolve()
+            .is_relative_to(distribution_builtin.resolve())
+        )
+    finally:
+        Jarvis._instance = None
+
+
+def test_explicit_operator_builtin_repository_is_not_rebound(
+    tmp_path: Path,
+) -> None:
+    """Only JARVIS's exact legacy copy path is distribution-managed."""
+    jarvis_root = tmp_path / ".ppi-jarvis"
+    operator_builtin = tmp_path / "operator" / "builtin"
+    marker = operator_builtin / "builtin" / "site_package" / "pkg.py"
+    marker.parent.mkdir(parents=True)
+    marker.write_text("# operator-owned package\n", encoding="utf-8")
+
+    Jarvis._instance = None
+    try:
+        jarvis = Jarvis(jarvis_root=str(jarvis_root))
+        jarvis.initialize(
+            config_dir=str(tmp_path / "config"),
+            private_dir=str(tmp_path / "private"),
+            shared_dir=str(tmp_path / "shared"),
+        )
+        repositories = {"repos": [str(operator_builtin)]}
+        jarvis.save_repos(repositories)
+
+        Jarvis._instance = None
+        reloaded = Jarvis(jarvis_root=str(jarvis_root))
+        assert reloaded.repos == repositories
+        assert reloaded.get_builtin_repo_path() == operator_builtin
+        assert marker.read_text(encoding="utf-8") == "# operator-owned package\n"
     finally:
         Jarvis._instance = None

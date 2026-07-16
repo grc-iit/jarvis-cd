@@ -312,6 +312,39 @@ def test_supervisor_cleans_child_when_initial_reporting_fails(
     ]
 
 
+def test_supervisor_missing_configured_pvpython_fails_loudly(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A configured launcher that does not exist is a recorded hard failure."""
+    reporter = _RecordingReporter()
+    descriptor = _supervisor_descriptor(tmp_path / "descriptor.json")
+    missing_launcher = str(tmp_path / "missing-pvpython")
+    arguments = _supervisor_arguments(descriptor, tmp_path / "output")
+    arguments[arguments.index("--pvpython-bin") + 1] = missing_launcher
+
+    def missing_popen(command: list[str], **_kwargs: Any) -> Any:
+        assert command[0] == missing_launcher
+        raise FileNotFoundError(f"configured launcher not found: {missing_launcher}")
+
+    def reporter_from_environment(**_kwargs: Any) -> _RecordingReporter:
+        return reporter
+
+    monkeypatch.setattr(supervisor_module.subprocess, "Popen", missing_popen)
+    monkeypatch.setattr(
+        supervisor_module,
+        "ServiceRuntimeReporter",
+        SimpleNamespace(from_environment=reporter_from_environment),
+    )
+
+    assert supervisor_module.main(arguments) == 1
+    assert reporter.lifecycle_calls == [ServiceLifecycle.FAILED]
+    diagnostic = capsys.readouterr().err
+    assert "ParaView service supervisor failed" in diagnostic
+    assert missing_launcher in diagnostic
+
+
 def test_supervisor_reports_periodic_degradation_and_recovery(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

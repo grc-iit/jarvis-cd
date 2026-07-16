@@ -282,12 +282,24 @@ class Jarvis:
         return _canonicalize_state_roots(config)
 
     def load_repos(self) -> Dict[str, Any]:
-        """Load repos configuration from file"""
+        """Load repositories and bind the legacy builtin slot to this install.
+
+        Older installations copied the distribution's ``builtin`` repository
+        into ``<JARVIS_ROOT>/builtin`` once and then kept using that mutable
+        snapshot across package upgrades.  The exact legacy path is owned by
+        JARVIS, so it is safe to rebind that one entry in memory to the builtin
+        repository shipped beside the running ``jarvis_cd`` package.  Other
+        repository entries, including operator-provided repositories named
+        ``builtin``, remain untouched.
+        """
         if not self.repos_file.exists():
             return {"repos": []}
 
         with open(self.repos_file, "r") as f:
-            return yaml.safe_load(f) or {"repos": []}
+            repositories = yaml.safe_load(f) or {"repos": []}
+        if not isinstance(repositories, dict):
+            return repositories
+        return self._bind_distribution_builtin_repository(repositories)
 
     def load_resource_graph(self) -> Dict[str, Any]:
         """Load resource graph from file"""
@@ -306,11 +318,11 @@ class Jarvis:
         self._config = normalized
 
     def save_repos(self, repos: Dict[str, Any]):
-        """Save repos configuration to file"""
+        """Save repository config and bind its managed builtin view."""
         self.jarvis_root.mkdir(parents=True, exist_ok=True)
         with open(self.repos_file, "w") as f:
             yaml.dump(repos, f, default_flow_style=False)
-        self._repos = repos
+        self._repos = self._bind_distribution_builtin_repository(repos)
 
     def save_resource_graph(self, resource_graph: Dict[str, Any]):
         """Save resource graph to file"""
@@ -534,27 +546,31 @@ class Jarvis:
         return config_dir / "pipelines"
 
     def get_builtin_repo_path(self) -> Path:
-        """Get path to builtin repository"""
+        """Get the active builtin repository for this JARVIS installation."""
         # First check if builtin repo is registered in repos
         for repo_path_str in self.repos["repos"]:
             repo_path = Path(repo_path_str)
             if repo_path.name == "builtin" and repo_path.exists():
                 return repo_path
 
-        # Fall back to builtin repo installed to ~/.ppi-jarvis/builtin
+        # Bind builtins to the running source tree or installed distribution.
+        # This must precede the legacy copied tree so a wheel upgrade cannot
+        # continue loading an older package contract from JARVIS_ROOT.
+        distribution_builtin = self._distribution_builtin_repository()
+        if distribution_builtin is not None:
+            return distribution_builtin
+
+        # Compatibility fallback for installations whose distribution did not
+        # include builtins.  This path is never overwritten here.
         user_builtin = self.jarvis_root / "builtin"
         if user_builtin.exists():
             return user_builtin
 
-        # Fall back to builtin repo in the same directory as this file (development)
-        dev_builtin = Path(__file__).parent.parent.parent / "builtin"
-        if dev_builtin.exists():
-            return dev_builtin
-
-        # Fall back to installed package location
+        # Preserve compatibility with non-standard installations where the
+        # builtin top-level package is not adjacent to jarvis_cd.
         try:
-            import importlib.util
             import importlib.metadata
+            import importlib.util
             import site
 
             # Method 1: Try to find builtin package directly
@@ -601,6 +617,52 @@ class Jarvis:
 
         # Default fallback
         return user_builtin
+
+    def _bind_distribution_builtin_repository(
+        self,
+        repositories: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Return repository config with only the managed legacy slot rebound."""
+        entries = repositories.get("repos")
+        if not isinstance(entries, list):
+            return repositories
+        distribution_builtin = self._distribution_builtin_repository()
+        if distribution_builtin is None:
+            return repositories
+        legacy_builtin = self._absolute_lexical_path(self.jarvis_root / "builtin")
+        rebound_path = str(distribution_builtin)
+        changed = False
+        rebound_entries: list[Any] = []
+        for entry in entries:
+            rebound: Any = entry
+            if (
+                isinstance(entry, str)
+                and self._absolute_lexical_path(entry) == legacy_builtin
+            ):
+                rebound = rebound_path
+                changed = rebound != entry
+            if rebound not in rebound_entries:
+                rebound_entries.append(rebound)
+            elif rebound != entry:
+                changed = True
+        if not changed:
+            return repositories
+        return {**repositories, "repos": rebound_entries}
+
+    @staticmethod
+    def _absolute_lexical_path(path: str | os.PathLike[str]) -> Path:
+        """Normalize a path without following operator-managed redirections."""
+        return Path(os.path.abspath(Path(path).expanduser()))
+
+    @staticmethod
+    def _distribution_builtin_repository() -> Optional[Path]:
+        """Locate the builtin repository shipped with the running package."""
+        candidate = Path(__file__).resolve().parents[2] / "builtin"
+        if (candidate / "__init__.py").is_file() and (
+            candidate / "builtin" / "__init__.py"
+        ).is_file():
+            return candidate
+        return None
 
     def find_package(self, pkg_name: str) -> Optional[str]:
         """
