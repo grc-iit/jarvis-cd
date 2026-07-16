@@ -4,8 +4,12 @@ LAMMPS (Large-scale Atomic/Molecular Massively Parallel Simulator) is a
 classical molecular-dynamics code from Sandia National Laboratories.
 """
 
+import hashlib
 import os
 import shlex
+import tempfile
+from pathlib import Path
+from typing import Any
 
 from jarvis_cd.core.pkg import Application
 from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
@@ -21,10 +25,10 @@ class Lammps(Application):
     system-installed lmp binary via MPI.
     """
 
-    def _init(self):
+    def _init(self) -> None:
         pass
 
-    def _configure_menu(self):
+    def _configure_menu(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": "nprocs",
@@ -82,19 +86,22 @@ class Lammps(Application):
             },
             {
                 "name": "io_dump_interval",
-                "msg": "If >0, auto-generate LJ input with dump every N steps",
+                "msg": (
+                    "If >0, use the package-owned Lennard-Jones workload and dump "
+                    "every N steps in system/Spack or container mode"
+                ),
                 "type": int,
                 "default": 0,
             },
             {
                 "name": "io_lattice_size",
-                "msg": "FCC lattice size per dim (4*N^3 atoms) for auto-generated IO input",
+                "msg": "FCC lattice size per dimension (4*N^3 atoms) for generated input",
                 "type": int,
                 "default": 80,
             },
             {
                 "name": "io_run_steps",
-                "msg": "Total steps for auto-generated IO input",
+                "msg": "Total steps for the package-owned generated workload",
                 "type": int,
                 "default": 5000,
             },
@@ -104,7 +111,7 @@ class Lammps(Application):
     # Container Dockerfile generators
     # ------------------------------------------------------------------
 
-    def _build_phase(self):
+    def _build_phase(self) -> tuple[str, str] | None:  # pyright: ignore[reportIncompatibleMethodOverride]
         if self.config.get("deploy_mode") != "container":
             return None
         base = self.config.get("base_image", "sci-hpc-base")
@@ -129,14 +136,14 @@ class Lammps(Application):
         )
         return content, suffix
 
-    def _build_deploy_phase(self):
+    def _build_deploy_phase(self) -> tuple[str, str] | None:  # pyright: ignore[reportIncompatibleMethodOverride]
         if self.config.get("deploy_mode") != "container":
             return None
         use_gpu = self.config.get("kokkos_gpu", True)
         deploy_base = (
             "nvidia/cuda:12.6.0-runtime-ubuntu24.04" if use_gpu else "ubuntu:24.04"
         )
-        suffix = getattr(self, "_build_suffix", "")
+        suffix = str(getattr(self, "_build_suffix", ""))
         content = self._read_dockerfile(
             "Dockerfile.deploy",
             {
@@ -150,7 +157,7 @@ class Lammps(Application):
     # Configuration
     # ------------------------------------------------------------------
 
-    def _configure(self, **kwargs):
+    def _configure(self, **kwargs: Any) -> None:
         """
         Configure LAMMPS.
 
@@ -162,9 +169,12 @@ class Lammps(Application):
         super()._configure(**kwargs)
 
         if self.config.get("deploy_mode") == "default":
-            if self.config["out"]:
+            output_dir: object = self.config.get("out")
+            if output_dir:
+                if not isinstance(output_dir, str):
+                    raise TypeError("out must be a path string")
                 Mkdir(
-                    self.config["out"],
+                    output_dir,
                     PsshExecInfo(hostfile=self.hostfile, env=self.env),
                 ).run()
 
@@ -174,12 +184,20 @@ class Lammps(Application):
 
     def _log_path(self) -> str:
         """Return the deterministic package-owned LAMMPS thermo log path."""
-        output_dir = os.path.expandvars(self.config.get("out") or ".")
-        return os.path.join(os.path.abspath(output_dir), "log.lammps")
+        return os.path.join(self._output_dir(), "log.lammps")
+
+    def _output_dir(self) -> str:
+        """Return the normalized package output directory."""
+        configured: object = self.config.get("out")
+        if configured is None or configured == "":
+            configured = "."
+        if not isinstance(configured, str):
+            raise TypeError("out must be a path string")
+        return os.path.abspath(os.path.expanduser(os.path.expandvars(configured)))
 
     def _remove_stale_log(self) -> None:
         """Remove the previous log before relay polling and LAMMPS startup."""
-        exec_args = {
+        exec_args: dict[str, Any] = {
             "hostfile": self.hostfile,
             "env": self.mod_env,
         }
@@ -203,45 +221,103 @@ class Lammps(Application):
                 f"Failed to remove stale LAMMPS log {self._log_path()}: {failures}"
             )
 
-    def start(self):
+    def _generated_input_script(self) -> str | None:
+        """Create the package-owned Lennard-Jones input when requested.
+
+        This workload is a LAMMPS package semantic, independent of whether
+        JARVIS launches a system/Spack binary or a container image. The input
+        lives in the pipeline shared directory so every allocated node sees
+        the same immutable launch input.
+        """
+        interval: object = self.config.get("io_dump_interval", 0)
+        if interval == 0:
+            script: object = self.config.get("script")
+            if script is None or script == "":
+                return None
+            if not isinstance(script, str):
+                raise TypeError("script must be a path string")
+            return os.path.expanduser(os.path.expandvars(script))
+
+        raw_values: dict[str, object] = {
+            "io_dump_interval": interval,
+            "io_lattice_size": self.config.get("io_lattice_size", 80),
+            "io_run_steps": self.config.get("io_run_steps", 5000),
+        }
+        values: dict[str, int] = {}
+        for name, value in raw_values.items():
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+            values[name] = value
+
+        output_dir = self._output_dir()
+        if any(ord(character) < 32 for character in output_dir):
+            raise ValueError("out cannot contain control characters")
+        output_token = shlex.quote(output_dir)
+        dump_token = shlex.quote(os.path.join(output_dir, "dump.*.lammpstrj"))
+        content = (
+            f"shell mkdir -p {output_token}\n"
+            "units lj\n"
+            "atom_style atomic\n"
+            "lattice fcc 0.8442\n"
+            f"region box block 0 {values['io_lattice_size']} "
+            f"0 {values['io_lattice_size']} 0 {values['io_lattice_size']}\n"
+            "create_box 1 box\n"
+            "create_atoms 1 box\n"
+            "mass 1 1.0\n"
+            "velocity all create 1.44 87287 loop geom\n"
+            "pair_style lj/cut 2.5\n"
+            "pair_coeff 1 1 1.0 1.0 2.5\n"
+            "neighbor 0.3 bin\n"
+            "neigh_modify every 10 delay 0 check no\n"
+            "fix 1 all nve\n"
+            f"dump d1 all custom {values['io_dump_interval']} {dump_token} "
+            "id type x y z vx vy vz\n"
+            "dump_modify d1 sort id\n"
+            f"thermo {values['io_dump_interval']}\n"
+            "timestep 0.005\n"
+            f"run {values['io_run_steps']}\n"
+        )
+
+        if self.shared_dir is None:
+            raise RuntimeError(
+                "LAMMPS generated input requires a pipeline shared directory"
+            )
+        shared_dir = Path(self.shared_dir)
+        shared_dir.mkdir(parents=True, exist_ok=True)
+        content_digest = hashlib.sha256(content.encode("utf-8")).hexdigest()[:16]
+        script_path = shared_dir / f"generated_io_input-{content_digest}.lmp"
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                newline="\n",
+                prefix=f".{script_path.name}.",
+                suffix=".tmp",
+                dir=shared_dir,
+                delete=False,
+            ) as temporary:
+                temporary.write(content)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+                temporary_path = Path(temporary.name)
+            os.replace(temporary_path, script_path)
+        finally:
+            if temporary_path is not None and temporary_path.exists():
+                temporary_path.unlink()
+        return str(script_path)
+
+    def start(self) -> None:
         """
         Launch LAMMPS.
 
         Branches on deploy_mode: uses MpiExecInfo with container engine for
         container mode, MpiExecInfo with hostfile for default mode.
         """
+        script_path = self._generated_input_script()
         self._remove_stale_log()
         line_callback = self.progress_line_callback()
         if self.config.get("deploy_mode") == "container":
-            script_path = self.config.get("script")
-            if self.config.get("io_dump_interval", 0) > 0:
-                n = self.config.get("io_lattice_size", 20)
-                steps = self.config.get("io_run_steps", 100)
-                interval = self.config["io_dump_interval"]
-                out_dir = self.config.get("out", "/tmp/lammps_out")
-                script_path = os.path.join(
-                    str(self.shared_dir), "generated_io_input.lmp"
-                )
-                with open(script_path, "w") as f:
-                    f.write(
-                        f"shell mkdir -p {out_dir}\n"
-                        f"units lj\natom_style atomic\n"
-                        f"lattice fcc 0.8442\n"
-                        f"region box block 0 {n} 0 {n} 0 {n}\n"
-                        f"create_box 1 box\ncreate_atoms 1 box\n"
-                        f"mass 1 1.0\n"
-                        f"velocity all create 1.44 87287 loop geom\n"
-                        f"pair_style lj/cut 2.5\npair_coeff 1 1 1.0 1.0 2.5\n"
-                        f"neighbor 0.3 bin\n"
-                        f"neigh_modify every 10 delay 0 check no\n"
-                        f"fix 1 all nve\n"
-                        f"dump d1 all custom {interval} "
-                        f"{out_dir}/dump.*.lammpstrj "
-                        f"id type x y z vx vy vz\n"
-                        f"dump_modify d1 sort id\n"
-                        f"thermo {interval}\n"
-                        f"timestep 0.005\nrun {steps}\n"
-                    )
             cmd = ["/usr/local/bin/lmp", f"-log {shlex.quote(self._log_path())}"]
             if script_path:
                 cmd.append(f"-in {shlex.quote(os.path.expandvars(script_path))}")
@@ -275,10 +351,8 @@ class Lammps(Application):
                 self.config["lmp_bin"],
                 f"-log {shlex.quote(self._log_path())}",
             ]
-            if self.config["script"]:
-                cmd.append(
-                    f"-in {shlex.quote(os.path.expandvars(self.config['script']))}"
-                )
+            if script_path:
+                cmd.append(f"-in {shlex.quote(script_path)}")
             if self.config.get("kokkos_gpu"):
                 n_gpus = self.config.get("num_gpus", 1)
                 cmd += [f"-k on g {n_gpus}", "-sf kk", "-pk kokkos cuda/aware on"]
@@ -298,14 +372,17 @@ class Lammps(Application):
         if failures:
             raise RuntimeError(f"LAMMPS execution failed: {failures}")
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop LAMMPS (no-op — LAMMPS runs to completion)."""
         pass
 
-    def clean(self):
+    def clean(self) -> None:
         """Remove LAMMPS output directory."""
-        if self.config["out"]:
+        output_dir: object = self.config.get("out")
+        if output_dir:
+            if not isinstance(output_dir, str):
+                raise TypeError("out must be a path string")
             Rm(
-                self.config["out"] + "*",
+                output_dir + "*",
                 PsshExecInfo(hostfile=self.hostfile, env=self.env),
             ).run()
