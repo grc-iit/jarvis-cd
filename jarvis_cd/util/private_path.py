@@ -115,6 +115,13 @@ def ensure_private_descriptor(
         raise PrivatePathIdentityChangedError(
             f"private path changed during secure open: {target}"
         )
+    if not directory and descriptor_information.st_nlink == 0:
+        # A descriptor pinned before an atomic pathname replacement can be
+        # unlinked while pathname metadata still resolves to a cached view of
+        # that inode. Callers may safely reopen only this typed churn signal.
+        raise PrivatePathIdentityChangedError(
+            f"private path changed during secure open: {target}"
+        )
     if not directory and descriptor_information.st_nlink != 1:
         raise RuntimeError(f"private file must have exactly one link: {target}")
     if os.name == "nt":
