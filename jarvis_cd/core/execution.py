@@ -1895,6 +1895,44 @@ class ExecutionStore:
             merged_metadata = dict(current.metadata)
             if metadata:
                 merged_metadata.update(metadata)
+            if _script_activation:
+                submission_value = merged_metadata.get("submission")
+                if isinstance(submission_value, Mapping):
+                    submission = dict(submission_value)
+                    submission_provider = submission.get("provider")
+                    submission_native_id = submission.get("scheduler_job_id")
+                    submission_cluster = submission.get("scheduler_cluster")
+                    if submission_provider not in (None, next_provider):
+                        raise RuntimeError(
+                            "scheduler activation provider conflicts with submission"
+                        )
+                    if submission_native_id not in (None, next_native_id):
+                        raise RuntimeError(
+                            "scheduler activation native identity conflicts with submission"
+                        )
+                    if submission_cluster not in (None, next_cluster):
+                        raise RuntimeError(
+                            "scheduler activation cluster conflicts with submission"
+                        )
+                    complete_submit_receipt = (
+                        submission.get("schema_version")
+                        == "jarvis.scheduler.submission.v1"
+                        and submission.get("execution_id") == current.execution_id
+                        and submission_provider == next_provider
+                        and submission_native_id == next_native_id
+                        and submission.get("submitted") is True
+                        and submission.get("identity_source") == "scheduler_submit_api"
+                    )
+                    if (
+                        complete_submit_receipt
+                        and submission_cluster is None
+                        and next_cluster is not None
+                    ):
+                        submission["scheduler_cluster"] = next_cluster
+                        submission["cluster_identity_source"] = (
+                            "scheduler_runtime_environment"
+                        )
+                    merged_metadata["submission"] = submission
             next_return_code = cast(
                 Optional[int],
                 current.return_code if return_code is _UNSET else return_code,

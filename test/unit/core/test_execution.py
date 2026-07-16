@@ -529,6 +529,115 @@ def test_scheduler_activation_is_identity_bound_and_scripted_only(
         )
 
 
+def test_scheduler_activation_backfills_submitted_cluster_projection(
+    tmp_path: Path,
+) -> None:
+    """Allocation identity keeps the durable submission projection coherent."""
+
+    store = ExecutionStore(tmp_path / "executions", "example")
+    store.create("submitted", mode="scheduler", scheduler_provider="slurm")
+    store.update("submitted", state="submitting")
+    store.update(
+        "submitted",
+        state="submitted",
+        submitted=True,
+        native_id="42",
+        metadata={
+            "submission": {
+                "schema_version": "jarvis.scheduler.submission.v1",
+                "execution_id": "submitted",
+                "provider": "slurm",
+                "scheduler_job_id": "42",
+                "scheduler_cluster": None,
+                "identity_source": "scheduler_submit_api",
+                "submitted": True,
+            }
+        },
+    )
+
+    activated = store.activate_scheduler(
+        "submitted",
+        provider="slurm",
+        native_id="42",
+        cluster="linux",
+    )
+
+    assert activated.cluster == "linux"
+    submission = activated.metadata["submission"]
+    assert submission["scheduler_cluster"] == "linux"
+    assert submission["cluster_identity_source"] == "scheduler_runtime_environment"
+    assert submission["identity_source"] == "scheduler_submit_api"
+
+
+def test_scheduler_activation_rejects_conflicting_submission_cluster(
+    tmp_path: Path,
+) -> None:
+    """An allocation cannot rewrite an already-bound submission cluster."""
+
+    store = ExecutionStore(tmp_path / "executions", "example")
+    store.create("conflict", mode="scheduler", scheduler_provider="slurm")
+    store.update("conflict", state="submitting")
+    store.update(
+        "conflict",
+        state="submitted",
+        submitted=True,
+        native_id="42",
+        metadata={
+            "submission": {
+                "provider": "slurm",
+                "scheduler_job_id": "42",
+                "scheduler_cluster": "other",
+            }
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="cluster conflicts"):
+        store.activate_scheduler(
+            "conflict",
+            provider="slurm",
+            native_id="42",
+            cluster="ares",
+        )
+
+
+def test_scheduler_activation_does_not_promote_incomplete_submission_receipt(
+    tmp_path: Path,
+) -> None:
+    """Runtime identity cannot make a manual/script-only projection look submitted."""
+
+    store = ExecutionStore(tmp_path / "executions", "example")
+    store.create(
+        "manual-projection",
+        mode="scheduler",
+        scheduler_provider="slurm",
+        metadata={
+            "submission": {
+                "schema_version": "jarvis.scheduler.submission.v1",
+                "execution_id": "manual-projection",
+                "provider": "slurm",
+                "scheduler_job_id": None,
+                "scheduler_cluster": None,
+                "identity_source": None,
+                "submitted": False,
+            }
+        },
+    )
+    store.update("manual-projection", state="scripted", terminal=True)
+
+    activated = store.activate_scheduler(
+        "manual-projection",
+        provider="slurm",
+        native_id="42",
+        cluster="linux",
+    )
+
+    submission = activated.metadata["submission"]
+    assert submission["scheduler_cluster"] is None
+    assert "cluster_identity_source" not in submission
+    assert submission["scheduler_job_id"] is None
+    assert submission["submitted"] is False
+
+
 def test_record_reader_rejects_unknown_fields_and_symlink_roots(
     tmp_path: Path,
 ) -> None:
