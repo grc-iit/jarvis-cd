@@ -96,6 +96,7 @@ _UNSET = object()
 _TRANSACTION_LOCK_PREFIX = ".jarvis-execution-lock-"
 _DIRECT_STARTUP_GRACE_SECONDS = 60.0
 _SECURE_RECORD_READ_ATTEMPTS = 16
+_SECURE_RECORD_READ_RETRY_SECONDS = 0.01
 
 
 @dataclass(frozen=True)
@@ -647,6 +648,15 @@ def _validate_private_regular_file(
         raise PrivatePathIdentityChangedError(
             f"private path changed during secure open: {path}"
         )
+    if descriptor_status.st_nlink == 0:
+        # Atomic replacement unlinks the descriptor's old inode. On a shared
+        # filesystem, pathname metadata can briefly remain cached at that same
+        # inode, so identity equality alone does not make the zero-link view a
+        # corrupt record. Classify it as replacement churn and let the bounded
+        # secure-read loop reopen the current pathname.
+        raise PrivatePathIdentityChangedError(
+            f"private path changed during secure open: {path}"
+        )
     if descriptor_status.st_nlink != 1 or descriptor_status.st_size > maximum_size:
         raise RuntimeError(f"invalid execution record: {path}")
     if os.name != "nt" and (
@@ -714,6 +724,7 @@ def read_execution_record(
         except PrivatePathIdentityChangedError:
             if attempt + 1 == _SECURE_RECORD_READ_ATTEMPTS:
                 raise
+            sleep(_SECURE_RECORD_READ_RETRY_SECONDS)
             continue
         finally:
             os.close(descriptor)
