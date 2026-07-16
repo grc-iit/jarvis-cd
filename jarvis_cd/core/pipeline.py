@@ -45,9 +45,12 @@ class Pipeline:
         self.container_host_path = ""  # Docker host path prefix for DinD remapping
         self.container_workspace = ""  # Container workspace root for DinD remapping
         self.container_caps = []  # Apptainer --add-caps (e.g. SYS_ADMIN)
+        self.container_fakeroot = False  # Apptainer --fakeroot at instance start
         self.container_binds = []  # Pipeline-level bind mounts (host:container)
         self.container_gpu = False  # --nv / GPU passthrough
         self.tmp_bind_root = None  # Per-host /tmp redirect root (apptainer)
+        self.container_overlay = True  # Apptainer --overlay writable layer
+        self.container_overlay_root = None  # Per-host overlay upper dir root (apptainer)
 
         # Default deploy_mode propagated to packages that don't set
         # their own. None means no default ('default' deploy_mode).
@@ -319,8 +322,20 @@ class Pipeline:
             pipeline_config['container_workspace'] = self.container_workspace
         if self.container_caps:
             pipeline_config['container_caps'] = self.container_caps
+        if self.container_fakeroot:
+            pipeline_config['container_fakeroot'] = self.container_fakeroot
         if self.container_binds:
             pipeline_config['container_binds'] = self.container_binds
+        # container_overlay defaults to True: persist only a non-default
+        # False (the `if truthy` idiom above would drop it silently).
+        if not self.container_overlay:
+            pipeline_config['container_overlay'] = False
+        if self.container_overlay_root:
+            pipeline_config['container_overlay_root'] = self.container_overlay_root
+        if self.container_gpu:
+            pipeline_config['container_gpu'] = self.container_gpu
+        if self.tmp_bind_root:
+            pipeline_config['tmp_bind_root'] = self.tmp_bind_root
 
         # Add base_deploy_mode (default deploy_mode propagated to pkgs).
         if self.base_deploy_mode:
@@ -972,8 +987,22 @@ class Pipeline:
         self.container_host_path = pipeline_config.get('container_host_path', '')
         self.container_workspace = pipeline_config.get('container_workspace', '')
         self.container_caps = pipeline_config.get('container_caps', [])
+        self.container_fakeroot = pipeline_config.get(
+            'container_fakeroot', False)
         self.container_binds = Pipeline._expand_env_in_config(
             pipeline_config.get('container_binds', []) or [])
+        self.container_overlay = pipeline_config.get('container_overlay', True)
+        overlay_root_raw = pipeline_config.get('container_overlay_root', None)
+        self.container_overlay_root = (
+            os.path.expandvars(overlay_root_raw)
+            if overlay_root_raw else None
+        )
+        self.container_gpu = pipeline_config.get('container_gpu', False)
+        tmp_bind_root_raw = pipeline_config.get('tmp_bind_root', None)
+        self.tmp_bind_root = (
+            os.path.expandvars(tmp_bind_root_raw)
+            if tmp_bind_root_raw else None
+        )
 
         # Launcher overrides (top-level YAML keys). None = use built-in
         # defaults (ssh / pssh / mpiexec). Typical override pattern:
@@ -1135,6 +1164,13 @@ class Pipeline:
         # the workload needs (e.g., SYS_ADMIN + /dev/fuse for FUSE mounts)
         # has to be declared at the pipeline level here.
         self.container_caps = pipeline_def.get('container_caps', [])
+        # Apptainer-only: run the instance under --fakeroot. Rootless
+        # apptainer grants a FUSE-capable user namespace (CAP_SYS_ADMIN
+        # inside the userns) only via --fakeroot; per-exec flags are
+        # ignored on a running instance, so like caps/binds above it must
+        # bake into `apptainer instance start`.
+        self.container_fakeroot = pipeline_def.get('container_fakeroot',
+                                                   False)
         self.container_binds = Pipeline._expand_env_in_config(
             pipeline_def.get('container_binds', []) or [])
 
@@ -1154,6 +1190,24 @@ class Pipeline:
         self.tmp_bind_root = (
             os.path.expandvars(tmp_bind_root_raw)
             if tmp_bind_root_raw else None
+        )
+
+        # Apptainer-only: writable-overlay controls. The default overlay
+        # upper dir lives under the pipeline's shared_dir, which is
+        # single-node only: overlayfs cannot use a shared/NFS directory
+        # as its upper layer, and concurrent `apptainer instance start`s
+        # across nodes race on the same session/overlay setup. Setting
+        # `container_overlay_root: /mnt/nvme/$USER` (or any per-host
+        # path) puts the upper dir at <root>/<pipeline_name>/overlay on
+        # every host instead — required for multi-node pipelines.
+        # `container_overlay: false` drops --overlay entirely: the
+        # container FS is read-only outside bind mounts and the host
+        # /tmp mounts normally.
+        self.container_overlay = pipeline_def.get('container_overlay', True)
+        overlay_root_raw = pipeline_def.get('container_overlay_root', None)
+        self.container_overlay_root = (
+            os.path.expandvars(overlay_root_raw)
+            if overlay_root_raw else None
         )
 
         # Launcher overrides (top-level YAML keys). None = use built-in
@@ -1781,21 +1835,59 @@ class Pipeline:
             if self.container_caps:
                 cap_flag = f'--add-caps {",".join(self.container_caps)} '
 
-            # Per-pipeline writable layer backed by NFS, not RAM.
+            fakeroot_flag = '--fakeroot ' if self.container_fakeroot else ''
+
+            # The effective hostfile decides both where instances start
+            # (exec_info below) and whether the default shared overlay
+            # is even legal (guard below). Fetch it once, up front.
+            hostfile = self.get_hostfile()
+
+            # Per-pipeline writable layer backed by disk, not RAM.
             # `--writable-tmpfs` is RAM-only (capped at ~50% of system
             # RAM); workloads that apt-/conda-install at runtime
             # (snakemake conda envs, deferred pip installs, …) blow past
-            # that even though the host has terabytes free. An overlay
-            # directory under shared_dir lives on the same NFS mount as
-            # the SIF, so the container has effectively unlimited
-            # writable space and the data persists across runs.
+            # that even though the host has terabytes free.
+            #
+            # The default overlay dir under shared_dir lives on the same
+            # (typically NFS) mount as the SIF — effectively unlimited
+            # writable space, persists across runs — but is single-node
+            # only: overlayfs cannot use a shared/NFS directory as its
+            # upper layer, and N nodes mounting the same upper dir race
+            # each other's session setup (guarded below).
+            # `container_overlay_root` relocates the upper dir to
+            # <root>/<pipeline_name>/overlay on node-local disk instead;
+            # that dir is created on every host via exec_info further
+            # down, since a head-side mkdir only exists on this node.
             #
             # `--no-mount tmp` keeps the host's small /tmp out of the
-            # picture; in-container /tmp lands in the overlay (NFS).
-            overlay_dir = shared_dir / 'overlay'
-            overlay_dir.mkdir(parents=True, exist_ok=True)
-            overlay_flag = f'--overlay {overlay_dir} '
-            no_mount_flag = '--no-mount tmp '
+            # picture; in-container /tmp lands in the overlay. With
+            # `container_overlay: false` there is no overlay for /tmp to
+            # land in, so the host /tmp stays mounted (apptainer
+            # default).
+            overlay_flag = ''
+            no_mount_flag = ''
+            if self.container_overlay:
+                if self.container_overlay_root:
+                    overlay_dir = (
+                        f"{self.container_overlay_root}/{self.name}/overlay")
+                else:
+                    if (len(hostfile) > 1 and
+                            not self._hostfile_is_local_only(hostfile)):
+                        raise RuntimeError(
+                            f"Pipeline '{self.name}' spans multiple hosts "
+                            f"but uses the default shared apptainer overlay "
+                            f"({shared_dir / 'overlay'}). overlayfs cannot "
+                            "use a shared/NFS directory as its upper layer, "
+                            "and concurrent instance starts race on it. Set "
+                            "`container_overlay_root: <node-local path>` "
+                            "(e.g. /mnt/nvme/$USER) or `container_overlay: "
+                            "false` in the pipeline YAML.")
+                    overlay_dir = shared_dir / 'overlay'
+                    # Head-side mkdir suffices only because this path is
+                    # on the shared FS (single-node guaranteed above).
+                    overlay_dir.mkdir(parents=True, exist_ok=True)
+                overlay_flag = f'--overlay {overlay_dir} '
+                no_mount_flag = '--no-mount tmp '
 
             # When tmp_bind_root is set in the pipeline YAML, replace the
             # overlay-backed /tmp with a per-host bind mount so workloads
@@ -1808,7 +1900,7 @@ class Pipeline:
                 no_mount_flag = ''
 
             start_cmd = (
-                f"apptainer instance start {nv_flag}{cap_flag}{bind_flags}"
+                f"apptainer instance start {fakeroot_flag}{nv_flag}{cap_flag}{bind_flags}"
                 f"{tmp_bind_flag}{no_mount_flag}{overlay_flag}{sif_path} {instance_name}"
                 f" && apptainer exec {nv_flag}instance://{instance_name}"
                 f" /usr/sbin/sshd -p {ssh_port}"
@@ -1828,7 +1920,6 @@ class Pipeline:
             # adopted by pam_slurm_adopt automatically; the pipeline's
             # own ssh_cmd override (e.g. env -u LD_LIBRARY_PATH ssh)
             # neutralizes the conda libcrypto/OpenSSL mismatch.
-            hostfile = self.get_hostfile()
             if self._hostfile_is_local_only(hostfile):
                 logger.info("Hostfile is local-only, deploying to localhost directly")
                 exec_info = LocalExecInfo()
@@ -1837,6 +1928,21 @@ class Pipeline:
                     f"Hostfile has {len(hostfile)} hosts; starting "
                     "apptainer instance on every host via PsshExecInfo")
                 exec_info = PsshExecInfo(hostfile=hostfile)
+
+            # A per-host overlay upper dir must exist on every node
+            # before `apptainer instance start` tries to mount it,
+            # otherwise apptainer aborts with "mount source X doesn't
+            # exist". (The default shared overlay was mkdir'd head-side
+            # above — being on the shared FS, every node sees it.)
+            if self.container_overlay and self.container_overlay_root:
+                overlay_mkdir = (
+                    f"mkdir -p "
+                    f"{self.container_overlay_root}/{self.name}/overlay")
+                logger.info(
+                    f"container_overlay_root set; ensuring "
+                    f"{self.container_overlay_root}/{self.name}/overlay "
+                    "exists on every host")
+                Exec(overlay_mkdir, exec_info).run()
 
             # Per-host bind source for tmp_bind_root must exist on every
             # node before the apptainer instance start tries to mount it,
@@ -1849,7 +1955,15 @@ class Pipeline:
                     f"{self.name}/tmp exists on every host")
                 Exec(tmp_mkdir, exec_info).run()
 
-            Exec(start_cmd, exec_info).run()
+            start = Exec(start_cmd, exec_info).run()
+            # A partial instance start must not go unnoticed: the
+            # workload's own clustering layer would wait forever on the
+            # node whose instance never came up.
+            for host, code in start.exit_code.items():
+                if code != 0:
+                    raise RuntimeError(
+                        f"apptainer instance start failed on {host} "
+                        f"(exit {code})")
             logger.success("Apptainer instances started (SSH ready)")
         else:
             # Docker/Podman: start containers via compose

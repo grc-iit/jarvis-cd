@@ -38,6 +38,7 @@
   "forwardPorts": [2222],
 
   "remoteEnv": {
-    "PYTHONPATH": "${containerWorkspaceFolder}"
+    "PYTHONPATH": "${containerWorkspaceFolder}",
+    "IS_SANDBOX": "1"
   }
 }
