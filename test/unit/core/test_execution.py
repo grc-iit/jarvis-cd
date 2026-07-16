@@ -288,6 +288,119 @@ def test_record_reader_does_not_block_atomic_replacement(
             os.close(descriptor)
 
 
+def test_record_reader_retries_its_own_atomic_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A secure read retries when a JARVIS writer replaces its open inode."""
+    store = ExecutionStore(tmp_path / "executions", "example")
+    store.create("replaceable", mode="direct")
+    real_validate = execution_module._validate_private_regular_file
+    reader_attempts = 0
+    replaced = False
+
+    def replace_during_validation(
+        descriptor: int,
+        path: Path,
+        *,
+        maximum_size: int,
+    ) -> os.stat_result:
+        nonlocal reader_attempts, replaced
+        reader_attempts += 1
+        if not replaced:
+            replaced = True
+            if os.name == "nt":
+                # MoveFileEx cannot replace a path held by Python's os.open.
+                # Exercise the same typed kernel-identity signal directly;
+                # the POSIX branch below performs the real atomic replacement.
+                raise execution_module.PrivatePathIdentityChangedError(
+                    f"private path changed during secure open: {path}"
+                )
+            store.update("replaceable", state="running")
+        return real_validate(descriptor, path, maximum_size=maximum_size)
+
+    monkeypatch.setattr(
+        execution_module,
+        "_validate_private_regular_file",
+        replace_during_validation,
+    )
+
+    record = store.get("replaceable")
+
+    assert record.state == ("preparing" if os.name == "nt" else "running")
+    assert reader_attempts >= 2
+
+
+def test_record_reader_does_not_retry_non_identity_security_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Symlink and type validation failures remain immediately fatal."""
+    store = ExecutionStore(tmp_path / "executions", "example")
+    store.create("blocked", mode="direct")
+    validations = 0
+
+    def reject_redirection(
+        _descriptor: int,
+        _path: Path,
+        *,
+        maximum_size: int,
+    ) -> os.stat_result:
+        nonlocal validations
+        validations += 1
+        assert maximum_size == MAX_RECORD_BYTES
+        raise RuntimeError("private path cannot traverse a symbolic link")
+
+    monkeypatch.setattr(
+        execution_module,
+        "_validate_private_regular_file",
+        reject_redirection,
+    )
+
+    with pytest.raises(RuntimeError, match="symbolic link"):
+        store.get("blocked")
+    assert validations == 1
+
+
+def test_record_reader_bounds_identity_retries_and_closes_descriptors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Continuous pathname churn fails closed after a bounded descriptor loop."""
+    store = ExecutionStore(tmp_path / "executions", "example")
+    store.create("churning", mode="direct")
+    descriptors: list[int] = []
+
+    def reject_changed_identity(
+        descriptor: int,
+        path: Path,
+        *,
+        maximum_size: int,
+    ) -> os.stat_result:
+        descriptors.append(descriptor)
+        assert maximum_size == MAX_RECORD_BYTES
+        raise execution_module.PrivatePathIdentityChangedError(
+            f"private path changed during secure open: {path}"
+        )
+
+    monkeypatch.setattr(
+        execution_module,
+        "_validate_private_regular_file",
+        reject_changed_identity,
+    )
+
+    with pytest.raises(
+        execution_module.PrivatePathIdentityChangedError,
+        match="changed during secure open",
+    ):
+        store.get("churning")
+
+    assert len(descriptors) == execution_module._SECURE_RECORD_READ_ATTEMPTS
+    for descriptor in descriptors:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+
+
 def test_store_rejects_non_json_metadata_and_terminal_regression(
     tmp_path: Path,
 ) -> None:

@@ -30,6 +30,7 @@ from jarvis_cd.service_runtime import (
     ServiceRuntimeStore,
 )
 from jarvis_cd.util.private_path import (
+    PrivatePathIdentityChangedError,
     ensure_private_descriptor,
     ensure_private_path,
     reject_private_path_redirection,
@@ -94,6 +95,7 @@ _TRANSITIONS = {
 _UNSET = object()
 _TRANSACTION_LOCK_PREFIX = ".jarvis-execution-lock-"
 _DIRECT_STARTUP_GRACE_SECONDS = 60.0
+_SECURE_RECORD_READ_ATTEMPTS = 16
 
 
 @dataclass(frozen=True)
@@ -639,12 +641,17 @@ def _validate_private_regular_file(
     if (
         not stat.S_ISREG(descriptor_status.st_mode)
         or stat.S_ISLNK(path_status.st_mode)
-        or (descriptor_status.st_dev, descriptor_status.st_ino)
-        != (path_status.st_dev, path_status.st_ino)
         or descriptor_status.st_nlink != 1
         or descriptor_status.st_size > maximum_size
     ):
         raise RuntimeError(f"invalid execution record: {path}")
+    if (descriptor_status.st_dev, descriptor_status.st_ino) != (
+        path_status.st_dev,
+        path_status.st_ino,
+    ):
+        raise PrivatePathIdentityChangedError(
+            f"private path changed during secure open: {path}"
+        )
     if os.name != "nt" and (
         descriptor_status.st_uid != _effective_uid()
         or stat.S_IMODE(descriptor_status.st_mode) & 0o077
@@ -681,18 +688,41 @@ def read_execution_record(
         raise RuntimeError(f"execution root is not owner-controlled: {execution_root}")
     record_path = execution_root / RECORD_NAME
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    descriptor = os.open(record_path, flags)
-    try:
-        _validate_private_regular_file(
-            descriptor,
-            record_path,
-            maximum_size=MAX_RECORD_BYTES,
-        )
-        payload = os.read(descriptor, MAX_RECORD_BYTES + 1)
-        if len(payload) > MAX_RECORD_BYTES:
-            raise RuntimeError(f"execution record is too large: {record_path}")
-    finally:
-        os.close(descriptor)
+    payload: Optional[bytes] = None
+    for attempt in range(_SECURE_RECORD_READ_ATTEMPTS):
+        descriptor = os.open(record_path, flags)
+        try:
+            _validate_private_regular_file(
+                descriptor,
+                record_path,
+                maximum_size=MAX_RECORD_BYTES,
+            )
+            payload = os.read(descriptor, MAX_RECORD_BYTES + 1)
+            if len(payload) > MAX_RECORD_BYTES:
+                raise RuntimeError(f"execution record is too large: {record_path}")
+            descriptor_status = os.fstat(descriptor)
+            reject_private_path_redirection(record_path)
+            path_status = record_path.lstat()
+            if stat.S_ISLNK(path_status.st_mode):
+                raise RuntimeError(
+                    f"private path changed during secure open: {record_path}"
+                )
+            if (descriptor_status.st_dev, descriptor_status.st_ino) != (
+                path_status.st_dev,
+                path_status.st_ino,
+            ):
+                raise PrivatePathIdentityChangedError(
+                    f"private path changed during secure open: {record_path}"
+                )
+        except PrivatePathIdentityChangedError:
+            if attempt + 1 == _SECURE_RECORD_READ_ATTEMPTS:
+                raise
+            continue
+        finally:
+            os.close(descriptor)
+        break
+    if payload is None:
+        raise RuntimeError(f"secure execution record read failed: {record_path}")
     try:
         document = json.loads(
             payload.decode("utf-8", errors="strict"),

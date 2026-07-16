@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 
+class PrivatePathIdentityChangedError(RuntimeError):
+    """Report that a pathname stopped identifying an open descriptor."""
+
+
 def reject_private_path_redirection(path: Path) -> None:
     """Reject symbolic links and Windows reparse points in a path ancestry.
 
@@ -102,10 +106,15 @@ def ensure_private_descriptor(
         not expected_type
         or _is_path_redirection(descriptor_information)
         or _is_path_redirection(path_information)
-        or (descriptor_information.st_dev, descriptor_information.st_ino)
-        != (path_information.st_dev, path_information.st_ino)
     ):
         raise RuntimeError(f"private path changed during secure open: {target}")
+    if (descriptor_information.st_dev, descriptor_information.st_ino) != (
+        path_information.st_dev,
+        path_information.st_ino,
+    ):
+        raise PrivatePathIdentityChangedError(
+            f"private path changed during secure open: {target}"
+        )
     if not directory and descriptor_information.st_nlink != 1:
         raise RuntimeError(f"private file must have exactly one link: {target}")
     if os.name == "nt":
@@ -124,11 +133,15 @@ def ensure_private_descriptor(
             raise RuntimeError(f"private path permissions are too broad: {target}")
     final_path_information = target.lstat()
     final_descriptor_information = os.fstat(descriptor)
-    if _is_path_redirection(final_path_information) or (
+    if _is_path_redirection(final_path_information):
+        raise RuntimeError(f"private path changed during secure open: {target}")
+    if (
         final_descriptor_information.st_dev,
         final_descriptor_information.st_ino,
     ) != (final_path_information.st_dev, final_path_information.st_ino):
-        raise RuntimeError(f"private path changed during secure open: {target}")
+        raise PrivatePathIdentityChangedError(
+            f"private path changed during secure open: {target}"
+        )
 
 
 def _ensure_private_windows_path(path: Path, *, directory: bool) -> None:
