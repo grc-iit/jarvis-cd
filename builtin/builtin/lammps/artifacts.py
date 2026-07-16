@@ -282,6 +282,7 @@ def adapter_from_package(package: dict[str, Any]) -> LammpsArtifactAdapter | Non
         return None
     output_dir = _configured_output_dir(
         package.get("out"),
+        shared_dir=package.get("shared_dir"),
         runtime_cwd=package.get("runtime_cwd"),
     )
     deploy_mode = str(package.get("effective_deploy_mode") or "default").casefold()
@@ -308,21 +309,28 @@ def adapter_from_package(package: dict[str, Any]) -> LammpsArtifactAdapter | Non
 def _configured_output_dir(
     value: object,
     *,
+    shared_dir: object = None,
     runtime_cwd: object,
 ) -> PurePosixPath:
     """Return one normalized absolute POSIX output directory."""
     raw = os.path.expandvars(str(value or "."))
     path = PurePosixPath(raw)
     if not path.is_absolute():
-        if not isinstance(runtime_cwd, str) or not runtime_cwd:
+        shared_path = _optional_absolute_path(shared_dir)
+        if shared_path is not None:
+            path = shared_path / path
+            raw = path.as_posix()
+        elif not isinstance(runtime_cwd, str) or not runtime_cwd:
             raise ValueError(
-                "relative LAMMPS artifact output requires a runtime working directory"
+                "relative LAMMPS artifact output requires a package shared "
+                "directory or runtime working directory"
             )
-        runtime_path = PurePosixPath(runtime_cwd)
-        if not runtime_path.is_absolute():
-            raise ValueError("LAMMPS runtime working directory must be absolute")
-        path = runtime_path / path
-        raw = path.as_posix()
+        else:
+            runtime_path = PurePosixPath(runtime_cwd)
+            if not runtime_path.is_absolute():
+                raise ValueError("LAMMPS runtime working directory must be absolute")
+            path = runtime_path / path
+            raw = path.as_posix()
     if not path.is_absolute() or path.as_posix() != raw or ".." in path.parts:
         raise ValueError("LAMMPS artifacts require a normalized absolute output path")
     return path

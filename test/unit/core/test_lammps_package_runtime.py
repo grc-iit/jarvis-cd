@@ -10,6 +10,9 @@ from typing import Any
 
 import pytest
 
+from jarvis_cd.shell import LocalExecInfo, PsshExecInfo
+from jarvis_cd.util.hostfile import Hostfile
+
 
 def _load_lammps_package() -> ModuleType:
     """Load the package implementation without changing JARVIS repo imports."""
@@ -54,6 +57,150 @@ class _FailedCleanupExec(_CapturedExec):
         super().__init__(command, exec_info)
         if command.startswith("rm -f "):
             self.exit_code = {"node1": 1}
+
+
+class _CapturedMkdir:
+    """Accept package output creation without touching remote execution."""
+
+    paths: list[str] = []
+
+    def __init__(self, path: str, exec_info: Any) -> None:
+        self.path = path
+        self.exec_info = exec_info
+        self.exit_code = {"localhost": 0}
+
+    def run(self) -> _CapturedMkdir:
+        """Record the resolved directory and report successful creation."""
+        self.paths.append(self.path)
+        return self
+
+
+class _CapturedRm:
+    """Capture one exact package-owned cleanup request."""
+
+    calls: list[tuple[str, bool]] = []
+
+    def __init__(
+        self,
+        path: str,
+        exec_info: Any,
+        *,
+        recursive: bool = False,
+    ) -> None:
+        self.path = path
+        self.exec_info = exec_info
+        self.recursive = recursive
+        self.exit_code = {"localhost": 0}
+
+    def run(self) -> _CapturedRm:
+        """Record the cleanup target and report successful removal."""
+        self.calls.append((self.path, self.recursive))
+        return self
+
+
+@pytest.fixture(autouse=True)
+def _capture_output_directory_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep package launch tests isolated from PSSH output creation."""
+    _CapturedMkdir.paths = []
+    _CapturedRm.calls = []
+    monkeypatch.setattr(lammps_package, "Mkdir", _CapturedMkdir)
+    monkeypatch.setattr(lammps_package, "Rm", _CapturedRm)
+
+
+def test_portable_defaults_use_package_shared_output_and_cpu() -> None:
+    """The agent-visible defaults must not assume a site path or accelerator."""
+    package = object.__new__(lammps_package.Lammps)
+    menu = {item["name"]: item for item in package._configure_menu()}
+
+    assert menu["out"]["default"] == "."
+    assert "JARVIS package shared directory" in menu["out"]["msg"]
+    assert menu["kokkos_gpu"]["default"] is False
+
+
+def test_default_output_resolves_inside_execution_package_shared_root(
+    tmp_path: Path,
+) -> None:
+    """Queued executions resolve the portable default using their owned root."""
+    package = object.__new__(lammps_package.Lammps)
+    package.config = {"out": "."}
+    package.shared_dir = tmp_path / "execution" / "shared" / "lammps"
+
+    assert Path(package._output_dir()) == package.shared_dir.resolve()
+
+    package.config["out"] = "trajectory"
+    assert Path(package._output_dir()) == (package.shared_dir / "trajectory").resolve()
+
+    package.config["out"] = "../escape"
+    with pytest.raises(ValueError, match="cannot escape package shared directory"):
+        package._output_dir()
+
+
+def test_output_directory_creation_uses_local_execution_for_default_hostfile(
+    tmp_path: Path,
+) -> None:
+    """A local pipeline must not require PSSH merely to create its output root."""
+    package = object.__new__(lammps_package.Lammps)
+    package.config = {"out": "."}
+    package.env = {}
+    package.shared_dir = tmp_path / "shared"
+    default_hostfile = Hostfile(find_ips=False)
+    package.pipeline = SimpleNamespace(get_hostfile=lambda: default_hostfile)
+
+    package._ensure_output_dir()
+
+    assert _CapturedMkdir.paths == [str(package.shared_dir.resolve())]
+    assert _CapturedMkdir.paths[0] == package._output_dir()
+    assert isinstance(package._node_exec_info(), LocalExecInfo)
+
+
+def test_remote_hostfile_uses_parallel_ssh_for_output_lifecycle(tmp_path: Path) -> None:
+    """A genuinely remote host set still fans package lifecycle operations out."""
+    package = object.__new__(lammps_package.Lammps)
+    package.config = {"out": "."}
+    package.shared_dir = tmp_path / "shared"
+    package.pipeline = SimpleNamespace(
+        get_hostfile=lambda: Hostfile(
+            hosts=["compute-01", "compute-02"],
+            find_ips=False,
+        )
+    )
+
+    assert isinstance(package._node_exec_info(), PsshExecInfo)
+
+
+def test_clean_removes_only_resolved_owned_output_without_wildcard(
+    tmp_path: Path,
+) -> None:
+    """Cleanup cannot target the process cwd or prefix-matching sibling paths."""
+    package = object.__new__(lammps_package.Lammps)
+    package.config = {"out": "results"}
+    package.env = {}
+    package.shared_dir = tmp_path / "execution" / "shared" / "lammps"
+    package.pipeline = SimpleNamespace(get_hostfile=lambda: Hostfile(find_ips=False))
+
+    package.clean()
+
+    expected = str((package.shared_dir / "results").resolve())
+    assert _CapturedRm.calls == [(expected, True)]
+    assert "*" not in _CapturedRm.calls[0][0]
+    assert _CapturedRm.calls[0][0] not in {".", ".*"}
+
+
+def test_clean_refuses_filesystem_root() -> None:
+    """Even an explicit absolute output cannot authorize root deletion."""
+    package = object.__new__(lammps_package.Lammps)
+    filesystem_root = Path.cwd().anchor
+    package.config = {"out": filesystem_root}
+    package.env = {}
+    package.shared_dir = Path.cwd()
+    package.pipeline = SimpleNamespace(get_hostfile=lambda: Hostfile(find_ips=False))
+
+    with pytest.raises(ValueError, match="filesystem root"):
+        package.clean()
+
+    assert _CapturedRm.calls == []
 
 
 def test_default_launch_owns_deterministic_lammps_log(

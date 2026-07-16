@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
+from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
 
 
@@ -68,15 +68,19 @@ class Lammps(Application):
             },
             {
                 "name": "out",
-                "msg": "Output directory for results",
+                "msg": (
+                    "Output directory for results. Relative paths resolve under "
+                    "the JARVIS package shared directory; '.' uses that durable "
+                    "execution-owned root."
+                ),
                 "type": str,
-                "default": "/tmp/lammps_out",
+                "default": ".",
             },
             {
                 "name": "kokkos_gpu",
                 "msg": "Enable Kokkos GPU (CUDA) acceleration",
                 "type": bool,
-                "default": True,
+                "default": False,
             },
             {
                 "name": "num_gpus",
@@ -115,7 +119,7 @@ class Lammps(Application):
         if self.config.get("deploy_mode") != "container":
             return None
         base = self.config.get("base_image", "sci-hpc-base")
-        use_gpu = self.config.get("kokkos_gpu", True)
+        use_gpu = self.config.get("kokkos_gpu", False)
         cuda_arch = self.config.get("cuda_arch", 80)
         if use_gpu:
             cmake_extra = (
@@ -139,7 +143,7 @@ class Lammps(Application):
     def _build_deploy_phase(self) -> tuple[str, str] | None:  # pyright: ignore[reportIncompatibleMethodOverride]
         if self.config.get("deploy_mode") != "container":
             return None
-        use_gpu = self.config.get("kokkos_gpu", True)
+        use_gpu = self.config.get("kokkos_gpu", False)
         deploy_base = (
             "nvidia/cuda:12.6.0-runtime-ubuntu24.04" if use_gpu else "ubuntu:24.04"
         )
@@ -169,14 +173,7 @@ class Lammps(Application):
         super()._configure(**kwargs)
 
         if self.config.get("deploy_mode") == "default":
-            output_dir: object = self.config.get("out")
-            if output_dir:
-                if not isinstance(output_dir, str):
-                    raise TypeError("out must be a path string")
-                Mkdir(
-                    output_dir,
-                    PsshExecInfo(hostfile=self.hostfile, env=self.env),
-                ).run()
+            self._ensure_output_dir()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -188,19 +185,31 @@ class Lammps(Application):
 
     def _output_dir(self) -> str:
         """Return the normalized package output directory."""
-        configured: object = self.config.get("out")
-        if configured is None or configured == "":
-            configured = "."
-        if not isinstance(configured, str):
-            raise TypeError("out must be a path string")
-        return os.path.abspath(os.path.expanduser(os.path.expandvars(configured)))
+        return str(self.resolve_shared_path(self.config.get("out"), field="out"))
+
+    def _ensure_output_dir(self) -> None:
+        """Create the resolved output directory on every participating host."""
+        created = Mkdir(
+            self._output_dir(),
+            self._node_exec_info(env=self.env),
+        ).run()
+        failures = {host: code for host, code in created.exit_code.items() if code != 0}
+        if failures:
+            raise RuntimeError(
+                f"Failed to create LAMMPS output directory {self._output_dir()}: "
+                f"{failures}"
+            )
+
+    def _node_exec_info(self, **kwargs: Any) -> LocalExecInfo | PsshExecInfo:
+        """Return local or parallel-SSH execution according to the hostfile."""
+        hostfile = self.hostfile
+        if hostfile is None or hostfile.is_local():
+            return LocalExecInfo(**kwargs)
+        return PsshExecInfo(hostfile=hostfile, **kwargs)
 
     def _remove_stale_log(self) -> None:
         """Remove the previous log before relay polling and LAMMPS startup."""
-        exec_args: dict[str, Any] = {
-            "hostfile": self.hostfile,
-            "env": self.mod_env,
-        }
+        exec_args: dict[str, Any] = {"env": self.mod_env}
         if self.config.get("deploy_mode") == "container":
             exec_args.update(
                 {
@@ -213,7 +222,7 @@ class Lammps(Application):
             )
         cleanup = Exec(
             f"rm -f {shlex.quote(self._log_path())}",
-            PsshExecInfo(**exec_args),
+            self._node_exec_info(**exec_args),
         ).run()
         failures = {host: code for host, code in cleanup.exit_code.items() if code != 0}
         if failures:
@@ -315,6 +324,7 @@ class Lammps(Application):
         container mode, MpiExecInfo with hostfile for default mode.
         """
         script_path = self._generated_input_script()
+        self._ensure_output_dir()
         self._remove_stale_log()
         line_callback = self.progress_line_callback()
         if self.config.get("deploy_mode") == "container":
@@ -364,7 +374,7 @@ class Lammps(Application):
                     ppn=self.config["ppn"],
                     hostfile=self.hostfile,
                     env=self.mod_env,
-                    cwd=self.config.get("out"),
+                    cwd=self._output_dir(),
                     line_callback=line_callback,
                 ),
             ).run()
@@ -378,11 +388,17 @@ class Lammps(Application):
 
     def clean(self) -> None:
         """Remove LAMMPS output directory."""
-        output_dir: object = self.config.get("out")
-        if output_dir:
-            if not isinstance(output_dir, str):
-                raise TypeError("out must be a path string")
-            Rm(
-                output_dir + "*",
-                PsshExecInfo(hostfile=self.hostfile, env=self.env),
-            ).run()
+        output_dir = self._output_dir()
+        output_path = Path(output_dir)
+        if output_path == Path(output_path.anchor):
+            raise ValueError("refusing to clean a filesystem root as LAMMPS output")
+        removed = Rm(
+            output_dir,
+            self._node_exec_info(env=self.env),
+            recursive=True,
+        ).run()
+        failures = {host: code for host, code in removed.exit_code.items() if code != 0}
+        if failures:
+            raise RuntimeError(
+                f"Failed to clean LAMMPS output directory {output_dir}: {failures}"
+            )

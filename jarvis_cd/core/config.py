@@ -622,14 +622,20 @@ class Jarvis:
         self,
         repositories: Dict[str, Any],
     ) -> Dict[str, Any]:
-        """Return repository config with only the managed legacy slot rebound."""
+        """Return repository config with only managed legacy slots rebound.
+
+        Ownership is path-based: JARVIS owns ``builtin`` directly beneath the
+        active ``JARVIS_ROOT`` and beneath its historical default
+        ``~/.ppi-jarvis`` root. A repository is never treated as managed merely
+        because its basename is ``builtin``.
+        """
         entries = repositories.get("repos")
         if not isinstance(entries, list):
             return repositories
         distribution_builtin = self._distribution_builtin_repository()
         if distribution_builtin is None:
             return repositories
-        legacy_builtin = self._absolute_lexical_path(self.jarvis_root / "builtin")
+        managed_builtin_slots = self._managed_builtin_repository_slots()
         rebound_path = str(distribution_builtin)
         changed = False
         rebound_entries: list[Any] = []
@@ -637,7 +643,7 @@ class Jarvis:
             rebound: Any = entry
             if (
                 isinstance(entry, str)
-                and self._absolute_lexical_path(entry) == legacy_builtin
+                and self._absolute_lexical_path(entry) in managed_builtin_slots
             ):
                 rebound = rebound_path
                 changed = rebound != entry
@@ -648,6 +654,15 @@ class Jarvis:
         if not changed:
             return repositories
         return {**repositories, "repos": rebound_entries}
+
+    def _managed_builtin_repository_slots(self) -> set[Path]:
+        """Return exact legacy paths reserved for JARVIS-managed builtins."""
+        historical_default = Path.home() / ".ppi-jarvis" / "builtin"
+        return {
+            self._absolute_lexical_path(self.jarvis_root / "builtin"),
+            self._absolute_lexical_path(historical_default),
+            self._absolute_lexical_path(historical_default.resolve(strict=False)),
+        }
 
     @staticmethod
     def _absolute_lexical_path(path: str | os.PathLike[str]) -> Path:

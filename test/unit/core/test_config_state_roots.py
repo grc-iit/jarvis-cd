@@ -246,3 +246,50 @@ def test_explicit_operator_builtin_repository_is_not_rebound(
         assert marker.read_text(encoding="utf-8") == "# operator-owned package\n"
     finally:
         Jarvis._instance = None
+
+
+def test_default_managed_builtin_rebinds_after_jarvis_root_migration(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Moving JARVIS_ROOT cannot leave the old default builtin contract active."""
+    canonical_home = tmp_path / "canonical-home"
+    canonical_home.mkdir()
+    logical_home = tmp_path / "logical-home"
+    _directory_link(logical_home, canonical_home)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: logical_home))
+    legacy_builtin = canonical_home / ".ppi-jarvis" / "builtin"
+    legacy_package = legacy_builtin / "builtin" / "paraview" / "pkg.py"
+    legacy_package.parent.mkdir(parents=True)
+    legacy_package.write_text("# stale default JARVIS copy\n", encoding="utf-8")
+    operator_builtin = canonical_home / "operator-repositories" / "builtin"
+    operator_marker = operator_builtin / "builtin" / "site_package" / "pkg.py"
+    operator_marker.parent.mkdir(parents=True)
+    operator_marker.write_text("# operator owned\n", encoding="utf-8")
+    migrated_root = canonical_home / ".local" / "share" / "relay" / "jarvis"
+
+    Jarvis._instance = None
+    try:
+        jarvis = Jarvis(jarvis_root=str(migrated_root))
+        jarvis.initialize(
+            config_dir=str(migrated_root / "config"),
+            private_dir=str(migrated_root / "private"),
+            shared_dir=str(migrated_root / "shared"),
+        )
+        persisted = {"repos": [str(legacy_builtin), str(operator_builtin)]}
+        jarvis.save_repos(persisted)
+
+        distribution_builtin = jarvis._distribution_builtin_repository()
+        assert distribution_builtin is not None
+        assert jarvis.repos == {
+            "repos": [str(distribution_builtin), str(operator_builtin)]
+        }
+        assert yaml.safe_load(jarvis.repos_file.read_text(encoding="utf-8")) == (
+            persisted
+        )
+        assert legacy_package.read_text(encoding="utf-8") == (
+            "# stale default JARVIS copy\n"
+        )
+        assert operator_marker.read_text(encoding="utf-8") == "# operator owned\n"
+    finally:
+        Jarvis._instance = None
