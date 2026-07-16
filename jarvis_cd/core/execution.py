@@ -638,12 +638,7 @@ def _validate_private_regular_file(
     ensure_private_descriptor(path, descriptor, directory=False)
     descriptor_status = os.fstat(descriptor)
     path_status = path.lstat()
-    if (
-        not stat.S_ISREG(descriptor_status.st_mode)
-        or stat.S_ISLNK(path_status.st_mode)
-        or descriptor_status.st_nlink != 1
-        or descriptor_status.st_size > maximum_size
-    ):
+    if not stat.S_ISREG(descriptor_status.st_mode) or stat.S_ISLNK(path_status.st_mode):
         raise RuntimeError(f"invalid execution record: {path}")
     if (descriptor_status.st_dev, descriptor_status.st_ino) != (
         path_status.st_dev,
@@ -652,6 +647,8 @@ def _validate_private_regular_file(
         raise PrivatePathIdentityChangedError(
             f"private path changed during secure open: {path}"
         )
+    if descriptor_status.st_nlink != 1 or descriptor_status.st_size > maximum_size:
+        raise RuntimeError(f"invalid execution record: {path}")
     if os.name != "nt" and (
         descriptor_status.st_uid != _effective_uid()
         or stat.S_IMODE(descriptor_status.st_mode) & 0o077
