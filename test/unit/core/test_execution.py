@@ -638,6 +638,253 @@ def test_scheduler_activation_does_not_promote_incomplete_submission_receipt(
     assert submission["submitted"] is False
 
 
+def test_scheduler_query_repairs_and_persists_legacy_cluster_projection(
+    tmp_path: Path,
+) -> None:
+    """A query repairs only identity-proven scheduler metadata from old runs."""
+
+    store = ExecutionStore(tmp_path / "executions", "example")
+    store.create("legacy", mode="scheduler", scheduler_provider="slurm")
+    store.update("legacy", state="submitting")
+    store.update(
+        "legacy",
+        state="submitted",
+        submitted=True,
+        native_id="42",
+        metadata={
+            "submission": {
+                "schema_version": "jarvis.scheduler.submission.v1",
+                "execution_id": "legacy",
+                "provider": "slurm",
+                "scheduler_job_id": "42",
+                "scheduler_cluster": None,
+                "identity_source": "scheduler_submit_api",
+                "submitted": True,
+            }
+        },
+    )
+    store.update(
+        "legacy",
+        state="running",
+        cluster="linux",
+        metadata={
+            "scheduler_activation": {
+                "provider": "slurm",
+                "native_id": "42",
+                "cluster": "linux",
+                "identity_source": "scheduler_runtime_environment",
+            }
+        },
+    )
+
+    repaired = store.get("legacy")
+
+    submission = repaired.metadata["submission"]
+    assert submission["scheduler_cluster"] == "linux"
+    assert submission["cluster_identity_source"] == ("scheduler_runtime_environment")
+    persisted = execution_module.read_execution_record(
+        store.executions_dir / "legacy",
+        expected_execution_id="legacy",
+    )
+    assert persisted.metadata["submission"] == submission
+
+
+def test_scheduler_query_keeps_matching_submission_cluster_unchanged(
+    tmp_path: Path,
+) -> None:
+    """A complete matching scheduler cluster is an explicit query no-op."""
+
+    store = ExecutionStore(tmp_path / "executions", "example")
+    store.create("cluster-match", mode="scheduler", scheduler_provider="slurm")
+    store.update("cluster-match", state="submitting")
+    store.update(
+        "cluster-match",
+        state="submitted",
+        submitted=True,
+        native_id="42",
+        metadata={
+            "submission": {
+                "schema_version": "jarvis.scheduler.submission.v1",
+                "execution_id": "cluster-match",
+                "provider": "slurm",
+                "scheduler_job_id": "42",
+                "scheduler_cluster": "linux",
+                "identity_source": "scheduler_submit_api",
+                "submitted": True,
+            }
+        },
+    )
+    store.update(
+        "cluster-match",
+        state="running",
+        cluster="linux",
+        metadata={
+            "scheduler_activation": {
+                "provider": "slurm",
+                "native_id": "42",
+                "cluster": "linux",
+                "identity_source": "scheduler_runtime_environment",
+            }
+        },
+    )
+    record_path = store.executions_dir / "cluster-match" / RECORD_NAME
+    before = record_path.read_bytes()
+
+    observed = store.get("cluster-match")
+
+    assert observed.metadata["submission"]["scheduler_cluster"] == "linux"
+    assert record_path.read_bytes() == before
+
+
+def test_scheduler_query_rejects_conflicting_submission_cluster_without_write(
+    tmp_path: Path,
+) -> None:
+    """A populated submission cluster cannot disagree with the durable record."""
+
+    store = ExecutionStore(tmp_path / "executions", "example")
+    store.create("cluster-conflict", mode="scheduler", scheduler_provider="slurm")
+    store.update("cluster-conflict", state="submitting")
+    store.update(
+        "cluster-conflict",
+        state="submitted",
+        submitted=True,
+        native_id="42",
+        metadata={
+            "submission": {
+                "schema_version": "jarvis.scheduler.submission.v1",
+                "execution_id": "cluster-conflict",
+                "provider": "slurm",
+                "scheduler_job_id": "42",
+                "scheduler_cluster": "other",
+                "identity_source": "scheduler_submit_api",
+                "submitted": True,
+            }
+        },
+    )
+    store.update(
+        "cluster-conflict",
+        state="running",
+        cluster="linux",
+        metadata={
+            "scheduler_activation": {
+                "provider": "slurm",
+                "native_id": "42",
+                "cluster": "linux",
+                "identity_source": "scheduler_runtime_environment",
+            }
+        },
+    )
+    record_path = store.executions_dir / "cluster-conflict" / RECORD_NAME
+    before = record_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match="submission cluster conflicts"):
+        store.get("cluster-conflict")
+
+    assert record_path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    ("metadata_key", "field_name", "conflicting_value", "diagnostic"),
+    [
+        ("submission", "execution_id", "other", "submission identity"),
+        ("submission", "provider", "pbs", "submission identity"),
+        ("submission", "scheduler_job_id", "99", "submission identity"),
+        ("scheduler_activation", "provider", "pbs", "activation identity"),
+        ("scheduler_activation", "native_id", "99", "activation identity"),
+        ("scheduler_activation", "cluster", "other", "activation identity"),
+    ],
+)
+def test_scheduler_query_rejects_conflicting_cluster_repair_identity(
+    tmp_path: Path,
+    metadata_key: str,
+    field_name: str,
+    conflicting_value: str,
+    diagnostic: str,
+) -> None:
+    """A query never rewrites a projection whose durable identities conflict."""
+
+    submission = {
+        "schema_version": "jarvis.scheduler.submission.v1",
+        "execution_id": "legacy-conflict",
+        "provider": "slurm",
+        "scheduler_job_id": "42",
+        "scheduler_cluster": None,
+        "identity_source": "scheduler_submit_api",
+        "submitted": True,
+    }
+    activation = {
+        "provider": "slurm",
+        "native_id": "42",
+        "cluster": "linux",
+        "identity_source": "scheduler_runtime_environment",
+    }
+    target = submission if metadata_key == "submission" else activation
+    target[field_name] = conflicting_value
+    store = ExecutionStore(tmp_path / "executions", "example")
+    store.create("legacy-conflict", mode="scheduler", scheduler_provider="slurm")
+    store.update("legacy-conflict", state="submitting")
+    store.update(
+        "legacy-conflict",
+        state="submitted",
+        submitted=True,
+        native_id="42",
+        metadata={"submission": submission},
+    )
+    store.update(
+        "legacy-conflict",
+        state="running",
+        cluster="linux",
+        metadata={"scheduler_activation": activation},
+    )
+    record_path = store.executions_dir / "legacy-conflict" / RECORD_NAME
+    before = record_path.read_bytes()
+
+    with pytest.raises(RuntimeError, match=diagnostic):
+        store.get("legacy-conflict")
+
+    assert record_path.read_bytes() == before
+
+
+def test_scheduler_query_does_not_promote_manual_submission_projection(
+    tmp_path: Path,
+) -> None:
+    """Query reconciliation leaves an incomplete manual projection untouched."""
+
+    store = ExecutionStore(tmp_path / "executions", "example")
+    store.create(
+        "manual-query",
+        mode="scheduler",
+        scheduler_provider="slurm",
+        metadata={
+            "submission": {
+                "schema_version": "jarvis.scheduler.submission.v1",
+                "execution_id": "manual-query",
+                "provider": "slurm",
+                "scheduler_job_id": None,
+                "scheduler_cluster": None,
+                "identity_source": None,
+                "submitted": False,
+            }
+        },
+    )
+    store.update("manual-query", state="scripted", terminal=True)
+    store.activate_scheduler(
+        "manual-query",
+        provider="slurm",
+        native_id="42",
+        cluster="linux",
+    )
+    record_path = store.executions_dir / "manual-query" / RECORD_NAME
+    before = record_path.read_bytes()
+
+    observed = store.get("manual-query")
+
+    submission = observed.metadata["submission"]
+    assert submission["scheduler_cluster"] is None
+    assert "cluster_identity_source" not in submission
+    assert record_path.read_bytes() == before
+
+
 def test_record_reader_rejects_unknown_fields_and_symlink_roots(
     tmp_path: Path,
 ) -> None:

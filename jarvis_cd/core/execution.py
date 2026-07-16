@@ -1132,7 +1132,112 @@ class ExecutionStore:
             self.executions_dir / validated_id,
             expected_execution_id=validated_id,
         )
+        if record.mode == "scheduler":
+            record = self._reconcile_scheduler_submission_cluster(validated_id)
         return self._reconcile_direct_execution(record)
+
+    def _reconcile_scheduler_submission_cluster(
+        self,
+        execution_id: str,
+    ) -> ExecutionRecord:
+        """Repair one narrowly proven legacy scheduler-cluster projection."""
+        execution_root = self.executions_dir / execution_id
+        with execution_transaction_lock(self.executions_dir, execution_id):
+            current = read_execution_record(
+                execution_root,
+                expected_execution_id=execution_id,
+            )
+            if current.pipeline_id != self.pipeline_id:
+                raise RuntimeError("execution record belongs to another pipeline")
+            if (
+                not current.submitted
+                or current.scheduler_provider is None
+                or current.scheduler_native_id is None
+                or current.cluster is None
+            ):
+                return current
+
+            submission_value = current.metadata.get("submission")
+            activation_value = current.metadata.get("scheduler_activation")
+            if not isinstance(submission_value, Mapping) or not isinstance(
+                activation_value,
+                Mapping,
+            ):
+                return current
+            submission = dict(submission_value)
+            activation = dict(activation_value)
+            if (
+                submission.get("schema_version") != "jarvis.scheduler.submission.v1"
+                or submission.get("submitted") is not True
+                or submission.get("identity_source") != "scheduler_submit_api"
+            ):
+                return current
+
+            submission_identity = (
+                submission.get("execution_id"),
+                submission.get("provider"),
+                submission.get("scheduler_job_id"),
+            )
+            if not all(
+                isinstance(value, str) and value for value in submission_identity
+            ):
+                return current
+            expected_submission_identity = (
+                current.execution_id,
+                current.scheduler_provider,
+                current.scheduler_native_id,
+            )
+            if submission_identity != expected_submission_identity:
+                raise RuntimeError(
+                    "scheduler submission identity conflicts with execution record"
+                )
+
+            submission_cluster = submission.get("scheduler_cluster")
+            if submission_cluster is not None:
+                if submission_cluster != current.cluster:
+                    raise RuntimeError(
+                        "scheduler submission cluster conflicts with execution record"
+                    )
+                return current
+
+            if activation.get("identity_source") != "scheduler_runtime_environment":
+                return current
+            activation_identity = (
+                activation.get("provider"),
+                activation.get("native_id"),
+                activation.get("cluster"),
+            )
+            if not all(
+                isinstance(value, str) and value for value in activation_identity
+            ):
+                return current
+            expected_activation_identity = (
+                current.scheduler_provider,
+                current.scheduler_native_id,
+                current.cluster,
+            )
+            if activation_identity != expected_activation_identity:
+                raise RuntimeError(
+                    "scheduler activation identity conflicts with execution record"
+                )
+
+            cluster_source = submission.get("cluster_identity_source")
+            if cluster_source is not None:
+                raise RuntimeError(
+                    "scheduler submission claims a cluster source without a cluster"
+                )
+            submission["scheduler_cluster"] = current.cluster
+            submission["cluster_identity_source"] = "scheduler_runtime_environment"
+            metadata = dict(current.metadata)
+            metadata["submission"] = submission
+            updated = replace(
+                current,
+                updated_at=_utc_now(),
+                metadata=metadata,
+                _record_path=execution_root / RECORD_NAME,
+            )
+            _atomic_write_record(execution_root / RECORD_NAME, updated)
+            return updated
 
     def _reconcile_direct_execution(
         self,
