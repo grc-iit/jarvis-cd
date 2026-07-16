@@ -459,6 +459,49 @@ class Pkg:
         # Fall back to global jarvis hostfile
         return self.jarvis.hostfile
 
+    def resolve_shared_path(
+        self,
+        value: object,
+        *,
+        field: str = "path",
+        default: str = ".",
+    ) -> Path:
+        """Resolve a package-owned path against this package's shared root.
+
+        Absolute paths remain operator-selected. Relative paths are scoped to
+        ``shared_dir`` so package defaults stay portable across sites and, for
+        scheduler runs, resolve inside the immutable execution snapshot rather
+        than the process working directory.
+
+        :param value: Configured string or path-like value.
+        :param field: Configuration field name used in validation errors.
+        :param default: Relative path used when ``value`` is unset or empty.
+        :return: A normalized absolute path.
+        :raises TypeError: If the configured value is not path-like.
+        :raises ValueError: If a relative value escapes the package shared root.
+        """
+        configured = default if value is None or value == "" else value
+        if not isinstance(configured, (str, os.PathLike)):
+            raise TypeError(f"{field} must be a path string")
+        raw = os.path.expanduser(os.path.expandvars(os.fspath(configured)))
+        if not raw or any(ord(character) < 32 for character in raw):
+            raise ValueError(f"{field} must be a non-empty printable path")
+
+        path = Path(raw)
+        if path.is_absolute():
+            return path.resolve(strict=False)
+
+        shared_dir = self.shared_dir
+        if not isinstance(shared_dir, (str, os.PathLike)) or not os.fspath(shared_dir):
+            raise RuntimeError(
+                f"relative {field} requires a JARVIS package shared directory"
+            )
+        shared_root = Path(shared_dir).expanduser().resolve(strict=False)
+        resolved = (shared_root / path).resolve(strict=False)
+        if not resolved.is_relative_to(shared_root):
+            raise ValueError(f"relative {field} cannot escape package shared directory")
+        return resolved
+
     def get_progress_provider(self) -> Optional["PackageProgressProvider"]:
         """Load this package's optional sibling ``progress.py`` provider.
 

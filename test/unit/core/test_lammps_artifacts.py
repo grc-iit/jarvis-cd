@@ -147,6 +147,23 @@ def test_lammps_factory_rejects_unscoped_output_authority() -> None:
     assert adapter.script_path == Path("/work/relative/output/in.lj")
 
 
+def test_lammps_default_artifacts_resolve_to_execution_package_shared_root() -> None:
+    """The portable output default must yield exact durable artifact locations."""
+    module = _module()
+
+    adapter = module.adapter_from_package(
+        {
+            "pkg_type": "builtin.lammps",
+            "out": ".",
+            "shared_dir": "/execution/shared/lammps",
+            "runtime_cwd": "/execution/runtime",
+        }
+    )
+
+    assert adapter is not None
+    assert adapter.output_dir.as_posix() == "/execution/shared/lammps"
+
+
 def test_container_lammps_reports_only_host_visible_output() -> None:
     """Container-private paths are not claimed as durable cluster artifacts."""
     module = _module()

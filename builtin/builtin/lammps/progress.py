@@ -384,15 +384,15 @@ def adapter_from_package(
     output = package.get("out")
     deploy_mode = package.get("effective_deploy_mode") or package.get("deploy_mode")
     progress = package.get("progress")
-    shared_log = _nested_progress_value(progress, "log_visibility") == "shared"
-    output_dir = (
-        Path(os.path.expandvars(output))
-        if deploy_mode != "container"
-        and shared_log
-        and isinstance(output, str)
-        and output.strip()
-        else None
+    shared_root = _optional_absolute_path(package.get("shared_dir"))
+    output_dir = _resolved_output_dir(output, shared_root=shared_root)
+    shared_log = _nested_progress_value(progress, "log_visibility") == "shared" or (
+        output_dir is not None
+        and shared_root is not None
+        and output_dir.is_relative_to(shared_root)
     )
+    if deploy_mode == "container" or not shared_log:
+        output_dir = None
     return LammpsThermoProgressAdapter(
         package_name=str(package_type),
         package_id=str(package.get("pkg_id") or "lammps"),
@@ -410,6 +410,37 @@ def adapter_from_package(
         ),
         output_dir=output_dir,
     )
+
+
+def _optional_absolute_path(value: object) -> Path | None:
+    """Return one normalized absolute package path when available."""
+    if not isinstance(value, (str, os.PathLike)) or not os.fspath(value):
+        return None
+    path = Path(os.path.expandvars(os.fspath(value))).expanduser()
+    if not path.is_absolute() or ".." in path.parts:
+        return None
+    return path.resolve(strict=False)
+
+
+def _resolved_output_dir(
+    value: object,
+    *,
+    shared_root: Path | None,
+) -> Path | None:
+    """Resolve LAMMPS output using the package shared-path contract."""
+    if value is None:
+        raw = "."
+    elif isinstance(value, str):
+        raw = os.path.expandvars(value or ".")
+    else:
+        return None
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return path.resolve(strict=False)
+    if shared_root is None:
+        return None
+    resolved = (shared_root / path).resolve(strict=False)
+    return resolved if resolved.is_relative_to(shared_root) else None
 
 
 def _nested_progress_total(value: object) -> object:

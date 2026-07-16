@@ -75,6 +75,28 @@ def test_adapter_is_owned_by_builtin_lammps(tmp_path: Path) -> None:
     assert node_local_adapter.log_visibility == "scoped_stdout"
 
 
+def test_default_output_progress_uses_execution_package_shared_log(
+    tmp_path: Path,
+) -> None:
+    """The portable default exposes the execution-owned log without stdout scraping."""
+    shared_dir = (tmp_path / "execution" / "shared" / "lammps").resolve()
+
+    adapter = adapter_from_package(
+        {
+            "pkg_type": "builtin.lammps",
+            "out": ".",
+            "shared_dir": str(shared_dir),
+            "io_dump_interval": 100,
+            "io_run_steps": 5000,
+        }
+    )
+
+    assert isinstance(adapter, LammpsThermoProgressAdapter)
+    assert adapter.log_visibility == "shared"
+    assert adapter.progress_log_paths() == [shared_dir / "log.lammps"]
+    assert adapter.total_steps == 5000
+
+
 def test_adapter_observes_only_lammps_jarvis_scope() -> None:
     """Unscoped or unrelated stdout must not create trusted progress."""
     adapter = LammpsThermoProgressAdapter(total_steps=100, run_id="job_1")
