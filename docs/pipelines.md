@@ -307,7 +307,7 @@ file the job script populates inside the allocation.
 
 ### Container Configuration
 
-Pipelines can be configured to run packages inside Docker or Podman containers. Set `base_deploy_mode: container` and provide container configuration. Containers act as SSH compute nodes — the host-side jarvis orchestrates everything by exec-ing commands into the running containers via `docker exec` and MPI over SSH. No jarvis installation is needed inside the containers.
+Pipelines can be configured to run packages inside Docker, Podman, or Apptainer containers. Set `base_deploy_mode: container` and provide container configuration. Containers act as SSH compute nodes — the host-side jarvis orchestrates everything by exec-ing commands into the running containers via `docker exec` (or `apptainer exec`) and MPI over SSH. No jarvis installation is needed inside the containers. Apptainer has its own start model and additional keys — see [Apptainer Pipelines](#apptainer-pipelines).
 
 #### Container Pipeline Parameters
 
@@ -353,6 +353,49 @@ pkgs:
 | `container_host_path` | string | `""` | Docker host path prefix for DinD environments |
 | `container_workspace` | string | `""` | Workspace root path for DinD path remapping |
 | `container_extensions` | dict | `{}` | Custom Docker Compose config merged into service definition |
+
+#### Apptainer Pipelines
+
+Set `container_engine: apptainer` to use Apptainer (typical on HPC clusters where Docker is unavailable). The model differs from Docker/Podman: there is no compose file. Jarvis starts a persistent **instance** (with an sshd inside, on `container_ssh_port`) from the pipeline's SIF on **every host in the hostfile**, then runs each package via `apptainer exec instance://<pipeline>`. The SIF defaults to `<pipeline_name>.sif` in the centralized containers directory; `container_image` overrides it with another SIF basename or an absolute path.
+
+Apptainer silently ignores per-exec `--bind` / `--add-caps` / `--fakeroot` flags on a running instance, so everything the workload needs must be declared at the pipeline level — the following keys bake into `apptainer instance start`:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `container_overlay` | bool | `true` | Mount a writable `--overlay` upper dir. `false` drops the overlay entirely: the container filesystem is read-only outside bind mounts, and the host `/tmp` mounts normally |
+| `container_overlay_root` | string | `null` | Node-local root for the overlay upper dir: each host uses `<root>/<pipeline>/overlay`, created on every host automatically. `$VAR`s are expanded. **Required for multi-node pipelines** (see below) |
+| `container_caps` | list | `[]` | Capabilities added via `--add-caps` (e.g. `SYS_ADMIN` for FUSE mounts) |
+| `container_fakeroot` | bool | `false` | Start the instance under `--fakeroot`. Rootless (non-setuid) apptainer only grants a FUSE-capable user namespace this way |
+| `container_binds` | list | `[]` | Extra `host:container` bind mounts (e.g. `/dev/fuse:/dev/fuse`). The pipeline shared/private dirs are always bound at identical paths |
+| `container_gpu` | bool | `false` | GPU passthrough (`--nv`) |
+| `tmp_bind_root` | string | `null` | Per-host `/tmp` redirect: binds `<root>/<pipeline>/tmp` (created on every host automatically) into the container at `/tmp`, so parallel hosts don't collide on `/tmp` paths that would otherwise land in a shared overlay. `$VAR`s are expanded |
+
+**Important — multi-node pipelines must relocate the overlay.** By default the overlay upper dir lives under the pipeline's shared directory, which on a real cluster is a shared filesystem (NFS). That layout only works single-node: overlayfs cannot use a shared/NFS directory as its upper layer, and concurrent `apptainer instance start`s on N nodes race each other on the same directory. A pipeline whose hostfile spans more than one host must set `container_overlay_root` to a node-local path (e.g. `/mnt/nvme/$USER`) or set `container_overlay: false` — jarvis refuses to start the known-broken combination rather than hang.
+
+Example 4-node apptainer pipeline:
+
+```yaml
+name: distributed_bench
+base_deploy_mode: container
+container_engine: apptainer
+hostfile: /path/to/hostfile.txt           # 4 compute nodes
+
+container_fakeroot: true                  # rootless FUSE-capable userns
+container_binds:
+  - /dev/fuse:/dev/fuse
+container_overlay_root: /mnt/nvme/$USER   # per-host overlay upper dir
+tmp_bind_root: /mnt/nvme/$USER            # per-host /tmp
+
+pkgs:
+  - pkg_type: builtin.ior
+    nprocs: 8
+    ppn: 2
+```
+
+Notes:
+- Jarvis never cleans the per-host overlay/tmp directories; their contents persist per node across runs (the default shared-dir overlay has the same persistence, just centralized).
+- A workload that installs software at runtime (apt/conda/pip inside the container) needs a writable overlay — with `container_overlay: false` the container filesystem is read-only outside bind mounts.
+- If `apptainer instance start` fails on any host, the pipeline aborts immediately naming that host instead of continuing with partial instances.
 
 #### How Container Pipelines Work
 

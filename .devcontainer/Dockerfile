@@ -40,10 +40,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Apptainer
 # -----------------------------------------------------------------------
 ARG APPTAINER_VERSION=1.4.1
-RUN wget -qO /tmp/apptainer.deb \
+RUN apt-get update \
+    && wget -qO /tmp/apptainer.deb \
         "https://github.com/apptainer/apptainer/releases/download/v${APPTAINER_VERSION}/apptainer_${APPTAINER_VERSION}_amd64.deb" \
     && apt-get install -y /tmp/apptainer.deb \
-    && rm /tmp/apptainer.deb
+    && rm /tmp/apptainer.deb \
+    && rm -rf /var/lib/apt/lists/*
 
 # -----------------------------------------------------------------------
 # SSH server setup (required by jarvis multi-node tests)

@@ -351,6 +351,15 @@ class PipelineTest:
             template, then any nested ``config.scheduler`` overrides it,
             then the ``scheduler.X`` variable values override that.
 
+        When NO ``scheduler.X`` variables are swept, the test's top-level
+        ``scheduler:`` block is NOT copied into iteration configs: in that
+        mode the block describes the single job that ``ppl submit`` wraps
+        around the WHOLE test run, and iterations must run in-process
+        inside that allocation (stamping the block onto every iteration
+        made ``_run_single`` re-submit each one as a nested sbatch job
+        from inside the allocation). A ``scheduler:`` nested inside
+        ``config:`` still requests per-iteration submission explicitly.
+
         :param base_config: Base pipeline configuration
         :param variables: Variable values to apply
         :return: Modified configuration
@@ -363,7 +372,7 @@ class PipelineTest:
         pkg_vars = {k: v for k, v in variables.items()
                     if k.split('.', 1)[0] != 'scheduler'}
 
-        if scheduler_vars or self.scheduler:
+        if scheduler_vars:
             merged = copy.deepcopy(self.scheduler) if self.scheduler else {}
             existing = config.get('scheduler') or {}
             merged.update(existing)
