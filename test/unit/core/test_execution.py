@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
@@ -329,6 +330,51 @@ def test_record_reader_retries_its_own_atomic_replacement(
 
     assert record.state == ("preparing" if os.name == "nt" else "running")
     assert reader_attempts >= 2
+
+
+def test_record_validator_classifies_unlinked_replaced_inode_for_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unlinked old inode is replacement churn, not a corrupt hardlink."""
+    record_path = tmp_path / RECORD_NAME
+    record_path.write_text("{}\n", encoding="utf-8")
+    old_inode = os.stat_result((stat.S_IFREG | 0o600, 101, 7, 0, 1, 1, 3, 0, 0, 0))
+    replacement_inode = os.stat_result(
+        (stat.S_IFREG | 0o600, 102, 7, 1, 1, 1, 3, 0, 0, 0)
+    )
+
+    def descriptor_already_validated(
+        _path: Path,
+        _descriptor: int,
+        *,
+        directory: bool,
+    ) -> None:
+        assert directory is False
+
+    def stat_open_inode(_descriptor: int) -> os.stat_result:
+        return old_inode
+
+    def stat_replacement_path(_path: Path) -> os.stat_result:
+        return replacement_inode
+
+    monkeypatch.setattr(
+        execution_module,
+        "ensure_private_descriptor",
+        descriptor_already_validated,
+    )
+    monkeypatch.setattr(execution_module.os, "fstat", stat_open_inode)
+    monkeypatch.setattr(Path, "lstat", stat_replacement_path)
+
+    with pytest.raises(
+        execution_module.PrivatePathIdentityChangedError,
+        match="changed during secure open",
+    ):
+        execution_module._validate_private_regular_file(
+            19,
+            record_path,
+            maximum_size=MAX_RECORD_BYTES,
+        )
 
 
 def test_record_reader_does_not_retry_non_identity_security_failure(
