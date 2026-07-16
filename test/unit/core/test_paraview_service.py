@@ -1117,6 +1117,7 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
         "dataset_descriptor": json.dumps(descriptor),
         "pvpython_bin": "/opt/paraview/bin/pvpython",
         "pvpython_options": "--mesa",
+        "force_offscreen_rendering": True,
         "service_bind_host": "127.0.0.1",
         "service_advertise_host": "127.0.0.1",
         "service_port": 0,
@@ -1144,7 +1145,7 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
     command, exec_info = _CapturedExec.commands[0]
     assert "service_supervisor.py" in command
     assert "/opt/paraview/bin/pvpython" in command
-    assert "--pvpython-options --mesa" in command
+    assert "--pvpython-options '--mesa --force-offscreen-rendering'" in command
     assert "--bind-host 127.0.0.1" in command
     assert "--advertise-host 127.0.0.1" in command
     assert exec_info.env["JARVIS_SERVICE_RUNTIME_PATH"].endswith(
@@ -1164,6 +1165,11 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
         (service_root / "dataset-descriptor.json").read_text(encoding="utf-8")
     )
     assert staged_descriptor == descriptor
+
+    package.config["pvpython_options"] = "--mesa --force-offscreen-rendering"
+    package._start_service(dict(package.mod_env))
+    deduplicated_command, _ = _CapturedExec.commands[1]
+    assert deduplicated_command.count("--force-offscreen-rendering") == 1
 
     package.config["service_bind_host"] = "0.0.0.0"
     with pytest.raises(ValueError, match="loopback-only"):

@@ -298,7 +298,15 @@ class Paraview(Application):
         pvpython_bin = os.path.expandvars(
             cast(str, self.config.get("pvpython_bin") or "pvpython")
         )
-        pvpython_options = cast(str, self.config.get("pvpython_options") or "")
+        pvpython_arguments = shlex.split(
+            cast(str, self.config.get("pvpython_options") or "")
+        )
+        if (
+            self.config.get("force_offscreen_rendering", False)
+            and "--force-offscreen-rendering" not in pvpython_arguments
+        ):
+            pvpython_arguments.append("--force-offscreen-rendering")
+        pvpython_options = shlex.join(pvpython_arguments)
         command = [
             sys.executable,
             str(supervisor),
