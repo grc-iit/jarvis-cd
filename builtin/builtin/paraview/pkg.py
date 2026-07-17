@@ -142,7 +142,7 @@ class Paraview(Application):
             },
         ]
 
-    def _configure(self, **kwargs):
+    def _configure(self, **kwargs: Any) -> None:
         """
         Converts the Jarvis configuration to application-specific configuration.
         E.g., OrangeFS produces an orangefs.xml file.
@@ -150,8 +150,18 @@ class Paraview(Application):
         :param kwargs: Configuration parameters for this pkg.
         :return: None
         """
+        del kwargs
+        if self.config.get("mode", "server") != "service":
+            return
 
-        pass
+        from jarvis_cd.service_runtime import DatasetDescriptor
+
+        configured = self.config.get("dataset_descriptor")
+        if not isinstance(configured, str):
+            raise ValueError(
+                "ParaView dataset_descriptor must be JSON text or a file path"
+            )
+        self._load_dataset_descriptor(configured, DatasetDescriptor)
 
     def start(self):
         """

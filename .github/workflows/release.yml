@@ -190,6 +190,7 @@ jobs:
             test/unit/core/test_lammps_progress.py \
             test/unit/core/test_lammps_package_runtime.py \
             test/unit/core/test_paraview_artifacts.py \
+            test/unit/core/test_paraview_service.py::test_package_validates_dataset_descriptor_during_configuration \
             test/unit/core/test_scheduler_submission.py \
             test/unit/core/test_pipeline_hostfile.py \
             test/unit/util/test_pkg_argparse.py \

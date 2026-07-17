@@ -1176,6 +1176,41 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
         package._start_service(dict(package.mod_env))
 
 
+def test_package_validates_dataset_descriptor_during_configuration(
+    tmp_path: Path,
+) -> None:
+    """A malformed catalog copy cannot persist until an execution is launched."""
+    package = cast(Any, object.__new__(package_module.Paraview))
+    package.config = {
+        "mode": "service",
+        "dataset_descriptor": json.dumps(
+            {
+                "schema_version": "jarvis.dataset-descriptor.v1",
+                "dataset_id": "asteroid-subset",
+                "kind": "temporal-volume-series",
+                "format": "vtk-image-data",
+                "members": [
+                    {
+                        "index": 0,
+                        "location": "/cluster/asteroid/frame-0000.vti",
+                        "timestep": 0.0,
+                    }
+                ],
+                "arrays": [],
+                "bounds": None,
+            }
+        ),
+    }
+
+    with pytest.raises(ValueError, match="fingerprint must be an object"):
+        package._configure()
+
+    package.config["dataset_descriptor"] = str(
+        _supervisor_descriptor(tmp_path / "valid-descriptor.json")
+    )
+    package._configure()
+
+
 def test_service_export_is_immediately_queryable_through_artifact_store(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
