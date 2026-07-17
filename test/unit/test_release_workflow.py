@@ -343,6 +343,10 @@ def test_exact_release_request_gates_artifact_build() -> None:
     assert "test/unit/core/test_progress_spi.py" in WORKFLOW
     assert "test/unit/core/test_pipeline_coverage.py" in WORKFLOW
     assert "test/unit/ci/test_live_ares_gray_scott_probe.py" in WORKFLOW
+    assert (
+        "test/unit/core/test_paraview_service.py::"
+        "test_package_validates_dataset_descriptor_during_configuration"
+    ) in WORKFLOW
     assert "test/unit/shell/test_local_exec.py" in WORKFLOW
     assert "test/unit/shell/test_mpi_exec.py" in WORKFLOW
     assert "test/unit/util/test_pkg_argparse.py" in WORKFLOW
