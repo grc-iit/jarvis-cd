@@ -11,6 +11,8 @@ from typing import Any, cast
 from jarvis_cd.core.pkg import Application
 from jarvis_cd.shell import Exec, ExecInfo, LocalExecInfo, MpiExecInfo
 
+_EXEC_FAILURE_STDERR_LIMIT = 4096
+
 
 class Paraview(Application):
     """
@@ -34,7 +36,10 @@ class Paraview(Application):
         return [
             {
                 "name": "mode",
-                "msg": "ParaView mode: server, service, or batch",
+                "msg": (
+                    "ParaView mode: service for a live dataset view, server for "
+                    "a plain pvserver, or batch for a script"
+                ),
                 "type": str,
                 "default": "server",
             },
@@ -100,7 +105,10 @@ class Paraview(Application):
             },
             {
                 "name": "dataset_descriptor",
-                "msg": "Service-mode dataset descriptor JSON or JSON file path",
+                "msg": (
+                    "Live-view dataset descriptor JSON or JSON file path; "
+                    "requires mode=service"
+                ),
                 "type": str,
                 "default": "",
             },
@@ -151,12 +159,18 @@ class Paraview(Application):
         :return: None
         """
         del kwargs
-        if self.config.get("mode", "server") != "service":
+        mode = self.config.get("mode", "server")
+        configured = self.config.get("dataset_descriptor")
+        if mode != "service":
+            if configured not in (None, ""):
+                raise ValueError(
+                    "ParaView dataset_descriptor requires mode='service' for "
+                    "live dataset viewing"
+                )
             return
 
         from jarvis_cd.service_runtime import DatasetDescriptor
 
-        configured = self.config.get("dataset_descriptor")
         if not isinstance(configured, str):
             raise ValueError(
                 "ParaView dataset_descriptor must be JSON text or a file path"
@@ -495,20 +509,38 @@ class Paraview(Application):
 
     @staticmethod
     def _raise_for_exec_failure(result: Any, *, operation: str) -> None:
-        """Raise when an execution has no status or any host exits nonzero."""
+        """Raise with bounded stderr when an execution exits unsuccessfully."""
         exit_codes = getattr(result, "exit_code", None)
         if not isinstance(exit_codes, dict) or not exit_codes:
             raise RuntimeError(f"{operation} returned no process exit status")
-        failures = {
-            str(host): code
+        failures = [
+            (host, code)
             for host, code in exit_codes.items()
             if isinstance(code, bool) or not isinstance(code, int) or code != 0
-        }
+        ]
         if failures:
             details = ", ".join(
-                f"{host}={code!r}" for host, code in sorted(failures.items())
+                f"{host}={code!r}"
+                for host, code in sorted(failures, key=lambda item: str(item[0]))
             )
-            raise RuntimeError(f"{operation} failed with exit status: {details}")
+            diagnostic = ""
+            stderr_by_host = getattr(result, "stderr", None)
+            if isinstance(stderr_by_host, dict):
+                messages: list[str] = []
+                for host, _code in sorted(failures, key=lambda item: str(item[0])):
+                    stderr = stderr_by_host.get(host)
+                    if stderr is None:
+                        stderr = stderr_by_host.get(str(host))
+                    if isinstance(stderr, str) and stderr.strip():
+                        messages.append(f"{host}: {' '.join(stderr.split())}")
+                if messages:
+                    bounded = "; ".join(messages)
+                    if len(bounded) > _EXEC_FAILURE_STDERR_LIMIT:
+                        bounded = bounded[: _EXEC_FAILURE_STDERR_LIMIT - 3] + "..."
+                    diagnostic = f"; stderr: {bounded}"
+            raise RuntimeError(
+                f"{operation} failed with exit status: {details}{diagnostic}"
+            )
 
     def stop(self):
         """

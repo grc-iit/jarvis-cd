@@ -1211,6 +1211,73 @@ def test_package_validates_dataset_descriptor_during_configuration(
     package._configure()
 
 
+@pytest.mark.parametrize("mode", ["server", "batch"])
+def test_package_requires_service_mode_for_live_dataset_descriptor(mode: str) -> None:
+    """A live-view descriptor cannot silently launch a non-service mode."""
+    package = cast(Any, object.__new__(package_module.Paraview))
+    package.config = {
+        "mode": mode,
+        "dataset_descriptor": '{"dataset_id":"asteroid-subset"}',
+    }
+
+    with pytest.raises(ValueError) as error:
+        package._configure()
+
+    assert "mode='service'" in str(error.value)
+    assert "live dataset viewing" in str(error.value)
+
+    package.config["dataset_descriptor"] = ""
+    package._configure()
+
+
+def test_package_parameters_describe_live_view_service_mode() -> None:
+    """Agent-facing parameter help explains the live-view mode contract."""
+    package = cast(Any, object.__new__(package_module.Paraview))
+    parameters = {
+        parameter["name"]: parameter for parameter in package._configure_menu()
+    }
+
+    assert "service for a live dataset view" in parameters["mode"]["msg"]
+    assert "requires mode=service" in parameters["dataset_descriptor"]["msg"]
+
+
+def test_package_exec_failure_preserves_bounded_stderr() -> None:
+    """A failed remote launch reports its actionable process diagnostic."""
+    result = SimpleNamespace(
+        exit_code={"localhost": 127},
+        stderr={"localhost": "/bin/sh: pvserver: command not found\n"},
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        package_module.Paraview._raise_for_exec_failure(
+            result,
+            operation="ParaView server",
+        )
+
+    message = str(error.value)
+    assert "localhost=127" in message
+    assert "pvserver: command not found" in message
+
+
+def test_package_exec_failure_truncates_oversized_stderr() -> None:
+    """Remote stderr cannot make the raised execution error unbounded."""
+    result = SimpleNamespace(
+        exit_code={"localhost": 1},
+        stderr={"localhost": "actionable-prefix " + ("x" * 5000)},
+    )
+
+    with pytest.raises(RuntimeError) as error:
+        package_module.Paraview._raise_for_exec_failure(
+            result,
+            operation="ParaView service",
+        )
+
+    message = str(error.value)
+    assert "actionable-prefix" in message
+    assert message.endswith("...")
+    assert len(message) < 4200
+
+
 def test_service_export_is_immediately_queryable_through_artifact_store(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
