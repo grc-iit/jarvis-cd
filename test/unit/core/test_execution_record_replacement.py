@@ -121,7 +121,7 @@ def test_post_submit_record_read_retries_after_metadata_settles(
         native_id="21948",
     )
     real_validate = execution_module._validate_private_regular_file
-    validation_attempts = 0
+    replacement_injected = False
     retry_delays: list[float] = []
 
     def transient_replacement(
@@ -130,9 +130,9 @@ def test_post_submit_record_read_retries_after_metadata_settles(
         *,
         maximum_size: int,
     ) -> os.stat_result:
-        nonlocal validation_attempts
-        validation_attempts += 1
-        if validation_attempts == 1:
+        nonlocal replacement_injected
+        if path.name == RECORD_NAME and not replacement_injected:
+            replacement_injected = True
             raise execution_module.PrivatePathIdentityChangedError(
                 f"private path changed during secure open: {path}"
             )
@@ -150,5 +150,5 @@ def test_post_submit_record_read_retries_after_metadata_settles(
     assert record.state == "submitted"
     assert record.submitted is True
     assert record.scheduler_native_id == "21948"
-    assert validation_attempts == 2
+    assert replacement_injected is True
     assert retry_delays == [execution_module._SECURE_RECORD_READ_RETRY_SECONDS]
