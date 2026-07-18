@@ -872,6 +872,7 @@ def test_filter_preserves_dataset_discovery_and_explicit_camera() -> None:
     backend._dataset_arrays = list(backend._arrays)
     backend._dataset_bounds = backend._bounds
     backend._dataset_timesteps = list(backend._timesteps)
+    backend._timestep_index = 1
     backend.descriptor = {
         "schema_version": "jarvis.dataset-descriptor.v1",
         "dataset_id": "source-volume",
@@ -879,12 +880,14 @@ def test_filter_preserves_dataset_discovery_and_explicit_camera() -> None:
     backend._active_field = {"name": "pressure", "association": "point"}
     backend._colormap = {"preset": "Viridis", "invert": False}
     backend._selection = {"status": "selected"}
+    backend._artifacts = []
     backend._discover_arrays = lambda _source=None: [
         {"name": "slice-pressure", "association": "point", "components": 1}
     ]
     backend._discover_bounds = lambda _source=None: (0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
     original_camera = backend._camera_state()
     original_discovery = backend.dataset_state()
+    original_timestep = backend.pipeline_state()["timestep"]
 
     with pytest.raises(CommandError, match="zero vector"):
         backend._apply_filter(
@@ -919,6 +922,8 @@ def test_filter_preserves_dataset_discovery_and_explicit_camera() -> None:
         {"name": "slice-pressure", "association": "point", "components": 1}
     ]
     assert backend._bounds == (0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
+    assert backend.pipeline_state()["timestep"] == original_timestep
+    assert backend._filters == [result["filter"]]
     assert backend._active_field is None
     assert backend._colormap is None
     assert backend._selection is None
