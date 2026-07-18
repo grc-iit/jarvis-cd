@@ -86,6 +86,9 @@ class ParaViewBackend:
         self._arrays = self._discover_arrays()
         self._bounds = self._discover_bounds()
         self._timesteps = self._discover_timesteps()
+        self._dataset_arrays = _json_copy_list(self._arrays)
+        self._dataset_bounds = tuple(self._bounds) if self._bounds is not None else None
+        self._dataset_timesteps = list(self._timesteps)
         self._timestep_index = 0
 
     def dataset_state(self) -> Dict[str, Any]:
@@ -93,9 +96,13 @@ class ParaViewBackend:
         return {
             "descriptor": _json_copy(self.descriptor),
             "discovery": {
-                "arrays": _json_copy_list(self._arrays),
-                "bounds": list(self._bounds) if self._bounds is not None else None,
-                "timestep_values": list(self._timesteps),
+                "arrays": _json_copy_list(self._dataset_arrays),
+                "bounds": (
+                    list(self._dataset_bounds)
+                    if self._dataset_bounds is not None
+                    else None
+                ),
+                "timestep_values": list(self._dataset_timesteps),
             },
         }
 
@@ -373,12 +380,8 @@ class ParaViewBackend:
                 proxy.LowerThreshold = threshold_lower
                 proxy.UpperThreshold = threshold_upper
             proxy.UpdatePipeline()
-            # Inspect the derived output while keeping ``dataset.discovery`` bound to
-            # the opened source descriptor. Filter state belongs to ``pipeline``;
-            # replacing source arrays or bounds here makes dataset identity drift and
-            # turns a geometric slice into an apparent dataset mutation.
-            self._discover_arrays(proxy)
-            self._discover_bounds(proxy)
+            new_arrays = self._discover_arrays(proxy)
+            new_bounds = self._discover_bounds(proxy)
             new_display = self.simple.Show(proxy, self.view)
             self.simple.Hide(previous_source, self.view)
             _apply_camera_state(self.view, previous_camera)
@@ -401,6 +404,8 @@ class ParaViewBackend:
         self.active_source = proxy
         self.display = new_display
         self._filters.append(record)
+        self._arrays = new_arrays
+        self._bounds = new_bounds
         self._active_field = None
         self._colormap = None
         self._selection = None
