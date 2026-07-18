@@ -5,13 +5,40 @@ import shlex
 import sys
 import tempfile
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, ExecInfo, LocalExecInfo, MpiExecInfo
+from jarvis_cd.shell import Exec, ExecInfo, LocalExecInfo, MpiExecInfo, Which
 
 _EXEC_FAILURE_STDERR_LIMIT = 4096
+_MODE_EXECUTABLES = {
+    "batch": "pvbatch",
+    "server": "pvserver",
+    "service": "pvpython",
+}
+_HEADLESS_ARGUMENTS = ("--mesa", "--force-offscreen-rendering")
+
+
+@dataclass(frozen=True)
+class _ParaViewRuntime:
+    """One ParaView launcher resolved inside the package execution environment."""
+
+    executable: str
+    capabilities: frozenset[str]
+
+    def arguments(self, *, force_offscreen: bool) -> tuple[str, ...]:
+        """Return package-selected launcher arguments for semantic headless mode."""
+        if not force_offscreen:
+            return ()
+        for argument in _HEADLESS_ARGUMENTS:
+            if argument in self.capabilities:
+                return (argument,)
+        raise RuntimeError(
+            f"ParaView launcher {self.executable!r} does not advertise a supported "
+            "headless rendering capability (--mesa or --force-offscreen-rendering)"
+        )
 
 
 class Paraview(Application):
@@ -63,7 +90,10 @@ class Paraview(Application):
             },
             {
                 "name": "force_offscreen_rendering",
-                "msg": "Useful for headless environments (no display)",
+                "msg": (
+                    "Use a detected headless backend in server or batch mode; "
+                    "service mode is always headless"
+                ),
                 "type": bool,
                 "default": False,
             },
@@ -76,18 +106,6 @@ class Paraview(Application):
             {
                 "name": "script",
                 "msg": "Generic Python script passed to pvbatch in batch mode",
-                "type": str,
-                "default": "",
-            },
-            {
-                "name": "pvbatch_bin",
-                "msg": "Path or command used to launch pvbatch",
-                "type": str,
-                "default": "pvbatch",
-            },
-            {
-                "name": "pvbatch_options",
-                "msg": "Options passed to pvbatch (for example --mesa)",
                 "type": str,
                 "default": "",
             },
@@ -109,18 +127,6 @@ class Paraview(Application):
                     "Live-view dataset descriptor JSON or JSON file path; "
                     "requires mode=service"
                 ),
-                "type": str,
-                "default": "",
-            },
-            {
-                "name": "pvpython_bin",
-                "msg": "Path or command used to launch the ParaView service",
-                "type": str,
-                "default": "pvpython",
-            },
-            {
-                "name": "pvpython_options",
-                "msg": "Options passed to pvpython in service mode",
                 "type": str,
                 "default": "",
             },
@@ -159,7 +165,10 @@ class Paraview(Application):
         :return: None
         """
         del kwargs
+        self._validate_legacy_runtime_configuration()
         mode = self.config.get("mode", "server")
+        if mode not in _MODE_EXECUTABLES:
+            raise ValueError(f"Unsupported ParaView mode: {mode!r}")
         configured = self.config.get("dataset_descriptor")
         if mode != "service":
             if configured not in (None, ""):
@@ -184,6 +193,7 @@ class Paraview(Application):
 
         :return: None
         """
+        self._validate_legacy_runtime_configuration()
         mode = self.config.get("mode", "server")
         environment = dict(self.mod_env)
         environment.setdefault("JARVIS_PACKAGE_NAME", "builtin.paraview")
@@ -214,17 +224,16 @@ class Paraview(Application):
             script = os.path.expandvars(cast(str, self.config.get("script") or ""))
             if not script:
                 raise ValueError("ParaView batch mode requires a script")
-            pvbatch_bin = os.path.expandvars(
-                cast(str, self.config.get("pvbatch_bin") or "pvbatch")
+            runtime = self._resolve_runtime("batch", environment)
+            command = [shlex.quote(runtime.executable)]
+            command.extend(
+                shlex.quote(item)
+                for item in runtime.arguments(
+                    force_offscreen=bool(
+                        self.config.get("force_offscreen_rendering", False)
+                    )
+                )
             )
-            command = [shlex.quote(pvbatch_bin)]
-            pvbatch_options = cast(
-                str,
-                self.config.get("pvbatch_options") or "",
-            )
-            command.extend(shlex.quote(item) for item in shlex.split(pvbatch_options))
-            if self.config["force_offscreen_rendering"]:
-                command.append("--force-offscreen-rendering")
             command.append(shlex.quote(script))
             script_args = cast(str, self.config.get("script_args") or "")
             if script_args:
@@ -235,13 +244,24 @@ class Paraview(Application):
         if mode != "server":
             raise ValueError(f"Unsupported ParaView mode: {mode!r}")
 
+        runtime = self._resolve_runtime("server", environment)
         port_id = self.config["port_id"]
         time_out = self.config["time_out"]
-        condition = ""
-        if self.config["force_offscreen_rendering"]:
-            condition += " --force-offscreen-rendering"
+        command = [
+            shlex.quote(runtime.executable),
+            f"--server-port={port_id}",
+            f"--timeout={time_out}",
+        ]
+        command.extend(
+            shlex.quote(item)
+            for item in runtime.arguments(
+                force_offscreen=bool(
+                    self.config.get("force_offscreen_rendering", False)
+                )
+            )
+        )
         result = Exec(
-            f"pvserver --server-port={port_id} --timeout={time_out}{condition}",
+            " ".join(command),
             exec_info,
         ).run()
         self._raise_for_exec_failure(result, operation="ParaView server")
@@ -275,6 +295,9 @@ class Paraview(Application):
             raise RuntimeError(
                 "ParaView service mode requires a durable JARVIS execution binding"
             )
+        runtime = self._resolve_runtime("service", environment)
+        pvpython_arguments = runtime.arguments(force_offscreen=True)
+        pvpython_options = shlex.join(pvpython_arguments)
         descriptor_value = cast(
             str,
             self.config.get("dataset_descriptor") or "",
@@ -319,18 +342,6 @@ class Paraview(Application):
         if not 0 <= service_port <= 65535:
             raise ValueError("service_port must be between 0 and 65535")
         startup_timeout = self._configured_int("service_startup_timeout", 120)
-        pvpython_bin = os.path.expandvars(
-            cast(str, self.config.get("pvpython_bin") or "pvpython")
-        )
-        pvpython_arguments = shlex.split(
-            cast(str, self.config.get("pvpython_options") or "")
-        )
-        if (
-            self.config.get("force_offscreen_rendering", False)
-            and "--force-offscreen-rendering" not in pvpython_arguments
-        ):
-            pvpython_arguments.append("--force-offscreen-rendering")
-        pvpython_options = shlex.join(pvpython_arguments)
         command = [
             sys.executable,
             str(supervisor),
@@ -341,7 +352,7 @@ class Paraview(Application):
             "--output-dir",
             str(output_dir),
             "--pvpython-bin",
-            pvpython_bin,
+            runtime.executable,
             "--pvpython-options",
             pvpython_options,
             "--bind-host",
@@ -369,6 +380,155 @@ class Paraview(Application):
             self._execution_info(environment, line_callback),
         ).run()
         self._raise_for_exec_failure(result, operation="ParaView service")
+
+    def _validate_legacy_runtime_configuration(self) -> None:
+        """Reject implementation overrides while accepting old no-op defaults."""
+        for field, executable in (
+            ("pvbatch_bin", "pvbatch"),
+            ("pvpython_bin", "pvpython"),
+        ):
+            configured = self.config.get(field)
+            if configured in (None, "", executable):
+                continue
+            raise ValueError(
+                f"ParaView {field} is no longer configurable; make {executable} "
+                "available through the JARVIS pipeline execution environment PATH"
+            )
+        for field, executable in (
+            ("pvbatch_options", "pvbatch"),
+            ("pvpython_options", "pvpython"),
+        ):
+            configured = self.config.get(field)
+            if configured in (None, ""):
+                continue
+            raise ValueError(
+                f"ParaView {field} is no longer configurable; builtin.paraview "
+                f"detects supported headless arguments from {executable}"
+            )
+
+    def _resolve_runtime(
+        self,
+        mode: str,
+        environment: dict[str, str],
+    ) -> _ParaViewRuntime:
+        """Resolve and probe the mode-specific launcher from ``self.mod_env``."""
+        executable_name = _MODE_EXECUTABLES.get(mode)
+        if executable_name is None:
+            raise ValueError(f"Unsupported ParaView mode: {mode!r}")
+        exec_info = self._runtime_probe_info(environment)
+        resolver = Which(executable_name, exec_info)
+        resolver.run()
+        failures = self._failed_exit_codes(resolver)
+        resolved = self._first_output_line(resolver.stdout)
+        if failures or not resolved:
+            path = environment.get("PATH")
+            path_context = "the configured PATH" if path else "PATH"
+            raise RuntimeError(
+                f"builtin.paraview mode={mode!r} requires {executable_name!r} "
+                f"in the JARVIS execution environment {path_context}; install "
+                "ParaView or select a pipeline environment that provides it"
+            )
+
+        help_result = Exec(
+            f"{shlex.quote(resolved)} --help",
+            exec_info,
+        ).run()
+        help_failures = self._failed_exit_codes(help_result)
+        if help_failures:
+            details = ", ".join(f"{host}={code!r}" for host, code in help_failures)
+            diagnostic = self._bounded_stderr(help_result, help_failures)
+            raise RuntimeError(
+                f"ParaView capability probe failed for {resolved!r}: {details}"
+                f"{diagnostic}"
+            )
+        help_text = "\n".join(
+            value
+            for output in (help_result.stdout, help_result.stderr)
+            if isinstance(output, dict)
+            for value in output.values()
+            if isinstance(value, str)
+        )
+        capabilities = frozenset(
+            argument for argument in _HEADLESS_ARGUMENTS if argument in help_text
+        )
+        return _ParaViewRuntime(
+            executable=resolved,
+            capabilities=capabilities,
+        )
+
+    def _runtime_probe_info(self, environment: dict[str, str]) -> LocalExecInfo:
+        """Use the same host, container, environment, and cwd as package launch."""
+        common: dict[str, Any] = {
+            "env": environment,
+            "cwd": os.path.expandvars(cast(str, self.config.get("cwd") or "")) or None,
+            "hostfile": self.hostfile,
+            "hide_output": True,
+            "timeout": 30,
+        }
+        if self.config.get("deploy_mode") == "container":
+            common.update(
+                {
+                    "container": self._container_engine,
+                    "container_image": self.deploy_image_name(),
+                    "shared_dir": self.shared_dir,
+                    "private_dir": self.private_dir,
+                    "bind_mounts": self.container_mounts,
+                }
+            )
+        return LocalExecInfo(**common)
+
+    @staticmethod
+    def _first_output_line(output: Any) -> str:
+        """Return the first printable non-empty line from executor output."""
+        if not isinstance(output, dict):
+            return ""
+        for host in sorted(output, key=str):
+            value = output[host]
+            if not isinstance(value, str):
+                continue
+            for line in value.splitlines():
+                candidate = line.strip()
+                if candidate and all(ord(character) >= 32 for character in candidate):
+                    return candidate
+        return ""
+
+    @staticmethod
+    def _failed_exit_codes(result: Any) -> list[tuple[Any, Any]]:
+        """Return deterministic nonzero or malformed executor statuses."""
+        exit_codes = getattr(result, "exit_code", None)
+        if not isinstance(exit_codes, dict) or not exit_codes:
+            return [("runtime", "missing")]
+        return sorted(
+            (
+                (host, code)
+                for host, code in exit_codes.items()
+                if isinstance(code, bool) or not isinstance(code, int) or code != 0
+            ),
+            key=lambda item: str(item[0]),
+        )
+
+    @staticmethod
+    def _bounded_stderr(
+        result: Any,
+        failures: list[tuple[Any, Any]],
+    ) -> str:
+        """Return bounded stderr for a failed runtime capability probe."""
+        stderr_by_host = getattr(result, "stderr", None)
+        if not isinstance(stderr_by_host, dict):
+            return ""
+        messages = []
+        for host, _code in failures:
+            stderr = stderr_by_host.get(host)
+            if stderr is None:
+                stderr = stderr_by_host.get(str(host))
+            if isinstance(stderr, str) and stderr.strip():
+                messages.append(f"{host}: {' '.join(stderr.split())}")
+        if not messages:
+            return ""
+        bounded = "; ".join(messages)
+        if len(bounded) > _EXEC_FAILURE_STDERR_LIMIT:
+            bounded = bounded[: _EXEC_FAILURE_STDERR_LIMIT - 3] + "..."
+        return f"; stderr: {bounded}"
 
     @staticmethod
     def _load_dataset_descriptor(

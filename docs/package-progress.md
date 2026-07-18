@@ -51,8 +51,10 @@ so they never need direct access to a host-only execution path.
 ## ParaView
 
 `builtin.paraview` supports both `server` and generic `batch` modes. Batch mode
-accepts a user or site-owned script, `pvbatch_bin`, and `pvbatch_options` (for
-example `--mesa` on a compatible installation). The bundled
+accepts a user or site-owned script and semantic script arguments. It resolves
+`pvbatch` from the pipeline execution environment and detects supported
+headless launcher arguments itself, selecting one backend rather than stacking
+backend-selection flags. The bundled
 `progress_reporter.py` is intentionally Python 3.10-compatible and imports no
 JARVIS modules because ParaView may bundle an older Python than JARVIS. It emits
 structured stdout only; the JARVIS parent validates identity and sequence, then
