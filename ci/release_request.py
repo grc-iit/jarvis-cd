@@ -54,6 +54,11 @@ def validate_release_request(
     """Return an exact release request after validating every field."""
     if len(raw.encode("utf-8")) > MAX_REQUEST_BYTES:
         raise ReleaseRequestError("release request exceeds its byte limit")
+    # PowerShell can prepend a UTF-8 BOM when an operator pipes JSON into
+    # ``gh``. RFC 8259 permits parsers to ignore that marker for
+    # interoperability; remove only a single leading marker so malformed
+    # content elsewhere remains invalid.
+    raw = raw.removeprefix("\ufeff")
     if STABLE_TAG_PATTERN.fullmatch(tag) is None:
         raise ReleaseRequestError("release tag must be a stable vX.Y.Z tag")
     if COMMIT_PATTERN.fullmatch(commit) is None:

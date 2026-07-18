@@ -67,6 +67,21 @@ def test_valid_request_is_canonicalized() -> None:
     assert _validate(record) == record
 
 
+def test_valid_request_accepts_single_leading_utf8_bom() -> None:
+    record = _record()
+
+    canonical = canonical_release_request(
+        "\ufeff" + json.dumps(record),
+        repository=REPOSITORY,
+        tag=TAG,
+        commit=COMMIT,
+        now_epoch=NOW,
+        max_age_seconds=3_600,
+    )
+
+    assert canonical == json.dumps(record, separators=(",", ":"), sort_keys=True)
+
+
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
