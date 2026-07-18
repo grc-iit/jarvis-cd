@@ -345,6 +345,36 @@ def test_supervisor_missing_configured_pvpython_fails_loudly(
     assert missing_launcher in diagnostic
 
 
+def test_supervisor_accepts_hyphen_prefixed_pvpython_options(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Package-selected launcher flags remain values, not supervisor options."""
+    reporter = _RecordingReporter()
+    descriptor = _supervisor_descriptor(tmp_path / "descriptor.json")
+    arguments = _supervisor_arguments(descriptor, tmp_path / "output")
+    arguments.append("--pvpython-options=--mesa")
+    observed: list[list[str]] = []
+
+    def capture_popen(command: list[str], **_kwargs: Any) -> Any:
+        observed.append(command)
+        raise FileNotFoundError("stop after parsing the supervisor command")
+
+    def reporter_from_environment(**_kwargs: Any) -> _RecordingReporter:
+        return reporter
+
+    monkeypatch.setattr(supervisor_module.subprocess, "Popen", capture_popen)
+    monkeypatch.setattr(
+        supervisor_module,
+        "ServiceRuntimeReporter",
+        SimpleNamespace(from_environment=reporter_from_environment),
+    )
+
+    assert supervisor_module.main(arguments) == 1
+    assert observed[0][:2] == ["pvpython", "--mesa"]
+    assert reporter.lifecycle_calls == [ServiceLifecycle.FAILED]
+
+
 def test_supervisor_reports_periodic_degradation_and_recovery(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1178,7 +1208,7 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
     command, exec_info = _CapturedExec.commands[0]
     assert "service_supervisor.py" in command
     assert "/runtime/paraview/bin/pvpython" in command
-    assert "--pvpython-options --mesa" in command
+    assert "--pvpython-options=--mesa" in command
     assert "--force-offscreen-rendering" not in command
     assert "--bind-host 127.0.0.1" in command
     assert "--advertise-host 127.0.0.1" in command
