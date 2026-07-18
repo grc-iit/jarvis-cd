@@ -190,14 +190,20 @@ pkg_type: builtin.paraview
 pkg_name: viewer
 mode: service
 dataset_descriptor: /site/descriptors/asteroid-subset.json
-pvpython_bin: /opt/ParaView/bin/pvpython
-pvpython_options: --mesa
 service_bind_host: 127.0.0.1
 service_advertise_host: 127.0.0.1
 service_port: 0
 service_startup_timeout: 120
 nprocs: 1
 ```
+
+`builtin.paraview` resolves `pvpython` from the pipeline execution
+environment's `PATH`. Service mode is intrinsically headless, so the package
+probes the installed launcher and selects one supported backend itself:
+`--mesa` when advertised, otherwise `--force-offscreen-rendering`. Site paths
+and raw ParaView launcher flags are not part of the semantic package contract.
+A missing or unusable `pvpython` dependency fails the package explicitly
+before the service supervisor starts.
 
 The ParaView backend is deliberately loopback-only. The relay connector must
 run inside the execution's owned allocation and dial `127.0.0.1`; JARVIS

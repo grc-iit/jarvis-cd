@@ -24,13 +24,21 @@ location from browser coordinates.
 jarvis ppl append paraview \
   mode=service \
   dataset_descriptor=/site/descriptors/asteroid-subset.json \
-  pvpython_bin=/opt/ParaView/bin/pvpython \
   service_bind_host=127.0.0.1 \
   service_advertise_host=127.0.0.1 \
   nprocs=1
 jarvis ppl submit +no_wait +json
 jarvis execution service-runtimes <execution-id> +json
 ```
+
+The package resolves `pvpython`, `pvbatch`, or `pvserver` (according to mode)
+from the JARVIS pipeline execution environment. Service mode is intrinsically
+headless: the package probes the selected launcher and chooses one supported
+backend, preferring `--mesa` and otherwise using
+`--force-offscreen-rendering`. Executable paths and raw launcher flags are
+intentionally not package parameters. If the selected environment does not
+provide the mode-specific ParaView executable, the package fails before
+application launch with an explicit dependency error.
 
 JARVIS reports the actual service host/port and lifecycle through the durable
 execution handle. A relay owns authenticated desktop routing; direct SSH

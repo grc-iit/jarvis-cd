@@ -181,22 +181,46 @@ def _load_paraview_package() -> ModuleType:
 class _CapturedExec:
     commands: list[tuple[str, Any]] = []
     exit_codes: dict[str, int] = {"localhost": 0}
+    help_text = "--mesa\n--force-offscreen-rendering\n"
 
     def __init__(self, command: str, exec_info: Any) -> None:
         self.command = command
         self.exec_info = exec_info
-        self.exit_code = dict(self.exit_codes)
-        self.commands.append((command, exec_info))
+        self.stdout = {"localhost": ""}
+        self.stderr = {"localhost": ""}
+        if command.endswith(" --help"):
+            self.exit_code = {"localhost": 0}
+            self.stdout["localhost"] = self.help_text
+        else:
+            self.exit_code = dict(self.exit_codes)
+            self.commands.append((command, exec_info))
 
     def run(self) -> "_CapturedExec":
         return self
 
 
-def test_generic_paraview_batch_honors_binary_options_and_hostfile(
+class _ResolvedWhich:
+    """Resolve the requested launcher inside a deterministic package PATH."""
+
+    calls: list[tuple[str, Any]] = []
+
+    def __init__(self, executable: str, exec_info: Any) -> None:
+        self.executable = executable
+        self.exec_info = exec_info
+        self.exit_code = {"localhost": 0}
+        self.stdout = {"localhost": f"/runtime/paraview/bin/{executable}\n"}
+        self.stderr = {"localhost": ""}
+        self.calls.append((executable, exec_info))
+
+    def run(self) -> "_ResolvedWhich":
+        return self
+
+
+def test_generic_paraview_batch_resolves_runtime_and_hostfile(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Ares can select pvbatch, --mesa, and the allocated hostfile generically."""
+    """The package resolves pvbatch and headless flags in its execution context."""
     module = _load_paraview_package()
     package = object.__new__(module.Paraview)
     assert module.__file__ is not None
@@ -213,8 +237,6 @@ def test_generic_paraview_batch_honors_binary_options_and_hostfile(
         "mode": "batch",
         "nprocs": 2,
         "ppn": 2,
-        "pvbatch_bin": "/opt/paraview/bin/pvbatch",
-        "pvbatch_options": "--mesa --verbosity INFO",
         "script": str(tmp_path / "asteroid script.py"),
         "script_args": "--frames 2",
     }
@@ -227,17 +249,21 @@ def test_generic_paraview_batch_honors_binary_options_and_hostfile(
     }
     _CapturedExec.commands = []
     _CapturedExec.exit_codes = {"localhost": 0}
+    _ResolvedWhich.calls = []
     monkeypatch.setattr(module, "Exec", _CapturedExec)
+    monkeypatch.setattr(module, "Which", _ResolvedWhich)
 
     package.start()
 
     command, exec_info = _CapturedExec.commands[0]
-    assert command.startswith("/opt/paraview/bin/pvbatch --mesa --verbosity INFO")
-    assert "--force-offscreen-rendering" in command
+    assert command.startswith("/runtime/paraview/bin/pvbatch --mesa")
+    assert "--force-offscreen-rendering" not in command
     assert exec_info.hostfile is hostfile
     assert exec_info.env["JARVIS_PACKAGE_NAME"] == "builtin.paraview"
     assert exec_info.env["JARVIS_PACKAGE_ID"] == "asteroid_render"
     assert exec_info.env["JARVIS_PROGRESS_TRANSPORT"] == "stdout"
+    assert [call[0] for call in _ResolvedWhich.calls] == ["pvbatch"]
+    assert _ResolvedWhich.calls[0][1].hostfile is hostfile
     reporter_path = Path(exec_info.env["JARVIS_PARAVIEW_REPORTER"])
     assert reporter_path.parent == Path(package.shared_dir) / ".jarvis-progress"
     assert module.__file__ is not None
@@ -277,8 +303,6 @@ def test_single_process_container_stages_reporter_and_uses_local_exec(
         "mode": "batch",
         "nprocs": 1,
         "ppn": 1,
-        "pvbatch_bin": "pvbatch",
-        "pvbatch_options": "--mesa",
         "script": str(tmp_path / "render.py"),
         "script_args": "--frames 2",
     }
@@ -297,7 +321,9 @@ def test_single_process_container_stages_reporter_and_uses_local_exec(
     }
     _CapturedExec.commands = []
     _CapturedExec.exit_codes = {"localhost": 0}
+    _ResolvedWhich.calls = []
     monkeypatch.setattr(module, "Exec", _CapturedExec)
+    monkeypatch.setattr(module, "Which", _ResolvedWhich)
 
     package.start()
 
@@ -314,6 +340,9 @@ def test_single_process_container_stages_reporter_and_uses_local_exec(
     assert reporter_path.is_file()
     assert reporter_path.parent == Path(package.shared_dir) / ".jarvis-progress"
     assert exec_info.env["PYTHONPATH"].split(os.pathsep)[0] == str(reporter_path.parent)
+    probe_info = _ResolvedWhich.calls[0][1]
+    assert probe_info.container == "apptainer"
+    assert probe_info.container_image == "paraview-progress-exec"
 
 
 @pytest.mark.parametrize(
@@ -340,8 +369,6 @@ def test_paraview_exit_failure_propagates_to_pipeline(
         "nprocs": 1,
         "ppn": 1,
         "port_id": 11111,
-        "pvbatch_bin": "pvbatch",
-        "pvbatch_options": "--mesa",
         "script": str(tmp_path / "render.py"),
         "script_args": "",
         "time_out": 10,
@@ -351,7 +378,9 @@ def test_paraview_exit_failure_propagates_to_pipeline(
     package.mod_env = {}
     _CapturedExec.commands = []
     _CapturedExec.exit_codes = {"compute-1": 7}
+    _ResolvedWhich.calls = []
     monkeypatch.setattr(module, "Exec", _CapturedExec)
+    monkeypatch.setattr(module, "Which", _ResolvedWhich)
 
     with pytest.raises(RuntimeError, match=rf"{operation} failed.*compute-1=7"):
         package.start()

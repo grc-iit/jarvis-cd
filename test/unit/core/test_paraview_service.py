@@ -403,15 +403,47 @@ class _CapturedExec:
     """Capture a real package launch boundary without starting pvpython."""
 
     commands: list[tuple[str, Any]] = []
+    help_text = "--mesa\n--force-offscreen-rendering\n"
 
     def __init__(self, command: str, exec_info: Any) -> None:
         self.command = command
         self.exec_info = exec_info
         self.exit_code = {"localhost": 0}
-        self.commands.append((command, exec_info))
+        self.stdout = {"localhost": ""}
+        self.stderr = {"localhost": ""}
+        if command.endswith(" --help"):
+            self.stdout["localhost"] = self.help_text
+        else:
+            self.commands.append((command, exec_info))
 
     def run(self) -> "_CapturedExec":
         return self
+
+
+class _ResolvedWhich:
+    """Resolve package launchers without depending on host ParaView installs."""
+
+    calls: list[tuple[str, Any]] = []
+
+    def __init__(self, executable: str, exec_info: Any) -> None:
+        self.executable = executable
+        self.exec_info = exec_info
+        self.exit_code = {"localhost": 0}
+        self.stdout = {"localhost": f"/runtime/paraview/bin/{executable}\n"}
+        self.stderr = {"localhost": ""}
+        self.calls.append((executable, exec_info))
+
+    def run(self) -> "_ResolvedWhich":
+        return self
+
+
+class _MissingWhich(_ResolvedWhich):
+    """Represent one absent mode-specific ParaView launcher."""
+
+    def __init__(self, executable: str, exec_info: Any) -> None:
+        super().__init__(executable, exec_info)
+        self.exit_code = {"localhost": 1}
+        self.stdout = {"localhost": ""}
 
 
 class _Backend:
@@ -1115,8 +1147,6 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
         "ppn": 1,
         "cwd": "",
         "dataset_descriptor": json.dumps(descriptor),
-        "pvpython_bin": "/opt/paraview/bin/pvpython",
-        "pvpython_options": "--mesa",
         "force_offscreen_rendering": True,
         "service_bind_host": "127.0.0.1",
         "service_advertise_host": "127.0.0.1",
@@ -1126,6 +1156,7 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
     package.pipeline = SimpleNamespace(get_hostfile=lambda: object())
     package.env = {}
     package.mod_env = {
+        "PATH": "/runtime/paraview/bin",
         "JARVIS_EXECUTION_ID": "exec-render",
         "JARVIS_PACKAGE_NAME": "builtin.paraview",
         "JARVIS_PACKAGE_ID": "viewer",
@@ -1138,14 +1169,17 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
         ),
     }
     _CapturedExec.commands = []
+    _ResolvedWhich.calls = []
     monkeypatch.setattr(package_module, "Exec", _CapturedExec)
+    monkeypatch.setattr(package_module, "Which", _ResolvedWhich)
 
     package.start()
 
     command, exec_info = _CapturedExec.commands[0]
     assert "service_supervisor.py" in command
-    assert "/opt/paraview/bin/pvpython" in command
-    assert "--pvpython-options '--mesa --force-offscreen-rendering'" in command
+    assert "/runtime/paraview/bin/pvpython" in command
+    assert "--pvpython-options --mesa" in command
+    assert "--force-offscreen-rendering" not in command
     assert "--bind-host 127.0.0.1" in command
     assert "--advertise-host 127.0.0.1" in command
     assert exec_info.env["JARVIS_SERVICE_RUNTIME_PATH"].endswith(
@@ -1166,10 +1200,12 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
     )
     assert staged_descriptor == descriptor
 
-    package.config["pvpython_options"] = "--mesa --force-offscreen-rendering"
     package._start_service(dict(package.mod_env))
     deduplicated_command, _ = _CapturedExec.commands[1]
-    assert deduplicated_command.count("--force-offscreen-rendering") == 1
+    assert deduplicated_command.count("--mesa") == 1
+    assert "--force-offscreen-rendering" not in deduplicated_command
+    assert [call[0] for call in _ResolvedWhich.calls] == ["pvpython", "pvpython"]
+    assert _ResolvedWhich.calls[0][1].env["PATH"] == "/runtime/paraview/bin"
 
     package.config["service_bind_host"] = "0.0.0.0"
     with pytest.raises(ValueError, match="loopback-only"):
@@ -1230,6 +1266,15 @@ def test_package_requires_service_mode_for_live_dataset_descriptor(mode: str) ->
     package._configure()
 
 
+def test_package_rejects_unknown_mode_during_configuration() -> None:
+    """An invalid mode cannot survive configuration until package startup."""
+    package = cast(Any, object.__new__(package_module.Paraview))
+    package.config = {"mode": "site-wrapper", "dataset_descriptor": ""}
+
+    with pytest.raises(ValueError, match="Unsupported ParaView mode"):
+        package._configure()
+
+
 def test_package_parameters_describe_live_view_service_mode() -> None:
     """Agent-facing parameter help explains the live-view mode contract."""
     package = cast(Any, object.__new__(package_module.Paraview))
@@ -1239,6 +1284,82 @@ def test_package_parameters_describe_live_view_service_mode() -> None:
 
     assert "service for a live dataset view" in parameters["mode"]["msg"]
     assert "requires mode=service" in parameters["dataset_descriptor"]["msg"]
+    assert (
+        "service mode is always headless"
+        in parameters["force_offscreen_rendering"]["msg"]
+    )
+    assert "pvpython_bin" not in parameters
+    assert "pvpython_options" not in parameters
+    assert "pvbatch_bin" not in parameters
+    assert "pvbatch_options" not in parameters
+
+
+def test_package_selects_one_deterministic_headless_backend() -> None:
+    """Mesa is preferred when available, with force-offscreen as fallback."""
+    both = package_module._ParaViewRuntime(
+        executable="/runtime/bin/pvpython",
+        capabilities=frozenset({"--force-offscreen-rendering", "--mesa"}),
+    )
+    fallback = package_module._ParaViewRuntime(
+        executable="/runtime/bin/pvpython",
+        capabilities=frozenset({"--force-offscreen-rendering"}),
+    )
+
+    assert both.arguments(force_offscreen=True) == ("--mesa",)
+    assert fallback.arguments(force_offscreen=True) == ("--force-offscreen-rendering",)
+    assert both.arguments(force_offscreen=False) == ()
+
+
+@pytest.mark.parametrize(
+    ("mode", "executable"),
+    [
+        ("service", "pvpython"),
+        ("batch", "pvbatch"),
+        ("server", "pvserver"),
+    ],
+)
+def test_package_fails_clearly_when_mode_runtime_is_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    executable: str,
+) -> None:
+    """Each mode checks its own dependency in the JARVIS execution PATH."""
+    package = cast(Any, object.__new__(package_module.Paraview))
+    package.config = {"cwd": ""}
+    package.pipeline = SimpleNamespace(get_hostfile=lambda: object())
+    _MissingWhich.calls = []
+    monkeypatch.setattr(package_module, "Which", _MissingWhich)
+
+    with pytest.raises(RuntimeError) as error:
+        package._resolve_runtime(mode, {"PATH": "/jarvis/environment/bin"})
+
+    message = str(error.value)
+    assert f"mode={mode!r}" in message
+    assert repr(executable) in message
+    assert "JARVIS execution environment" in message
+    assert _MissingWhich.calls[0][1].env == {"PATH": "/jarvis/environment/bin"}
+
+
+def test_package_rejects_legacy_launcher_overrides() -> None:
+    """Executable paths and raw launcher flags are not semantic parameters."""
+    package = cast(Any, object.__new__(package_module.Paraview))
+    package.config = {
+        "mode": "server",
+        "dataset_descriptor": "",
+        "pvpython_bin": "/site/ParaView/bin/pvpython",
+    }
+
+    with pytest.raises(ValueError, match="execution environment PATH"):
+        package._configure()
+
+    package.config = {
+        "mode": "server",
+        "dataset_descriptor": "",
+        "pvpython_bin": "pvpython",
+        "pvpython_options": "--mesa",
+    }
+    with pytest.raises(ValueError, match="detects supported headless arguments"):
+        package._configure()
 
 
 def test_package_exec_failure_preserves_bounded_stderr() -> None:

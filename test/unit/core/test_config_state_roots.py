@@ -198,17 +198,12 @@ def test_stale_managed_builtin_repo_binds_to_running_distribution(
         )
 
         package = Pkg.load_standalone("builtin.paraview")
-        setting = next(
-            item
-            for item in package.configure_menu()
-            if item.get("name") == "pvpython_bin"
-        )
-        assert setting == {
-            "name": "pvpython_bin",
-            "msg": "Path or command used to launch the ParaView service",
-            "type": str,
-            "default": "pvpython",
-        }
+        settings = {str(item.get("name")): item for item in package.configure_menu()}
+        assert "pvpython_bin" not in settings
+        assert "pvpython_options" not in settings
+        assert "pvbatch_bin" not in settings
+        assert "pvbatch_options" not in settings
+        assert settings["mode"]["default"] == "server"
         assert (
             Path(package.pkg_dir)
             .resolve()
