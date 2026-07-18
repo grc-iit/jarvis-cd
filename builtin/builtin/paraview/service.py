@@ -373,8 +373,12 @@ class ParaViewBackend:
                 proxy.LowerThreshold = threshold_lower
                 proxy.UpperThreshold = threshold_upper
             proxy.UpdatePipeline()
-            new_arrays = self._discover_arrays(proxy)
-            new_bounds = self._discover_bounds(proxy)
+            # Inspect the derived output while keeping ``dataset.discovery`` bound to
+            # the opened source descriptor. Filter state belongs to ``pipeline``;
+            # replacing source arrays or bounds here makes dataset identity drift and
+            # turns a geometric slice into an apparent dataset mutation.
+            self._discover_arrays(proxy)
+            self._discover_bounds(proxy)
             new_display = self.simple.Show(proxy, self.view)
             self.simple.Hide(previous_source, self.view)
             _apply_camera_state(self.view, previous_camera)
@@ -397,8 +401,6 @@ class ParaViewBackend:
         self.active_source = proxy
         self.display = new_display
         self._filters.append(record)
-        self._arrays = new_arrays
-        self._bounds = new_bounds
         self._active_field = None
         self._colormap = None
         self._selection = None
