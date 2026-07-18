@@ -857,8 +857,8 @@ class _FilterSimple:
         return
 
 
-def test_filter_validates_atomically_and_preserves_explicit_camera() -> None:
-    """Filters have no hidden reset and commit only after full validation."""
+def test_filter_preserves_dataset_discovery_and_explicit_camera() -> None:
+    """Filters mutate pipeline state without rewriting source dataset discovery."""
     backend = cast(Any, object.__new__(service_module.ParaViewBackend))
     previous_source = object()
     backend.active_source = previous_source
@@ -866,13 +866,18 @@ def test_filter_validates_atomically_and_preserves_explicit_camera() -> None:
     backend.view = _CameraView()
     backend.simple = _FilterSimple()
     backend._filters = []
-    backend._arrays = []
+    backend._arrays = [{"name": "pressure", "association": "point", "components": 1}]
+    backend._bounds = (-10.0, 10.0, -20.0, 20.0, -30.0, 30.0)
     backend._active_field = {"name": "pressure", "association": "point"}
     backend._colormap = {"preset": "Viridis", "invert": False}
     backend._selection = {"status": "selected"}
-    backend._discover_arrays = lambda _source=None: []
+    backend._discover_arrays = lambda _source=None: [
+        {"name": "slice-pressure", "association": "point", "components": 1}
+    ]
     backend._discover_bounds = lambda _source=None: (0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
     original_camera = backend._camera_state()
+    original_arrays = list(backend._arrays)
+    original_bounds = backend._bounds
 
     with pytest.raises(CommandError, match="zero vector"):
         backend._apply_filter(
@@ -902,6 +907,8 @@ def test_filter_validates_atomically_and_preserves_explicit_camera() -> None:
     assert backend.active_source is backend.simple.proxy
     assert backend.simple.proxy.updated is True
     assert backend._camera_state() == original_camera
+    assert backend._arrays == original_arrays
+    assert backend._bounds == original_bounds
     assert backend._active_field is None
     assert backend._colormap is None
     assert backend._selection is None
