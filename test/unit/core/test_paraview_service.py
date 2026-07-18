@@ -868,6 +868,14 @@ def test_filter_preserves_dataset_discovery_and_explicit_camera() -> None:
     backend._filters = []
     backend._arrays = [{"name": "pressure", "association": "point", "components": 1}]
     backend._bounds = (-10.0, 10.0, -20.0, 20.0, -30.0, 30.0)
+    backend._timesteps = [0.0, 1.0]
+    backend._dataset_arrays = list(backend._arrays)
+    backend._dataset_bounds = backend._bounds
+    backend._dataset_timesteps = list(backend._timesteps)
+    backend.descriptor = {
+        "schema_version": "jarvis.dataset-descriptor.v1",
+        "dataset_id": "source-volume",
+    }
     backend._active_field = {"name": "pressure", "association": "point"}
     backend._colormap = {"preset": "Viridis", "invert": False}
     backend._selection = {"status": "selected"}
@@ -876,8 +884,7 @@ def test_filter_preserves_dataset_discovery_and_explicit_camera() -> None:
     ]
     backend._discover_bounds = lambda _source=None: (0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
     original_camera = backend._camera_state()
-    original_arrays = list(backend._arrays)
-    original_bounds = backend._bounds
+    original_discovery = backend.dataset_state()
 
     with pytest.raises(CommandError, match="zero vector"):
         backend._apply_filter(
@@ -907,8 +914,11 @@ def test_filter_preserves_dataset_discovery_and_explicit_camera() -> None:
     assert backend.active_source is backend.simple.proxy
     assert backend.simple.proxy.updated is True
     assert backend._camera_state() == original_camera
-    assert backend._arrays == original_arrays
-    assert backend._bounds == original_bounds
+    assert backend.dataset_state() == original_discovery
+    assert backend._arrays == [
+        {"name": "slice-pressure", "association": "point", "components": 1}
+    ]
+    assert backend._bounds == (0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
     assert backend._active_field is None
     assert backend._colormap is None
     assert backend._selection is None
