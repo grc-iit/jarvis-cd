@@ -359,6 +359,7 @@ def test_exact_release_request_gates_artifact_build() -> None:
     assert "'private_schema': 'jarvis.service-runtime.private.v1'" in WORKFLOW
     assert "resolve-service-runtime-authority" in WORKFLOW
     assert "MAX_HTTP_CONNECTIONS" in WORKFLOW
+    assert "sys.path.insert(0, str(distribution_root / 'builtin'))" in WORKFLOW
     build_block = WORKFLOW[build_index : WORKFLOW.index("  release:")]
     assert "    needs: release-preflight" in build_block
     assert "release_request" in build_block
