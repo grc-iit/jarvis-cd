@@ -442,6 +442,63 @@ class JarvisCLI(ArgParse):
             ]
         )
 
+        self.add_cmd(
+            "execution resolve-service-runtime-authority",
+            msg="Resolve one private service capability for a trusted connector",
+        )
+        self.add_args(
+            [
+                {
+                    "name": "execution_id",
+                    "msg": "JARVIS execution identity",
+                    "type": str,
+                    "required": True,
+                    "pos": True,
+                },
+                {
+                    "name": "pipeline_id",
+                    "aliases": ["pipeline-id"],
+                    "msg": "Exact pipeline identity",
+                    "type": str,
+                    "required": True,
+                },
+                {
+                    "name": "package_id",
+                    "aliases": ["package-id"],
+                    "msg": "Exact package identity",
+                    "type": str,
+                    "required": True,
+                },
+                {
+                    "name": "service_instance_id",
+                    "aliases": ["service-instance-id"],
+                    "msg": "Exact service instance identity",
+                    "type": str,
+                    "required": True,
+                },
+                {
+                    "name": "revision",
+                    "msg": "Exact current service revision",
+                    "type": int,
+                    "required": True,
+                },
+                {
+                    "name": "token_sha256",
+                    "aliases": ["token-sha256"],
+                    "msg": "Expected public bearer-token digest",
+                    "type": str,
+                    "required": True,
+                },
+                {
+                    "name": "json",
+                    "msg": "Emit the private authority document",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
         self.add_cmd("ppl update", msg="Update current pipeline")
         self.add_args(
             [
@@ -1606,6 +1663,23 @@ class JarvisCLI(ArgParse):
                 f"  {runtime.package_id}/{runtime.service_instance_id}: "
                 f"{runtime.lifecycle.value} {runtime.base_url}"
             )
+
+    def execution_resolve_service_runtime_authority(self) -> None:
+        """Emit one exact private authority for an internal trusted connector."""
+        self._ensure_initialized()
+        if self.kwargs.get("json") is not True:
+            raise ValueError(
+                "service runtime authority resolution requires explicit +json"
+            )
+        pipeline = Pipeline(self.kwargs["pipeline_id"])
+        resolved = pipeline.resolve_execution_service_runtime_authority(
+            self.kwargs["execution_id"],
+            package_id=self.kwargs["package_id"],
+            service_instance_id=self.kwargs["service_instance_id"],
+            revision=self.kwargs["revision"],
+            token_sha256=self.kwargs["token_sha256"],
+        )
+        print(json.dumps(resolved.to_dict(), separators=(",", ":"), sort_keys=True))
 
     def ppl_start(self):
         """Start current pipeline"""

@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
+import socket
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from http import HTTPStatus
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Mapping, cast
+from typing import Any, Callable, Mapping, cast
 
 import pytest
 from jarvis_cd.artifacts import ArtifactStore
@@ -32,6 +35,7 @@ sys.path.insert(0, str(_BUILTIN_REPOSITORY_ROOT))
 
 from builtin.paraview import service as service_module  # noqa: E402
 from builtin.paraview import pkg as package_module  # noqa: E402
+from builtin.paraview import service_http as service_http_module  # noqa: E402
 from builtin.paraview import service_supervisor as supervisor_module  # noqa: E402
 from builtin.paraview.service_http import (  # noqa: E402
     COMMAND_RESULT_SCHEMA,
@@ -44,6 +48,15 @@ from builtin.paraview.service_http import (  # noqa: E402
 )
 
 _PNG = b"\x89PNG\r\n\x1a\nreal-test-frame"
+
+
+def _wait_until(predicate: Callable[[], bool], *, timeout: float = 2.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return bool(predicate())
 
 
 def test_service_supervisor_rejects_shared_cluster_bind() -> None:
@@ -69,6 +82,8 @@ def test_service_supervisor_rejects_shared_cluster_bind() -> None:
                 "30",
                 "--service-instance-id",
                 "service-test",
+                "--authorization-file",
+                "authorization.token",
             ]
         )
 
@@ -158,6 +173,10 @@ def _supervisor_descriptor(path: Path) -> Path:
 
 def _supervisor_arguments(descriptor: Path, output_dir: Path) -> list[str]:
     """Return a loopback supervisor command using no real subprocess."""
+    authorization = descriptor.with_name("authorization.token")
+    authorization.write_text("a" * 64 + "\n", encoding="ascii")
+    if sys.platform != "win32":
+        authorization.chmod(0o600)
     return [
         "--service-script",
         "service.py",
@@ -177,6 +196,8 @@ def _supervisor_arguments(descriptor: Path, output_dir: Path) -> list[str]:
         "5",
         "--service-instance-id",
         "srv_0123456789abcdef0123456789abcdef",
+        "--authorization-file",
+        str(authorization.resolve()),
     ]
 
 
@@ -224,8 +245,10 @@ def test_supervisor_health_requires_exact_versioned_instance_response(
     """A different process or malformed revision cannot satisfy readiness."""
     response_payload: dict[str, Any] = {}
 
-    def fake_urlopen(_request: object, *, timeout: float) -> _HealthResponse:
+    def fake_urlopen(request: object, *, timeout: float) -> _HealthResponse:
         assert timeout == 0.5
+        assert isinstance(request, urllib.request.Request)
+        assert request.get_header("Authorization") == "Bearer " + "a" * 64
         return _HealthResponse(response_payload)
 
     monkeypatch.setattr(supervisor_module.urllib.request, "urlopen", fake_urlopen)
@@ -241,12 +264,14 @@ def test_supervisor_health_requires_exact_versioned_instance_response(
         "127.0.0.1",
         18080,
         service_instance_id="srv_0123456789abcdef0123456789abcdef",
+        authorization_token="a" * 64,
     )
     response_payload["revision"] = True
     assert not supervisor_module._health_ready(
         "127.0.0.1",
         18080,
         service_instance_id="srv_0123456789abcdef0123456789abcdef",
+        authorization_token="a" * 64,
     )
     response_payload.update(expected)
     response_payload["unexpected"] = "field"
@@ -254,6 +279,7 @@ def test_supervisor_health_requires_exact_versioned_instance_response(
         "127.0.0.1",
         18080,
         service_instance_id="srv_0123456789abcdef0123456789abcdef",
+        authorization_token="a" * 64,
     )
 
 
@@ -396,9 +422,11 @@ def test_supervisor_reports_periodic_degradation_and_recovery(
         _port: int,
         *,
         service_instance_id: str,
+        authorization_token: str,
     ) -> bool:
         nonlocal probe_calls
         assert service_instance_id == "srv_0123456789abcdef0123456789abcdef"
+        assert authorization_token == "a" * 64
         probe_calls += 1
         healthy = probe_calls in {1, 5}
         if probe_calls == 5:
@@ -482,6 +510,7 @@ class _Backend:
     def __init__(self) -> None:
         self.timestep = 0
         self.artifacts: list[dict[str, Any]] = []
+        self.transaction_open = False
 
     def dataset_state(self) -> dict[str, Any]:
         return {
@@ -503,14 +532,41 @@ class _Backend:
                 "value": float(self.timestep),
                 "count": 2,
             },
-            "active_field": None,
-            "filters": [],
-            "colormap": None,
+            "nodes": [
+                {
+                    "node_id": "node_root",
+                    "kind": "reader",
+                    "input_node_ids": [],
+                    "filter": None,
+                    "output": {
+                        "topology": "unknown",
+                        "raw_data_type": None,
+                        "bounds": None,
+                        "point_count": 0,
+                        "cell_count": 0,
+                        "arrays": [],
+                    },
+                }
+            ],
+            "representations": [
+                {
+                    "representation_id": "rep_root",
+                    "node_id": "node_root",
+                    "type": "surface",
+                    "visible": True,
+                    "opacity": 1.0,
+                    "point_size_px": None,
+                    "color": {"mode": "solid", "rgb": [0.8, 0.8, 0.8]},
+                }
+            ],
+            "measurements": [],
             "camera": {
                 "position": [1.0, 1.0, 1.0],
                 "focal_point": [0.0, 0.0, 0.0],
                 "view_up": [0.0, 1.0, 0.0],
                 "parallel_scale": 1.0,
+                "projection": "perspective",
+                "view_angle": 30.0,
             },
             "selection": None,
             "artifacts": self.artifacts,
@@ -533,6 +589,21 @@ class _Backend:
 
     def render_png(self) -> bytes:
         return _PNG
+
+    def begin_command(self) -> int:
+        assert not self.transaction_open
+        self.transaction_open = True
+        return self.timestep
+
+    def commit_command(self, checkpoint: object) -> None:
+        del checkpoint
+        assert self.transaction_open
+        self.transaction_open = False
+
+    def rollback_command(self, checkpoint: object) -> None:
+        assert self.transaction_open
+        self.timestep = cast(int, checkpoint)
+        self.transaction_open = False
 
 
 class _SelectionCollection:
@@ -584,6 +655,7 @@ class _SelectionView:
     def __init__(self, source: Any, ids: list[int]) -> None:
         self.source = source
         self.ids = ids
+        self.representation = _SelectionRepresentation(source)
         self.pixel_rectangle: list[int] | None = None
 
     def SelectSurfaceCells(
@@ -594,7 +666,7 @@ class _SelectionView:
         _modifier: int,
     ) -> None:
         self.pixel_rectangle = pixel_rectangle
-        representations.items.append(_SelectionRepresentation(self.source))
+        representations.items.append(self.representation)
         selections.items.append(_SelectionSource("IDSelectionSource", self.ids))
 
 
@@ -637,6 +709,8 @@ def test_controller_returns_authoritative_state_and_idempotent_result() -> None:
     controller = ServiceStateController(
         backend=_Backend(),
         execution_id="exec-render",
+        package_name="builtin.paraview",
+        package_id="viewer",
         service_instance_id="srv_0123456789abcdef0123456789abcdef",
     )
 
@@ -654,11 +728,32 @@ def test_controller_returns_authoritative_state_and_idempotent_result() -> None:
         controller.command(_command(index=0))
 
 
+def test_v2_contract_versions_and_explicit_v1_migration_failure() -> None:
+    """Mixed v1 input and v2 output is rejected instead of feigning compatibility."""
+    assert STATE_SCHEMA == "jarvis.paraview.service-state.v2"
+    assert COMMAND_SCHEMA == "jarvis.paraview.command.v2"
+    assert COMMAND_RESULT_SCHEMA == "jarvis.paraview.command-result.v2"
+    legacy = {
+        "schema_version": "jarvis.paraview.command.v1",
+        "command_id": "legacy-colormap",
+        "operation": "set_colormap",
+        "expected_revision": 1,
+        "arguments": {"preset": "Viridis (matplotlib)", "invert": False},
+    }
+
+    with pytest.raises(CommandError, match="migrate the command") as captured:
+        service_http_module._validate_command(legacy)
+
+    assert captured.value.code == "unsupported_schema"
+
+
 def test_controller_rejects_stale_revision_before_backend_mutation() -> None:
     """Concurrent agents receive an explicit conflict instead of lost updates."""
     controller = ServiceStateController(
         backend=_Backend(),
         execution_id="exec-render",
+        package_name="builtin.paraview",
+        package_id="viewer",
         service_instance_id="srv_0123456789abcdef0123456789abcdef",
     )
     controller.command(_command())
@@ -675,6 +770,8 @@ def test_controller_retains_ids_until_explicit_lifetime_limit() -> None:
     controller = ServiceStateController(
         backend=_Backend(),
         execution_id="exec-render",
+        package_name="builtin.paraview",
+        package_id="viewer",
         service_instance_id="srv_0123456789abcdef0123456789abcdef",
         max_commands=2,
     )
@@ -710,73 +807,97 @@ class _ScreenshotSimple:
         target.write_bytes(self.payload)
 
 
-def test_unique_png_export_never_overwrites_and_rejects_invalid_output(
+def test_png_staging_is_private_and_rejects_invalid_output(
     tmp_path: Path,
 ) -> None:
-    """Publishing validates PNG bytes and uses create-if-absent semantics."""
+    """Staging validates PNG bytes without publishing a final filename."""
     simple = _ScreenshotSimple()
-    output = tmp_path / "frame.png"
-
-    payload = service_module._write_unique_png(
+    staged_path, payload = service_module._stage_png(
         simple=simple,
         view=object(),
-        output_path=output,
+        output_dir=tmp_path,
         width=640,
         height=480,
     )
 
     assert payload == _PNG
-    assert output.read_bytes() == _PNG
-    with pytest.raises(CommandError) as captured:
-        service_module._write_unique_png(
-            simple=simple,
-            view=object(),
-            output_path=output,
-            width=640,
-            height=480,
-        )
-    assert captured.value.code == "artifact_exists"
-    assert captured.value.status is HTTPStatus.CONFLICT
-    assert output.read_bytes() == _PNG
+    assert staged_path.read_bytes() == _PNG
+    assert staged_path.name.startswith(".paraview-artifact.")
     assert len(simple.calls) == 1
+    staged_path.unlink()
 
-    invalid_output = tmp_path / "invalid.png"
     with pytest.raises(RuntimeError, match="did not produce a PNG"):
-        service_module._write_unique_png(
+        service_module._stage_png(
             simple=_ScreenshotSimple(b"not-a-png"),
             view=object(),
-            output_path=invalid_output,
+            output_dir=tmp_path,
             width=640,
             height=480,
         )
-    assert not invalid_output.exists()
+    assert not list(tmp_path.glob(".paraview-artifact.*"))
 
 
-def test_export_rolls_back_png_when_manifest_publication_fails(
+def test_staged_export_recovers_link_created_before_sidecar_append(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A failed artifact record cannot leave an untracked exported PNG."""
-    backend = cast(Any, object.__new__(service_module.ParaViewBackend))
-    backend.output_dir = tmp_path.resolve()
-    backend.simple = _ScreenshotSimple()
-    backend.view = object()
-    backend._artifacts = []
-    backend.service_instance_id = "srv_0123456789abcdef0123456789abcdef"
+    """A marker makes link-before-ledger failure attributable and recoverable."""
+    sidecar = (tmp_path / "artifacts.jsonl").resolve()
+    output = (tmp_path / "frame.png").resolve()
+    monkeypatch.setenv("JARVIS_ARTIFACT_PATH", str(sidecar))
+    monkeypatch.setenv("JARVIS_EXECUTION_ID", "exec-render")
+    monkeypatch.setenv("JARVIS_PACKAGE_NAME", "paraview")
+    monkeypatch.setenv("JARVIS_PACKAGE_ID", "builtin.paraview")
+    staged_path, payload = service_module._stage_png(
+        simple=_ScreenshotSimple(),
+        view=object(),
+        output_dir=tmp_path,
+        width=640,
+        height=480,
+    )
+    event = service_module._prepare_artifact_event(
+        artifact_id="art_test",
+        logical_name="frame.png",
+        path=output,
+        size_bytes=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),
+        service_instance_id="srv_test",
+        command_id="cmd-export",
+        representation_ids=["rep_root"],
+        scene_digest="sha256:" + "0" * 64,
+        cluster_location="/cluster/frame.png",
+    )
 
-    def fail_manifest(**_kwargs: Any) -> dict[str, Any]:
-        raise OSError("sidecar fsync failed")
+    def fail_open(_path: Path) -> int:
+        raise OSError("sidecar open failed")
 
-    monkeypatch.setattr(service_module, "_append_artifact", fail_manifest)
-
-    with pytest.raises(OSError, match="sidecar fsync failed"):
-        backend._export_artifact(
-            {"filename": "nested/frame.png", "width": 640, "height": 480},
-            "cmd-export",
+    original_open = service_module._open_private_append
+    monkeypatch.setattr(service_module, "_open_private_append", fail_open)
+    with pytest.raises(OSError, match="sidecar open failed"):
+        service_module._commit_staged_artifacts(
+            {
+                "art_test": {
+                    "event": event,
+                    "staged_path": staged_path,
+                    "output_path": output,
+                }
+            }
         )
 
-    assert not (tmp_path / "nested" / "frame.png").exists()
-    assert backend._artifacts == []
+    assert staged_path.is_file()
+    assert output.read_bytes() == _PNG
+    assert not sidecar.exists()
+    markers = list(tmp_path.glob(".artifacts.jsonl.paraview-transaction-*.json"))
+    assert len(markers) == 1
+
+    monkeypatch.setattr(service_module, "_open_private_append", original_open)
+    service_module._recover_artifact_transactions()
+
+    published = service_module._read_artifact_lines(sidecar)
+    assert published == [event]
+    assert not markers[0].exists()
+    assert not staged_path.exists()
+    assert output.read_bytes() == _PNG
 
 
 class _CameraView:
@@ -787,6 +908,8 @@ class _CameraView:
         self.CameraFocalPoint = [0.0, 0.0, 0.0]
         self.CameraViewUp = [0.0, 1.0, 0.0]
         self.CameraParallelScale = 5.0
+        self.CameraParallelProjection = 0
+        self.CameraViewAngle = 30.0
         self.ViewTime: float | None = None
 
 
@@ -820,8 +943,26 @@ def test_camera_validates_before_mutation_and_rolls_back_render_failure() -> Non
     assert backend.simple.render_calls == 0
 
     backend.simple = _RenderSimple(fail_on={1})
+    backend._nodes = {"node_root": {"node_id": "node_root"}}
+    backend._node_proxies = {
+        "node_root": SimpleNamespace(UpdatePipeline=lambda *_args: None)
+    }
+    backend._representations = {}
+    backend._representation_displays = {}
+    backend._representation_transfer_proxies = {}
+    backend._measurements = {}
+    backend._selection = None
+    backend._artifacts = []
+    backend._transaction_open = False
+    backend._pending_deletes = []
+    backend._retired_proxies = []
+    backend._staged_artifacts = {}
+    backend._reader_timesteps = []
+    backend._timesteps = []
+    backend._timestep_index = 0
     with pytest.raises(RuntimeError, match="render failed"):
-        backend._set_camera(
+        backend.execute(
+            "set_camera",
             {"position": [8.0, 3.0, 2.0], "parallel_scale": 8.0},
             "cmd-failed-camera",
         )
@@ -830,15 +971,44 @@ def test_camera_validates_before_mutation_and_rolls_back_render_failure() -> Non
     assert backend.simple.render_calls == 2
 
 
+@pytest.mark.parametrize(
+    ("arguments", "message"),
+    [
+        ({"focal_point": [4.0, 3.0, 2.0]}, "must be distinct"),
+        ({"view_up": [-4.0, -3.0, -2.0]}, "cannot be parallel"),
+        ({"view_up": [0.0, 0.0, 0.0]}, "zero vector"),
+        ({"projection": "orthographic"}, "perspective or parallel"),
+        ({"view_angle": 0.0}, "between 0 and 180"),
+        ({"view_angle": 180.0}, "between 0 and 180"),
+    ],
+)
+def test_camera_partial_update_validates_complete_geometry_before_mutation(
+    arguments: dict[str, Any],
+    message: str,
+) -> None:
+    backend = cast(Any, object.__new__(service_module.ParaViewBackend))
+    backend.view = _CameraView()
+    backend.simple = _RenderSimple()
+    original = backend._camera_state()
+
+    with pytest.raises(CommandError, match=message):
+        backend._set_camera(arguments, "invalid-partial-camera")
+
+    assert backend._camera_state() == original
+    assert backend.simple.render_calls == 0
+
+
 class _FilterProxy:
     """Minimal slice proxy used to exercise mutation ordering."""
 
     def __init__(self) -> None:
         self.SliceType = SimpleNamespace(Origin=None, Normal=None)
         self.updated = False
+        self.update_times: list[float | None] = []
 
-    def UpdatePipeline(self) -> None:
+    def UpdatePipeline(self, value: float | None = None) -> None:
         self.updated = True
+        self.update_times.append(value)
 
 
 class _FilterSimple:
@@ -848,6 +1018,7 @@ class _FilterSimple:
         self.slice_calls: list[object] = []
         self.hidden: list[object] = []
         self.proxy = _FilterProxy()
+        self.active_source: object | None = object()
 
     def Slice(self, *, Input: object) -> _FilterProxy:
         self.slice_calls.append(Input)
@@ -862,45 +1033,73 @@ class _FilterSimple:
     def Delete(self, _source: object) -> None:
         return
 
+    def GetActiveSource(self) -> object | None:
+        return self.active_source
+
+    def SetActiveSource(self, source: object | None) -> None:
+        self.active_source = source
+
     def Render(self, _view: object) -> None:
         return
 
 
 def test_filter_preserves_dataset_discovery_and_explicit_camera() -> None:
-    """Filters mutate pipeline state without rewriting source dataset discovery."""
+    """A branch filter adds only a topology node and preserves source context."""
     backend = cast(Any, object.__new__(service_module.ParaViewBackend))
-    previous_source = object()
-    backend.active_source = previous_source
-    backend.display = object()
     backend.view = _CameraView()
     backend.simple = _FilterSimple()
-    backend._filters = []
-    backend._arrays = [{"name": "pressure", "association": "point", "components": 1}]
-    backend._bounds = (-10.0, 10.0, -20.0, 20.0, -30.0, 30.0)
+    previous_source = backend.simple.active_source
+    root_output = {
+        "topology": "volume",
+        "raw_data_type": "vtkImageData",
+        "bounds": [-10.0, 10.0, -20.0, 20.0, -30.0, 30.0],
+        "point_count": 100,
+        "cell_count": 50,
+        "arrays": [
+            {
+                "name": "pressure",
+                "association": "point",
+                "components": 1,
+                "units": None,
+            }
+        ],
+    }
+    backend._nodes = {
+        "node_root": {
+            "node_id": "node_root",
+            "kind": "reader",
+            "input_node_ids": [],
+            "filter": None,
+            "output": root_output,
+        }
+    }
+    backend._node_proxies = {"node_root": object()}
     backend._timesteps = [0.0, 1.0]
-    backend._dataset_arrays = list(backend._arrays)
-    backend._dataset_bounds = backend._bounds
+    backend._reader_timesteps = [0.0, 1.0]
+    backend._dataset_arrays = list(root_output["arrays"])
+    backend._dataset_bounds = tuple(root_output["bounds"])
     backend._dataset_timesteps = list(backend._timesteps)
     backend._timestep_index = 1
     backend.descriptor = {
         "schema_version": "jarvis.dataset-descriptor.v1",
         "dataset_id": "source-volume",
     }
-    backend._active_field = {"name": "pressure", "association": "point"}
-    backend._colormap = {"preset": "Viridis", "invert": False}
     backend._selection = {"status": "selected"}
-    backend._artifacts = []
-    backend._discover_arrays = lambda _source=None: [
-        {"name": "slice-pressure", "association": "point", "components": 1}
-    ]
-    backend._discover_bounds = lambda _source=None: (0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
+    backend._output_summary = lambda _proxy, *, topology: {
+        "topology": topology,
+        "raw_data_type": "vtkPolyData",
+        "bounds": [0.0, 1.0, 0.0, 1.0, 0.0, 1.0],
+        "point_count": 12,
+        "cell_count": 8,
+        "arrays": list(root_output["arrays"]),
+    }
     original_camera = backend._camera_state()
     original_discovery = backend.dataset_state()
-    original_timestep = backend.pipeline_state()["timestep"]
 
     with pytest.raises(CommandError, match="zero vector"):
-        backend._apply_filter(
+        backend._create_filter(
             {
+                "input_node_id": "node_root",
                 "type": "slice",
                 "parameters": {
                     "origin": [0.0, 0.0, 0.0],
@@ -911,8 +1110,9 @@ def test_filter_preserves_dataset_discovery_and_explicit_camera() -> None:
         )
 
     assert backend.simple.slice_calls == []
-    result = backend._apply_filter(
+    result = backend._create_filter(
         {
+            "input_node_id": "node_root",
             "type": "slice",
             "parameters": {
                 "origin": [0.0, 0.0, 0.0],
@@ -922,289 +1122,16 @@ def test_filter_preserves_dataset_discovery_and_explicit_camera() -> None:
         "cmd-valid-filter",
     )
 
-    assert result["filter"]["type"] == "slice"
-    assert backend.active_source is backend.simple.proxy
+    assert result["node"]["filter"]["type"] == "slice"
+    assert backend.simple.active_source is previous_source
     assert backend.simple.proxy.updated is True
+    assert backend.simple.proxy.update_times == [1.0]
     assert backend._camera_state() == original_camera
     assert backend.dataset_state() == original_discovery
-    assert backend._arrays == [
-        {"name": "slice-pressure", "association": "point", "components": 1}
-    ]
-    assert backend._bounds == (0.0, 1.0, 0.0, 1.0, 0.0, 1.0)
-    assert backend.pipeline_state()["timestep"] == original_timestep
-    assert backend._filters == [result["filter"]]
-    assert backend._active_field is None
-    assert backend._colormap is None
-    assert backend._selection is None
-
-
-class _FieldDisplay:
-    """Record transfer-function rescaling for active-field tests."""
-
-    def __init__(self) -> None:
-        self.rescale_calls = 0
-
-    def RescaleTransferFunctionToDataRange(
-        self,
-        _extend: bool,
-        _force: bool,
-    ) -> None:
-        self.rescale_calls += 1
-
-
-class _FieldArrayInformation:
-    """Expose exact ParaView array identity and finite component ranges."""
-
-    def __init__(
-        self,
-        name: str,
-        components: int,
-        scalar_range: tuple[float, float],
-    ) -> None:
-        self.name = name
-        self.components = components
-        self.scalar_range = scalar_range
-        self.requested_components: list[int] = []
-
-    def GetName(self) -> str:
-        return self.name
-
-    def GetNumberOfComponents(self) -> int:
-        return self.components
-
-    def GetComponentFiniteRange(self, component: int) -> tuple[float, float]:
-        self.requested_components.append(component)
-        return self.scalar_range
-
-
-class _FieldAttributesInformation:
-    def __init__(self, arrays: list[_FieldArrayInformation]) -> None:
-        self.arrays = arrays
-
-    def GetNumberOfArrays(self) -> int:
-        return len(self.arrays)
-
-    def GetArrayInformation(self, index: int) -> _FieldArrayInformation:
-        return self.arrays[index]
-
-
-class _FieldDataInformation:
-    def __init__(
-        self,
-        *,
-        point_arrays: list[_FieldArrayInformation] | None = None,
-        cell_arrays: list[_FieldArrayInformation] | None = None,
-    ) -> None:
-        self.point_arrays = _FieldAttributesInformation(point_arrays or [])
-        self.cell_arrays = _FieldAttributesInformation(cell_arrays or [])
-
-    def GetPointDataInformation(self) -> _FieldAttributesInformation:
-        return self.point_arrays
-
-    def GetCellDataInformation(self) -> _FieldAttributesInformation:
-        return self.cell_arrays
-
-
-class _FieldSource:
-    def __init__(self, information: _FieldDataInformation) -> None:
-        self.information = information
-        self.update_times: list[float] = []
-
-    def GetDataInformation(self) -> _FieldDataInformation:
-        return self.information
-
-    def UpdatePipeline(self, value: float) -> None:
-        self.update_times.append(value)
-
-
-class _FieldLookup:
-    def __init__(self) -> None:
-        self.preset_calls: list[tuple[str, bool]] = []
-        self.rescale_calls: list[tuple[float, float]] = []
-        self.invert_calls = 0
-
-    def ApplyPreset(self, preset: str, rescale: bool) -> bool:
-        self.preset_calls.append((preset, rescale))
-        return True
-
-    def RescaleTransferFunction(self, lower: float, upper: float) -> None:
-        self.rescale_calls.append((lower, upper))
-
-    def InvertTransferFunction(self) -> None:
-        self.invert_calls += 1
-
-
-class _FieldSimple(_RenderSimple):
-    """Record the actual ColorBy choice applied to a display."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.color_by: tuple[str, str] | None = None
-        self.lookup = _FieldLookup()
-
-    def ColorBy(self, _display: object, field: tuple[str, str]) -> None:
-        self.color_by = field
-
-    def GetColorTransferFunction(self, _name: str) -> _FieldLookup:
-        return self.lookup
-
-
-def test_active_field_reports_exact_range_units_and_generic_colormap() -> None:
-    """Field state and transfer-function state come from the displayed ParaView data."""
-    backend = cast(Any, object.__new__(service_module.ParaViewBackend))
-    array = _FieldArrayInformation("temperature", 1, (-12.5, 38.25))
-    backend.active_source = _FieldSource(_FieldDataInformation(point_arrays=[array]))
-    backend._arrays = [
-        {
-            "name": "temperature",
-            "association": "point",
-            "components": 1,
-            "units": None,
-        }
-    ]
-    backend._active_field = {
-        "name": "pressure",
-        "association": "point",
-        "components": 1,
-        "range": [0.0, 1.0],
-        "units": "Pa",
-    }
-    backend._colormap = {"preset": "Viridis", "invert": False}
-    backend.display = _FieldDisplay()
-    backend.simple = _FieldSimple()
-    backend.view = object()
-
-    result = backend._set_active_field(
-        {"name": "temperature", "association": "point"},
-        "cmd-field",
-    )
-
-    assert result == {
-        "active_field": {
-            "name": "temperature",
-            "association": "point",
-            "components": 1,
-            "range": [-12.5, 38.25],
-            "units": None,
-        }
-    }
-    assert backend.simple.color_by == ("POINTS", "temperature")
-    assert array.requested_components == [0]
-    assert backend.display.rescale_calls == 1
-    assert backend.simple.lookup.preset_calls == [
-        (service_module.DEFAULT_COLORMAP_PRESET, True)
-    ]
-    assert backend.simple.lookup.rescale_calls == [(-12.5, 38.25)]
-    assert backend._colormap == {
-        "preset": service_module.DEFAULT_COLORMAP_PRESET,
-        "invert": False,
-    }
-
-
-def test_timestep_refreshes_active_field_and_transfer_function_range() -> None:
-    """Physical timestep changes cannot leave the previous scalar range in state or color."""
-    backend = cast(Any, object.__new__(service_module.ParaViewBackend))
-    array = _FieldArrayInformation("pressure", 1, (2.5, 91.75))
-    source = _FieldSource(_FieldDataInformation(cell_arrays=[array]))
-    backend.active_source = source
-    backend.reader = _TimedPipelineProxy()
-    backend.view = SimpleNamespace(ViewTime=None)
-    backend.display = _FieldDisplay()
-    backend.simple = _FieldSimple()
-    backend._reader_timesteps = [0.0, 1.0]
-    backend._timesteps = [0.0, 1141.0]
-    backend._timestep_index = 0
-    backend._active_field = {
-        "name": "pressure",
-        "association": "cell",
-        "components": 1,
-        "range": [-1.0, 1.0],
-        "units": None,
-    }
-    backend._colormap = {
-        "preset": service_module.DEFAULT_COLORMAP_PRESET,
-        "invert": False,
-    }
-
-    result = backend._set_timestep({"index": 1}, "cmd-time")
-
-    assert result == {"timestep": {"index": 1, "value": 1141.0}}
-    assert backend.view.ViewTime == 1.0
-    assert backend.reader.update_times == [1.0]
-    assert source.update_times == [1.0]
-    assert backend._active_field == {
-        "name": "pressure",
-        "association": "cell",
-        "components": 1,
-        "range": [2.5, 91.75],
-        "units": None,
-    }
-    assert backend._colormap == {
-        "preset": service_module.DEFAULT_COLORMAP_PRESET,
-        "invert": False,
-    }
-    assert backend.display.rescale_calls == 1
-    assert backend.simple.lookup.rescale_calls == [(2.5, 91.75)]
-
-
-def test_active_field_rejects_non_finite_paraview_range() -> None:
-    """The service never publishes a guessed legend range for invalid array data."""
-    backend = cast(Any, object.__new__(service_module.ParaViewBackend))
-    array = _FieldArrayInformation("pressure", 1, (float("nan"), float("inf")))
-    backend.active_source = _FieldSource(_FieldDataInformation(point_arrays=[array]))
-    backend._arrays = [
-        {
-            "name": "pressure",
-            "association": "point",
-            "components": 1,
-            "units": None,
-        }
-    ]
-    backend._active_field = None
-    backend._colormap = None
-    backend.display = _FieldDisplay()
-    backend.simple = _FieldSimple()
-    backend.view = object()
-
-    with pytest.raises(CommandError) as captured:
-        backend._set_active_field(
-            {"name": "pressure", "association": "point"},
-            "cmd-field",
-        )
-
-    assert captured.value.code == "field_range_unavailable"
-    assert backend._active_field is None
-    assert backend._colormap is None
-    assert backend.simple.color_by is None
-
-
-def test_explicit_colormap_preserves_authoritative_scalar_range() -> None:
-    """Changing only the preset cannot decouple its transfer range from field state."""
-    backend = cast(Any, object.__new__(service_module.ParaViewBackend))
-    backend._active_field = {
-        "name": "pressure",
-        "association": "point",
-        "components": 1,
-        "range": [-8.0, 144.0],
-        "units": None,
-    }
-    backend._colormap = {
-        "preset": service_module.DEFAULT_COLORMAP_PRESET,
-        "invert": False,
-    }
-    backend.display = _FieldDisplay()
-    backend.simple = _FieldSimple()
-    backend.view = object()
-
-    result = backend._set_colormap(
-        {"preset": "Viridis (matplotlib)", "invert": True},
-        "cmd-colormap",
-    )
-
-    assert result == {"colormap": {"preset": "Viridis (matplotlib)", "invert": True}}
-    assert backend.simple.lookup.preset_calls == [("Viridis (matplotlib)", True)]
-    assert backend.simple.lookup.rescale_calls == [(-8.0, 144.0)]
-    assert backend.simple.lookup.invert_calls == 1
+    assert result["node"]["node_id"] in backend._nodes
+    assert result["node"]["output"]["topology"] == "surface"
+    assert backend.simple.hidden == []
+    assert backend._selection == {"status": "selected"}
 
 
 def test_http_health_state_command_conflict_and_frame_sse() -> None:
@@ -1212,21 +1139,39 @@ def test_http_health_state_command_conflict_and_frame_sse() -> None:
     controller = ServiceStateController(
         backend=_Backend(),
         execution_id="exec-render",
+        package_name="builtin.paraview",
+        package_id="viewer",
         service_instance_id="srv_0123456789abcdef0123456789abcdef",
     )
-    server = create_server("127.0.0.1", 0, controller)
+    token = "a" * 64
+    server = create_server("127.0.0.1", 0, controller, token)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     origin = f"http://127.0.0.1:{server.server_address[1]}"
     try:
-        with urllib.request.urlopen(origin + "/healthz", timeout=2) as response:
+        with pytest.raises(urllib.error.HTTPError) as missing_auth:
+            urllib.request.urlopen(origin + "/healthz", timeout=2)
+        wrong_request = urllib.request.Request(
+            origin + "/healthz",
+            headers={"Authorization": "Bearer " + "b" * 64},
+        )
+        with pytest.raises(urllib.error.HTTPError) as wrong_auth:
+            urllib.request.urlopen(wrong_request, timeout=2)
+        headers = {"Authorization": f"Bearer {token}"}
+        with urllib.request.urlopen(
+            urllib.request.Request(origin + "/healthz", headers=headers),
+            timeout=2,
+        ) as response:
             health = json.load(response)
-        with urllib.request.urlopen(origin + "/state", timeout=2) as response:
+        with urllib.request.urlopen(
+            urllib.request.Request(origin + "/state", headers=headers),
+            timeout=2,
+        ) as response:
             state = json.load(response)
         request = urllib.request.Request(
             origin + "/commands",
             data=json.dumps(_command()).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", **headers},
             method="POST",
         )
         with urllib.request.urlopen(request, timeout=2) as response:
@@ -1236,18 +1181,25 @@ def test_http_health_state_command_conflict_and_frame_sse() -> None:
             data=json.dumps(
                 _command(command_id="cmd-2", expected_revision=1, index=0)
             ).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={"Content-Type": "application/json", **headers},
             method="POST",
         )
         with pytest.raises(urllib.error.HTTPError) as captured:
             urllib.request.urlopen(stale, timeout=2)
         conflict = json.load(captured.value)
-        with urllib.request.urlopen(origin + "/live-data", timeout=2) as response:
+        with urllib.request.urlopen(
+            urllib.request.Request(origin + "/live-data", headers=headers),
+            timeout=2,
+        ) as response:
             event = response.readline().decode("ascii").strip()
             event_id = response.readline().decode("ascii").strip()
             data = response.readline().decode("utf-8").strip()
 
         assert health["status"] == "ready"
+        assert missing_auth.value.code == 401
+        assert missing_auth.value.headers["Connection"] == "close"
+        assert wrong_auth.value.code == 401
+        assert wrong_auth.value.headers["Connection"] == "close"
         assert state["schema_version"] == STATE_SCHEMA
         assert result["state"]["revision"] == 2
         assert captured.value.code == 409
@@ -1257,6 +1209,422 @@ def test_http_health_state_command_conflict_and_frame_sse() -> None:
         assert json.loads(data.removeprefix("data: "))["schema_version"] == FRAME_SCHEMA
     finally:
         server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_sse_frame_payload_is_encoded_once_per_revision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent subscribers share one immutable frame encoding per revision."""
+    calls = 0
+    original = service_http_module.base64.b64encode
+
+    def counted(value: bytes) -> bytes:
+        nonlocal calls
+        calls += 1
+        return original(value)
+
+    monkeypatch.setattr(service_http_module.base64, "b64encode", counted)
+    controller = ServiceStateController(
+        backend=_Backend(),
+        execution_id="exec-render",
+        package_name="builtin.paraview",
+        package_id="viewer",
+        service_instance_id="srv_0123456789abcdef0123456789abcdef",
+    )
+
+    revision, state_payload, frame_payload = controller.wait_for_sse_change(
+        0,
+        timeout=0.01,
+    )
+    repeated = controller.wait_for_sse_change(0, timeout=0.01)
+
+    assert revision == 1
+    assert repeated[1] is state_payload
+    assert repeated[2] is frame_payload
+    assert calls == 1
+
+    controller.command(_command())
+    changed = controller.wait_for_sse_change(revision, timeout=0.01)
+
+    assert changed[0] == 2
+    assert changed[2] is not frame_payload
+    assert calls == 2
+
+
+def test_http_connection_and_body_timeouts_reclaim_slots() -> None:
+    """Idle headers and partial command bodies cannot retain connection slots."""
+    controller = ServiceStateController(
+        backend=_Backend(),
+        execution_id="exec-render",
+        package_name="builtin.paraview",
+        package_id="viewer",
+        service_instance_id="srv_0123456789abcdef0123456789abcdef",
+    )
+    token = "a" * 64
+    server = create_server(
+        "127.0.0.1",
+        0,
+        controller,
+        token,
+        max_connections=1,
+        max_sse_subscribers=1,
+        header_timeout=0.1,
+        body_timeout=0.1,
+        write_timeout=0.5,
+        heartbeat_interval=0.1,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    address = cast(tuple[str, int], server.server_address)
+    idle = socket.create_connection(address, timeout=1)
+    rejected = socket.create_connection(address, timeout=1)
+    try:
+        assert _wait_until(lambda: server.active_connection_count == 1)
+        rejection = rejected.recv(4096)
+        assert b"503 Service Unavailable" in rejection
+        assert b'"code":"connection_limit"' in rejection
+        assert _wait_until(lambda: server.active_connection_count == 0)
+
+        partial = socket.create_connection(address, timeout=1)
+        partial.sendall(
+            (
+                "POST /commands HTTP/1.1\r\n"
+                "Host: 127.0.0.1\r\n"
+                f"Authorization: Bearer {token}\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: 20\r\n\r\n"
+                "{}"
+            ).encode("ascii")
+        )
+        response = b""
+        while b'"code":"request_timeout"' not in response:
+            chunk = partial.recv(4096)
+            if not chunk:
+                break
+            response += chunk
+        partial.close()
+
+        assert b"408 Request Timeout" in response
+        assert b'"code":"request_timeout"' in response
+        assert _wait_until(lambda: server.active_connection_count == 0)
+    finally:
+        idle.close()
+        rejected.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_http_error_response_is_finally_capped_and_secret_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Even oversized structured backend errors become one fixed envelope."""
+    backend = _Backend()
+    secret = "private-capability-" + "b" * 64
+
+    def fail_execute(
+        _operation: str,
+        _arguments: Mapping[str, Any],
+        _command_id: str,
+    ) -> dict[str, Any]:
+        raise CommandError(
+            "backend_rejected",
+            secret,
+            details={"diagnostic": secret + "X" * 2048},
+        )
+
+    monkeypatch.setattr(backend, "execute", fail_execute)
+    monkeypatch.setattr(service_http_module, "MAX_RESPONSE_BYTES", 256)
+    controller = ServiceStateController(
+        backend=backend,
+        execution_id="exec-render",
+        package_name="builtin.paraview",
+        package_id="viewer",
+        service_instance_id="srv_0123456789abcdef0123456789abcdef",
+    )
+    token = "a" * 64
+    server = create_server("127.0.0.1", 0, controller, token)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+    request = urllib.request.Request(
+        origin + "/commands",
+        data=json.dumps(_command()).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+        method="POST",
+    )
+    try:
+        with pytest.raises(urllib.error.HTTPError) as captured:
+            urllib.request.urlopen(request, timeout=2)
+        payload = captured.value.read()
+        document = json.loads(payload)
+
+        assert captured.value.code == HTTPStatus.INTERNAL_SERVER_ERROR
+        assert len(payload) <= service_http_module.MAX_RESPONSE_BYTES
+        assert document == {
+            "schema_version": service_http_module.COMMAND_ERROR_SCHEMA,
+            "error": {
+                "code": "response_too_large",
+                "message": "the ParaView service response exceeded its size limit",
+                "details": {},
+            },
+        }
+        assert secret.encode("ascii") not in payload
+        assert backend.transaction_open is False
+        assert backend.timestep == 0
+        assert controller.state()["revision"] == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_http_absolute_read_deadlines_reject_trickle_clients() -> None:
+    """Bytes arriving below inactivity timeouts cannot retain the sole slot."""
+    controller = ServiceStateController(
+        backend=_Backend(),
+        execution_id="exec-render",
+        package_name="builtin.paraview",
+        package_id="viewer",
+        service_instance_id="srv_0123456789abcdef0123456789abcdef",
+    )
+    token = "a" * 64
+    server = create_server(
+        "127.0.0.1",
+        0,
+        controller,
+        token,
+        max_connections=1,
+        max_sse_subscribers=1,
+        header_timeout=0.12,
+        body_timeout=0.12,
+        write_timeout=0.5,
+        heartbeat_interval=0.1,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    address = cast(tuple[str, int], server.server_address)
+    origin = f"http://127.0.0.1:{address[1]}"
+    headers = {"Authorization": f"Bearer {token}"}
+    sockets: list[socket.socket] = []
+    drippers: list[tuple[threading.Thread, threading.Event]] = []
+
+    def start_drip(connection: socket.socket, payload: bytes) -> None:
+        stop = threading.Event()
+
+        def drip() -> None:
+            for value in payload:
+                if stop.is_set():
+                    return
+                try:
+                    connection.sendall(bytes((value,)))
+                except OSError:
+                    return
+                if stop.wait(0.03):
+                    return
+
+        worker = threading.Thread(target=drip, daemon=True)
+        drippers.append((worker, stop))
+        worker.start()
+
+    def prove_slot_reusable() -> None:
+        with urllib.request.urlopen(
+            urllib.request.Request(origin + "/healthz", headers=headers),
+            timeout=2,
+        ) as response:
+            assert json.load(response)["status"] == "ready"
+
+    try:
+        slow_header = socket.create_connection(address, timeout=1)
+        sockets.append(slow_header)
+        start_drip(
+            slow_header,
+            b"GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\n" + b"X" * 128,
+        )
+        assert _wait_until(lambda: server.active_connection_count == 1)
+        assert _wait_until(
+            lambda: server.active_connection_count == 0,
+            timeout=0.6,
+        )
+        drippers[-1][1].set()
+        drippers[-1][0].join(timeout=1)
+        prove_slot_reusable()
+
+        slow_body = socket.create_connection(address, timeout=1)
+        sockets.append(slow_body)
+        slow_body.sendall(
+            (
+                "POST /commands HTTP/1.1\r\n"
+                "Host: 127.0.0.1\r\n"
+                f"Authorization: Bearer {token}\r\n"
+                "Content-Type: application/json\r\n"
+                "Content-Length: 256\r\n\r\n"
+            ).encode("ascii")
+        )
+        start_drip(slow_body, b"{" + b" " * 254 + b"}")
+        assert _wait_until(lambda: server.active_connection_count == 1)
+        assert _wait_until(
+            lambda: server.active_connection_count == 0,
+            timeout=0.6,
+        )
+        drippers[-1][1].set()
+        drippers[-1][0].join(timeout=1)
+        prove_slot_reusable()
+    finally:
+        for _worker, stop in drippers:
+            stop.set()
+        for connection in sockets:
+            connection.close()
+        for worker, _stop in drippers:
+            worker.join(timeout=1)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_shutdown_does_not_wait_for_an_executing_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closing intent and sockets never block behind the controller lock."""
+    backend = _Backend()
+    original_execute = backend.execute
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocked_execute(
+        operation: str,
+        arguments: Mapping[str, Any],
+        command_id: str,
+    ) -> dict[str, Any]:
+        entered.set()
+        if not release.wait(timeout=2):
+            raise RuntimeError("test command release timed out")
+        return original_execute(operation, arguments, command_id)
+
+    monkeypatch.setattr(backend, "execute", blocked_execute)
+    controller = ServiceStateController(
+        backend=backend,
+        execution_id="exec-render",
+        package_name="builtin.paraview",
+        package_id="viewer",
+        service_instance_id="srv_0123456789abcdef0123456789abcdef",
+    )
+    token = "a" * 64
+    server = create_server("127.0.0.1", 0, controller, token)
+    thread = threading.Thread(
+        target=lambda: server.serve_forever(poll_interval=0.01),
+        daemon=True,
+    )
+    thread.start()
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+    request = urllib.request.Request(
+        origin + "/commands",
+        data=json.dumps(_command()).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {token}",
+        },
+        method="POST",
+    )
+
+    def invoke_command() -> None:
+        try:
+            urllib.request.urlopen(request, timeout=2).close()
+        except (OSError, urllib.error.URLError):
+            pass
+
+    caller = threading.Thread(target=invoke_command, daemon=True)
+    caller.start()
+    shutdown_thread = threading.Thread(target=server.shutdown, daemon=True)
+    try:
+        assert entered.wait(timeout=1)
+        shutdown_thread.start()
+        shutdown_thread.join(timeout=0.3)
+        assert not shutdown_thread.is_alive()
+        server.server_close()
+    finally:
+        release.set()
+        if shutdown_thread.is_alive():
+            shutdown_thread.join(timeout=1)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+        caller.join(timeout=2)
+
+
+def test_sse_subscriber_limit_reclaims_slot_and_shutdown_interrupts_stream() -> None:
+    """SSE admission is bounded, reclaimable, and interruptible on shutdown."""
+    controller = ServiceStateController(
+        backend=_Backend(),
+        execution_id="exec-render",
+        package_name="builtin.paraview",
+        package_id="viewer",
+        service_instance_id="srv_0123456789abcdef0123456789abcdef",
+    )
+    token = "a" * 64
+    server = create_server(
+        "127.0.0.1",
+        0,
+        controller,
+        token,
+        max_connections=3,
+        max_sse_subscribers=1,
+        header_timeout=0.2,
+        body_timeout=0.2,
+        write_timeout=0.2,
+        heartbeat_interval=0.02,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+    headers = {"Authorization": f"Bearer {token}"}
+    first = urllib.request.urlopen(
+        urllib.request.Request(origin + "/live-data", headers=headers),
+        timeout=2,
+    )
+    try:
+        assert first.readline() == b"event: frame\n"
+        assert _wait_until(lambda: server.active_subscriber_count == 1)
+        with pytest.raises(urllib.error.HTTPError) as limited:
+            urllib.request.urlopen(
+                urllib.request.Request(origin + "/events", headers=headers),
+                timeout=2,
+            )
+        assert limited.value.code == HTTPStatus.SERVICE_UNAVAILABLE
+        assert json.load(limited.value)["error"]["code"] == "subscriber_limit"
+
+        first.close()
+        assert _wait_until(lambda: server.active_subscriber_count == 0)
+
+        replacement = urllib.request.urlopen(
+            urllib.request.Request(origin + "/events", headers=headers),
+            timeout=2,
+        )
+        assert replacement.readline() == b"event: state\n"
+        assert _wait_until(lambda: server.active_subscriber_count == 1)
+        idle = socket.create_connection(
+            cast(tuple[str, int], server.server_address),
+            timeout=1,
+        )
+        assert _wait_until(lambda: server.active_connection_count == 2)
+
+        shutdown_thread = threading.Thread(target=server.shutdown)
+        shutdown_thread.start()
+        shutdown_thread.join(timeout=2)
+        assert not shutdown_thread.is_alive()
+        assert _wait_until(lambda: server.active_connection_count == 0)
+        assert _wait_until(lambda: server.active_subscriber_count == 0)
+        idle.close()
+        replacement.close()
+    finally:
+        first.close()
+        if not server.closing:
+            server.shutdown()
         server.server_close()
         thread.join(timeout=2)
 
@@ -1277,6 +1645,38 @@ def test_missing_paraview_runtime_fails_explicitly(
             descriptor={},
             output_dir=tmp_path,
             service_instance_id="srv_0123456789abcdef0123456789abcdef",
+            execution_id="exec-render",
+            package_name="builtin.paraview",
+            package_id="viewer",
+        )
+
+
+def test_service_startup_rejects_cli_and_environment_execution_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("JARVIS_EXECUTION_ID", "exec-bound")
+    monkeypatch.setenv("JARVIS_PACKAGE_NAME", "paraview")
+    monkeypatch.setenv("JARVIS_PACKAGE_ID", "builtin.paraview")
+
+    with pytest.raises(RuntimeError, match="does not match JARVIS_EXECUTION_ID"):
+        service_module.main(
+            [
+                "--descriptor",
+                str(tmp_path / "descriptor.json"),
+                "--output-dir",
+                str(tmp_path / "output"),
+                "--bind-host",
+                "127.0.0.1",
+                "--port",
+                "18080",
+                "--execution-id",
+                "exec-cli",
+                "--service-instance-id",
+                "srv-test",
+                "--authorization-file",
+                str(tmp_path / "authorization.token"),
+            ]
         )
 
 
@@ -1312,15 +1712,24 @@ def test_descriptor_physical_timesteps_override_synthetic_reader_labels() -> Non
     backend._reader_timesteps = reader_clock
     backend._timesteps = physical
     backend._timestep_index = 0
-    backend._active_field = None
-    backend._filters = []
-    backend._colormap = None
     backend._selection = None
     backend._artifacts = []
+    backend._measurements = {}
+    backend._representations = {}
     backend.view = _CameraView()
     backend.view.ViewTime = None
     backend.reader = _TimedPipelineProxy()
     backend.active_source = _TimedPipelineProxy()
+    backend._node_proxies = {
+        "node_root": backend.reader,
+        "node_branch": backend.active_source,
+    }
+    backend._nodes = {
+        "node_root": {"node_id": "node_root"},
+        "node_branch": {"node_id": "node_branch"},
+    }
+    backend._refreshed_node_records = lambda: dict(backend._nodes)
+    backend._refreshed_representation_records = lambda _nodes: {}
     backend.simple = SimpleNamespace(Render=lambda _view: None)
 
     result = backend._set_timestep({"index": 4}, "cmd-final")
@@ -1344,13 +1753,13 @@ def test_descriptor_timestep_mapping_rejects_partial_or_mismatched_series() -> N
             {"index": 1, "location": "/cluster/frame-1.vti"},
         ]
     }
-    with pytest.raises(ValueError, match="cover every member"):
+    with pytest.raises(RuntimeError, match="mix timed and untimed"):
         backend._resolve_timesteps([0.0, 1.0])
 
     backend.descriptor["members"][1]["timestep"] = 1141.0
     with pytest.raises(RuntimeError, match="count differs"):
         backend._resolve_timesteps([0.0])
-    with pytest.raises(RuntimeError, match="did not expose a time axis"):
+    with pytest.raises(RuntimeError, match="count differs"):
         backend._resolve_timesteps([])
 
 
@@ -1391,55 +1800,43 @@ def test_normalized_viewport_maps_to_real_paraview_pixels() -> None:
         service_module._viewport({"x0": -0.1, "y0": 0.2, "x1": 0.5, "y1": 0.6})
 
 
-def test_surface_selection_returns_real_ids_with_bounded_result() -> None:
-    """The response caps IDs while preserving ParaView's exact selected count."""
-    source = SimpleNamespace()
-    representations = _SelectionCollection()
-    representations.items.append(_SelectionRepresentation(source))
-    selections = _SelectionCollection()
-    selections.items.append(
-        _SelectionSource(
-            "IDSelectionSource",
-            [value for index in range(300) for value in (0, index)],
-        )
-    )
-
-    ids, count, reason = service_module._surface_selection_ids(
-        selected_representations=representations,
-        selection_sources=selections,
-        active_source=SimpleNamespace(SMProxy=source),
-        servermanager=_SelectionServerManager(),
-        limit=256,
-    )
-
-    assert reason is None
-    assert count == 300
-    assert len(ids) == 256
-    assert ids[0] == {"process_id": 0, "element_id": 0}
-    assert ids[-1] == {"process_id": 0, "element_id": 255}
-
-
 def test_viewport_inspection_uses_backend_selection_and_exact_result_shape() -> None:
     """Viewport inspection delegates to ParaView and never maps pixels to world data."""
     source = SimpleNamespace()
     view = _SelectionView(source, [0, 41, 0, 73])
     simple = _SelectionSimple()
     backend = cast(Any, object.__new__(service_module.ParaViewBackend))
-    backend.active_source = SimpleNamespace(SMProxy=source)
+    backend.active_source = SimpleNamespace(
+        SMProxy=source,
+        GetDataInformation=lambda: SimpleNamespace(
+            GetNumberOfPoints=lambda: 100,
+            GetNumberOfCells=lambda: 100,
+        ),
+    )
     backend.view = view
     backend.simple = simple
     backend.servermanager = _SelectionServerManager()
     backend.vtk = SimpleNamespace(vtkCollection=_SelectionCollection)
     backend._selection = None
+    backend._representations = {
+        "rep_root": {"node_id": "node_root", "visible": True, "type": "surface"}
+    }
+    backend._representation_displays = {"rep_root": view.representation}
+    backend._node_proxies = {"node_root": backend.active_source}
 
     result = backend._inspect_selection(
-        {"viewport": {"x0": 0.25, "y0": 0.1, "x1": 0.75, "y1": 0.9}},
+        {
+            "representation_id": "rep_root",
+            "viewport": {"x0": 0.25, "y0": 0.1, "x1": 0.75, "y1": 0.9},
+        },
         "cmd-select",
     )
 
     selection = result["selection"]
     assert selection == {
         "selector": "viewport",
+        "representation_id": "rep_root",
+        "node_id": "node_root",
         "status": "selected",
         "association": "cell",
         "viewport": {"x0": 0.25, "y0": 0.1, "x1": 0.75, "y1": 0.9},
@@ -1462,15 +1859,29 @@ def test_viewport_inspection_uses_backend_selection_and_exact_result_shape() -> 
 def test_viewport_inspection_reports_unsupported_without_approximation() -> None:
     """A missing backend picker is visible to callers instead of being guessed."""
     backend = cast(Any, object.__new__(service_module.ParaViewBackend))
-    backend.active_source = SimpleNamespace(SMProxy=object())
+    backend.active_source = SimpleNamespace(
+        SMProxy=object(),
+        GetDataInformation=lambda: SimpleNamespace(
+            GetNumberOfPoints=lambda: 100,
+            GetNumberOfCells=lambda: 100,
+        ),
+    )
     backend.view = SimpleNamespace()
     backend.simple = _SelectionSimple()
     backend.servermanager = _SelectionServerManager()
     backend.vtk = SimpleNamespace(vtkCollection=_SelectionCollection)
     backend._selection = None
+    backend._representations = {
+        "rep_root": {"node_id": "node_root", "visible": True, "type": "surface"}
+    }
+    backend._representation_displays = {"rep_root": object()}
+    backend._node_proxies = {"node_root": backend.active_source}
 
     result = backend._inspect_selection(
-        {"viewport": {"x0": 0.1, "y0": 0.1, "x1": 0.2, "y1": 0.2}},
+        {
+            "representation_id": "rep_root",
+            "viewport": {"x0": 0.1, "y0": 0.1, "x1": 0.2, "y1": 0.2},
+        },
         "cmd-select",
     )
 
@@ -1486,16 +1897,30 @@ def test_viewport_inspection_fails_if_selection_highlight_cannot_be_cleared() ->
     """A successful ID query cannot leave an obscuring ParaView highlight behind."""
     source = SimpleNamespace()
     backend = cast(Any, object.__new__(service_module.ParaViewBackend))
-    backend.active_source = SimpleNamespace(SMProxy=source)
+    backend.active_source = SimpleNamespace(
+        SMProxy=source,
+        GetDataInformation=lambda: SimpleNamespace(
+            GetNumberOfPoints=lambda: 100,
+            GetNumberOfCells=lambda: 100,
+        ),
+    )
     backend.view = _SelectionView(source, [0, 41])
     backend.simple = _SelectionSimple(fail_clear=True)
     backend.servermanager = _SelectionServerManager()
     backend.vtk = SimpleNamespace(vtkCollection=_SelectionCollection)
     backend._selection = None
+    backend._representations = {
+        "rep_root": {"node_id": "node_root", "visible": True, "type": "surface"}
+    }
+    backend._representation_displays = {"rep_root": backend.view.representation}
+    backend._node_proxies = {"node_root": backend.active_source}
 
     with pytest.raises(RuntimeError, match="could not clear"):
         backend._inspect_selection(
-            {"viewport": {"x0": 0.1, "y0": 0.1, "x1": 0.2, "y1": 0.2}},
+            {
+                "representation_id": "rep_root",
+                "viewport": {"x0": 0.1, "y0": 0.1, "x1": 0.2, "y1": 0.2},
+            },
             "cmd-select",
         )
 
@@ -1595,6 +2020,14 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
     assert (service_root / "service_http.py").is_file()
     assert (service_root / "service_supervisor.py").is_file()
     assert (service_root / "output").is_dir()
+    authorization_file = service_root / "authorization.token"
+    token = authorization_file.read_text(encoding="ascii").strip()
+    assert len(token) == 64
+    assert all(character in "0123456789abcdef" for character in token)
+    assert token not in command
+    assert "--authorization-file" in command
+    if sys.platform != "win32":
+        assert authorization_file.stat().st_mode & 0o077 == 0
     staged_descriptor = json.loads(
         (service_root / "dataset-descriptor.json").read_text(encoding="utf-8")
     )
@@ -1807,21 +2240,38 @@ def test_service_export_is_immediately_queryable_through_artifact_store(
     sidecar = (tmp_path / "execution" / "artifacts" / "viewer.jsonl").resolve()
     output = (tmp_path / "shared" / "output" / "frame.png").resolve()
     output.parent.mkdir(parents=True)
-    output.write_bytes(_PNG)
     monkeypatch.setenv("JARVIS_ARTIFACT_PATH", str(sidecar))
     monkeypatch.setenv("JARVIS_EXECUTION_ID", "exec-render")
     monkeypatch.setenv("JARVIS_PACKAGE_NAME", "builtin.paraview")
     monkeypatch.setenv("JARVIS_PACKAGE_ID", "viewer")
 
-    returned = service_module._append_artifact(
+    staged_path, payload = service_module._stage_png(
+        simple=_ScreenshotSimple(),
+        view=object(),
+        output_dir=output.parent,
+        width=640,
+        height=480,
+    )
+    returned = service_module._prepare_artifact_event(
         artifact_id="art_0123456789abcdefghijklmn",
         logical_name="frame.png",
         path=output,
-        size_bytes=len(_PNG),
-        sha256="a" * 64,
+        size_bytes=len(payload),
+        sha256=hashlib.sha256(payload).hexdigest(),
         service_instance_id="srv_0123456789abcdef0123456789abcdef",
         command_id="cmd-export",
+        representation_ids=["rep_root"],
+        scene_digest="sha256:" + "0" * 64,
         cluster_location="/cluster/output/frame.png",
+    )
+    service_module._commit_staged_artifacts(
+        {
+            returned["artifact_id"]: {
+                "event": returned,
+                "staged_path": staged_path,
+                "output_path": output,
+            }
+        }
     )
     persisted = ArtifactStore(sidecar).latest(returned["artifact_id"])
 
@@ -1829,4 +2279,4 @@ def test_service_export_is_immediately_queryable_through_artifact_store(
     assert persisted.artifact_id == returned["artifact_id"]
     assert persisted.location is not None
     assert persisted.location.value == "/cluster/output/frame.png"
-    assert persisted.checksum == "sha256:" + "a" * 64
+    assert persisted.checksum == "sha256:" + hashlib.sha256(payload).hexdigest()

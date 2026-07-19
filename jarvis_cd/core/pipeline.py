@@ -39,6 +39,7 @@ from jarvis_cd.core.execution import (
     ExecutionHandle,
     ExecutionArtifactSnapshot,
     ExecutionProgressSnapshot,
+    ExecutionServiceRuntimeAuthority,
     ExecutionServiceRuntimeSnapshot,
     ExecutionRecord,
     ExecutionStore,
@@ -1614,6 +1615,24 @@ class Pipeline:
     ) -> ExecutionServiceRuntimeSnapshot:
         """Return current service runtimes for one exact execution."""
         return self._execution_store().service_runtimes(execution_id)
+
+    def resolve_execution_service_runtime_authority(
+        self,
+        execution_id: str,
+        *,
+        package_id: str,
+        service_instance_id: str,
+        revision: int,
+        token_sha256: str,
+    ) -> ExecutionServiceRuntimeAuthority:
+        """Resolve one private service authority for a trusted connector."""
+        return self._execution_store().resolve_service_runtime_authority(
+            execution_id,
+            package_id=package_id,
+            service_instance_id=service_instance_id,
+            revision=revision,
+            token_sha256=token_sha256,
+        )
 
     def _pipeline_storage_dir(self) -> Path:
         """Return the directory this Pipeline instance is allowed to mutate."""

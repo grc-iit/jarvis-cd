@@ -178,6 +178,8 @@ jobs:
             test/unit/core/test_artifact_spi.py \
             test/unit/core/test_progress_spi.py \
             test/unit/core/test_execution.py \
+            test/unit/core/test_execution_cli.py \
+            test/unit/core/test_service_runtime.py \
             test/unit/core/test_gray_scott_artifacts.py \
             test/unit/core/test_gray_scott_progress.py \
             test/unit/core/test_adios2_gray_scott_artifacts.py \
@@ -190,8 +192,8 @@ jobs:
             test/unit/core/test_lammps_progress.py \
             test/unit/core/test_lammps_package_runtime.py \
             test/unit/core/test_paraview_artifacts.py \
-            test/unit/core/test_paraview_service.py::test_package_validates_dataset_descriptor_during_configuration \
-            test/unit/core/test_paraview_service.py::test_supervisor_accepts_hyphen_prefixed_pvpython_options \
+            test/unit/core/test_paraview_scene_v2.py \
+            test/unit/core/test_paraview_service.py \
             test/unit/core/test_scheduler_submission.py \
             test/unit/core/test_pipeline_hostfile.py \
             test/unit/util/test_pkg_argparse.py \
@@ -253,12 +255,16 @@ jobs:
           (
           cd .release-smoke
           bin/python - <<'PY'
+          import hashlib
           from importlib.metadata import entry_points
           from pathlib import Path
 
           import jarvis_cd
+          from builtin.paraview.service_http import MAX_HTTP_CONNECTIONS, STATE_SCHEMA
           from jarvis_cd.artifacts import ARTIFACT_SCHEMA_VERSION, ArtifactReporter
+          from jarvis_cd.core.execution import ExecutionStore
           from jarvis_cd.progress.lammps import adapter_from_package
+          from jarvis_cd.service_runtime import ServiceRuntimeAuthority
 
           if ARTIFACT_SCHEMA_VERSION != 'jarvis.artifact.v1':
               raise SystemExit('installed artifact schema is not functional')
@@ -274,6 +280,9 @@ jobs:
                   ('gray_scott', 'progress.py'),
                   ('lammps', 'artifacts.py'),
                   ('paraview', 'artifacts.py'),
+                  ('paraview', 'service.py'),
+                  ('paraview', 'service_http.py'),
+                  ('paraview', 'service_supervisor.py'),
               )
           ]
           missing_providers = [str(path) for path in required_providers if not path.is_file()]
@@ -294,6 +303,16 @@ jobs:
           if adapter is None or adapter.adapter_name != 'lammps':
               raise SystemExit('installed LAMMPS progress provider is not functional')
           exec(adapter.package_load_probe_python(), {})
+          if MAX_HTTP_CONNECTIONS != 32 or STATE_SCHEMA != 'jarvis.paraview.service-state.v2':
+              raise SystemExit('installed ParaView service v2 contract is not functional')
+          if not callable(getattr(ExecutionStore, 'resolve_service_runtime_authority', None)):
+              raise SystemExit('installed private runtime authority resolver is missing')
+          raw_token = 'a' * 64
+          authority = ServiceRuntimeAuthority(scheme='bearer', token=raw_token)
+          if authority.authorization.token_sha256 != hashlib.sha256(
+              raw_token.encode('ascii')
+          ).hexdigest() or raw_token in repr(authority):
+              raise SystemExit('installed private runtime authority contract is unsafe')
           PY
           )
           .release-smoke/bin/jarvis --help >/dev/null
@@ -334,6 +353,15 @@ jobs:
                               'builtin.lammps',
                               'builtin.paraview',
                           ],
+                      },
+                      'service_runtime_contract': {
+                          'public_schema': 'jarvis.service-runtime.v2',
+                          'private_schema': 'jarvis.service-runtime.private.v1',
+                          'authority_query': (
+                              'jarvis execution resolve-service-runtime-authority'
+                          ),
+                          'paraview_state_schema': 'jarvis.paraview.service-state.v2',
+                          'paraview_command_schema': 'jarvis.paraview.command.v2',
                       },
                       'runtime_lock': 'runtime-requirements.txt',
                   },

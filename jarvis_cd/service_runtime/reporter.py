@@ -12,6 +12,7 @@ from .schema import (
     DatasetDescriptor,
     ServiceLifecycle,
     ServiceProtocol,
+    ServiceRuntimeAuthority,
     ServiceRuntimeReport,
 )
 from .store import ServiceRuntimeStore
@@ -37,6 +38,7 @@ class ServiceRuntimeReporter:
         state_path: str = "/state",
         command_path: str = "/commands",
         dataset_descriptor: DatasetDescriptor,
+        authority: ServiceRuntimeAuthority,
     ) -> None:
         """Bind immutable service identity to an owned sidecar."""
         self.execution_id = execution_id
@@ -53,6 +55,7 @@ class ServiceRuntimeReporter:
         self.state_path = state_path
         self.command_path = command_path
         self.dataset_descriptor = dataset_descriptor
+        self.authority = authority
         if not self.path.is_absolute():
             raise ValueError("service runtime sidecar path must be absolute")
         # Validate all immutable values before the first storage mutation.
@@ -66,6 +69,7 @@ class ServiceRuntimeReporter:
         host: str,
         port: int,
         dataset_descriptor: DatasetDescriptor,
+        authority: ServiceRuntimeAuthority,
         protocol: ServiceProtocol = ServiceProtocol.HTTP,
         environ: Mapping[str, str] | None = None,
     ) -> "ServiceRuntimeReporter":
@@ -95,6 +99,7 @@ class ServiceRuntimeReporter:
             port=port,
             protocol=protocol,
             dataset_descriptor=dataset_descriptor,
+            authority=authority,
         )
 
     @staticmethod
@@ -130,7 +135,10 @@ class ServiceRuntimeReporter:
                 observed_at,
             )
 
-        return ServiceRuntimeStore(self.path).append_next(build)
+        return ServiceRuntimeStore(self.path).append_next(
+            build,
+            authority=self.authority,
+        )
 
     def _build_report(
         self,
@@ -155,6 +163,7 @@ class ServiceRuntimeReporter:
             state_path=self.state_path,
             command_path=self.command_path,
             dataset_descriptor=self.dataset_descriptor,
+            authorization=self.authority.authorization,
             message=message,
             observed_at_epoch=observed_at,
         )

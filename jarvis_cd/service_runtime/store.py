@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import time
 from contextlib import contextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Callable, Final, Iterator
+from typing import Any, Callable, Final, Iterator, cast
 
 from jarvis_cd.util.private_path import (
     ensure_private_descriptor,
@@ -18,12 +19,94 @@ from jarvis_cd.util.private_path import (
 
 from .schema import (
     MAX_SERVICE_RUNTIME_BYTES,
+    SERVICE_RUNTIME_SCHEMA_VERSION,
+    SERVICE_RUNTIME_SCHEMA_VERSION_V1,
     ServiceLifecycle,
+    ServiceRuntimeAuthority,
     ServiceRuntimeReport,
     validate_service_runtime_history,
 )
 
 MAX_SERVICE_RUNTIME_STORE_BYTES: Final = 64 * 1024 * 1024
+PRIVATE_SERVICE_RUNTIME_SCHEMA_VERSION: Final = "jarvis.service-runtime.private.v1"
+
+
+@dataclass(frozen=True, slots=True)
+class _PrivateServiceRuntimeRecord:
+    """One public runtime plus its optional owner-private authority."""
+
+    runtime: ServiceRuntimeReport
+    authority: ServiceRuntimeAuthority | None
+
+    def __post_init__(self) -> None:
+        """Bind the raw capability to the public digest and schema exactly."""
+        if self.runtime.schema_version == SERVICE_RUNTIME_SCHEMA_VERSION_V1:
+            if self.authority is not None or self.runtime.authorization is not None:
+                raise ValueError("service runtime v1 cannot contain private authority")
+            return
+        if self.runtime.schema_version != SERVICE_RUNTIME_SCHEMA_VERSION:
+            raise ValueError("unsupported private service runtime schema")
+        if self.authority is None:
+            raise ValueError("service runtime v2 requires owner-private authority")
+        if self.runtime.authorization != self.authority.authorization:
+            raise ValueError(
+                "service runtime authority does not match its public token digest"
+            )
+        if self.authority.token in self.runtime.to_json():
+            raise ValueError(
+                "owner-private service runtime authority appeared in the public report"
+            )
+
+    def to_private_json(self) -> str:
+        """Serialize one bounded private envelope without changing public v2."""
+        if self.runtime.schema_version == SERVICE_RUNTIME_SCHEMA_VERSION_V1:
+            return self.runtime.to_json()
+        assert self.authority is not None
+        payload = json.dumps(
+            {
+                "schema_version": PRIVATE_SERVICE_RUNTIME_SCHEMA_VERSION,
+                "runtime": self.runtime.to_dict(),
+                "authority": self.authority.to_private_dict(),
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+            allow_nan=False,
+        )
+        if len(payload.encode("utf-8")) > MAX_SERVICE_RUNTIME_BYTES:
+            raise ValueError("private service runtime record exceeds maximum size")
+        return payload
+
+    @classmethod
+    def from_private_json(cls, payload: str) -> "_PrivateServiceRuntimeRecord":
+        """Parse either a legacy public v1 line or an exact private envelope."""
+        try:
+            value = json.loads(payload, object_pairs_hook=_reject_duplicate_keys)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ValueError(
+                "private service runtime record is not valid JSON"
+            ) from exc
+        if not isinstance(value, dict):
+            raise ValueError("private service runtime record must be an object")
+        document = cast(dict[str, Any], value)
+        if document.get("schema_version") == SERVICE_RUNTIME_SCHEMA_VERSION_V1:
+            return cls(
+                runtime=ServiceRuntimeReport.from_dict(document),
+                authority=None,
+            )
+        if set(document) != {"schema_version", "runtime", "authority"}:
+            raise ValueError("private service runtime envelope fields are invalid")
+        if document.get("schema_version") != PRIVATE_SERVICE_RUNTIME_SCHEMA_VERSION:
+            raise ValueError("unsupported private service runtime envelope schema")
+        runtime = document.get("runtime")
+        authority = document.get("authority")
+        if not isinstance(runtime, dict) or not isinstance(authority, dict):
+            raise ValueError("private service runtime envelope values are invalid")
+        return cls(
+            runtime=ServiceRuntimeReport.from_dict(cast(dict[str, Any], runtime)),
+            authority=ServiceRuntimeAuthority.from_private_dict(
+                cast(dict[str, Any], authority)
+            ),
+        )
 
 
 class ServiceRuntimeStore:
@@ -33,15 +116,25 @@ class ServiceRuntimeStore:
         """Bind the store to an exact JARVIS-owned sidecar path."""
         self.path = Path(path)
 
-    def append(self, report: ServiceRuntimeReport) -> None:
-        """Append one validated report under an inter-process lock."""
+    def append(
+        self,
+        report: ServiceRuntimeReport,
+        *,
+        authority: ServiceRuntimeAuthority | None = None,
+    ) -> None:
+        """Append one validated public report and its private authority."""
         self._prepare_parent()
         with _exclusive_store_lock(self.path):
             descriptor = _open_store(self.path, write=True)
             try:
                 information = _validate_descriptor(self.path, descriptor)
-                existing = _read_reports(descriptor, information.st_size)
-                _commit_reports(descriptor, information.st_size, existing, [report])
+                existing = _read_records(descriptor, information.st_size)
+                _commit_records(
+                    descriptor,
+                    information.st_size,
+                    existing,
+                    [_PrivateServiceRuntimeRecord(report, authority)],
+                )
             finally:
                 os.close(descriptor)
 
@@ -51,18 +144,25 @@ class ServiceRuntimeStore:
             [tuple[ServiceRuntimeReport, ...]],
             ServiceRuntimeReport,
         ],
+        *,
+        authority: ServiceRuntimeAuthority | None = None,
     ) -> ServiceRuntimeReport:
-        """Build and append a monotonic report from locked current history."""
+        """Build and append a monotonic report with private authority."""
         self._prepare_parent()
         with _exclusive_store_lock(self.path):
             descriptor = _open_store(self.path, write=True)
             try:
                 information = _validate_descriptor(self.path, descriptor)
-                existing = _read_reports(descriptor, information.st_size)
-                report = builder(tuple(existing))
+                existing = _read_records(descriptor, information.st_size)
+                report = builder(tuple(record.runtime for record in existing))
                 if not isinstance(report, ServiceRuntimeReport):
                     raise TypeError("service runtime builder returned an invalid value")
-                _commit_reports(descriptor, information.st_size, existing, [report])
+                _commit_records(
+                    descriptor,
+                    information.st_size,
+                    existing,
+                    [_PrivateServiceRuntimeRecord(report, authority)],
+                )
                 return report
             finally:
                 os.close(descriptor)
@@ -77,7 +177,10 @@ class ServiceRuntimeStore:
             descriptor = _open_store(self.path, write=False)
             try:
                 information = _validate_descriptor(self.path, descriptor)
-                return _read_reports(descriptor, information.st_size)
+                return [
+                    record.runtime
+                    for record in _read_records(descriptor, information.st_size)
+                ]
             finally:
                 os.close(descriptor)
 
@@ -104,6 +207,49 @@ class ServiceRuntimeStore:
             None,
         )
 
+    def resolve_authority(
+        self,
+        *,
+        service_instance_id: str,
+        revision: int,
+        token_sha256: str,
+    ) -> tuple[ServiceRuntimeReport, ServiceRuntimeAuthority]:
+        """Resolve one current owner-private capability by exact public identity."""
+        _reject_symlink_tree(self.path)
+        if not self.path.exists():
+            raise LookupError("service runtime authority store does not exist")
+        _reject_symlink_tree(self.path.parent)
+        with _exclusive_store_lock(self.path):
+            descriptor = _open_store(self.path, write=False)
+            try:
+                information = _validate_descriptor(self.path, descriptor)
+                records = _read_records(descriptor, information.st_size)
+            finally:
+                os.close(descriptor)
+        current = next(
+            (
+                record
+                for record in reversed(records)
+                if record.runtime.service_instance_id == service_instance_id
+            ),
+            None,
+        )
+        if current is None:
+            raise LookupError("service runtime authority identity was not found")
+        report = current.runtime
+        authorization = report.authorization
+        if (
+            report.revision != revision
+            or report.schema_version != SERVICE_RUNTIME_SCHEMA_VERSION
+            or authorization is None
+            or authorization.scheme != "bearer"
+            or authorization.token_sha256 != token_sha256
+            or current.authority is None
+            or current.authority.authorization != authorization
+        ):
+            raise LookupError("service runtime authority identity is stale or invalid")
+        return report, current.authority
+
     def finalize_active(self, *, failed: bool) -> list[ServiceRuntimeReport]:
         """Close nonterminal services when their owning execution terminates."""
         _reject_symlink_tree(self.path)
@@ -114,45 +260,53 @@ class ServiceRuntimeStore:
             descriptor = _open_store(self.path, write=True)
             try:
                 information = _validate_descriptor(self.path, descriptor)
-                existing = _read_reports(descriptor, information.st_size)
-                current: dict[str, ServiceRuntimeReport] = {}
-                for report in existing:
-                    current[report.service_instance_id] = report
+                existing = _read_records(descriptor, information.st_size)
+                current: dict[str, _PrivateServiceRuntimeRecord] = {}
+                for private_record in existing:
+                    current[private_record.runtime.service_instance_id] = private_record
                 observed_at = time.time()
-                additions: list[ServiceRuntimeReport] = []
-                for report in current.values():
+                additions: list[_PrivateServiceRuntimeRecord] = []
+                for private_record in current.values():
+                    report = private_record.runtime
                     if report.lifecycle in {
                         ServiceLifecycle.STOPPED,
                         ServiceLifecycle.FAILED,
                     }:
                         continue
                     additions.append(
-                        replace(
-                            report,
-                            revision=report.revision + 1,
-                            lifecycle=(
-                                ServiceLifecycle.FAILED
-                                if failed
-                                else ServiceLifecycle.STOPPED
+                        _PrivateServiceRuntimeRecord(
+                            runtime=replace(
+                                report,
+                                revision=report.revision + 1,
+                                lifecycle=(
+                                    ServiceLifecycle.FAILED
+                                    if failed
+                                    else ServiceLifecycle.STOPPED
+                                ),
+                                message=(
+                                    "JARVIS reconciled the service after its owning "
+                                    + (
+                                        "execution failed"
+                                        if failed
+                                        else "execution ended"
+                                    )
+                                ),
+                                observed_at_epoch=max(
+                                    observed_at,
+                                    report.observed_at_epoch,
+                                ),
                             ),
-                            message=(
-                                "JARVIS reconciled the service after its owning "
-                                + ("execution failed" if failed else "execution ended")
-                            ),
-                            observed_at_epoch=max(
-                                observed_at,
-                                report.observed_at_epoch,
-                            ),
+                            authority=private_record.authority,
                         )
                     )
                 if additions:
-                    _commit_reports(
+                    _commit_records(
                         descriptor,
                         information.st_size,
                         existing,
                         additions,
                     )
-                return additions
+                return [addition.runtime for addition in additions]
             finally:
                 os.close(descriptor)
 
@@ -164,17 +318,17 @@ class ServiceRuntimeStore:
         _reject_symlink_tree(self.path.parent)
 
 
-def _commit_reports(
+def _commit_records(
     descriptor: int,
     original_size: int,
-    existing: list[ServiceRuntimeReport],
-    additions: list[ServiceRuntimeReport],
+    existing: list[_PrivateServiceRuntimeRecord],
+    additions: list[_PrivateServiceRuntimeRecord],
 ) -> None:
-    """Validate and durably append a batch, rolling back partial writes."""
+    """Validate and durably append private records, rolling back partial writes."""
     combined = [*existing, *additions]
-    validate_service_runtime_history(combined)
+    validate_service_runtime_history([record.runtime for record in combined])
     payload = b"".join(
-        (report.to_json() + "\n").encode("utf-8") for report in additions
+        (record.to_private_json() + "\n").encode("utf-8") for record in additions
     )
     if original_size + len(payload) > MAX_SERVICE_RUNTIME_STORE_BYTES:
         raise ValueError("service runtime store would exceed maximum size")
@@ -193,8 +347,11 @@ def _commit_reports(
         raise
 
 
-def _read_reports(descriptor: int, size: int) -> list[ServiceRuntimeReport]:
-    """Read one locked descriptor without closing the caller's handle."""
+def _read_records(
+    descriptor: int,
+    size: int,
+) -> list[_PrivateServiceRuntimeRecord]:
+    """Read private records from one locked owner-verified descriptor."""
     if size > MAX_SERVICE_RUNTIME_STORE_BYTES:
         raise ValueError("service runtime store exceeds maximum size")
     if size:
@@ -202,7 +359,7 @@ def _read_reports(descriptor: int, size: int) -> list[ServiceRuntimeReport]:
         if os.read(descriptor, 1) != b"\n":
             raise ValueError("service runtime store has an incomplete JSONL record")
     os.lseek(descriptor, 0, os.SEEK_SET)
-    reports: list[ServiceRuntimeReport] = []
+    records: list[_PrivateServiceRuntimeRecord] = []
     with os.fdopen(os.dup(descriptor), "r", encoding="utf-8", newline="") as stream:
         for line_number, line in enumerate(stream, start=1):
             if len(line.encode("utf-8")) > MAX_SERVICE_RUNTIME_BYTES + 1:
@@ -212,9 +369,18 @@ def _read_reports(descriptor: int, size: int) -> list[ServiceRuntimeReport]:
             payload = line.rstrip("\r\n")
             if not payload:
                 raise ValueError(f"service runtime line {line_number} cannot be empty")
-            reports.append(ServiceRuntimeReport.from_json(payload))
-    validate_service_runtime_history(reports)
-    return reports
+            records.append(_PrivateServiceRuntimeRecord.from_private_json(payload))
+    validate_service_runtime_history([record.runtime for record in records])
+    return records
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError(f"duplicate JSON key: {key}")
+        value[key] = item
+    return value
 
 
 def _reject_symlink(path: Path, *, label: str) -> None:

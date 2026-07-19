@@ -26,6 +26,8 @@ from jarvis_cd.artifacts import (
 from jarvis_cd.progress import ProgressEvent, ProgressStore
 from jarvis_cd.service_runtime import (
     SERVICE_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
+    ServiceAuthorization,
+    ServiceRuntimeAuthority,
     ServiceRuntimeReport,
     ServiceRuntimeStore,
 )
@@ -45,6 +47,7 @@ MAX_RECORD_BYTES = 65_536
 PROGRESS_SNAPSHOT_SCHEMA = "jarvis.execution.progress.v1"
 ARTIFACT_SNAPSHOT_SCHEMA = "jarvis.execution.artifacts.v1"
 SERVICE_RUNTIME_SNAPSHOT_SCHEMA = SERVICE_RUNTIME_SNAPSHOT_SCHEMA_VERSION
+SERVICE_RUNTIME_AUTHORITY_SCHEMA = "jarvis.execution.service-runtime-authority.v1"
 DIRECT_LAUNCH_SCHEMA = "jarvis.direct-launch.v1"
 DIRECT_LEASE_NAME = ".jarvis-direct-execution.lease"
 SCHEDULER_ARTIFACT_PATH_SCHEMA = "jarvis.scheduler.artifact-path.v1"
@@ -183,6 +186,32 @@ class ExecutionServiceRuntimeSnapshot:
             "service_runtimes": [
                 runtime.to_dict() for runtime in self.service_runtimes
             ],
+        }
+
+
+@dataclass(frozen=True)
+class ExecutionServiceRuntimeAuthority:
+    """Explicit secret-bearing result for one trusted connector resolution."""
+
+    execution_id: str
+    pipeline_id: str
+    package_id: str
+    service_instance_id: str
+    revision: int
+    token_sha256: str
+    authorization: ServiceRuntimeAuthority
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the raw authority only for the explicit resolver command."""
+        return {
+            "schema_version": SERVICE_RUNTIME_AUTHORITY_SCHEMA,
+            "execution_id": self.execution_id,
+            "pipeline_id": self.pipeline_id,
+            "package_id": self.package_id,
+            "service_instance_id": self.service_instance_id,
+            "revision": self.revision,
+            "token_sha256": self.token_sha256,
+            "authorization": self.authorization.to_private_dict(),
         }
 
 
@@ -398,6 +427,26 @@ class ExecutionHandle:
         assert record._record_path is not None
         store = ExecutionStore(record._record_path.parent.parent, self.pipeline_id)
         return store.service_runtimes(self.execution_id)
+
+    def resolve_service_runtime_authority(
+        self,
+        *,
+        package_id: str,
+        service_instance_id: str,
+        revision: int,
+        token_sha256: str,
+    ) -> ExecutionServiceRuntimeAuthority:
+        """Resolve one exact private authority for a trusted connector."""
+        record = self.refresh()
+        assert record._record_path is not None
+        store = ExecutionStore(record._record_path.parent.parent, self.pipeline_id)
+        return store.resolve_service_runtime_authority(
+            self.execution_id,
+            package_id=package_id,
+            service_instance_id=service_instance_id,
+            revision=revision,
+            token_sha256=token_sha256,
+        )
 
 
 @dataclass(frozen=True)
@@ -1132,6 +1181,8 @@ class ExecutionStore:
             self.executions_dir / validated_id,
             expected_execution_id=validated_id,
         )
+        if record.pipeline_id != self.pipeline_id:
+            raise RuntimeError("execution record belongs to another pipeline")
         if record.mode == "scheduler":
             record = self._reconcile_scheduler_submission_cluster(validated_id)
         return self._reconcile_direct_execution(record)
@@ -1566,6 +1617,116 @@ class ExecutionStore:
                     ),
                 )
             ),
+        )
+
+    def resolve_service_runtime_authority(
+        self,
+        execution_id: str,
+        *,
+        package_id: str,
+        service_instance_id: str,
+        revision: int,
+        token_sha256: str,
+    ) -> ExecutionServiceRuntimeAuthority:
+        """Resolve one current private capability through exact durable identity."""
+        record = self.get(execution_id)
+        if (
+            not isinstance(package_id, str)
+            or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}", package_id) is None
+            or not isinstance(service_instance_id, str)
+            or re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}",
+                service_instance_id,
+            )
+            is None
+            or isinstance(revision, bool)
+            or not isinstance(revision, int)
+            or revision < 1
+        ):
+            raise ValueError("service runtime authority identity is invalid")
+        authorization = ServiceAuthorization(
+            scheme="bearer",
+            token_sha256=token_sha256,
+        )
+        snapshot = self.service_runtimes(record.execution_id)
+        public_matches = [
+            report
+            for report in snapshot.service_runtimes
+            if report.package_id == package_id
+            and report.service_instance_id == service_instance_id
+        ]
+        if len(public_matches) != 1:
+            raise LookupError("service runtime authority public identity was not found")
+        public_report = public_matches[0]
+        runtime_files = record.metadata.get("service_runtime_files", {})
+        if not isinstance(runtime_files, dict):
+            raise RuntimeError("execution service runtime index is invalid")
+        matches: list[tuple[str, str]] = []
+        for runtime_key, entry in runtime_files.items():
+            if (
+                not isinstance(runtime_key, str)
+                or not runtime_key
+                or not isinstance(entry, dict)
+                or set(entry) != {"filename", "package_id", "package_name"}
+                or not isinstance(entry.get("filename"), str)
+                or not entry["filename"]
+                or not isinstance(entry.get("package_id"), str)
+                or not entry["package_id"]
+                or not isinstance(entry.get("package_name"), str)
+                or not entry["package_name"]
+            ):
+                raise RuntimeError("execution service runtime index is invalid")
+            filename = cast(str, entry["filename"])
+            package_name = cast(str, entry["package_name"])
+            relative = Path(filename)
+            if (
+                relative.name != filename
+                or relative.is_absolute()
+                or relative.suffix != ".jsonl"
+                or not package_name
+            ):
+                raise RuntimeError("execution service runtime index is invalid")
+            if entry["package_id"] != package_id:
+                continue
+            matches.append((filename, package_name))
+        if len(matches) != 1:
+            raise LookupError(
+                "service runtime authority package identity was not found"
+            )
+        filename, package_name = matches[0]
+        sidecar = (
+            self.executions_dir / record.execution_id / "service-runtimes" / filename
+        )
+        try:
+            report, authority = ServiceRuntimeStore(sidecar).resolve_authority(
+                service_instance_id=service_instance_id,
+                revision=revision,
+                token_sha256=authorization.token_sha256,
+            )
+        except (OSError, PermissionError, ValueError, LookupError) as exc:
+            raise RuntimeError(
+                "service runtime authority could not be resolved from its "
+                "owner-private record"
+            ) from exc
+        if (
+            report.execution_id != record.execution_id
+            or report.package_id != package_id
+            or report.package_name != package_name
+            or report.service_instance_id != service_instance_id
+            or report.revision != revision
+            or report.authorization != authorization
+            or authority.authorization != authorization
+            or report != public_report
+        ):
+            raise RuntimeError("service runtime authority identity did not match")
+        return ExecutionServiceRuntimeAuthority(
+            execution_id=record.execution_id,
+            pipeline_id=record.pipeline_id,
+            package_id=package_id,
+            service_instance_id=service_instance_id,
+            revision=revision,
+            token_sha256=authorization.token_sha256,
+            authorization=authority,
         )
 
     def finalize_artifacts(
