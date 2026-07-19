@@ -256,11 +256,11 @@ jobs:
           cd .release-smoke
           bin/python - <<'PY'
           import hashlib
+          import sys
           from importlib.metadata import entry_points
           from pathlib import Path
 
           import jarvis_cd
-          from builtin.paraview.service_http import MAX_HTTP_CONNECTIONS, STATE_SCHEMA
           from jarvis_cd.artifacts import ARTIFACT_SCHEMA_VERSION, ArtifactReporter
           from jarvis_cd.core.execution import ExecutionStore
           from jarvis_cd.progress.lammps import adapter_from_package
@@ -271,6 +271,14 @@ jobs:
           if ArtifactReporter.__module__ != 'jarvis_cd.artifacts.reporter':
               raise SystemExit('installed artifact reporter is not functional')
           distribution_root = Path(jarvis_cd.__file__).resolve().parent.parent
+          # Package implementations are repository payloads. JARVIS adds this
+          # repository root when loading them; mirror that installed-runtime
+          # boundary instead of assuming they are core-wheel subpackages.
+          sys.path.insert(0, str(distribution_root / 'builtin'))
+          from builtin.paraview.service_http import (  # noqa: E402
+              MAX_HTTP_CONNECTIONS,
+              STATE_SCHEMA,
+          )
           required_providers = [
               distribution_root / 'builtin' / 'builtin' / package / filename
               for package, filename in (
