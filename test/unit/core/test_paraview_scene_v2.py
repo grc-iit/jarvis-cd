@@ -128,6 +128,7 @@ class _Display:
         self.Opacity = 1.0
         self.Representation = "Surface"
         self.PointSize = 1.0
+        self.ColorArrayName = ["NONE", ""]
         self.DiffuseColor: list[float] = []
         self.AmbientColor: list[float] = []
         self.scalar_bar_calls: list[bool] = []
@@ -207,6 +208,8 @@ class _SceneSimple:
         *,
         separate: bool = False,
     ) -> None:
+        if field is None and display.ColorArrayName[0] == "NONE":
+            raise RuntimeError("invalid association string 'NONE'")
         self.color_calls.append((display, field, separate))
 
     def GetColorTransferFunction(
@@ -457,6 +460,18 @@ def test_same_node_supports_independent_surface_and_point_actors() -> None:
             "bad-preset",
         )
     assert captured.value.code == "preset_not_found"
+
+
+def test_solid_color_normalizes_unset_paraview_association() -> None:
+    """Solid actors disable scalar coloring from a fresh ParaView display."""
+    backend, simple, _source = _representation_backend()
+    display = backend._representation_displays["rep_root"]
+
+    backend._apply_representation_record(backend._representations["rep_root"])
+
+    assert display.ColorArrayName == ["POINTS", ""]
+    assert simple.color_calls[-1] == (display, None, False)
+    assert display.DiffuseColor == [0.8, 0.8, 0.8]
 
 
 def test_hidden_field_actor_resolves_and_validates_without_scalar_bar() -> None:
