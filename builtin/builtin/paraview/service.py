@@ -1824,6 +1824,9 @@ class ParaViewBackend:
         scalar_bar_setter(self.view, False)
         color = cast(Mapping[str, Any], record["color"])
         if color["mode"] == "solid":
+            # ParaView 5.x reads the current association before disabling scalar
+            # coloring. Fresh displays report NONE, which its ColorBy helper rejects.
+            display.ColorArrayName = ["POINTS", ""]
             self.simple.ColorBy(display, None)
             self._replace_representation_transfer_proxies(representation_id, ())
             rgb = list(color["rgb"])
