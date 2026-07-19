@@ -599,14 +599,22 @@ class _SelectionView:
 
 
 class _SelectionSimple:
-    def __init__(self) -> None:
+    def __init__(self, *, fail_clear: bool = False) -> None:
         self.surface_calls: list[tuple[list[int], Any]] = []
+        self.cleared_sources: list[Any] = []
+        self.render_calls = 0
+        self.fail_clear = fail_clear
 
     def Render(self, _view: Any) -> None:
-        return
+        self.render_calls += 1
 
     def SelectSurfaceCells(self, *, Rectangle: list[int], View: Any) -> None:
         self.surface_calls.append((Rectangle, View))
+
+    def ClearSelection(self, source: Any) -> None:
+        self.cleared_sources.append(source)
+        if self.fail_clear:
+            raise RuntimeError("selection clear failed")
 
 
 def _command(
@@ -779,6 +787,7 @@ class _CameraView:
         self.CameraFocalPoint = [0.0, 0.0, 0.0]
         self.CameraViewUp = [0.0, 1.0, 0.0]
         self.CameraParallelScale = 5.0
+        self.ViewTime: float | None = None
 
 
 class _RenderSimple:
@@ -943,25 +952,122 @@ class _FieldDisplay:
         self.rescale_calls += 1
 
 
+class _FieldArrayInformation:
+    """Expose exact ParaView array identity and finite component ranges."""
+
+    def __init__(
+        self,
+        name: str,
+        components: int,
+        scalar_range: tuple[float, float],
+    ) -> None:
+        self.name = name
+        self.components = components
+        self.scalar_range = scalar_range
+        self.requested_components: list[int] = []
+
+    def GetName(self) -> str:
+        return self.name
+
+    def GetNumberOfComponents(self) -> int:
+        return self.components
+
+    def GetComponentFiniteRange(self, component: int) -> tuple[float, float]:
+        self.requested_components.append(component)
+        return self.scalar_range
+
+
+class _FieldAttributesInformation:
+    def __init__(self, arrays: list[_FieldArrayInformation]) -> None:
+        self.arrays = arrays
+
+    def GetNumberOfArrays(self) -> int:
+        return len(self.arrays)
+
+    def GetArrayInformation(self, index: int) -> _FieldArrayInformation:
+        return self.arrays[index]
+
+
+class _FieldDataInformation:
+    def __init__(
+        self,
+        *,
+        point_arrays: list[_FieldArrayInformation] | None = None,
+        cell_arrays: list[_FieldArrayInformation] | None = None,
+    ) -> None:
+        self.point_arrays = _FieldAttributesInformation(point_arrays or [])
+        self.cell_arrays = _FieldAttributesInformation(cell_arrays or [])
+
+    def GetPointDataInformation(self) -> _FieldAttributesInformation:
+        return self.point_arrays
+
+    def GetCellDataInformation(self) -> _FieldAttributesInformation:
+        return self.cell_arrays
+
+
+class _FieldSource:
+    def __init__(self, information: _FieldDataInformation) -> None:
+        self.information = information
+        self.update_times: list[float] = []
+
+    def GetDataInformation(self) -> _FieldDataInformation:
+        return self.information
+
+    def UpdatePipeline(self, value: float) -> None:
+        self.update_times.append(value)
+
+
+class _FieldLookup:
+    def __init__(self) -> None:
+        self.preset_calls: list[tuple[str, bool]] = []
+        self.rescale_calls: list[tuple[float, float]] = []
+        self.invert_calls = 0
+
+    def ApplyPreset(self, preset: str, rescale: bool) -> bool:
+        self.preset_calls.append((preset, rescale))
+        return True
+
+    def RescaleTransferFunction(self, lower: float, upper: float) -> None:
+        self.rescale_calls.append((lower, upper))
+
+    def InvertTransferFunction(self) -> None:
+        self.invert_calls += 1
+
+
 class _FieldSimple(_RenderSimple):
     """Record the actual ColorBy choice applied to a display."""
 
     def __init__(self) -> None:
         super().__init__()
         self.color_by: tuple[str, str] | None = None
+        self.lookup = _FieldLookup()
 
     def ColorBy(self, _display: object, field: tuple[str, str]) -> None:
         self.color_by = field
 
+    def GetColorTransferFunction(self, _name: str) -> _FieldLookup:
+        return self.lookup
 
-def test_active_field_change_clears_stale_colormap_semantics() -> None:
-    """A transfer preset is never claimed for a newly selected array."""
+
+def test_active_field_reports_exact_range_units_and_generic_colormap() -> None:
+    """Field state and transfer-function state come from the displayed ParaView data."""
     backend = cast(Any, object.__new__(service_module.ParaViewBackend))
-    backend._arrays = [{"name": "temperature", "association": "point", "components": 1}]
+    array = _FieldArrayInformation("temperature", 1, (-12.5, 38.25))
+    backend.active_source = _FieldSource(_FieldDataInformation(point_arrays=[array]))
+    backend._arrays = [
+        {
+            "name": "temperature",
+            "association": "point",
+            "components": 1,
+            "units": None,
+        }
+    ]
     backend._active_field = {
         "name": "pressure",
         "association": "point",
         "components": 1,
+        "range": [0.0, 1.0],
+        "units": "Pa",
     }
     backend._colormap = {"preset": "Viridis", "invert": False}
     backend.display = _FieldDisplay()
@@ -973,9 +1079,132 @@ def test_active_field_change_clears_stale_colormap_semantics() -> None:
         "cmd-field",
     )
 
-    assert result["active_field"]["name"] == "temperature"
+    assert result == {
+        "active_field": {
+            "name": "temperature",
+            "association": "point",
+            "components": 1,
+            "range": [-12.5, 38.25],
+            "units": None,
+        }
+    }
     assert backend.simple.color_by == ("POINTS", "temperature")
+    assert array.requested_components == [0]
+    assert backend.display.rescale_calls == 1
+    assert backend.simple.lookup.preset_calls == [
+        (service_module.DEFAULT_COLORMAP_PRESET, True)
+    ]
+    assert backend.simple.lookup.rescale_calls == [(-12.5, 38.25)]
+    assert backend._colormap == {
+        "preset": service_module.DEFAULT_COLORMAP_PRESET,
+        "invert": False,
+    }
+
+
+def test_timestep_refreshes_active_field_and_transfer_function_range() -> None:
+    """Physical timestep changes cannot leave the previous scalar range in state or color."""
+    backend = cast(Any, object.__new__(service_module.ParaViewBackend))
+    array = _FieldArrayInformation("pressure", 1, (2.5, 91.75))
+    source = _FieldSource(_FieldDataInformation(cell_arrays=[array]))
+    backend.active_source = source
+    backend.reader = _TimedPipelineProxy()
+    backend.view = SimpleNamespace(ViewTime=None)
+    backend.display = _FieldDisplay()
+    backend.simple = _FieldSimple()
+    backend._reader_timesteps = [0.0, 1.0]
+    backend._timesteps = [0.0, 1141.0]
+    backend._timestep_index = 0
+    backend._active_field = {
+        "name": "pressure",
+        "association": "cell",
+        "components": 1,
+        "range": [-1.0, 1.0],
+        "units": None,
+    }
+    backend._colormap = {
+        "preset": service_module.DEFAULT_COLORMAP_PRESET,
+        "invert": False,
+    }
+
+    result = backend._set_timestep({"index": 1}, "cmd-time")
+
+    assert result == {"timestep": {"index": 1, "value": 1141.0}}
+    assert backend.view.ViewTime == 1.0
+    assert backend.reader.update_times == [1.0]
+    assert source.update_times == [1.0]
+    assert backend._active_field == {
+        "name": "pressure",
+        "association": "cell",
+        "components": 1,
+        "range": [2.5, 91.75],
+        "units": None,
+    }
+    assert backend._colormap == {
+        "preset": service_module.DEFAULT_COLORMAP_PRESET,
+        "invert": False,
+    }
+    assert backend.display.rescale_calls == 1
+    assert backend.simple.lookup.rescale_calls == [(2.5, 91.75)]
+
+
+def test_active_field_rejects_non_finite_paraview_range() -> None:
+    """The service never publishes a guessed legend range for invalid array data."""
+    backend = cast(Any, object.__new__(service_module.ParaViewBackend))
+    array = _FieldArrayInformation("pressure", 1, (float("nan"), float("inf")))
+    backend.active_source = _FieldSource(_FieldDataInformation(point_arrays=[array]))
+    backend._arrays = [
+        {
+            "name": "pressure",
+            "association": "point",
+            "components": 1,
+            "units": None,
+        }
+    ]
+    backend._active_field = None
+    backend._colormap = None
+    backend.display = _FieldDisplay()
+    backend.simple = _FieldSimple()
+    backend.view = object()
+
+    with pytest.raises(CommandError) as captured:
+        backend._set_active_field(
+            {"name": "pressure", "association": "point"},
+            "cmd-field",
+        )
+
+    assert captured.value.code == "field_range_unavailable"
+    assert backend._active_field is None
     assert backend._colormap is None
+    assert backend.simple.color_by is None
+
+
+def test_explicit_colormap_preserves_authoritative_scalar_range() -> None:
+    """Changing only the preset cannot decouple its transfer range from field state."""
+    backend = cast(Any, object.__new__(service_module.ParaViewBackend))
+    backend._active_field = {
+        "name": "pressure",
+        "association": "point",
+        "components": 1,
+        "range": [-8.0, 144.0],
+        "units": None,
+    }
+    backend._colormap = {
+        "preset": service_module.DEFAULT_COLORMAP_PRESET,
+        "invert": False,
+    }
+    backend.display = _FieldDisplay()
+    backend.simple = _FieldSimple()
+    backend.view = object()
+
+    result = backend._set_colormap(
+        {"preset": "Viridis (matplotlib)", "invert": True},
+        "cmd-colormap",
+    )
+
+    assert result == {"colormap": {"preset": "Viridis (matplotlib)", "invert": True}}
+    assert backend.simple.lookup.preset_calls == [("Viridis (matplotlib)", True)]
+    assert backend.simple.lookup.rescale_calls == [(-8.0, 144.0)]
+    assert backend.simple.lookup.invert_calls == 1
 
 
 def test_http_health_state_command_conflict_and_frame_sse() -> None:
@@ -1049,6 +1278,101 @@ def test_missing_paraview_runtime_fails_explicitly(
             output_dir=tmp_path,
             service_instance_id="srv_0123456789abcdef0123456789abcdef",
         )
+
+
+class _TimedPipelineProxy:
+    """Capture the exact internal ParaView clock used for a timestep mutation."""
+
+    def __init__(self) -> None:
+        self.update_times: list[float] = []
+
+    def UpdatePipeline(self, value: float) -> None:
+        self.update_times.append(value)
+
+
+def test_descriptor_physical_timesteps_override_synthetic_reader_labels() -> None:
+    """Public state keeps catalog times while ParaView advances on its internal clock."""
+
+    backend = cast(Any, object.__new__(service_module.ParaViewBackend))
+    physical = [0.0, 1141.0, 2286.0, 3429.0, 4565.0]
+    backend.descriptor = {
+        "members": [
+            {
+                "index": index,
+                "location": f"/cluster/frame-{index}.vti",
+                "timestep": value,
+            }
+            for index, value in enumerate(physical)
+        ]
+    }
+    reader_clock = [0.0, 1.0, 2.0, 3.0, 4.0]
+
+    assert backend._resolve_timesteps(reader_clock) == physical
+
+    backend._reader_timesteps = reader_clock
+    backend._timesteps = physical
+    backend._timestep_index = 0
+    backend._active_field = None
+    backend._filters = []
+    backend._colormap = None
+    backend._selection = None
+    backend._artifacts = []
+    backend.view = _CameraView()
+    backend.view.ViewTime = None
+    backend.reader = _TimedPipelineProxy()
+    backend.active_source = _TimedPipelineProxy()
+    backend.simple = SimpleNamespace(Render=lambda _view: None)
+
+    result = backend._set_timestep({"index": 4}, "cmd-final")
+
+    assert result == {"timestep": {"index": 4, "value": 4565.0}}
+    assert backend.pipeline_state()["timestep"] == {
+        "index": 4,
+        "value": 4565.0,
+        "count": 5,
+    }
+    assert backend.view.ViewTime == 4.0
+    assert backend.reader.update_times == [4.0]
+    assert backend.active_source.update_times == [4.0]
+
+
+def test_descriptor_timestep_mapping_rejects_partial_or_mismatched_series() -> None:
+    backend = cast(Any, object.__new__(service_module.ParaViewBackend))
+    backend.descriptor = {
+        "members": [
+            {"index": 0, "location": "/cluster/frame-0.vti", "timestep": 0.0},
+            {"index": 1, "location": "/cluster/frame-1.vti"},
+        ]
+    }
+    with pytest.raises(ValueError, match="cover every member"):
+        backend._resolve_timesteps([0.0, 1.0])
+
+    backend.descriptor["members"][1]["timestep"] = 1141.0
+    with pytest.raises(RuntimeError, match="count differs"):
+        backend._resolve_timesteps([0.0])
+    with pytest.raises(RuntimeError, match="did not expose a time axis"):
+        backend._resolve_timesteps([])
+
+
+@pytest.mark.parametrize("invalid", [True, float("nan"), float("inf")])
+def test_package_descriptor_rejects_invalid_member_timestep(invalid: object) -> None:
+    members = (DatasetMember(index=0, location="/cluster/input.vti"),)
+    descriptor = DatasetDescriptor(
+        dataset_id="invalid-time",
+        kind="volume",
+        format="vtk-image-data",
+        members=members,
+        fingerprint=calculate_dataset_fingerprint(
+            dataset_id="invalid-time",
+            kind="volume",
+            format="vtk-image-data",
+            members=members,
+        ),
+    ).to_dict()
+    descriptor["members"][0]["timestep"] = invalid
+
+    with pytest.raises(ValueError, match="finite number"):
+        service_module._validate_descriptor(descriptor)
 
 
 def test_normalized_viewport_maps_to_real_paraview_pixels() -> None:
@@ -1130,7 +1454,9 @@ def test_viewport_inspection_uses_backend_selection_and_exact_result_shape() -> 
         "reason": None,
     }
     assert view.pixel_rectangle == selection["pixel_rectangle"]
-    assert simple.surface_calls == [(selection["pixel_rectangle"], view)]
+    assert simple.surface_calls == []
+    assert simple.cleared_sources == [backend.active_source]
+    assert simple.render_calls == 2
 
 
 def test_viewport_inspection_reports_unsupported_without_approximation() -> None:
@@ -1153,6 +1479,28 @@ def test_viewport_inspection_reports_unsupported_without_approximation() -> None
     assert selection["selected_count"] is None
     assert selection["ids"] == []
     assert selection["reason"] == "paraview_surface_selection_unavailable"
+    assert backend.simple.cleared_sources == [backend.active_source]
+
+
+def test_viewport_inspection_fails_if_selection_highlight_cannot_be_cleared() -> None:
+    """A successful ID query cannot leave an obscuring ParaView highlight behind."""
+    source = SimpleNamespace()
+    backend = cast(Any, object.__new__(service_module.ParaViewBackend))
+    backend.active_source = SimpleNamespace(SMProxy=source)
+    backend.view = _SelectionView(source, [0, 41])
+    backend.simple = _SelectionSimple(fail_clear=True)
+    backend.servermanager = _SelectionServerManager()
+    backend.vtk = SimpleNamespace(vtkCollection=_SelectionCollection)
+    backend._selection = None
+
+    with pytest.raises(RuntimeError, match="could not clear"):
+        backend._inspect_selection(
+            {"viewport": {"x0": 0.1, "y0": 0.1, "x1": 0.2, "y1": 0.2}},
+            "cmd-select",
+        )
+
+    assert backend.simple.cleared_sources == [backend.active_source]
+    assert backend._selection is None
 
 
 def test_package_service_mode_stages_generic_runtime_and_owned_output(

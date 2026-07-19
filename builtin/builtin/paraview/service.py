@@ -31,6 +31,7 @@ MAX_SELECTION_RESULTS = 256
 MAX_EXPORTED_ARTIFACT_BYTES = 128 * 1024 * 1024
 LIVE_VIEW_SIZE = (960, 540)
 ARTIFACT_PREFIX = "JARVIS_ARTIFACT "
+DEFAULT_COLORMAP_PRESET = "Cool to Warm"
 
 
 class ParaViewBackend:
@@ -85,7 +86,8 @@ class ParaViewBackend:
         self._artifacts: List[Dict[str, Any]] = []
         self._arrays = self._discover_arrays()
         self._bounds = self._discover_bounds()
-        self._timesteps = self._discover_timesteps()
+        self._reader_timesteps = self._discover_reader_timesteps()
+        self._timesteps = self._resolve_timesteps(self._reader_timesteps)
         self._dataset_arrays = _json_copy_list(self._arrays)
         self._dataset_bounds = tuple(self._bounds) if self._bounds is not None else None
         self._dataset_timesteps = list(self._timesteps)
@@ -189,9 +191,12 @@ class ParaViewBackend:
                     "timestep index exceeds the discovered series",
                 )
             value = self._timesteps[index]
-            self.view.ViewTime = value
-            self.reader.UpdatePipeline(value)
-            self.active_source.UpdatePipeline(value)
+            if self._reader_timesteps:
+                reader_value = self._reader_timesteps[index]
+                self.view.ViewTime = reader_value
+                self.reader.UpdatePipeline(reader_value)
+                self.active_source.UpdatePipeline(reader_value)
+            self._refresh_active_field_range()
         self._timestep_index = index
         self.simple.Render(self.view)
         return {"timestep": {"index": index, "value": value}}
@@ -217,19 +222,27 @@ class ParaViewBackend:
                 "field_not_found",
                 "active field is not present in discovered ParaView arrays",
             )
+        scalar_range = self._array_range(name, association, match["components"])
+        lookup = self.simple.GetColorTransferFunction(name)
+        if not lookup.ApplyPreset(DEFAULT_COLORMAP_PRESET, True):
+            raise CommandError(
+                "preset_not_found",
+                "ParaView's default generic colormap preset was not found",
+            )
         paraview_association = "POINTS" if association == "point" else "CELLS"
         self.simple.ColorBy(self.display, (paraview_association, name))
         self.display.RescaleTransferFunctionToDataRange(True, False)
+        lookup.RescaleTransferFunction(*scalar_range)
         active_field = {
             "name": name,
             "association": association,
             "components": match["components"],
+            "range": scalar_range,
+            "units": match.get("units"),
         }
         self.simple.Render(self.view)
         self._active_field = active_field
-        # A transfer-function preset is bound to the previously active array.
-        # Changing arrays must not claim that preset is still applied.
-        self._colormap = None
+        self._colormap = {"preset": DEFAULT_COLORMAP_PRESET, "invert": False}
         return {"active_field": dict(self._active_field)}
 
     def _set_camera(
@@ -434,6 +447,7 @@ class ParaViewBackend:
         if invert:
             lookup.InvertTransferFunction()
         self.display.RescaleTransferFunctionToDataRange(True, False)
+        lookup.RescaleTransferFunction(*self._active_field["range"])
         self._colormap = {"preset": preset, "invert": invert}
         self.simple.Render(self.view)
         return {"colormap": dict(self._colormap)}
@@ -517,15 +531,17 @@ class ParaViewBackend:
                 servermanager=self.servermanager,
                 limit=MAX_SELECTION_RESULTS,
             )
-            self.simple.SelectSurfaceCells(
-                Rectangle=pixel_rectangle,
-                View=self.view,
-            )
-            self.simple.Render(self.view)
         except (AttributeError, RuntimeError, TypeError, ValueError):
             ids = []
             selected_count = None
             unsupported_reason = "paraview_surface_selection_unavailable"
+        try:
+            self.simple.ClearSelection(self.active_source)
+            self.simple.Render(self.view)
+        except (AttributeError, RuntimeError, TypeError, ValueError) as exc:
+            raise RuntimeError(
+                "ParaView could not clear the viewport selection highlight"
+            ) from exc
 
         if unsupported_reason is not None:
             status = "unsupported"
@@ -630,6 +646,72 @@ class ParaViewBackend:
                 )
         return arrays
 
+    def _array_range(
+        self,
+        name: str,
+        association: str,
+        components: int,
+    ) -> List[float]:
+        """Return the finite scalar or vector-magnitude range for one live array."""
+
+        information = self.active_source.GetDataInformation()
+        attribute_information = (
+            information.GetPointDataInformation()
+            if association == "point"
+            else information.GetCellDataInformation()
+        )
+        array_information = None
+        for index in range(min(attribute_information.GetNumberOfArrays(), 256)):
+            candidate = attribute_information.GetArrayInformation(index)
+            if candidate is not None and str(candidate.GetName()) == name:
+                array_information = candidate
+                break
+        if array_information is None:
+            raise CommandError(
+                "field_not_found",
+                "active field is not present in current ParaView array information",
+            )
+        current_components = int(array_information.GetNumberOfComponents())
+        if current_components != components:
+            raise CommandError(
+                "field_shape_changed",
+                "active field component count changed in current ParaView data",
+            )
+        component = 0 if components == 1 else -1
+        for method_name in ("GetComponentFiniteRange", "GetComponentRange"):
+            method = getattr(array_information, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                values = cast(Sequence[Any], method(component))
+                scalar_range = [float(values[0]), float(values[1])]
+            except (IndexError, TypeError, ValueError, OverflowError):
+                continue
+            if (
+                all(math.isfinite(value) for value in scalar_range)
+                and scalar_range[0] <= scalar_range[1]
+            ):
+                return scalar_range
+        raise CommandError(
+            "field_range_unavailable",
+            "ParaView did not expose a finite range for the active field",
+        )
+
+    def _refresh_active_field_range(self) -> None:
+        """Refresh range semantics and the transfer function for the displayed data."""
+
+        if self._active_field is None:
+            return
+        scalar_range = self._array_range(
+            self._active_field["name"],
+            self._active_field["association"],
+            self._active_field["components"],
+        )
+        self.display.RescaleTransferFunctionToDataRange(True, False)
+        lookup = self.simple.GetColorTransferFunction(self._active_field["name"])
+        lookup.RescaleTransferFunction(*scalar_range)
+        self._active_field["range"] = scalar_range
+
     def _discover_bounds(
         self,
         source: Any = None,
@@ -643,16 +725,45 @@ class ParaViewBackend:
             return None
         return cast(Tuple[float, float, float, float, float, float], bounds)
 
-    def _discover_timesteps(self) -> List[float]:
+    def _discover_reader_timesteps(self) -> List[float]:
+        """Return ParaView's internal clock for the opened reader or file series."""
+
         values = getattr(self.reader, "TimestepValues", None)
         if values:
-            return [float(value) for value in values]
-        descriptor_values = [
-            member.get("timestep")
-            for member in self.descriptor["members"]
-            if member.get("timestep") is not None
-        ]
-        return [float(value) for value in descriptor_values]
+            parsed = [float(value) for value in values]
+            if not all(math.isfinite(value) for value in parsed):
+                raise RuntimeError("ParaView reader exposed a non-finite timestep")
+            return parsed
+        return []
+
+    def _resolve_timesteps(self, reader_values: Sequence[float]) -> List[float]:
+        """Resolve user-facing physical times without changing ParaView's reader clock.
+
+        Multi-file readers commonly synthesize ``0, 1, ...`` even when the catalog descriptor
+        carries physical simulation times. Descriptor values therefore label the public runtime,
+        while ``reader_values`` remain the clock used to drive ``ViewTime`` and ``UpdatePipeline``.
+        Partial or cardinality-mismatched metadata is rejected rather than silently mislabelled.
+        """
+
+        members = self.descriptor["members"]
+        configured = [member.get("timestep") for member in members]
+        present = [value is not None for value in configured]
+        if any(present) and not all(present):
+            raise ValueError(
+                "dataset descriptor timestep metadata must cover every member or no members"
+            )
+        if all(present):
+            physical = [float(cast(float, value)) for value in configured]
+            if reader_values and len(reader_values) != len(physical):
+                raise RuntimeError(
+                    "ParaView reader timestep count differs from the dataset descriptor"
+                )
+            if len(physical) > 1 and not reader_values:
+                raise RuntimeError(
+                    "ParaView did not expose a time axis for the descriptor member series"
+                )
+            return physical
+        return [float(value) for value in reader_values]
 
     def _camera_state(self) -> Dict[str, Any]:
         return {
@@ -740,6 +851,13 @@ def _validate_descriptor(value: Mapping[str, Any]) -> Dict[str, Any]:
         if member.get("index") != expected_index:
             raise ValueError("dataset member indexes must be contiguous")
         _normalized_absolute_path(member.get("location"))
+        timestep = member.get("timestep")
+        if timestep is not None and (
+            isinstance(timestep, bool)
+            or not isinstance(timestep, (int, float))
+            or not math.isfinite(float(timestep))
+        ):
+            raise ValueError("dataset member timestep must be a finite number")
     fingerprint = value.get("fingerprint")
     if (
         not isinstance(fingerprint, dict)
