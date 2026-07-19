@@ -9,7 +9,9 @@ import pytest
 
 from jarvis_cd.progress import (
     PackageProgressProvider,
+    ProcessExitProgressProvider,
     ProgressObservation,
+    ProgressState,
     RelayProgressAdapter,
 )
 from jarvis_cd.progress.lammps import (
@@ -40,6 +42,7 @@ def test_adapter_is_owned_by_builtin_lammps(tmp_path: Path) -> None:
     assert adapter.total_steps == 100
     assert adapter.progress_log_paths() == [tmp_path / "log.lammps"]
     assert isinstance(adapter, PackageProgressProvider)
+    assert isinstance(adapter, ProcessExitProgressProvider)
     assert isinstance(adapter, RelayProgressAdapter)
 
     container_adapter = adapter_from_package(
@@ -136,6 +139,73 @@ def test_lammps_provider_exposes_typed_jarvis_observations() -> None:
     assert all(isinstance(item, ProgressObservation) for item in observations)
     assert [item.current for item in observations] == [0.0, 5.0]
     assert [item.total for item in observations] == [10, 10]
+
+
+def test_lammps_successful_exit_completes_observed_final_timestep() -> None:
+    """A zero process exit commits an observed final thermo row exactly once."""
+    provider = LammpsThermoProgressAdapter(
+        total_steps=100,
+        package_version="test-version",
+    )
+    observed = provider.observe_progress(
+        "run 100\nStep Temp CPU\n0 1.0 0.0\n50 1.1 1.0\n100 1.2 2.0"
+    )
+
+    terminal = provider.finalize_progress_for_exit(0)
+
+    assert [item.current for item in observed] == [0.0, 50.0]
+    assert [item.current for item in terminal] == [100.0, 100.0]
+    assert terminal[-1].state is ProgressState.COMPLETED
+    assert terminal[-1].total == 100.0
+    assert terminal[-1].unit == "step"
+    assert terminal[-1].metadata["source"] == "jarvis_package"
+    assert terminal[-1].metadata["package_version"] == "test-version"
+    assert terminal[-1].metadata["completion_signal"] == (
+        "process_exit_zero_after_final_timestep"
+    )
+    assert terminal[-1].metadata["return_code"] == 0
+    assert provider.finalize_progress_for_exit(0) == []
+
+
+def test_lammps_successful_exit_does_not_invent_unobserved_progress() -> None:
+    """Process success alone cannot fabricate a missing final thermo step."""
+    provider = LammpsThermoProgressAdapter(total_steps=100)
+    observed = provider.observe_progress(
+        "run 100\nStep Temp CPU\n0 1.0 0.0\n50 1.1 1.0\n"
+    )
+
+    terminal = provider.finalize_progress_for_exit(0)
+
+    assert [item.current for item in observed] == [0.0, 50.0]
+    assert terminal == []
+    assert all(item.state is ProgressState.RUNNING for item in observed)
+
+
+def test_lammps_failed_exit_terminates_at_last_observed_timestep() -> None:
+    """A nonzero process exit records failure without advancing progress."""
+    provider = LammpsThermoProgressAdapter(total_steps=100)
+    observed = provider.observe_progress(
+        "run 100\nStep Temp CPU\n0 1.0 0.0\n25 1.1 1.0\n"
+    )
+
+    terminal = provider.finalize_progress_for_exit(7)
+
+    assert [item.current for item in observed] == [0.0, 25.0]
+    assert len(terminal) == 1
+    assert terminal[0].state is ProgressState.FAILED
+    assert terminal[0].current == 25.0
+    assert terminal[0].total == 100.0
+    assert terminal[0].metadata["completion_signal"] == "process_exit_nonzero"
+    assert terminal[0].metadata["return_code"] == 7
+    assert provider.finalize_progress_for_exit(7) == []
+
+
+def test_lammps_process_exit_rejects_non_integer_status() -> None:
+    """The package provider accepts only an actual integer process result."""
+    provider = LammpsThermoProgressAdapter(total_steps=100)
+
+    with pytest.raises(TypeError, match="process return code must be an integer"):
+        provider.finalize_progress_for_exit(True)
 
 
 def test_adapter_rejects_unobserved_acceptance_claims() -> None:

@@ -43,18 +43,131 @@ class LammpsThermoProgressAdapter:
     stdout_fragment: str = ""
     jarvis_stdout_fragment: str = ""
     last_emitted_key: tuple[float, float, float, float | None] | None = None
+    _last_observation: ProgressObservation | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _terminal_state: ProgressState | None = field(default=None, init=False, repr=False)
 
     def observe_progress(self, text: str) -> list[ProgressObservation]:
         """Interpret application stdout for the JARVIS-owned typed SPI."""
-        return [_record_to_observation(record) for record in self.observe_stdout(text)]
+        if self._terminal_state is not None:
+            return []
+        return self._remember_observations(
+            [_record_to_observation(record) for record in self.observe_stdout(text)]
+        )
 
     def finalize_progress(self) -> list[ProgressObservation]:
         """Flush the final application-output fragment for JARVIS core."""
-        return [_record_to_observation(record) for record in self.finalize_stdout()]
+        if self._terminal_state is not None:
+            return []
+        return self._remember_observations(
+            [_record_to_observation(record) for record in self.finalize_stdout()]
+        )
+
+    def finalize_progress_for_exit(self, return_code: int) -> list[ProgressObservation]:
+        """Finalize LAMMPS progress from its authoritative process exit status."""
+        if isinstance(return_code, bool) or not isinstance(return_code, int):
+            raise TypeError("process return code must be an integer")
+        if self._terminal_state is not None:
+            return []
+
+        observations = self.finalize_progress()
+        terminal = self._process_exit_observation(return_code)
+        if terminal is not None:
+            observations.append(terminal)
+            self._last_observation = terminal
+            self._terminal_state = terminal.state
+        return observations
 
     def reset_progress(self) -> None:
         """Reset the JARVIS-owned application stream parser."""
         self.reset_stdout()
+
+    def _remember_observations(
+        self,
+        observations: list[ProgressObservation],
+    ) -> list[ProgressObservation]:
+        """Retain the last typed observation for truthful process finalization."""
+        if observations:
+            self._last_observation = observations[-1]
+        return observations
+
+    def _process_exit_observation(
+        self,
+        return_code: int,
+    ) -> ProgressObservation | None:
+        """Return one terminal event without inventing unobserved progress."""
+        latest = self._last_observation
+        if return_code == 0:
+            total_steps = self.total_steps
+            if (
+                latest is None
+                or total_steps is None
+                or latest.current != total_steps
+                or latest.total != total_steps
+            ):
+                return None
+            completed_steps = latest.current
+            if completed_steps is None:
+                return None
+            metadata = dict(latest.metadata)
+            metadata.update(
+                {
+                    "completion_signal": "process_exit_zero_after_final_timestep",
+                    "return_code": return_code,
+                }
+            )
+            return ProgressObservation(
+                label=latest.label,
+                state=ProgressState.COMPLETED,
+                current=completed_steps,
+                total=total_steps,
+                unit=latest.unit,
+                message=(
+                    f"LAMMPS completed {int(completed_steps)} of "
+                    f"{int(total_steps)} steps"
+                ),
+                metadata=metadata,
+            )
+
+        current = latest.current if latest is not None else 0.0
+        total = latest.total if latest is not None else self.total_steps
+        metadata = (
+            dict(latest.metadata)
+            if latest is not None
+            else self._base_progress_metadata()
+        )
+        metadata.update(
+            {
+                "completion_signal": "process_exit_nonzero",
+                "return_code": return_code,
+            }
+        )
+        return ProgressObservation(
+            label=latest.label if latest is not None else "timestep",
+            state=ProgressState.FAILED,
+            current=current,
+            total=total,
+            unit=latest.unit if latest is not None else "step",
+            message=f"LAMMPS failed with exit status {return_code}",
+            metadata=metadata,
+        )
+
+    def _base_progress_metadata(self) -> dict[str, JsonValue]:
+        """Return bounded package provenance when no thermo row was observed."""
+        return {
+            "adapter": self.adapter_name,
+            "source": "jarvis_package",
+            "progress_source": self.authoritative_source or "process_exit",
+            "log_visibility": self.log_visibility,
+            "package_name": self.package_name,
+            "package_id": self.package_id,
+            "package_version": self.package_version,
+            "run_id": self.run_id,
+            "execution_id": self.run_id,
+        }
 
     def observe_stdout(self, text: str) -> list[dict[str, object]]:
         """Extract progress from an already trusted package-owned log."""
@@ -80,6 +193,8 @@ class LammpsThermoProgressAdapter:
         self.active_run_steps = None
         self.active_run_start_step = None
         self.last_emitted_key = None
+        self._last_observation = None
+        self._terminal_state = None
 
     def _observe_stdout(
         self,
