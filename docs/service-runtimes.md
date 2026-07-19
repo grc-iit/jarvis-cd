@@ -145,6 +145,16 @@ ID returns HTTP 429 with `command_limit`, while every previously accepted ID
 remains replayable. Restarting the service creates a new service instance and
 a new command-ID lifetime.
 
+`set_active_field` reports the exact array `name`, `association`, component
+count, finite scalar (or vector-magnitude) `range`, and nullable `units`.
+JARVIS never infers missing units; when the runtime has no authoritative unit
+metadata the field reports `units: null`. Selecting a field applies the generic
+`Cool to Warm` preset and records it in `pipeline.colormap`; a later
+`set_colormap` remains explicit.
+Changing timesteps refreshes both the reported range and the transfer-function
+range for the displayed data. Applying a filter invalidates the active field
+and colormap, so a range from the pre-filter source cannot remain in state.
+
 `inspect_selection` accepts exactly one of two selector forms. A known element
 uses `{"association":"point|cell","index":N}`. A human drag box uses
 `{"viewport":{"x0":0.1,"y0":0.2,"x1":0.9,"y1":0.8}}`, with finite
@@ -157,7 +167,10 @@ also include the normalized `viewport` and exact `pixel_rectangle`. At most 256
 real IDs are returned while `selected_count` preserves the full count. A
 backend that cannot expose real selection IDs returns `status=unsupported`; an
 area with no visible cells returns `status=empty`. JARVIS never approximates a
-screen selection as world coordinates.
+screen selection as world coordinates. After collecting the IDs and count,
+the service clears ParaView's opaque selection highlight and renders the clean
+data view; clients can display the authoritative viewport as a non-obscuring
+overlay from the returned normalized rectangle.
 
 The `jarvis.paraview.command-result.v1` response contains the resulting full
 authoritative state and the real operation result. `/events` pushes those state
