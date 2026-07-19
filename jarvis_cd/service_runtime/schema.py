@@ -13,7 +13,8 @@ from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Any, Final, Mapping, cast
 
-SERVICE_RUNTIME_SCHEMA_VERSION: Final = "jarvis.service-runtime.v1"
+SERVICE_RUNTIME_SCHEMA_VERSION_V1: Final = "jarvis.service-runtime.v1"
+SERVICE_RUNTIME_SCHEMA_VERSION: Final = "jarvis.service-runtime.v2"
 DATASET_DESCRIPTOR_SCHEMA_VERSION: Final = "jarvis.dataset-descriptor.v1"
 SERVICE_RUNTIME_SNAPSHOT_SCHEMA_VERSION: Final = "jarvis.execution.service-runtimes.v1"
 MAX_SERVICE_RUNTIME_BYTES: Final = 256 * 1024
@@ -23,7 +24,8 @@ MAX_TEXT_BYTES: Final = 4096
 _IDENTITY_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$")
 _ARTIFACT_ID_PATTERN: Final = re.compile(r"^art_[A-Za-z0-9_-]{22,86}$")
 _SHA256_PATTERN: Final = re.compile(r"^[0-9a-f]{64}$")
-_REPORT_FIELDS: Final = frozenset(
+_BEARER_TOKEN_PATTERN: Final = re.compile(r"^[0-9a-f]{64}$")
+_REPORT_FIELDS_V1: Final = frozenset(
     {
         "schema_version",
         "execution_id",
@@ -46,6 +48,7 @@ _REPORT_FIELDS: Final = frozenset(
         "observed_at_epoch",
     }
 )
+_REPORT_FIELDS_V2: Final = _REPORT_FIELDS_V1 | {"authorization"}
 _DESCRIPTOR_FIELDS: Final = frozenset(
     {
         "schema_version",
@@ -389,6 +392,88 @@ class DatasetDescriptor:
 
 
 @dataclass(frozen=True, slots=True)
+class ServiceAuthorization:
+    """Non-secret reference to an execution-owned service capability."""
+
+    scheme: str
+    token_sha256: str
+
+    def __post_init__(self) -> None:
+        """Require the exact public bearer-reference contract."""
+        if self.scheme != "bearer":
+            raise ValueError("service authorization scheme must be bearer")
+        if not _SHA256_PATTERN.fullmatch(self.token_sha256):
+            raise ValueError(
+                "service authorization token_sha256 must be 64 lowercase "
+                "hexadecimal characters"
+            )
+
+    def to_dict(self) -> dict[str, str]:
+        """Serialize only the non-secret capability digest."""
+        return {"scheme": self.scheme, "token_sha256": self.token_sha256}
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "ServiceAuthorization":
+        """Parse an exact public bearer reference without accepting a token."""
+        _reject_unknown(
+            value,
+            frozenset({"scheme", "token_sha256"}),
+            "authorization",
+        )
+        return cls(
+            scheme=_required_str(value, "scheme", "authorization"),
+            token_sha256=_required_str(value, "token_sha256", "authorization"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ServiceRuntimeAuthority:
+    """Owner-private bearer capability resolved only for a trusted connector."""
+
+    scheme: str
+    token: str = field(repr=False)
+
+    def __post_init__(self) -> None:
+        """Require one exact high-entropy bearer capability."""
+        if self.scheme != "bearer":
+            raise ValueError("service runtime authority scheme must be bearer")
+        if not _BEARER_TOKEN_PATTERN.fullmatch(self.token):
+            raise ValueError(
+                "service runtime authority token must be 64 lowercase "
+                "hexadecimal characters"
+            )
+
+    @property
+    def token_sha256(self) -> str:
+        """Return the public digest that binds this private capability."""
+        return hashlib.sha256(self.token.encode("ascii")).hexdigest()
+
+    @property
+    def authorization(self) -> ServiceAuthorization:
+        """Return the non-secret public reference for this authority."""
+        return ServiceAuthorization(
+            scheme=self.scheme,
+            token_sha256=self.token_sha256,
+        )
+
+    def to_private_dict(self) -> dict[str, str]:
+        """Serialize the raw token only for an owner-private store or resolver."""
+        return {"scheme": self.scheme, "token": self.token}
+
+    @classmethod
+    def from_private_dict(
+        cls,
+        value: Mapping[str, Any],
+    ) -> "ServiceRuntimeAuthority":
+        """Parse an exact owner-private bearer capability."""
+        _reject_unknown(value, frozenset({"scheme", "token"}), "authority")
+        return cls(
+            scheme=_required_str(value, "scheme", "authority"),
+            token=_required_str(value, "token", "authority"),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ServiceRuntimeReport:
     """One durable observation of an execution-owned network service."""
 
@@ -407,6 +492,7 @@ class ServiceRuntimeReport:
     state_path: str
     command_path: str
     dataset_descriptor: DatasetDescriptor
+    authorization: ServiceAuthorization | None = None
     message: str | None = None
     observed_at_epoch: float = field(default_factory=time.time)
     delivery_mode: str = "push"
@@ -414,10 +500,18 @@ class ServiceRuntimeReport:
 
     def __post_init__(self) -> None:
         """Validate a complete, agent-queryable service observation."""
-        if self.schema_version != SERVICE_RUNTIME_SCHEMA_VERSION:
+        if self.schema_version not in {
+            SERVICE_RUNTIME_SCHEMA_VERSION_V1,
+            SERVICE_RUNTIME_SCHEMA_VERSION,
+        }:
             raise ValueError(
                 f"unsupported service runtime schema: {self.schema_version!r}"
             )
+        if self.schema_version == SERVICE_RUNTIME_SCHEMA_VERSION:
+            if not isinstance(self.authorization, ServiceAuthorization):
+                raise ValueError("service runtime v2 requires authorization")
+        elif self.authorization is not None:
+            raise ValueError("service runtime v1 cannot contain authorization")
         for field_name, value in (
             ("execution_id", self.execution_id),
             ("package_name", self.package_name),
@@ -470,7 +564,7 @@ class ServiceRuntimeReport:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the stable service-runtime schema."""
-        return {
+        value: dict[str, Any] = {
             "schema_version": self.schema_version,
             "execution_id": self.execution_id,
             "package_name": self.package_name,
@@ -491,6 +585,10 @@ class ServiceRuntimeReport:
             "message": self.message,
             "observed_at_epoch": self.observed_at_epoch,
         }
+        if self.schema_version == SERVICE_RUNTIME_SCHEMA_VERSION:
+            assert self.authorization is not None
+            value["authorization"] = self.authorization.to_dict()
+        return value
 
     def to_json(self) -> str:
         """Serialize a bounded canonical JSONL payload."""
@@ -502,7 +600,20 @@ class ServiceRuntimeReport:
     @classmethod
     def from_dict(cls, value: Mapping[str, Any]) -> "ServiceRuntimeReport":
         """Parse a report and reject unversioned extensions."""
-        _reject_unknown(value, _REPORT_FIELDS, "service runtime report")
+        schema_version = _required_str(value, "schema_version", "service runtime")
+        if schema_version == SERVICE_RUNTIME_SCHEMA_VERSION_V1:
+            _reject_unknown(value, _REPORT_FIELDS_V1, "service runtime report")
+            authorization = None
+        elif schema_version == SERVICE_RUNTIME_SCHEMA_VERSION:
+            _reject_unknown(value, _REPORT_FIELDS_V2, "service runtime report")
+            authorization = ServiceAuthorization.from_dict(
+                _required_mapping(
+                    value.get("authorization"),
+                    "service runtime authorization",
+                )
+            )
+        else:
+            raise ValueError(f"unsupported service runtime schema: {schema_version!r}")
         descriptor_value = _required_mapping(
             value.get("dataset_descriptor"),
             "service runtime dataset_descriptor",
@@ -529,11 +640,7 @@ class ServiceRuntimeReport:
         except ValueError as exc:
             raise ValueError("invalid service runtime lifecycle or protocol") from exc
         return cls(
-            schema_version=_required_str(
-                value,
-                "schema_version",
-                "service runtime",
-            ),
+            schema_version=schema_version,
             execution_id=_required_str(value, "execution_id", "service runtime"),
             package_name=_required_str(value, "package_name", "service runtime"),
             package_id=_required_str(value, "package_id", "service runtime"),
@@ -562,6 +669,7 @@ class ServiceRuntimeReport:
                 "service runtime",
             ),
             dataset_descriptor=DatasetDescriptor.from_dict(descriptor_value),
+            authorization=authorization,
             message=message,
             observed_at_epoch=float(observed),
         )
@@ -652,6 +760,8 @@ def validate_service_runtime_history(reports: list[ServiceRuntimeReport]) -> Non
                 "command_path",
                 "delivery_mode",
                 "dataset_descriptor",
+                "authorization",
+                "schema_version",
             )
             for name in immutable:
                 if getattr(report, name) != getattr(previous, name):
@@ -838,12 +948,15 @@ __all__ = [
     "MAX_DATASET_MEMBERS",
     "MAX_SERVICE_RUNTIME_BYTES",
     "SERVICE_RUNTIME_SCHEMA_VERSION",
+    "SERVICE_RUNTIME_SCHEMA_VERSION_V1",
     "SERVICE_RUNTIME_SNAPSHOT_SCHEMA_VERSION",
     "DatasetArray",
     "DatasetDescriptor",
     "DatasetMember",
     "ServiceLifecycle",
+    "ServiceAuthorization",
     "ServiceProtocol",
+    "ServiceRuntimeAuthority",
     "ServiceRuntimeReport",
     "calculate_dataset_fingerprint",
     "validate_service_runtime_history",

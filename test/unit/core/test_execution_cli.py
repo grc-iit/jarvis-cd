@@ -143,6 +143,100 @@ def test_execution_service_runtimes_json_can_query_noncurrent_pipeline(
     constructor.assert_called_once_with("example")
 
 
+def test_execution_authority_cli_emits_only_explicit_private_document(
+    capsys,
+) -> None:
+    token = "a" * 64
+    document = {
+        "schema_version": "jarvis.execution.service-runtime-authority.v1",
+        "execution_id": "run-1",
+        "pipeline_id": "example",
+        "package_id": "viewer",
+        "service_instance_id": "srv-viewer",
+        "revision": 3,
+        "token_sha256": "b" * 64,
+        "authorization": {"scheme": "bearer", "token": token},
+    }
+    resolved = SimpleNamespace(to_dict=Mock(return_value=document))
+    pipeline = SimpleNamespace(
+        resolve_execution_service_runtime_authority=Mock(return_value=resolved)
+    )
+    cli = JarvisCLI()
+    cli.kwargs = {
+        "execution_id": "run-1",
+        "pipeline_id": "example",
+        "package_id": "viewer",
+        "service_instance_id": "srv-viewer",
+        "revision": 3,
+        "token_sha256": "b" * 64,
+        "json": True,
+    }
+    cli._ensure_initialized = Mock()
+
+    with patch("jarvis_cd.core.cli.Pipeline", return_value=pipeline) as constructor:
+        cli.execution_resolve_service_runtime_authority()
+
+    output = capsys.readouterr().out
+    assert output == json.dumps(document, separators=(",", ":"), sort_keys=True) + "\n"
+    constructor.assert_called_once_with("example")
+    pipeline.resolve_execution_service_runtime_authority.assert_called_once_with(
+        "run-1",
+        package_id="viewer",
+        service_instance_id="srv-viewer",
+        revision=3,
+        token_sha256="b" * 64,
+    )
+
+
+def test_execution_authority_cli_requires_explicit_json(capsys) -> None:
+    cli = JarvisCLI()
+    cli.kwargs = {"json": False}
+    cli._ensure_initialized = Mock()
+
+    with pytest.raises(ValueError, match=r"requires explicit \+json"):
+        cli.execution_resolve_service_runtime_authority()
+
+    assert capsys.readouterr().out == ""
+
+
+def test_execution_authority_parser_accepts_exact_connector_contract() -> None:
+    """The non-MCP resolver requires every documented identity selector."""
+    cli = JarvisCLI()
+    cli.define_options()
+    handler = Mock()
+    cli.execution_resolve_service_runtime_authority = handler
+
+    parsed = cli.parse(
+        [
+            "execution",
+            "resolve-service-runtime-authority",
+            "run-1",
+            "--pipeline-id",
+            "visualization",
+            "--package-id",
+            "viewer",
+            "--service-instance-id",
+            "srv-viewer",
+            "--revision",
+            "3",
+            "--token-sha256",
+            "b" * 64,
+            "+json",
+        ]
+    )
+
+    assert parsed == {
+        "execution_id": "run-1",
+        "pipeline_id": "visualization",
+        "package_id": "viewer",
+        "service_instance_id": "srv-viewer",
+        "revision": 3,
+        "token_sha256": "b" * 64,
+        "json": True,
+    }
+    handler.assert_called_once_with()
+
+
 def test_json_handle_is_emitted_as_one_final_line(capsys) -> None:
     """Run and submit handlers share the exact handle serialization."""
     handle = ExecutionHandle(

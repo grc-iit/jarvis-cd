@@ -7,6 +7,7 @@ import json
 import shlex
 import signal
 import socket
+import stat
 import subprocess
 import sys
 import threading
@@ -19,6 +20,7 @@ from typing import IO, Optional, Sequence
 from jarvis_cd.service_runtime import (
     DatasetDescriptor,
     ServiceLifecycle,
+    ServiceRuntimeAuthority,
     ServiceRuntimeReporter,
 )
 
@@ -40,6 +42,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--startup-timeout", type=float, required=True)
     parser.add_argument("--service-instance-id", required=True)
+    parser.add_argument("--authorization-file", required=True)
     args = parser.parse_args(argv)
 
     if not 1 <= args.startup_timeout <= 600:
@@ -51,6 +54,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     descriptor = DatasetDescriptor.from_json(
         Path(args.descriptor).read_text(encoding="utf-8")
     )
+    authorization_path = Path(args.authorization_file)
+    authorization_token = _read_authorization_token(authorization_path)
     port = args.port or _available_port(args.bind_host)
     if not 1 <= port <= 65535:
         raise ValueError("service port must be zero or between 1 and 65535")
@@ -59,6 +64,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         host=args.advertise_host,
         port=port,
         dataset_descriptor=descriptor,
+        authority=ServiceRuntimeAuthority(
+            scheme="bearer",
+            token=authorization_token,
+        ),
     )
     command = [
         args.pvpython_bin,
@@ -76,6 +85,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         reporter.execution_id,
         "--service-instance-id",
         args.service_instance_id,
+        "--authorization-file",
+        str(authorization_path),
     ]
     stopping = threading.Event()
     lifecycle: Optional[ServiceLifecycle] = None
@@ -134,6 +145,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 probe_host,
                 port,
                 service_instance_id=args.service_instance_id,
+                authorization_token=authorization_token,
             ):
                 reporter.report(
                     ServiceLifecycle.READY,
@@ -166,6 +178,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 probe_host,
                 port,
                 service_instance_id=args.service_instance_id,
+                authorization_token=authorization_token,
             )
             if healthy:
                 health_failures = 0
@@ -293,6 +306,19 @@ def _terminate_process(
         return process.wait(timeout=grace_seconds), True
 
 
+def _read_authorization_token(path: Path) -> str:
+    """Read one private capability file without placing its value in argv or logs."""
+    if not path.is_absolute() or not path.is_file() or path.is_symlink():
+        raise ValueError("authorization file must be a regular absolute file")
+    if path.stat().st_size > 128:
+        raise ValueError("authorization file exceeds its bounded size")
+    if sys.platform != "win32" and stat.S_IMODE(path.stat().st_mode) & 0o077:
+        raise ValueError("authorization file must not grant group or other access")
+    token = path.read_text(encoding="ascii").strip()
+    ServiceRuntimeAuthority(scheme="bearer", token=token)
+    return token
+
+
 def _available_port(bind_host: str) -> int:
     """Reserve and release an ephemeral port immediately before child launch."""
     family = socket.AF_INET6 if ":" in bind_host else socket.AF_INET
@@ -314,12 +340,16 @@ def _health_ready(
     port: int,
     *,
     service_instance_id: str,
+    authorization_token: str,
 ) -> bool:
     """Accept readiness only from the versioned service health response."""
     rendered_host = f"[{host}]" if ":" in host else host
     request = urllib.request.Request(
         f"http://{rendered_host}:{port}/healthz",
-        headers={"Accept": "application/json"},
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {authorization_token}",
+        },
     )
     try:
         with urllib.request.urlopen(request, timeout=0.5) as response:

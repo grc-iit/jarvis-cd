@@ -343,15 +343,22 @@ def test_exact_release_request_gates_artifact_build() -> None:
     assert "test/unit/core/test_progress_spi.py" in WORKFLOW
     assert "test/unit/core/test_pipeline_coverage.py" in WORKFLOW
     assert "test/unit/ci/test_live_ares_gray_scott_probe.py" in WORKFLOW
-    assert (
-        "test/unit/core/test_paraview_service.py::"
-        "test_package_validates_dataset_descriptor_during_configuration"
-    ) in WORKFLOW
+    for release_contract_test in (
+        "test/unit/core/test_execution_cli.py",
+        "test/unit/core/test_service_runtime.py",
+        "test/unit/core/test_paraview_scene_v2.py",
+        "test/unit/core/test_paraview_service.py",
+    ):
+        assert release_contract_test in WORKFLOW
     assert "test/unit/shell/test_local_exec.py" in WORKFLOW
     assert "test/unit/shell/test_mpi_exec.py" in WORKFLOW
     assert "test/unit/util/test_pkg_argparse.py" in WORKFLOW
     assert "'schema_version': 'jarvis.artifact.v1'" in WORKFLOW
     assert "jarvis execution artifacts" in WORKFLOW
+    assert "'public_schema': 'jarvis.service-runtime.v2'" in WORKFLOW
+    assert "'private_schema': 'jarvis.service-runtime.private.v1'" in WORKFLOW
+    assert "resolve-service-runtime-authority" in WORKFLOW
+    assert "MAX_HTTP_CONNECTIONS" in WORKFLOW
     build_block = WORKFLOW[build_index : WORKFLOW.index("  release:")]
     assert "    needs: release-preflight" in build_block
     assert "release_request" in build_block

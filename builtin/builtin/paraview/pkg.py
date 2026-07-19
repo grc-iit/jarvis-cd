@@ -1,6 +1,7 @@
 """Launch generic ParaView servers, services, or user-supplied batch scripts."""
 
 import os
+import secrets
 import shlex
 import sys
 import tempfile
@@ -338,6 +339,11 @@ class Paraview(Application):
         )
         output_dir = service_root / "output"
         output_dir.mkdir(mode=0o700)
+        authorization_path = service_root / "authorization.token"
+        self._write_private_payload(
+            authorization_path,
+            (secrets.token_hex(32) + "\n").encode("ascii"),
+        )
         service_port = self._configured_int("service_port", 0)
         if not 0 <= service_port <= 65535:
             raise ValueError("service_port must be between 0 and 65535")
@@ -364,6 +370,8 @@ class Paraview(Application):
             str(startup_timeout),
             "--service-instance-id",
             service_instance_id,
+            "--authorization-file",
+            str(authorization_path),
         ]
         environment.update(
             {
