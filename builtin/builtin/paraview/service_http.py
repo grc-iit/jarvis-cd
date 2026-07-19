@@ -199,6 +199,7 @@ class ServiceStateController:
                 )
         self.max_commands = max_commands
         self.max_idempotency_bytes = max_idempotency_bytes
+        self._command_lock = threading.Lock()
         self._lock = threading.RLock()
         self._changed = threading.Condition(self._lock)
         self._revision = 1
@@ -267,37 +268,42 @@ class ServiceStateController:
             payload
         )
         canonical_request = canonical.encode("utf-8")
-        with self._changed:
-            previous = self._results.get(command_id)
-            if previous is not None:
-                previous_request, previous_response = previous
-                if previous_request != canonical_request:
+        with self._command_lock:
+            with self._changed:
+                previous = self._results.get(command_id)
+                if previous is not None:
+                    previous_request, previous_response = previous
+                    if previous_request != canonical_request:
+                        raise CommandError(
+                            "idempotency_conflict",
+                            "command_id was already used for a different command",
+                            status=HTTPStatus.CONFLICT,
+                        )
+                    decoded = json.loads(previous_response.decode("utf-8"))
+                    if not isinstance(decoded, dict):
+                        raise RuntimeError("cached ParaView response is not an object")
+                    return decoded
+                if len(self._results) >= self.max_commands:
                     raise CommandError(
-                        "idempotency_conflict",
-                        "command_id was already used for a different command",
-                        status=HTTPStatus.CONFLICT,
+                        "command_limit",
+                        "the service lifetime command limit was reached",
+                        status=HTTPStatus.TOO_MANY_REQUESTS,
+                        details={"max_commands": self.max_commands},
                     )
-                decoded = json.loads(previous_response.decode("utf-8"))
-                if not isinstance(decoded, dict):
-                    raise RuntimeError("cached ParaView response is not an object")
-                return decoded
-            if len(self._results) >= self.max_commands:
-                raise CommandError(
-                    "command_limit",
-                    "the service lifetime command limit was reached",
-                    status=HTTPStatus.TOO_MANY_REQUESTS,
-                    details={"max_commands": self.max_commands},
-                )
-            if expected is not None and expected != self._revision:
-                raise CommandError(
-                    "revision_conflict",
-                    "expected_revision does not match authoritative state",
-                    status=HTTPStatus.CONFLICT,
-                    details={
-                        "expected_revision": expected,
-                        "actual_revision": self._revision,
-                    },
-                )
+                if expected is not None and expected != self._revision:
+                    raise CommandError(
+                        "revision_conflict",
+                        "expected_revision does not match authoritative state",
+                        status=HTTPStatus.CONFLICT,
+                        details={
+                            "expected_revision": expected,
+                            "actual_revision": self._revision,
+                        },
+                    )
+                current_revision = self._revision
+                current_frame = self._frame
+                current_idempotency_bytes = self._idempotency_payload_bytes
+
             checkpoint = self.backend.begin_command()
             try:
                 result = self.backend.execute(operation, arguments, command_id)
@@ -306,11 +312,11 @@ class ServiceStateController:
                 # Export is already the exact current frame and publication is
                 # deterministic. Every scene mutation must prove a new frame.
                 candidate_frame = (
-                    self._frame
+                    current_frame
                     if operation == "export_artifact"
                     else self._bounded_frame(self.backend.render_png())
                 )
-                candidate_revision = self._revision + 1
+                candidate_revision = current_revision + 1
                 candidate_state = self._capture_state(candidate_revision)
                 candidate_state_sse_payload = _state_sse_payload(
                     candidate_revision,
@@ -335,7 +341,7 @@ class ServiceStateController:
                         "ParaView command response exceeds the service size limit"
                     )
                 candidate_idempotency_bytes = (
-                    self._idempotency_payload_bytes
+                    current_idempotency_bytes
                     + len(canonical_request)
                     + len(canonical_response)
                 )
@@ -346,9 +352,7 @@ class ServiceStateController:
                         status=HTTPStatus.TOO_MANY_REQUESTS,
                         details={
                             "max_idempotency_bytes": self.max_idempotency_bytes,
-                            "stored_idempotency_bytes": (
-                                self._idempotency_payload_bytes
-                            ),
+                            "stored_idempotency_bytes": current_idempotency_bytes,
                         },
                     )
                 self.backend.commit_command(checkpoint)
@@ -367,14 +371,16 @@ class ServiceStateController:
                     "ParaView operation failed",
                     status=HTTPStatus.UNPROCESSABLE_ENTITY,
                 ) from exc
-            self._frame = candidate_frame
-            self._revision = candidate_revision
-            self._state = candidate_state
-            self._state_sse_payload = candidate_state_sse_payload
-            self._frame_sse_payload = candidate_frame_sse_payload
-            self._results[command_id] = (canonical_request, canonical_response)
-            self._idempotency_payload_bytes = candidate_idempotency_bytes
-            self._changed.notify_all()
+
+            with self._changed:
+                self._frame = candidate_frame
+                self._revision = candidate_revision
+                self._state = candidate_state
+                self._state_sse_payload = candidate_state_sse_payload
+                self._frame_sse_payload = candidate_frame_sse_payload
+                self._results[command_id] = (canonical_request, canonical_response)
+                self._idempotency_payload_bytes = candidate_idempotency_bytes
+                self._changed.notify_all()
             return _json_copy(response)
 
     def _capture_state(self, revision: Optional[int] = None) -> Dict[str, Any]:

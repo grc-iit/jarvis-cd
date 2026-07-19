@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import io
+import base64
 import hashlib
+import io
 import json
 import socket
 import subprocess
@@ -57,6 +58,33 @@ def _wait_until(predicate: Callable[[], bool], *, timeout: float = 2.0) -> bool:
             return True
         time.sleep(0.01)
     return bool(predicate())
+
+
+def _read_sse_record(
+    response: Any,
+) -> tuple[str, int | None, dict[str, Any] | None]:
+    """Read one complete event or heartbeat from a live HTTP response."""
+    first_line = response.readline()
+    if first_line == b": heartbeat\n":
+        assert response.readline() == b"\n"
+        return "heartbeat", None, None
+    event = first_line.decode("ascii").strip().removeprefix("event: ")
+    revision = int(response.readline().decode("ascii").strip().removeprefix("id: "))
+    payload = json.loads(
+        response.readline().decode("utf-8").strip().removeprefix("data: ")
+    )
+    assert response.readline() == b"\n"
+    assert isinstance(payload, dict)
+    return event, revision, payload
+
+
+def _read_sse_event(response: Any) -> tuple[str, int, dict[str, Any]]:
+    """Read one complete state or frame event from a live HTTP response."""
+    event, revision, payload = _read_sse_record(response)
+    assert event in {"state", "frame"}
+    assert revision is not None
+    assert payload is not None
+    return event, revision, payload
 
 
 def test_service_supervisor_rejects_shared_cluster_bind() -> None:
@@ -604,6 +632,38 @@ class _Backend:
         assert self.transaction_open
         self.timestep = cast(int, checkpoint)
         self.transaction_open = False
+
+
+class _RevisionFrameBackend(_Backend):
+    """Return revision-distinct PNG bytes so publication cannot hide a stale frame."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.render_calls = 0
+
+    def render_png(self) -> bytes:
+        self.render_calls += 1
+        return _PNG + f"-{self.render_calls}".encode("ascii")
+
+
+class _BlockingRevisionFrameBackend(_RevisionFrameBackend):
+    """Hold one mutation open while live SSE streams prove their liveness."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.execute_started = threading.Event()
+        self.release_execute = threading.Event()
+
+    def execute(
+        self,
+        operation: str,
+        arguments: Mapping[str, Any],
+        command_id: str,
+    ) -> dict[str, Any]:
+        self.execute_started.set()
+        if not self.release_execute.wait(timeout=2):
+            raise RuntimeError("test command release timed out")
+        return super().execute(operation, arguments, command_id)
 
 
 class _SelectionCollection:
@@ -1211,6 +1271,225 @@ def test_http_health_state_command_conflict_and_frame_sse() -> None:
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_http_sse_publishes_every_mutation_and_replays_current_revision() -> None:
+    """Live streams and reconnects receive the PNG and state for each committed revision."""
+    backend = _RevisionFrameBackend()
+    controller = ServiceStateController(
+        backend=backend,
+        execution_id="exec-render",
+        package_name="builtin.paraview",
+        package_id="viewer",
+        service_instance_id="srv_0123456789abcdef0123456789abcdef",
+    )
+    token = "a" * 64
+    server = create_server(
+        "127.0.0.1",
+        0,
+        controller,
+        token,
+        heartbeat_interval=0.05,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+    headers = {"Authorization": f"Bearer {token}"}
+    frames = urllib.request.urlopen(
+        urllib.request.Request(origin + "/live-data", headers=headers),
+        timeout=2,
+    )
+    states = urllib.request.urlopen(
+        urllib.request.Request(origin + "/events", headers=headers),
+        timeout=2,
+    )
+    try:
+        frame_event, frame_revision, frame = _read_sse_event(frames)
+        state_event, state_revision, state = _read_sse_event(states)
+        assert (frame_event, frame_revision) == ("frame", 1)
+        assert (state_event, state_revision) == ("state", 1)
+        assert state["revision"] == 1
+        assert base64.b64decode(frame["data"]) == _PNG + b"-1"
+
+        for revision, index in ((2, 1), (3, 0)):
+            request = urllib.request.Request(
+                origin + "/commands",
+                data=json.dumps(
+                    _command(
+                        command_id=f"cmd-{revision}",
+                        expected_revision=revision - 1,
+                        index=index,
+                    )
+                ).encode("utf-8"),
+                headers={"Content-Type": "application/json", **headers},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
+                result = json.load(response)
+            frame_event, frame_revision, frame = _read_sse_event(frames)
+            state_event, state_revision, state = _read_sse_event(states)
+
+            assert result["state"]["revision"] == revision
+            assert (frame_event, frame_revision) == ("frame", revision)
+            assert (state_event, state_revision) == ("state", revision)
+            assert state == result["state"]
+            assert base64.b64decode(frame["data"]) == _PNG + f"-{revision}".encode(
+                "ascii"
+            )
+
+        frames.close()
+        states.close()
+        request = urllib.request.Request(
+            origin + "/commands",
+            data=json.dumps(
+                _command(command_id="cmd-4", expected_revision=3, index=1)
+            ).encode("utf-8"),
+            headers={"Content-Type": "application/json", **headers},
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=2) as response:
+            result = json.load(response)
+        reconnect_headers = {**headers, "Last-Event-ID": "3"}
+        with urllib.request.urlopen(
+            urllib.request.Request(origin + "/live-data", headers=reconnect_headers),
+            timeout=2,
+        ) as reconnected_frames:
+            frame_event, frame_revision, frame = _read_sse_event(reconnected_frames)
+        with urllib.request.urlopen(
+            urllib.request.Request(origin + "/events", headers=reconnect_headers),
+            timeout=2,
+        ) as reconnected_states:
+            state_event, state_revision, state = _read_sse_event(reconnected_states)
+
+        assert result["state"]["revision"] == 4
+        assert (frame_event, frame_revision) == ("frame", 4)
+        assert (state_event, state_revision) == ("state", 4)
+        assert state == result["state"]
+        assert base64.b64decode(frame["data"]) == _PNG + b"-4"
+        assert backend.render_calls == 4
+    finally:
+        frames.close()
+        states.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_sse_heartbeats_continue_during_a_blocked_command() -> None:
+    """Long mutations preserve stream liveness and publish one matched revision."""
+    backend = _BlockingRevisionFrameBackend()
+    controller = ServiceStateController(
+        backend=backend,
+        execution_id="exec-render",
+        package_name="builtin.paraview",
+        package_id="viewer",
+        service_instance_id="srv_0123456789abcdef0123456789abcdef",
+    )
+    token = "a" * 64
+    server = create_server(
+        "127.0.0.1",
+        0,
+        controller,
+        token,
+        heartbeat_interval=0.02,
+    )
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    origin = f"http://127.0.0.1:{server.server_address[1]}"
+    headers = {"Authorization": f"Bearer {token}"}
+    frames = urllib.request.urlopen(
+        urllib.request.Request(origin + "/live-data", headers=headers),
+        timeout=2,
+    )
+    states = urllib.request.urlopen(
+        urllib.request.Request(origin + "/events", headers=headers),
+        timeout=2,
+    )
+    command_results: list[dict[str, Any]] = []
+    command_errors: list[BaseException] = []
+    records: dict[str, tuple[str, int | None, dict[str, Any] | None]] = {}
+    reader_errors: list[BaseException] = []
+    snapshots: list[tuple[dict[str, Any], tuple[int, bytes]]] = []
+
+    def invoke_command() -> None:
+        try:
+            command_results.append(
+                controller.command(
+                    _command(
+                        command_id="cmd-blocked",
+                        expected_revision=1,
+                        index=1,
+                    )
+                )
+            )
+        except BaseException as exc:
+            command_errors.append(exc)
+
+    def read_record(name: str, response: Any) -> None:
+        try:
+            records[name] = _read_sse_record(response)
+        except BaseException as exc:
+            reader_errors.append(exc)
+
+    def read_committed_snapshot() -> None:
+        try:
+            snapshots.append((controller.state(), controller.frame()))
+        except BaseException as exc:
+            reader_errors.append(exc)
+
+    command_thread = threading.Thread(target=invoke_command, daemon=True)
+    readers = [
+        threading.Thread(target=read_record, args=("frame", frames), daemon=True),
+        threading.Thread(target=read_record, args=("state", states), daemon=True),
+        threading.Thread(target=read_committed_snapshot, daemon=True),
+    ]
+    try:
+        assert _read_sse_event(frames)[:2] == ("frame", 1)
+        assert _read_sse_event(states)[:2] == ("state", 1)
+
+        command_thread.start()
+        assert backend.execute_started.wait(timeout=1)
+        for reader in readers:
+            reader.start()
+        for reader in readers:
+            reader.join(timeout=0.5)
+
+        assert not any(reader.is_alive() for reader in readers)
+        assert not reader_errors
+        assert records == {
+            "frame": ("heartbeat", None, None),
+            "state": ("heartbeat", None, None),
+        }
+        assert snapshots[0][0]["revision"] == 1
+        assert snapshots[0][1] == (1, _PNG + b"-1")
+
+        backend.release_execute.set()
+        command_thread.join(timeout=2)
+        assert not command_thread.is_alive()
+        assert not command_errors
+        assert len(command_results) == 1
+
+        frame_event, frame_revision, frame = _read_sse_event(frames)
+        state_event, state_revision, state = _read_sse_event(states)
+        result = command_results[0]
+        assert (frame_event, frame_revision) == ("frame", 2)
+        assert (state_event, state_revision) == ("state", 2)
+        assert state == result["state"]
+        assert base64.b64decode(frame["data"]) == _PNG + b"-2"
+        assert backend.render_calls == 2
+
+        assert _read_sse_record(frames) == ("heartbeat", None, None)
+        assert _read_sse_record(states) == ("heartbeat", None, None)
+    finally:
+        backend.release_execute.set()
+        command_thread.join(timeout=2)
+        for reader in readers:
+            reader.join(timeout=2)
+        frames.close()
+        states.close()
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=2)
 
 
 def test_sse_frame_payload_is_encoded_once_per_revision(
