@@ -180,6 +180,16 @@ jarvis rg path
 # Load resource graph from custom file
 jarvis rg load /path/to/custom_resource_graph.yaml
 
+# List profiles shipped by the active JARVIS builtin repository
+jarvis rg builtins
+
+# Activate an exact shipped profile through JARVIS-owned resolution
+jarvis rg load-builtin ares
+
+# Emit one bounded JSON result for orchestration clients. An unavailable exact
+# profile is an expected result; corrupt/unreadable profiles remain hard errors.
+jarvis rg load-builtin ares +json
+
 # Show path to current resource graph file (prints only the path)
 jarvis rg path
 
