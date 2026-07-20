@@ -180,6 +180,7 @@ jobs:
             test/unit/core/test_execution.py \
             test/unit/core/test_execution_cli.py \
             test/unit/core/test_service_runtime.py \
+            test/unit/core/test_resource_graph_activation.py \
             test/unit/core/test_gray_scott_artifacts.py \
             test/unit/core/test_gray_scott_progress.py \
             test/unit/core/test_adios2_gray_scott_artifacts.py \
@@ -324,6 +325,33 @@ jobs:
           PY
           )
           .release-smoke/bin/jarvis --help >/dev/null
+          (
+          cd .release-smoke
+          export JARVIS_ROOT="$PWD/jarvis-root"
+          bin/jarvis init "$PWD/config" "$PWD/private" "$PWD/shared" >/dev/null
+          bin/jarvis rg builtins | grep -Fx ares >/dev/null
+          BUILTIN_RESULT="$(bin/jarvis rg load-builtin ares +json)" \
+            bin/python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          result = json.loads(os.environ['BUILTIN_RESULT'])
+          if result.get('schema_version') != 'jarvis.resource-graph-builtin.v1':
+              raise SystemExit('installed builtin graph schema is not functional')
+          if result.get('profile') != 'ares' or result.get('action') != 'loaded':
+              raise SystemExit(f'installed builtin graph activation failed: {result}')
+          if result.get('available') is not True or 'ares' not in result.get('catalog', []):
+              raise SystemExit(f'installed builtin graph catalog failed: {result}')
+          source = Path(result['source'])
+          if hashlib.sha256(source.read_bytes()).hexdigest() != result['source_sha256']:
+              raise SystemExit('installed builtin graph source digest is incorrect')
+          active = Path(os.environ['JARVIS_ROOT']) / 'resource_graph.yaml'
+          if not active.is_file() or '/mnt/ssd' not in active.read_text(encoding='utf-8'):
+              raise SystemExit('installed builtin graph was not durably activated')
+          PY
+          )
 
       - name: Create release manifest
         env:
