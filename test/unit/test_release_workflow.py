@@ -346,6 +346,7 @@ def test_exact_release_request_gates_artifact_build() -> None:
     for release_contract_test in (
         "test/unit/core/test_execution_cli.py",
         "test/unit/core/test_service_runtime.py",
+        "test/unit/core/test_resource_graph_activation.py",
         "test/unit/core/test_paraview_scene_v2.py",
         "test/unit/core/test_paraview_service.py",
     ):
@@ -360,6 +361,9 @@ def test_exact_release_request_gates_artifact_build() -> None:
     assert "resolve-service-runtime-authority" in WORKFLOW
     assert "MAX_HTTP_CONNECTIONS" in WORKFLOW
     assert "sys.path.insert(0, str(distribution_root / 'builtin'))" in WORKFLOW
+    assert "bin/jarvis rg builtins | grep -Fx ares" in WORKFLOW
+    assert "bin/jarvis rg load-builtin ares +json" in WORKFLOW
+    assert "jarvis.resource-graph-builtin.v1" in WORKFLOW
     build_block = WORKFLOW[build_index : WORKFLOW.index("  release:")]
     assert "    needs: release-preflight" in build_block
     assert "release_request" in build_block

@@ -17,6 +17,21 @@ class BuiltinResourceGraphUnavailable(FileNotFoundError):
     """Raised only when an exact profile is absent from the builtin catalog."""
 
 
+def _validate_builtin_resource_graph_profile(profile: str) -> str:
+    """Return one safe exact builtin profile name or fail closed."""
+    if (
+        not profile
+        or profile != profile.strip()
+        or len(profile) > 256
+        or profile in {".", ".."}
+        or "/" in profile
+        or "\\" in profile
+        or any(ord(character) < 32 or ord(character) == 127 for character in profile)
+    ):
+        raise ValueError("builtin resource graph profile must be one safe exact name")
+    return profile
+
+
 def _fsync_directory(path: Path) -> None:
     """Durably publish a completed state-file replacement on POSIX."""
     if os.name == "nt":
@@ -666,29 +681,19 @@ class Jarvis:
                 ".yml",
             }:
                 continue
-            profile = candidate.stem
+            profile = _validate_builtin_resource_graph_profile(candidate.stem)
             if profile in profiles:
                 raise ValueError(f"duplicate builtin resource graph profile: {profile}")
             if len(profiles) >= MAX_BUILTIN_RESOURCE_GRAPH_PROFILES:
-                raise ValueError("builtin resource graph catalog exceeds its profile limit")
+                raise ValueError(
+                    "builtin resource graph catalog exceeds its profile limit"
+                )
             profiles[profile] = candidate
         return profiles
 
     def get_builtin_resource_graph_path(self, profile: str) -> Path:
         """Resolve one exact builtin graph profile or report the owned catalog."""
-        if (
-            not profile
-            or profile != profile.strip()
-            or len(profile) > 256
-            or profile in {".", ".."}
-            or "/" in profile
-            or "\\" in profile
-            or any(
-                ord(character) < 32 or ord(character) == 127
-                for character in profile
-            )
-        ):
-            raise ValueError("builtin resource graph profile must be one safe exact name")
+        _validate_builtin_resource_graph_profile(profile)
         profiles = self.list_builtin_resource_graphs()
         selected = profiles.get(profile)
         if selected is None:

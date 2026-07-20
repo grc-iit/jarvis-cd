@@ -79,11 +79,13 @@ def test_rg_load_atomically_activates_graph_for_a_new_process(tmp_path: Path) ->
     assert "dev_type: ssd" in observed.stdout
 
 
-def test_rg_load_failed_activation_preserves_file_and_in_memory_graph(
+@pytest.mark.parametrize("activation", ["load", "load_builtin"])
+def test_failed_replace_preserves_file_cache_and_manager_graph(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    activation: str,
 ) -> None:
-    """A failed atomic replace must leave both active views unchanged."""
+    """A failed atomic replace must leave all active views unchanged."""
     jarvis_root = tmp_path / "custom-jarvis-root"
     monkeypatch.setenv("JARVIS_ROOT", str(jarvis_root))
     Jarvis._instance = None
@@ -110,9 +112,18 @@ def test_rg_load_failed_activation_preserves_file_and_in_memory_graph(
 
         monkeypatch.setattr("jarvis_cd.core.config.os.replace", fail_replace)
         with pytest.raises(OSError, match="simulated atomic replacement failure"):
-            manager.load(source)
+            if activation == "load":
+                manager.load(source)
+            else:
+                monkeypatch.setattr(
+                    jarvis,
+                    "get_builtin_resource_graph_path",
+                    lambda _profile: source,
+                )
+                manager.load_builtin("fixture")
 
         assert jarvis.resource_graph_file.read_bytes() == active_before
+        assert jarvis.resource_graph["fs"][0]["mount"] == "/old"
         mounts = {
             device["mount"]
             for node in manager.resource_graph.get_all_nodes()
@@ -124,11 +135,13 @@ def test_rg_load_failed_activation_preserves_file_and_in_memory_graph(
         Jarvis._instance = None
 
 
-def test_post_replace_fsync_failure_keeps_file_and_cache_coherent(
+@pytest.mark.parametrize("activation", ["load", "load_builtin"])
+def test_post_replace_fsync_failure_keeps_every_live_graph_coherent(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    activation: str,
 ) -> None:
-    """A durability error after replace must expose the same new graph in both views."""
+    """A post-replace error must expose the new graph in all three live views."""
     jarvis_root = tmp_path / "custom-jarvis-root"
     monkeypatch.setenv("JARVIS_ROOT", str(jarvis_root))
     Jarvis._instance = None
@@ -139,7 +152,15 @@ def test_post_replace_fsync_failure_keeps_file_and_cache_coherent(
             str(tmp_path / "private"),
             str(tmp_path / "shared"),
         )
-        replacement = {"fs": [{"mount": "/new", "dev_type": "ssd", "shared": True}]}
+        jarvis.save_resource_graph(
+            {"fs": [{"mount": "/old", "dev_type": "hdd", "shared": True}]}
+        )
+        manager = ResourceGraphManager()
+        source = tmp_path / "replacement.yaml"
+        source.write_text(
+            "fs:\n- mount: /new\n  dev_type: ssd\n  shared: true\n",
+            encoding="utf-8",
+        )
 
         def fail_directory_fsync(_path: Path) -> None:
             raise OSError("simulated directory fsync failure")
@@ -148,15 +169,27 @@ def test_post_replace_fsync_failure_keeps_file_and_cache_coherent(
             "jarvis_cd.core.config._fsync_directory", fail_directory_fsync
         )
         with pytest.raises(OSError, match="simulated directory fsync failure"):
-            jarvis.save_resource_graph(replacement)
+            if activation == "load":
+                manager.load(source)
+            else:
+                monkeypatch.setattr(
+                    jarvis,
+                    "get_builtin_resource_graph_path",
+                    lambda _profile: source,
+                )
+                manager.load_builtin("fixture")
 
         persisted = yaml.safe_load(
             jarvis.resource_graph_file.read_text(encoding="utf-8")
         )
-        assert persisted == replacement
-        assert jarvis.resource_graph == replacement
-        replacement["fs"][0]["mount"] = "/caller-mutated"
+        assert persisted["fs"][0]["mount"] == "/new"
         assert jarvis.resource_graph == persisted
+        mounts = {
+            device["mount"]
+            for node in manager.resource_graph.get_all_nodes()
+            for device in manager.resource_graph.get_node_storage(node)
+        }
+        assert mounts == {"/new"}
         assert not list(jarvis_root.glob(".resource_graph.*.tmp"))
     finally:
         Jarvis._instance = None
@@ -273,6 +306,42 @@ def test_load_builtin_json_keeps_corrupt_profile_as_a_hard_error(
     assert result.returncode != 0
     assert "jarvis.resource-graph-builtin.v1" not in result.stdout
     assert "Error:" in result.stdout + result.stderr
+
+
+def test_builtin_catalog_rejects_unsafe_discovered_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unsafe on-disk names must fail before entering human or JSON output."""
+    jarvis_root = tmp_path / "custom-jarvis-root"
+    monkeypatch.setenv("JARVIS_ROOT", str(jarvis_root))
+    Jarvis._instance = None
+    try:
+        jarvis = Jarvis.get_instance()
+        graph_root = tmp_path / "operator" / "builtin" / "resource_graph"
+        graph_root.mkdir(parents=True)
+        unsafe = graph_root / "unsafe\nprofile.yaml"
+        original_iterdir = Path.iterdir
+        original_is_file = Path.is_file
+
+        def fake_iterdir(path: Path):
+            if path == graph_root:
+                return iter([unsafe])
+            return original_iterdir(path)
+
+        def fake_is_file(path: Path) -> bool:
+            if path == unsafe:
+                return True
+            return original_is_file(path)
+
+        monkeypatch.setattr(jarvis, "get_builtin_repo_path", lambda: graph_root.parent)
+        monkeypatch.setattr(Path, "iterdir", fake_iterdir)
+        monkeypatch.setattr(Path, "is_file", fake_is_file)
+
+        with pytest.raises(ValueError, match="must be one safe exact name"):
+            jarvis.list_builtin_resource_graphs()
+    finally:
+        Jarvis._instance = None
 
 
 def test_load_builtin_json_does_not_relabel_selected_source_disappearance(
