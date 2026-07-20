@@ -29,7 +29,7 @@ class ResourceGraphManager:
         self.resource_graph = ResourceGraph()
 
         # Try to load existing resource graph if available
-        default_path = Path.home() / '.ppi-jarvis' / 'resource_graph.yaml'
+        default_path = self.jarvis.resource_graph_file
         if default_path.exists():
             try:
                 self.resource_graph.load_from_file(default_path)
@@ -180,32 +180,33 @@ class ResourceGraphManager:
                     logger.error(f"Exception processing {hostname}: {e}")
                     
     def _save(self):
-        """Save resource graph to file."""
-        # Save to user's home directory for private machine storage
-        output_file = Path.home() / '.ppi-jarvis' / 'resource_graph.yaml'
-        output_file.parent.mkdir(exist_ok=True)
-
-        self.resource_graph.save_to_file(output_file)
+        """Save resource graph through the configured JARVIS state boundary."""
+        self.jarvis.save_resource_graph(self.resource_graph.to_dict())
         
     def load(self, file_path: Optional[Path] = None):
         """
         Load resource graph from file.
 
-        :param file_path: Path to resource graph file (default: ~/.ppi-jarvis/resource_graph.yaml)
+        :param file_path: Source graph, or the configured active graph when omitted
         """
         if file_path is None:
-            file_path = Path.home() / '.ppi-jarvis' / 'resource_graph.yaml'
+            file_path = self.jarvis.resource_graph_file
             
         if not file_path.exists():
             raise FileNotFoundError(f"Resource graph file not found: {file_path}")
             
-        self.resource_graph.load_from_file(file_path)
-        logger.success(f"Loaded resource graph from {file_path}")
+        loaded_graph = ResourceGraph()
+        loaded_graph.load_from_file(file_path)
+        self.jarvis.save_resource_graph(loaded_graph.to_dict())
+        self.resource_graph = loaded_graph
+        logger.success(
+            f"Loaded resource graph from {file_path} and activated it at "
+            f"{self.jarvis.resource_graph_file}"
+        )
         
     def show(self):
         """Display the current resource graph YAML file."""
-        # Get default resource graph path
-        default_path = Path.home() / '.ppi-jarvis' / 'resource_graph.yaml'
+        default_path = self.jarvis.resource_graph_file
 
         if not default_path.exists():
             logger.warning("No resource graph found. Run 'jarvis rg build' first.")
@@ -279,8 +280,7 @@ class ResourceGraphManager:
         
     def show_path(self):
         """Show the path to the current resource graph file."""
-        # Default path where resource graph is stored
-        default_path = Path.home() / '.ppi-jarvis' / 'resource_graph.yaml'
+        default_path = self.jarvis.resource_graph_file
         
         if default_path.exists():
             # Print only the path for shell command substitution

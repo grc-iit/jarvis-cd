@@ -1,4 +1,5 @@
 import os
+import tempfile
 import yaml
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -325,10 +326,31 @@ class Jarvis:
         self._repos = self._bind_distribution_builtin_repository(repos)
 
     def save_resource_graph(self, resource_graph: Dict[str, Any]):
-        """Save resource graph to file"""
+        """Atomically save the active graph under the configured JARVIS root."""
         self.jarvis_root.mkdir(parents=True, exist_ok=True)
-        with open(self.resource_graph_file, "w") as f:
-            yaml.dump(resource_graph, f, default_flow_style=False)
+        descriptor, temporary_name = tempfile.mkstemp(
+            dir=self.jarvis_root,
+            prefix=".resource_graph.",
+            suffix=".tmp",
+            text=True,
+        )
+        temporary_path = Path(temporary_name)
+        try:
+            if os.name != "nt":
+                os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w") as stream:
+                yaml.dump(resource_graph, stream, default_flow_style=False)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary_path, self.resource_graph_file)
+            if os.name != "nt":
+                directory_descriptor = os.open(self.jarvis_root, os.O_RDONLY)
+                try:
+                    os.fsync(directory_descriptor)
+                finally:
+                    os.close(directory_descriptor)
+        finally:
+            temporary_path.unlink(missing_ok=True)
         self._resource_graph = resource_graph
 
     def add_repo(self, repo_path: str, force: bool = False):
