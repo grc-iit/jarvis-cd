@@ -1,8 +1,8 @@
 """
 Unit tests for ResourceGraphManager from jarvis_cd.core.resource_graph.
 
-ResourceGraphManager loads/saves to ~/.ppi-jarvis/resource_graph.yaml by default.
-Tests that touch the filesystem use temporary paths patched over the default.
+ResourceGraphManager loads and saves through the configured JARVIS resource-graph path.
+Tests that touch the filesystem use temporary paths.
 """
 import io
 import os

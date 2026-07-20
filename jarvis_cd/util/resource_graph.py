@@ -159,6 +159,16 @@ class ResourceGraph:
                 filtered[hostname] = filtered_devices
         return filtered
         
+    def to_dict(self) -> Dict[str, List[Dict[str, Any]]]:
+        """Return the canonical persistent representation of this graph."""
+        fs_data = []
+        for devices in self.common_mounts.values():
+            if devices:
+                device_dict = devices[0].copy()
+                device_dict.pop('hostname', None)
+                fs_data.append(device_dict)
+        return {'fs': fs_data}
+
     def save_to_file(self, output_path: Path, format: str = 'yaml'):
         """
         Save resource graph to file.
@@ -166,19 +176,7 @@ class ResourceGraph:
         :param output_path: Path to save file
         :param format: Output format ('yaml' or 'json')
         """
-        # Convert to serializable format - only store common mount points
-        fs_data = []
-
-        # Only store common mount points (accessible across nodes or single node)
-        for mount_point, devices in self.common_mounts.items():
-            # Use the first device as representative of the mount point
-            if devices:
-                device_dict = devices[0].copy()
-                # Remove hostname-specific information
-                device_dict.pop('hostname', None)
-                fs_data.append(device_dict)
-
-        data = {'fs': fs_data}
+        data = self.to_dict()
 
         # Save to file
         with open(output_path, 'w') as f:
