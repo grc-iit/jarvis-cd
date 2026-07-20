@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 from jarvis_cd.core.config import Jarvis
 from jarvis_cd.core.resource_graph import ResourceGraphManager
@@ -111,6 +112,44 @@ def test_rg_load_failed_activation_preserves_file_and_in_memory_graph(
             for device in manager.resource_graph.get_node_storage(node)
         }
         assert mounts == {"/old"}
+        assert not list(jarvis_root.glob(".resource_graph.*.tmp"))
+    finally:
+        Jarvis._instance = None
+
+
+def test_post_replace_fsync_failure_keeps_file_and_cache_coherent(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A durability error after replace must expose the same new graph in both views."""
+    jarvis_root = tmp_path / "custom-jarvis-root"
+    monkeypatch.setenv("JARVIS_ROOT", str(jarvis_root))
+    Jarvis._instance = None
+    try:
+        jarvis = Jarvis.get_instance()
+        jarvis.initialize(
+            str(tmp_path / "config"),
+            str(tmp_path / "private"),
+            str(tmp_path / "shared"),
+        )
+        replacement = {"fs": [{"mount": "/new", "dev_type": "ssd", "shared": True}]}
+
+        def fail_directory_fsync(_path: Path) -> None:
+            raise OSError("simulated directory fsync failure")
+
+        monkeypatch.setattr(
+            "jarvis_cd.core.config._fsync_directory", fail_directory_fsync
+        )
+        with pytest.raises(OSError, match="simulated directory fsync failure"):
+            jarvis.save_resource_graph(replacement)
+
+        persisted = yaml.safe_load(
+            jarvis.resource_graph_file.read_text(encoding="utf-8")
+        )
+        assert persisted == replacement
+        assert jarvis.resource_graph == replacement
+        replacement["fs"][0]["mount"] = "/caller-mutated"
+        assert jarvis.resource_graph == persisted
         assert not list(jarvis_root.glob(".resource_graph.*.tmp"))
     finally:
         Jarvis._instance = None

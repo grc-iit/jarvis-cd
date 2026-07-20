@@ -1,3 +1,4 @@
+import copy
 import os
 import tempfile
 import yaml
@@ -9,6 +10,17 @@ from jarvis_cd.util.hostfile import Hostfile
 
 _JARVIS_ROOT_ENVIRONMENT = "JARVIS_ROOT"
 _STATE_ROOT_FIELDS = ("config_dir", "private_dir", "shared_dir")
+
+
+def _fsync_directory(path: Path) -> None:
+    """Durably publish a completed state-file replacement on POSIX."""
+    if os.name == "nt":
+        return
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _canonicalize_state_roots(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -328,6 +340,7 @@ class Jarvis:
     def save_resource_graph(self, resource_graph: Dict[str, Any]):
         """Atomically save the active graph under the configured JARVIS root."""
         self.jarvis_root.mkdir(parents=True, exist_ok=True)
+        persisted_graph = copy.deepcopy(resource_graph)
         descriptor, temporary_name = tempfile.mkstemp(
             dir=self.jarvis_root,
             prefix=".resource_graph.",
@@ -339,19 +352,14 @@ class Jarvis:
             if os.name != "nt":
                 os.fchmod(descriptor, 0o600)
             with os.fdopen(descriptor, "w") as stream:
-                yaml.dump(resource_graph, stream, default_flow_style=False)
+                yaml.dump(persisted_graph, stream, default_flow_style=False)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary_path, self.resource_graph_file)
-            if os.name != "nt":
-                directory_descriptor = os.open(self.jarvis_root, os.O_RDONLY)
-                try:
-                    os.fsync(directory_descriptor)
-                finally:
-                    os.close(directory_descriptor)
+            self._resource_graph = persisted_graph
+            _fsync_directory(self.jarvis_root)
         finally:
             temporary_path.unlink(missing_ok=True)
-        self._resource_graph = resource_graph
 
     def add_repo(self, repo_path: str, force: bool = False):
         """Add a repository to the repos configuration"""
