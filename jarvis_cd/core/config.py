@@ -10,6 +10,11 @@ from jarvis_cd.util.hostfile import Hostfile
 
 _JARVIS_ROOT_ENVIRONMENT = "JARVIS_ROOT"
 _STATE_ROOT_FIELDS = ("config_dir", "private_dir", "shared_dir")
+MAX_BUILTIN_RESOURCE_GRAPH_PROFILES = 128
+
+
+class BuiltinResourceGraphUnavailable(FileNotFoundError):
+    """Raised only when an exact profile is absent from the builtin catalog."""
 
 
 def _fsync_directory(path: Path) -> None:
@@ -647,6 +652,52 @@ class Jarvis:
 
         # Default fallback
         return user_builtin
+
+    def list_builtin_resource_graphs(self) -> Dict[str, Path]:
+        """Return the exact resource-graph profiles owned by the active builtin repo."""
+        graph_root = self.get_builtin_repo_path() / "resource_graph"
+        if not graph_root.is_dir():
+            return {}
+        profiles: Dict[str, Path] = {}
+        for candidate in sorted(graph_root.iterdir()):
+            if not candidate.is_file() or candidate.suffix not in {
+                ".json",
+                ".yaml",
+                ".yml",
+            }:
+                continue
+            profile = candidate.stem
+            if profile in profiles:
+                raise ValueError(f"duplicate builtin resource graph profile: {profile}")
+            if len(profiles) >= MAX_BUILTIN_RESOURCE_GRAPH_PROFILES:
+                raise ValueError("builtin resource graph catalog exceeds its profile limit")
+            profiles[profile] = candidate
+        return profiles
+
+    def get_builtin_resource_graph_path(self, profile: str) -> Path:
+        """Resolve one exact builtin graph profile or report the owned catalog."""
+        if (
+            not profile
+            or profile != profile.strip()
+            or len(profile) > 256
+            or profile in {".", ".."}
+            or "/" in profile
+            or "\\" in profile
+            or any(
+                ord(character) < 32 or ord(character) == 127
+                for character in profile
+            )
+        ):
+            raise ValueError("builtin resource graph profile must be one safe exact name")
+        profiles = self.list_builtin_resource_graphs()
+        selected = profiles.get(profile)
+        if selected is None:
+            available = ", ".join(profiles) if profiles else "none"
+            raise BuiltinResourceGraphUnavailable(
+                f"builtin resource graph profile {profile!r} is unavailable; "
+                f"available profiles: {available}"
+            )
+        return selected
 
     def _bind_distribution_builtin_repository(
         self,

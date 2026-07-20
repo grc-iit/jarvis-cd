@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import hashlib
 import os
 import stat
 import subprocess
@@ -11,6 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from jarvis_cd.core.cli import JarvisCLI
 from jarvis_cd.core.config import Jarvis
 from jarvis_cd.core.resource_graph import ResourceGraphManager
 
@@ -18,7 +21,11 @@ from jarvis_cd.core.resource_graph import ResourceGraphManager
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _run_jarvis(*arguments: str, jarvis_root: Path) -> subprocess.CompletedProcess[str]:
+def _run_jarvis(
+    *arguments: str,
+    jarvis_root: Path,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
     """Run the real JARVIS CLI in a fresh, bounded interpreter."""
     environment = os.environ.copy()
     environment["JARVIS_ROOT"] = str(jarvis_root)
@@ -26,7 +33,7 @@ def _run_jarvis(*arguments: str, jarvis_root: Path) -> subprocess.CompletedProce
         [sys.executable, "-m", "jarvis_cd.core.cli", *arguments],
         cwd=PROJECT_ROOT,
         env=environment,
-        check=True,
+        check=check,
         capture_output=True,
         text=True,
         timeout=15,
@@ -153,3 +160,139 @@ def test_post_replace_fsync_failure_keeps_file_and_cache_coherent(
         assert not list(jarvis_root.glob(".resource_graph.*.tmp"))
     finally:
         Jarvis._instance = None
+
+
+def test_load_builtin_activates_packaged_graph_for_a_new_process(
+    tmp_path: Path,
+) -> None:
+    """JARVIS must own catalog resolution and durable builtin activation."""
+    jarvis_root = tmp_path / "custom-jarvis-root"
+    _run_jarvis(
+        "init",
+        str(tmp_path / "config"),
+        str(tmp_path / "private"),
+        str(tmp_path / "shared"),
+        jarvis_root=jarvis_root,
+    )
+
+    catalog = _run_jarvis("rg", "builtins", jarvis_root=jarvis_root)
+    assert "ares" in catalog.stdout.splitlines()
+    loaded = _run_jarvis("rg", "load-builtin", "ares", "+json", jarvis_root=jarvis_root)
+    result = json.loads(loaded.stdout)
+    assert result == {
+        "action": "loaded",
+        "available": True,
+        "catalog": ["ares", "deception", "delta", "g2-standard-4", "polaris"],
+        "profile": "ares",
+        "schema_version": "jarvis.resource-graph-builtin.v1",
+        "source": result["source"],
+        "source_sha256": result["source_sha256"],
+    }
+    assert result["source"].endswith("/builtin/resource_graph/ares.yaml") or result[
+        "source"
+    ].endswith("\\builtin\\resource_graph\\ares.yaml")
+    assert (
+        result["source_sha256"]
+        == hashlib.sha256(Path(result["source"]).read_bytes()).hexdigest()
+    )
+
+    observed = _run_jarvis("rg", "show", jarvis_root=jarvis_root)
+    assert "/mnt/ssd" in observed.stdout
+    assert "dev_type: ssd" in observed.stdout
+
+
+@pytest.mark.parametrize("profile", ["missing-cluster", "../ares", "ares/path"])
+def test_load_builtin_reports_exact_availability_boundary(
+    tmp_path: Path,
+    profile: str,
+) -> None:
+    """Unknown and unsafe names must fail without relay-owned path guessing."""
+    jarvis_root = tmp_path / "custom-jarvis-root"
+    _run_jarvis(
+        "init",
+        str(tmp_path / "config"),
+        str(tmp_path / "private"),
+        str(tmp_path / "shared"),
+        jarvis_root=jarvis_root,
+    )
+
+    result = _run_jarvis(
+        "rg",
+        "load-builtin",
+        profile,
+        "+json",
+        jarvis_root=jarvis_root,
+        check=False,
+    )
+    output = result.stdout + result.stderr
+    if profile == "missing-cluster":
+        assert result.returncode == 0
+        document = json.loads(result.stdout)
+        assert document["schema_version"] == "jarvis.resource-graph-builtin.v1"
+        assert document["profile"] == profile
+        assert document["action"] == "unavailable"
+        assert document["available"] is False
+        assert document["source"] is None
+        assert document["source_sha256"] is None
+        assert "ares" in document["catalog"]
+    else:
+        assert result.returncode != 0
+        assert "jarvis.resource-graph-builtin.v1" not in result.stdout
+        assert "must be one safe exact name" in output
+
+
+def test_load_builtin_json_keeps_corrupt_profile_as_a_hard_error(
+    tmp_path: Path,
+) -> None:
+    """Only a clean catalog miss is structured as unavailable."""
+    jarvis_root = tmp_path / "custom-jarvis-root"
+    _run_jarvis(
+        "init",
+        str(tmp_path / "config"),
+        str(tmp_path / "private"),
+        str(tmp_path / "shared"),
+        jarvis_root=jarvis_root,
+    )
+    operator_builtin = tmp_path / "operator" / "builtin"
+    graph_root = operator_builtin / "resource_graph"
+    graph_root.mkdir(parents=True)
+    (graph_root / "corrupt.yaml").write_text("fs: [", encoding="utf-8")
+    (jarvis_root / "repos.yaml").write_text(
+        yaml.safe_dump({"repos": [str(operator_builtin)]}),
+        encoding="utf-8",
+    )
+
+    result = _run_jarvis(
+        "rg",
+        "load-builtin",
+        "corrupt",
+        "+json",
+        jarvis_root=jarvis_root,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "jarvis.resource-graph-builtin.v1" not in result.stdout
+    assert "Error:" in result.stdout + result.stderr
+
+
+def test_load_builtin_json_does_not_relabel_selected_source_disappearance(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A catalog hit that vanishes during I/O is a hard error, not unavailable."""
+
+    class VanishingSourceManager:
+        def list_builtins(self) -> list[str]:
+            return ["ares"]
+
+        def load_builtin(self, _profile: str) -> tuple[Path, str]:
+            raise FileNotFoundError("selected builtin source vanished")
+
+    cli = JarvisCLI()
+    cli.kwargs = {"profile": "ares", "json": True}
+    monkeypatch.setattr(cli, "rg_manager", VanishingSourceManager())
+    monkeypatch.setattr(cli, "_ensure_initialized", lambda: None)
+
+    with pytest.raises(FileNotFoundError, match="selected builtin source vanished"):
+        cli.rg_load_builtin()
+    assert "jarvis.resource-graph-builtin.v1" not in capsys.readouterr().out

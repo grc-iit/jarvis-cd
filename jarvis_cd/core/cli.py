@@ -1,9 +1,10 @@
 import json
 import sys
 import os
+from contextlib import redirect_stdout
 from pathlib import Path
 from jarvis_cd.util.argparse import ArgParse
-from jarvis_cd.core.config import Jarvis
+from jarvis_cd.core.config import BuiltinResourceGraphUnavailable, Jarvis
 from jarvis_cd.core.execution import ExecutionHandle
 from jarvis_cd.core.pipeline import Pipeline
 from jarvis_cd.core.pipeline_test import load_yaml_auto
@@ -12,6 +13,10 @@ from jarvis_cd.core.repository import RepositoryManager
 from jarvis_cd.core.pkg import Pkg
 from jarvis_cd.core.environment import EnvironmentManager
 from jarvis_cd.core.resource_graph import ResourceGraphManager
+
+
+BUILTIN_RESOURCE_GRAPH_RESULT_SCHEMA = "jarvis.resource-graph-builtin.v1"
+MAX_BUILTIN_RESOURCE_GRAPH_RESULT_BYTES = 64 * 1024
 
 
 class JarvisCLI(ArgParse):
@@ -1063,6 +1068,29 @@ class JarvisCLI(ArgParse):
                     "type": str,
                     "required": True,
                     "pos": True,
+                }
+            ]
+        )
+
+        self.add_cmd("rg builtins", msg="List builtin resource graph profiles")
+        self.add_args([])
+
+        self.add_cmd("rg load-builtin", msg="Load a builtin resource graph profile")
+        self.add_args(
+            [
+                {
+                    "name": "profile",
+                    "msg": "Exact builtin resource graph profile name",
+                    "type": str,
+                    "required": True,
+                    "pos": True,
+                },
+                {
+                    "name": "json",
+                    "msg": "Emit one bounded machine-readable activation result",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
                 }
             ]
         )
@@ -2597,6 +2625,76 @@ class JarvisCLI(ArgParse):
         self._ensure_initialized()
         file_path = Path(self.kwargs["file_path"])
         self.rg_manager.load(file_path)
+
+    def rg_builtins(self):
+        """List exact builtin resource graph profiles."""
+        self._ensure_initialized()
+        for profile in self.rg_manager.list_builtins():
+            print(profile)
+
+    def rg_load_builtin(self):
+        """Activate one exact builtin resource graph profile."""
+        self._ensure_initialized()
+        profile = self.kwargs["profile"]
+        json_output = bool(self.kwargs.get("json", False))
+        catalog = self.rg_manager.list_builtins()
+        try:
+            if json_output:
+                with redirect_stdout(sys.stderr):
+                    source, source_sha256 = self.rg_manager.load_builtin(profile)
+            else:
+                source, source_sha256 = self.rg_manager.load_builtin(profile)
+        except BuiltinResourceGraphUnavailable:
+            if not json_output:
+                raise
+            self._emit_builtin_resource_graph_result(
+                profile=profile,
+                action="unavailable",
+                available=False,
+                source=None,
+                source_sha256=None,
+                catalog=catalog,
+            )
+            return
+        if json_output:
+            self._emit_builtin_resource_graph_result(
+                profile=profile,
+                action="loaded",
+                available=True,
+                source=source,
+                source_sha256=source_sha256,
+                catalog=catalog,
+            )
+            return
+        print(f"Activated builtin resource graph profile {profile} from {source}")
+
+    @staticmethod
+    def _emit_builtin_resource_graph_result(
+        *,
+        profile: str,
+        action: str,
+        available: bool,
+        source: Path | None,
+        source_sha256: str | None,
+        catalog: list[str],
+    ) -> None:
+        """Emit one bounded result consumed by bootstrap clients."""
+        result = json.dumps(
+            {
+                "schema_version": BUILTIN_RESOURCE_GRAPH_RESULT_SCHEMA,
+                "profile": profile,
+                "action": action,
+                "available": available,
+                "source": str(source) if source is not None else None,
+                "source_sha256": source_sha256,
+                "catalog": catalog,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        if len(result.encode("utf-8")) > MAX_BUILTIN_RESOURCE_GRAPH_RESULT_BYTES:
+            raise ValueError("builtin resource graph result exceeds its byte limit")
+        print(result)
 
     def rg_path(self):
         """Show path to current resource graph file"""

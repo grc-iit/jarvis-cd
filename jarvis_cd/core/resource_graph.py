@@ -2,8 +2,11 @@
 Resource graph management for Jarvis.
 Coordinates resource collection across nodes and provides analysis capabilities.
 """
+import hashlib
 import json
+import stat
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -13,6 +16,39 @@ from jarvis_cd.core.config import Jarvis
 from jarvis_cd.util.resource_graph import ResourceGraph
 from jarvis_cd.util.logger import logger
 from jarvis_cd.shell import ResourceGraphExec, PsshExecInfo, LocalExec, LocalExecInfo
+
+
+MAX_BUILTIN_RESOURCE_GRAPH_BYTES = 64 * 1024 * 1024
+
+
+def _read_regular_file(path: Path) -> tuple[bytes, str]:
+    """Read one bounded regular graph file while proving stable identity."""
+    before = path.lstat()
+    if (
+        not stat.S_ISREG(before.st_mode)
+        or before.st_nlink != 1
+        or before.st_size <= 0
+        or before.st_size > MAX_BUILTIN_RESOURCE_GRAPH_BYTES
+    ):
+        raise ValueError("builtin resource graph source must be one bounded regular file")
+    with path.open("rb") as stream:
+        payload = stream.read(MAX_BUILTIN_RESOURCE_GRAPH_BYTES + 1)
+    if len(payload) != before.st_size:
+        raise ValueError("builtin resource graph source changed during activation")
+    after = path.lstat()
+    if (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+    ) != (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+    ):
+        raise ValueError("builtin resource graph source changed during activation")
+    return payload, hashlib.sha256(payload).hexdigest()
 
 
 class ResourceGraphManager:
@@ -203,6 +239,27 @@ class ResourceGraphManager:
             f"Loaded resource graph from {file_path} and activated it at "
             f"{self.jarvis.resource_graph_file}"
         )
+
+    def list_builtins(self) -> List[str]:
+        """Return the exact packaged resource-graph profile catalog."""
+        return list(self.jarvis.list_builtin_resource_graphs())
+
+    def load_builtin(self, profile: str) -> tuple[Path, str]:
+        """Activate one exact packaged resource-graph profile."""
+        source = self.jarvis.get_builtin_resource_graph_path(profile)
+        payload, source_sha256 = _read_regular_file(source)
+        with tempfile.TemporaryDirectory(prefix="jarvis-builtin-graph-") as directory:
+            snapshot = Path(directory) / source.name
+            snapshot.write_bytes(payload)
+            loaded_graph = ResourceGraph()
+            loaded_graph.load_from_file(snapshot)
+        self.jarvis.save_resource_graph(loaded_graph.to_dict())
+        self.resource_graph = loaded_graph
+        logger.success(
+            f"Loaded builtin resource graph from {source} and activated it at "
+            f"{self.jarvis.resource_graph_file}"
+        )
+        return source, source_sha256
         
     def show(self):
         """Display the current resource graph YAML file."""
