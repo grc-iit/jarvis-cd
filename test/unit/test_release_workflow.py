@@ -363,6 +363,10 @@ def test_exact_release_request_gates_artifact_build() -> None:
     assert "sys.path.insert(0, str(distribution_root / 'builtin'))" in WORKFLOW
     assert "bin/jarvis rg builtins | grep -Fx ares" in WORKFLOW
     assert "bin/jarvis rg load-builtin ares +json" in WORKFLOW
+    assert "> builtin-graph-result.json" in WORKFLOW
+    assert "BUILTIN_RESULT_PATH" in WORKFLOW
+    assert "os.environ['BUILTIN_RESULT']" not in WORKFLOW
+    assert 'BUILTIN_RESULT="$(bin/jarvis rg load-builtin' not in WORKFLOW
     assert "jarvis.resource-graph-builtin.v1" in WORKFLOW
     build_block = WORKFLOW[build_index : WORKFLOW.index("  release:")]
     assert "    needs: release-preflight" in build_block

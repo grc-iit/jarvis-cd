@@ -5,11 +5,12 @@ Coordinates resource collection across nodes and provides analysis capabilities.
 
 import hashlib
 import json
+import os
 import stat
 import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, cast
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from jarvis_cd.core.config import Jarvis
@@ -22,32 +23,71 @@ MAX_BUILTIN_RESOURCE_GRAPH_BYTES = 64 * 1024 * 1024
 
 
 def _read_regular_file(path: Path) -> tuple[bytes, str]:
-    """Read one bounded regular graph file while proving stable identity."""
-    before = path.lstat()
-    if (
-        not stat.S_ISREG(before.st_mode)
-        or before.st_nlink != 1
-        or before.st_size <= 0
-        or before.st_size > MAX_BUILTIN_RESOURCE_GRAPH_BYTES
-    ):
-        raise ValueError(
-            "builtin resource graph source must be one bounded regular file"
+    """Read one bounded graph while binding the opened file to its path."""
+
+    def identity(details: os.stat_result) -> tuple[int, int, int, int, int, int, int]:
+        # Windows can advance ctime merely by opening the file, so descriptor
+        # binding there relies on the stable volume/file identity plus the
+        # reparse-point rejection. POSIX ctime is included because an
+        # unprivileged alternate hardlink writer cannot restore it.
+        stable_ctime_ns = 0 if os.name == "nt" else details.st_ctime_ns
+        return (
+            details.st_mode,
+            details.st_dev,
+            details.st_ino,
+            details.st_nlink,
+            details.st_size,
+            details.st_mtime_ns,
+            stable_ctime_ns,
         )
-    with path.open("rb") as stream:
-        payload = stream.read(MAX_BUILTIN_RESOURCE_GRAPH_BYTES + 1)
-    if len(payload) != before.st_size:
-        raise ValueError("builtin resource graph source changed during activation")
-    after = path.lstat()
+
+    def is_reparse_point(details: os.stat_result) -> bool:
+        attributes = cast(int, getattr(details, "st_file_attributes", 0))
+        reparse_flag = cast(int, getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+        return bool(attributes & reparse_flag)
+
+    linked_before = path.lstat()
     if (
-        before.st_dev,
-        before.st_ino,
-        before.st_size,
-        before.st_mtime_ns,
-    ) != (
-        after.st_dev,
-        after.st_ino,
-        after.st_size,
-        after.st_mtime_ns,
+        not stat.S_ISREG(linked_before.st_mode)
+        or is_reparse_point(linked_before)
+        or linked_before.st_nlink < 1
+        or linked_before.st_size <= 0
+        or linked_before.st_size > MAX_BUILTIN_RESOURCE_GRAPH_BYTES
+    ):
+        raise ValueError("builtin resource graph source must be one bounded regular file")
+    flags = (
+        os.O_RDONLY
+        | cast(int, getattr(os, "O_BINARY", 0))
+        | cast(int, getattr(os, "O_CLOEXEC", 0))
+        | cast(int, getattr(os, "O_NOFOLLOW", 0))
+    )
+    descriptor = os.open(path, flags)
+    try:
+        opened_before = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened_before.st_mode)
+            or is_reparse_point(opened_before)
+            or identity(opened_before) != identity(linked_before)
+        ):
+            raise ValueError("builtin resource graph source changed before activation")
+        chunks: list[bytes] = []
+        remaining = MAX_BUILTIN_RESOURCE_GRAPH_BYTES + 1
+        while remaining:
+            chunk = os.read(descriptor, min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+        opened_after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    linked_after = path.lstat()
+    if (
+        len(payload) != opened_before.st_size
+        or is_reparse_point(linked_after)
+        or identity(opened_after) != identity(opened_before)
+        or identity(linked_after) != identity(opened_after)
     ):
         raise ValueError("builtin resource graph source changed during activation")
     return payload, hashlib.sha256(payload).hexdigest()
