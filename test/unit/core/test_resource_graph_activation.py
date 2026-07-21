@@ -15,7 +15,7 @@ import yaml
 
 from jarvis_cd.core.cli import JarvisCLI
 from jarvis_cd.core.config import Jarvis
-from jarvis_cd.core.resource_graph import ResourceGraphManager
+from jarvis_cd.core.resource_graph import ResourceGraphManager, _read_regular_file
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -232,6 +232,69 @@ def test_load_builtin_activates_packaged_graph_for_a_new_process(
     observed = _run_jarvis("rg", "show", jarvis_root=jarvis_root)
     assert "/mnt/ssd" in observed.stdout
     assert "dev_type: ssd" in observed.stdout
+
+
+def test_load_builtin_accepts_stable_hardlinked_wheel_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """uv's hardlink install mode must remain a valid packaged source."""
+    jarvis_root = tmp_path / "custom-jarvis-root"
+    monkeypatch.setenv("JARVIS_ROOT", str(jarvis_root))
+    Jarvis._instance = None
+    try:
+        jarvis = Jarvis.get_instance()
+        jarvis.initialize(
+            str(tmp_path / "config"),
+            str(tmp_path / "private"),
+            str(tmp_path / "shared"),
+        )
+        cache_source = tmp_path / "wheel-cache-ares.yaml"
+        cache_source.write_text(
+            "fs:\n- mount: /hardlinked\n  dev_type: ssd\n  shared: true\n",
+            encoding="utf-8",
+        )
+        installed_source = tmp_path / "installed-ares.yaml"
+        os.link(cache_source, installed_source)
+        assert installed_source.stat().st_nlink >= 2
+        monkeypatch.setattr(
+            jarvis,
+            "get_builtin_resource_graph_path",
+            lambda _profile: installed_source,
+        )
+
+        source, source_sha256 = ResourceGraphManager().load_builtin("ares")
+
+        assert source == installed_source
+        assert source_sha256 == hashlib.sha256(installed_source.read_bytes()).hexdigest()
+        assert "/hardlinked" in jarvis.resource_graph_file.read_text(encoding="utf-8")
+    finally:
+        Jarvis._instance = None
+
+
+def test_builtin_reader_rejects_path_swap_between_lstat_and_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The opened descriptor must be the exact file inspected by path."""
+    source = tmp_path / "ares.yaml"
+    source.write_text("fs:\n- mount: /expected\n", encoding="utf-8")
+    replacement = tmp_path / "replacement.yaml"
+    replacement.write_text("fs:\n- mount: /substituted\n", encoding="utf-8")
+    original_open = os.open
+    swapped = False
+
+    def swap_before_open(path: os.PathLike[str] | str, flags: int) -> int:
+        nonlocal swapped
+        if not swapped and Path(path) == source:
+            swapped = True
+            os.replace(replacement, source)
+        return original_open(path, flags)
+
+    monkeypatch.setattr("jarvis_cd.core.resource_graph.os.open", swap_before_open)
+
+    with pytest.raises(ValueError, match="changed before activation"):
+        _read_regular_file(source)
 
 
 @pytest.mark.parametrize("profile", ["missing-cluster", "../ares", "ares/path"])

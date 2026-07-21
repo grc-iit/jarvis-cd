@@ -330,14 +330,19 @@ jobs:
           export JARVIS_ROOT="$PWD/jarvis-root"
           bin/jarvis init "$PWD/config" "$PWD/private" "$PWD/shared" >/dev/null
           bin/jarvis rg builtins | grep -Fx ares >/dev/null
-          BUILTIN_RESULT="$(bin/jarvis rg load-builtin ares +json)" \
-            bin/python - <<'PY'
+          bin/jarvis rg load-builtin ares +json > builtin-graph-result.json
+          test -s builtin-graph-result.json
+          BUILTIN_RESULT_PATH="$PWD/builtin-graph-result.json" bin/python - <<'PY'
           import hashlib
           import json
           import os
           from pathlib import Path
 
-          result = json.loads(os.environ['BUILTIN_RESULT'])
+          result_path = Path(os.environ['BUILTIN_RESULT_PATH'])
+          payload = result_path.read_bytes()
+          if not payload or len(payload) > 64 * 1024:
+              raise SystemExit('installed builtin graph result is not bounded JSON')
+          result = json.loads(payload)
           if result.get('schema_version') != 'jarvis.resource-graph-builtin.v1':
               raise SystemExit('installed builtin graph schema is not functional')
           if result.get('profile') != 'ares' or result.get('action') != 'loaded':
