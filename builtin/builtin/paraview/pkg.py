@@ -1,6 +1,7 @@
 """Launch generic ParaView servers, services, or user-supplied batch scripts."""
 
 import os
+import re
 import secrets
 import shlex
 import sys
@@ -11,6 +12,16 @@ from pathlib import Path
 from typing import Any, cast
 
 from jarvis_cd.core.pkg import Application
+from jarvis_cd.deployment import (
+    ConfigurationCondition,
+    ConfigurationRule,
+    ExecutionProfile,
+    PackageDeploymentContract,
+    ProviderResolution,
+    ReadinessContract,
+    RuntimeRequirement,
+    RuntimeStatus,
+)
 from jarvis_cd.shell import Exec, ExecInfo, LocalExecInfo, MpiExecInfo, Which
 
 _EXEC_FAILURE_STDERR_LIMIT = 4096
@@ -20,6 +31,7 @@ _MODE_EXECUTABLES = {
     "service": "pvpython",
 }
 _HEADLESS_ARGUMENTS = ("--mesa", "--force-offscreen-rendering")
+_VERSION_COMPONENT = re.compile(r"\d+")
 
 
 @dataclass(frozen=True)
@@ -156,6 +168,134 @@ class Paraview(Application):
                 "default": 120,
             },
         ]
+
+    def _deployment_contract(self) -> PackageDeploymentContract:
+        """Describe every generic ParaView execution and readiness mode."""
+        environment = self._deployment_environment()
+        requirements = tuple(
+            self._deployment_runtime_requirement(mode, environment)
+            for mode in ("batch", "server", "service")
+        )
+        return PackageDeploymentContract(
+            package="builtin.paraview",
+            execution_profiles=(
+                ExecutionProfile(
+                    name="batch_script",
+                    execution_kind="batch",
+                    when=(ConfigurationCondition("mode", "equals", "batch"),),
+                    runtime_requirements=("paraview.batch",),
+                    readiness=ReadinessContract(
+                        mechanism="process_exit",
+                        condition="successful_exit",
+                    ),
+                ),
+                ExecutionProfile(
+                    name="client_server",
+                    execution_kind="service",
+                    when=(ConfigurationCondition("mode", "equals", "server"),),
+                    runtime_requirements=("paraview.server",),
+                    readiness=ReadinessContract(
+                        mechanism="progress_event",
+                        condition="application_ready",
+                    ),
+                ),
+                ExecutionProfile(
+                    name="live_dataset_service",
+                    execution_kind="service",
+                    when=(ConfigurationCondition("mode", "equals", "service"),),
+                    runtime_requirements=("paraview.service",),
+                    readiness=ReadinessContract(
+                        mechanism="service_runtime",
+                        condition="health_check_succeeded",
+                        capability="interactive_visualization",
+                    ),
+                ),
+            ),
+            runtime_requirements=requirements,
+            configuration_rules=(
+                ConfigurationRule(
+                    when=(ConfigurationCondition("mode", "equals", "batch"),),
+                    requires=(
+                        ConfigurationCondition("script", "is_not_empty"),
+                        ConfigurationCondition("dataset_descriptor", "is_empty"),
+                    ),
+                    description=(
+                        "Batch execution requires a user script and does not "
+                        "create a live dataset service."
+                    ),
+                ),
+                ConfigurationRule(
+                    when=(ConfigurationCondition("mode", "equals", "server"),),
+                    requires=(
+                        ConfigurationCondition("dataset_descriptor", "is_empty"),
+                    ),
+                    description=(
+                        "Plain client-server execution does not consume a live-view "
+                        "dataset descriptor."
+                    ),
+                ),
+                ConfigurationRule(
+                    when=(ConfigurationCondition("mode", "equals", "service"),),
+                    requires=(
+                        ConfigurationCondition("dataset_descriptor", "is_not_empty"),
+                        ConfigurationCondition("nprocs", "equals", 1),
+                    ),
+                    description=(
+                        "The health-checked live dataset service requires one process "
+                        "and a dataset descriptor."
+                    ),
+                ),
+            ),
+        )
+
+    def _deployment_runtime_requirement(
+        self,
+        mode: str,
+        environment: dict[str, str],
+    ) -> RuntimeRequirement:
+        """Probe one mode without returning its selected launcher location."""
+        required_by_mode = {
+            "batch": ("batch_execution",),
+            "server": ("client_server",),
+            "service": ("headless_rendering", "python_automation"),
+        }
+        required = required_by_mode[mode]
+        try:
+            runtime = self._resolve_runtime(mode, environment)
+        except (OSError, RuntimeError, ValueError):
+            status = RuntimeStatus("unavailable", "software_not_usable")
+            available: tuple[str, ...] = ()
+        else:
+            baseline = {
+                "batch": "batch_execution",
+                "server": "client_server",
+                "service": "python_automation",
+            }[mode]
+            capabilities = {baseline}
+            if runtime.capabilities:
+                capabilities.add("headless_rendering")
+            available = tuple(sorted(capabilities))
+            if set(required).issubset(capabilities):
+                status = RuntimeStatus("ready", "runtime_probe_succeeded")
+            else:
+                status = RuntimeStatus(
+                    "unavailable",
+                    "required_capability_unavailable",
+                )
+        return RuntimeRequirement(
+            requirement_id=f"paraview.{mode}",
+            description=f"ParaView runtime for the {mode} execution profile",
+            required_capabilities=required,
+            available_capabilities=available,
+            status=status,
+            provider_resolutions=(
+                ProviderResolution(
+                    provider="spack",
+                    query_kind="spec",
+                    query_value="paraview",
+                ),
+            ),
+        )
 
     def _configure(self, **kwargs: Any) -> None:
         """
@@ -418,50 +558,127 @@ class Paraview(Application):
         mode: str,
         environment: dict[str, str],
     ) -> _ParaViewRuntime:
-        """Resolve and probe the mode-specific launcher from ``self.mod_env``."""
+        """Discover and capability-rank one mode-specific ParaView launcher.
+
+        Discovery is owned by the package: the active PATH is considered along
+        with ``PARAVIEW_HOME`` and versioned user installations.  Concrete
+        locations remain internal and are never serialized by the deployment
+        contract.
+        """
         executable_name = _MODE_EXECUTABLES.get(mode)
         if executable_name is None:
             raise ValueError(f"Unsupported ParaView mode: {mode!r}")
         exec_info = self._runtime_probe_info(environment)
-        resolver = Which(executable_name, exec_info)
-        resolver.run()
-        failures = self._failed_exit_codes(resolver)
-        resolved = self._first_output_line(resolver.stdout)
-        if failures or not resolved:
+        candidates = self._runtime_candidates(
+            executable_name,
+            environment,
+            exec_info,
+        )
+        if not candidates:
             path = environment.get("PATH")
             path_context = "the configured PATH" if path else "PATH"
             raise RuntimeError(
                 f"builtin.paraview mode={mode!r} requires {executable_name!r} "
-                f"in the JARVIS execution environment {path_context}; install "
-                "ParaView or select a pipeline environment that provides it"
+                f"in the JARVIS execution environment {path_context} or a "
+                "package-discoverable ParaView installation"
             )
 
-        help_result = Exec(
-            f"{shlex.quote(resolved)} --help",
-            exec_info,
-        ).run()
-        help_failures = self._failed_exit_codes(help_result)
-        if help_failures:
-            details = ", ".join(f"{host}={code!r}" for host, code in help_failures)
-            diagnostic = self._bounded_stderr(help_result, help_failures)
-            raise RuntimeError(
-                f"ParaView capability probe failed for {resolved!r}: {details}"
-                f"{diagnostic}"
+        require_headless = mode == "service" or bool(
+            self.config.get("force_offscreen_rendering", False)
+        )
+        usable: list[tuple[int, _ParaViewRuntime]] = []
+        for position, resolved in enumerate(candidates):
+            help_result = Exec(
+                f"{shlex.quote(resolved)} --help",
+                exec_info,
+            ).run()
+            if self._failed_exit_codes(help_result):
+                continue
+            help_text = "\n".join(
+                value
+                for output in (help_result.stdout, help_result.stderr)
+                if isinstance(output, dict)
+                for value in output.values()
+                if isinstance(value, str)
             )
-        help_text = "\n".join(
-            value
-            for output in (help_result.stdout, help_result.stderr)
-            if isinstance(output, dict)
-            for value in output.values()
-            if isinstance(value, str)
+            capabilities = frozenset(
+                argument for argument in _HEADLESS_ARGUMENTS if argument in help_text
+            )
+            if require_headless and not capabilities:
+                continue
+            usable.append(
+                (
+                    position,
+                    _ParaViewRuntime(
+                        executable=resolved,
+                        capabilities=capabilities,
+                    ),
+                )
+            )
+        if not usable:
+            requirement = " with headless rendering" if require_headless else ""
+            raise RuntimeError(
+                f"No discovered ParaView runtime for mode={mode!r}{requirement} "
+                "passed the package capability probe"
+            )
+
+        # Prefer the richest capability set, then the stable discovery order.
+        # This is deterministic even when multiple versioned installations exist.
+        usable.sort(
+            key=lambda item: (len(item[1].capabilities), -item[0]),
+            reverse=True,
         )
-        capabilities = frozenset(
-            argument for argument in _HEADLESS_ARGUMENTS if argument in help_text
+        return usable[0][1]
+
+    def _runtime_candidates(
+        self,
+        executable_name: str,
+        environment: dict[str, str],
+        exec_info: LocalExecInfo,
+    ) -> tuple[str, ...]:
+        """Return deduplicated PATH, explicit-home, and user-root candidates."""
+        candidates: list[str] = []
+        resolver = Which(executable_name, exec_info)
+        resolver.run()
+        if not self._failed_exit_codes(resolver):
+            resolved = self._first_output_line(resolver.stdout)
+            if resolved:
+                candidates.append(resolved)
+
+        explicit_home = environment.get("PARAVIEW_HOME")
+        if explicit_home:
+            root = Path(explicit_home).expanduser()
+            for candidate in (root / "bin" / executable_name, root / executable_name):
+                if candidate.is_file():
+                    candidates.append(str(candidate.resolve()))
+
+        home_value = environment.get("HOME")
+        home = Path(home_value).expanduser() if home_value else Path.home()
+        versioned = list((home / "opt").glob("ParaView-*/bin"))
+        versioned.sort(key=self._versioned_runtime_key, reverse=True)
+        for bin_dir in versioned:
+            candidate = bin_dir / executable_name
+            if candidate.is_file():
+                candidates.append(str(candidate.resolve()))
+
+        unique: list[str] = []
+        seen: set[str] = set()
+        for candidate in candidates:
+            key = os.path.normcase(os.path.normpath(candidate))
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(candidate)
+        return tuple(unique)
+
+    @staticmethod
+    def _versioned_runtime_key(bin_dir: Path) -> tuple[tuple[int, ...], str]:
+        """Sort versioned ParaView roots numerically with a stable text tie-break."""
+        install_name = bin_dir.parent.name
+        version = tuple(
+            int(component) for component in _VERSION_COMPONENT.findall(install_name)
         )
-        return _ParaViewRuntime(
-            executable=resolved,
-            capabilities=capabilities,
-        )
+        return version, install_name.casefold()
 
     def _runtime_probe_info(self, environment: dict[str, str]) -> LocalExecInfo:
         """Use the same host, container, environment, and cwd as package launch."""
