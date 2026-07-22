@@ -882,6 +882,27 @@ class Pkg:
         # Combine package-specific and common menus
         return package_menu + common_menu
 
+    def configuration_input_materialization_matches(
+        self,
+        parameter: str,
+        requested: object,
+        materialized: object,
+    ) -> bool:
+        """Verify one package-declared durable configuration-input rewrite."""
+        from jarvis_cd.configuration_input import (
+            configuration_input_materialization_matches,
+        )
+
+        if self.shared_dir is None:
+            return False
+        return configuration_input_materialization_matches(
+            menu=self.configure_menu(),
+            parameter=parameter,
+            requested=requested,
+            materialized=materialized,
+            shared_dir=self.shared_dir,
+        )
+
     def get_argparse(self):
         """
         Get PkgArgParse instance for this package.
@@ -919,6 +940,19 @@ class Pkg:
 
         # Call the internal configuration method
         self._configure(**kwargs)
+
+        # Snapshot only inputs explicitly declared by the package. This runs
+        # after package validation/configuration so persisted pipeline state no
+        # longer depends on a caller- or transport-owned staging pathname.
+        from jarvis_cd.configuration_input import materialize_configuration_inputs
+
+        if self.shared_dir is None:
+            raise RuntimeError("package configuration requires a shared directory")
+        self.config = materialize_configuration_inputs(
+            menu=self.configure_menu(),
+            config=self.config,
+            shared_dir=self.shared_dir,
+        )
 
         return self.config.copy()
 

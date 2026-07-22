@@ -14,6 +14,7 @@ from typing import Any
 from jarvis_cd.core.pkg import Application
 from jarvis_cd.deployment import (
     ConfigurationCondition,
+    ConfigurationInputBinding,
     ConfigurationRule,
     ExecutionProfile,
     PackageDeploymentContract,
@@ -56,11 +57,21 @@ class Lammps(Application):
             {
                 "name": "script",
                 "msg": (
-                    "Optional LAMMPS input script. Empty selects the package-owned "
-                    "bounded Lennard-Jones workload."
+                    "Optional native LAMMPS input script. In reduced Lennard-Jones "
+                    "units, `lattice fcc <density>` sets the FCC number density and "
+                    "`region ... units lattice` expresses unit-cell counts; no "
+                    "separate box rescaling is required. Every created atom type "
+                    "must receive a positive mass before velocity or integration "
+                    "commands; for the standard reduced Lennard-Jones single-type "
+                    "case, use `mass 1 1.0`. Empty selects the package-owned bounded "
+                    "Lennard-Jones workload."
                 ),
                 "type": str,
                 "default": "",
+                "input_binding": ConfigurationInputBinding(
+                    kind="local_file",
+                    structure="regular_file",
+                ).to_dict(),
             },
             {
                 "name": "cuda_arch",
@@ -161,6 +172,10 @@ class Lammps(Application):
                     when=(ConfigurationCondition("script", "is_empty"),),
                     runtime_requirements=("lammps",),
                     readiness=completed,
+                    description=(
+                        "Built-in bounded Lennard-Jones smoke workload with a "
+                        "package-generated input script and trajectory output."
+                    ),
                 ),
                 ExecutionProfile(
                     name="input_script",
@@ -168,6 +183,15 @@ class Lammps(Application):
                     when=(ConfigurationCondition("script", "is_not_empty"),),
                     runtime_requirements=("lammps",),
                     readiness=completed,
+                    description=(
+                        "Caller-authored native LAMMPS input. For reduced-unit FCC "
+                        "systems, express target number density directly with "
+                        "`lattice fcc <density>` and cell counts with "
+                        "`region ... units lattice`. Assign every created atom type "
+                        "a positive mass before velocity or integration commands; "
+                        "for the standard reduced Lennard-Jones single-type case, "
+                        "use `mass 1 1.0`."
+                    ),
                 ),
             ),
             runtime_requirements=(runtime,),

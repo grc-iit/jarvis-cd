@@ -102,9 +102,35 @@ class LammpsThermoProgressAdapter:
         latest = self._last_observation
         if return_code == 0:
             total_steps = self.total_steps
+            if total_steps is None:
+                current = latest.current if latest is not None else None
+                metadata = (
+                    dict(latest.metadata)
+                    if latest is not None
+                    else self._base_progress_metadata()
+                )
+                metadata.update(
+                    {
+                        "completion_signal": "process_exit_zero_with_unknown_total",
+                        "return_code": return_code,
+                    }
+                )
+                observed_step = (
+                    f" after observed step {int(current)}"
+                    if current is not None
+                    else ""
+                )
+                return ProgressObservation(
+                    label=latest.label if latest is not None else "timestep",
+                    state=ProgressState.COMPLETED,
+                    current=current,
+                    total=None,
+                    unit=latest.unit if latest is not None else "step",
+                    message=f"LAMMPS completed successfully{observed_step}",
+                    metadata=metadata,
+                )
             if (
                 latest is None
-                or total_steps is None
                 or latest.current != total_steps
                 or latest.total != total_steps
             ):
@@ -508,6 +534,10 @@ def adapter_from_package(
     )
     if deploy_mode == "container" or not shared_log:
         output_dir = None
+    script = package.get("script")
+    generated_workload = script is None or (
+        isinstance(script, str) and not script.strip()
+    )
     return LammpsThermoProgressAdapter(
         package_name=str(package_type),
         package_id=str(package.get("pkg_id") or "lammps"),
@@ -518,7 +548,8 @@ def adapter_from_package(
             or package.get("steps")
             or (
                 package.get("io_run_steps")
-                if _optional_float(package.get("io_dump_interval"))
+                if generated_workload
+                and _optional_float(package.get("io_dump_interval"))
                 else None
             )
             or _nested_progress_total(progress)

@@ -100,6 +100,64 @@ def test_default_output_progress_uses_execution_package_shared_log(
     assert adapter.total_steps == 5000
 
 
+def test_caller_script_does_not_inherit_generated_workload_total(
+    tmp_path: Path,
+) -> None:
+    """An arbitrary input script cannot inherit the built-in smoke-test size."""
+    shared_dir = (tmp_path / "execution" / "shared" / "lammps").resolve()
+
+    adapter = adapter_from_package(
+        {
+            "pkg_type": "builtin.lammps",
+            "out": ".",
+            "shared_dir": str(shared_dir),
+            "script": str(tmp_path / "staged" / "in.research"),
+            "io_dump_interval": 100,
+            "io_run_steps": 5000,
+        }
+    )
+
+    assert isinstance(adapter, LammpsThermoProgressAdapter)
+    assert adapter.progress_log_paths() == [shared_dir / "log.lammps"]
+    assert adapter.total_steps is None
+
+
+def test_caller_script_success_completes_indeterminate_progress() -> None:
+    """Process exit completes custom work without inventing a timestep total."""
+    provider = LammpsThermoProgressAdapter(total_steps=None)
+    observed = provider.observe_progress(
+        "run 250\nStep Temp CPU\n0 1.0 0.0\n125 1.1 1.0\n250 1.2 2.0\n"
+    )
+
+    terminal = provider.finalize_progress_for_exit(0)
+
+    assert [item.current for item in observed] == [0.0, 125.0, 250.0]
+    assert all(item.total is None for item in observed)
+    assert len(terminal) == 1
+    assert terminal[0].state is ProgressState.COMPLETED
+    assert terminal[0].current == 250.0
+    assert terminal[0].total is None
+    assert terminal[0].metadata["completion_signal"] == (
+        "process_exit_zero_with_unknown_total"
+    )
+    assert terminal[0].metadata["return_code"] == 0
+    assert provider.finalize_progress_for_exit(0) == []
+
+
+def test_caller_script_success_without_thermo_is_still_terminal() -> None:
+    """A quiet custom script retains authoritative process completion state."""
+    provider = LammpsThermoProgressAdapter(total_steps=None)
+
+    terminal = provider.finalize_progress_for_exit(0)
+
+    assert len(terminal) == 1
+    assert terminal[0].state is ProgressState.COMPLETED
+    assert terminal[0].current is None
+    assert terminal[0].total is None
+    assert terminal[0].message == "LAMMPS completed successfully"
+    assert terminal[0].metadata["progress_source"] == "process_exit"
+
+
 def test_adapter_observes_only_lammps_jarvis_scope() -> None:
     """Unscoped or unrelated stdout must not create trusted progress."""
     adapter = LammpsThermoProgressAdapter(total_steps=100, run_id="job_1")
