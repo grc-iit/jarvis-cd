@@ -13,6 +13,7 @@ import pytest
 from jarvis_cd.core.pkg import Pkg
 from jarvis_cd.deployment import (
     ConfigurationCondition,
+    ConfigurationInputBinding,
     ExecutionProfile,
     PackageDeploymentContract,
     ProgramProbeResult,
@@ -114,6 +115,29 @@ def test_schema_rejects_path_provider_queries_and_dangling_runtimes() -> None:
         )
 
 
+def test_configuration_input_binding_is_closed_and_machine_readable() -> None:
+    """Clients receive explicit file semantics instead of guessing from prose."""
+    binding = ConfigurationInputBinding(
+        kind="local_file",
+        structure="regular_file",
+    )
+
+    assert binding.to_dict() == {
+        "schema_version": "jarvis.configuration-input-binding.v1",
+        "kind": "local_file",
+        "structure": "regular_file",
+    }
+    with pytest.raises(
+        ValueError,
+        match="unsupported configuration input binding schema",
+    ):
+        ConfigurationInputBinding(
+            kind="local_file",
+            structure="regular_file",
+            schema_version="jarvis.configuration-input-binding.v2",
+        )
+
+
 def test_lammps_contract_defaults_to_generated_batch_and_spack_resolution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -132,6 +156,17 @@ def test_lammps_contract_defaults_to_generated_batch_and_spack_resolution(
     document = package.describe_deployment()
 
     assert menu["script"]["default"] == ""
+    assert menu["script"]["input_binding"] == {
+        "schema_version": "jarvis.configuration-input-binding.v1",
+        "kind": "local_file",
+        "structure": "regular_file",
+    }
+    assert "`lattice fcc <density>`" in menu["script"]["msg"]
+    assert "`region ... units lattice`" in menu["script"]["msg"]
+    assert (
+        "Every created atom type must receive a positive mass" in menu["script"]["msg"]
+    )
+    assert "`mass 1 1.0`" in menu["script"]["msg"]
     assert menu["io_dump_interval"]["default"] == 100
     assert "lmp_bin" not in menu
     assert document is not None
@@ -141,6 +176,17 @@ def test_lammps_contract_defaults_to_generated_batch_and_spack_resolution(
         (profile["name"], profile["execution_kind"])
         for profile in document["execution_profiles"]
     } == {("generated_workload", "batch"), ("input_script", "batch")}
+    profiles = {profile["name"]: profile for profile in document["execution_profiles"]}
+    assert profiles["generated_workload"]["description"] == (
+        "Built-in bounded Lennard-Jones smoke workload with a package-generated "
+        "input script and trajectory output."
+    )
+    assert "`lattice fcc <density>`" in profiles["input_script"]["description"]
+    assert (
+        "Assign every created atom type a positive mass"
+        in profiles["input_script"]["description"]
+    )
+    assert "`mass 1 1.0`" in profiles["input_script"]["description"]
     runtime = document["runtime_requirements"][0]
     assert runtime["status"] == {
         "state": "ready",

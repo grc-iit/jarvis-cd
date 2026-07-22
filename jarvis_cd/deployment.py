@@ -12,9 +12,10 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
 from shutil import which
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence, cast
 
 PACKAGE_DEPLOYMENT_SCHEMA_VERSION = "jarvis.package-deployment.v1"
+CONFIGURATION_INPUT_BINDING_SCHEMA_VERSION = "jarvis.configuration-input-binding.v1"
 
 ExecutionKind = Literal["batch", "service"]
 ReadinessMechanism = Literal[
@@ -30,6 +31,8 @@ ConditionOperator = Literal[
     "is_not_empty",
 ]
 JsonScalar = str | int | float | bool | None
+InputBindingKind = Literal["local_file"]
+InputBindingStructure = Literal["regular_file"]
 
 _TOKEN_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]*$")
 _PARAMETER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -126,6 +129,62 @@ class ConfigurationRule:
             "requires": [condition.to_dict() for condition in self.requires],
             "description": self.description,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigurationInputBinding:
+    """Machine-readable staging semantics for one configuration setting.
+
+    Package menus attach this descriptor to a setting under ``input_binding``.
+    Clients can then stage declared inputs without inferring filesystem
+    semantics from a parameter name or its prose description.
+    """
+
+    kind: InputBindingKind
+    structure: InputBindingStructure
+    schema_version: str = CONFIGURATION_INPUT_BINDING_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        """Reject unsupported input sources and filesystem structures."""
+        if self.schema_version != CONFIGURATION_INPUT_BINDING_SCHEMA_VERSION:
+            raise ValueError(
+                "unsupported configuration input binding schema: "
+                f"{self.schema_version!r}"
+            )
+        if self.kind != "local_file":
+            raise ValueError(f"unsupported configuration input kind: {self.kind!r}")
+        if self.structure != "regular_file":
+            raise ValueError(
+                f"unsupported configuration input structure: {self.structure!r}"
+            )
+
+    def to_dict(self) -> dict[str, str]:
+        """Serialize the closed descriptor consumed by staging clients."""
+        return {
+            "schema_version": self.schema_version,
+            "kind": self.kind,
+            "structure": self.structure,
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "ConfigurationInputBinding":
+        """Parse one closed package-menu descriptor without accepting extensions."""
+        expected = {"schema_version", "kind", "structure"}
+        if set(value) != expected:
+            raise ValueError(
+                "configuration input binding fields must be exactly: "
+                + ", ".join(sorted(expected))
+            )
+        schema_version = value["schema_version"]
+        kind = value["kind"]
+        structure = value["structure"]
+        if not all(isinstance(item, str) for item in (schema_version, kind, structure)):
+            raise ValueError("configuration input binding fields must be strings")
+        return cls(
+            schema_version=cast(str, schema_version),
+            kind=cast(InputBindingKind, kind),
+            structure=cast(InputBindingStructure, structure),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,6 +395,7 @@ class ExecutionProfile:
     when: tuple[ConfigurationCondition, ...]
     runtime_requirements: tuple[str, ...]
     readiness: ReadinessContract
+    description: str | None = None
 
     def __post_init__(self) -> None:
         """Validate a complete execution profile."""
@@ -350,16 +410,21 @@ class ExecutionProfile:
             self.runtime_requirements,
             "execution profile runtime requirements",
         )
+        if self.description is not None:
+            _validate_text(self.description, "execution profile description")
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize one agent-selectable execution profile."""
-        return {
+        value: dict[str, Any] = {
             "name": self.name,
             "execution_kind": self.execution_kind,
             "when": [condition.to_dict() for condition in self.when],
             "runtime_requirements": list(self.runtime_requirements),
             "readiness": self.readiness.to_dict(),
         }
+        if self.description is not None:
+            value["description"] = self.description
+        return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,8 +483,10 @@ class PackageDeploymentContract:
 
 
 __all__ = [
+    "CONFIGURATION_INPUT_BINDING_SCHEMA_VERSION",
     "PACKAGE_DEPLOYMENT_SCHEMA_VERSION",
     "ConfigurationCondition",
+    "ConfigurationInputBinding",
     "ConfigurationRule",
     "ExecutionProfile",
     "PackageDeploymentContract",

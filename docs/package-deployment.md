@@ -21,6 +21,7 @@ The current schema is `jarvis.package-deployment.v1`:
   "execution_profiles": [
     {
       "name": "generated_workload",
+      "description": "Package-generated bounded smoke workload.",
       "execution_kind": "batch",
       "when": [
         {"parameter": "script", "operator": "is_empty"}
@@ -80,7 +81,9 @@ Execution profiles use only two portable kinds:
 
 Configuration conditions support `equals`, `greater_than`, `is_empty`, and
 `is_not_empty`. Every profile and rule is explicit; clients do not need to
-interpret help prose to discover requirements.
+interpret help prose to discover requirements. A profile may also include a
+short package-owned `description` that explains the scientific meaning of that
+mode without exposing site paths or launcher details.
 
 ## Package implementation
 
@@ -101,14 +104,50 @@ Generic implementation and administrative menu settings are marked
 but an agent-facing describer should omit them. Package semantic inputs remain
 visible and are governed by `configuration_rules`.
 
+### Declared local configuration inputs
+
+A package can opt one configuration setting into caller-local file staging by
+attaching the following closed descriptor to that setting in its configuration
+menu:
+
+```json
+{
+  "input_binding": {
+    "schema_version": "jarvis.configuration-input-binding.v1",
+    "kind": "local_file",
+    "structure": "regular_file"
+  }
+}
+```
+
+This authority is explicit and per setting. Clients must not infer file
+semantics from a setting name, its value, or help prose. Version 1 accepts only
+one bounded regular file; directories, links, reparse points, special files,
+and files larger than 16 MiB are rejected.
+
+During package configuration, JARVIS copies each non-empty declared input into
+package-owned shared storage at
+`configuration-inputs/<parameter>/<sha256><safe-suffix>` and persists that
+absolute content-addressed path. The resulting pipeline no longer depends on a
+transport-owned staging pathname, so the transport may remove its copy after
+the configuration transaction succeeds. Reconfiguration is idempotent when
+the persisted content-addressed file is supplied again.
+
+Transport adapters that verify the durable transaction can call
+`Pkg.configuration_input_materialization_matches()`. It returns true only when
+the requested source and persisted target have identical bytes and the target
+is the exact content-addressed file under the declaring package's shared root.
+It does not authorize undeclared settings or arbitrary path rewrites.
+
 ## Built-in packages
 
 `builtin.lammps` exposes two batch profiles. An empty `script` selects its
 bounded generated Lennard-Jones workload; a non-empty `script` selects a user
-input. The default trajectory interval is 100, so default configuration always
-launches a real finite workload. Host execution resolves LAMMPS from the
-activated environment, and the contract offers the Spack spec `lammps` when
-that runtime is not yet usable.
+input. `script` declares the versioned regular-file input binding, while all
+materialization remains generic JARVIS core behavior. The default trajectory
+interval is 100, so default configuration always launches a real finite
+workload. Host execution resolves LAMMPS from the activated environment, and
+the contract offers the Spack spec `lammps` when that runtime is not yet usable.
 
 `builtin.paraview` exposes batch-script, client-server, and health-checked live
 dataset service profiles. The package resolves and capability-checks ParaView
