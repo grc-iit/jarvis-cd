@@ -12,6 +12,17 @@ from pathlib import Path
 from typing import Any
 
 from jarvis_cd.core.pkg import Application
+from jarvis_cd.deployment import (
+    ConfigurationCondition,
+    ConfigurationRule,
+    ExecutionProfile,
+    PackageDeploymentContract,
+    ProviderResolution,
+    ReadinessContract,
+    RuntimeRequirement,
+    RuntimeStatus,
+    probe_program,
+)
 from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
 
@@ -44,15 +55,12 @@ class Lammps(Application):
             },
             {
                 "name": "script",
-                "msg": "Path to LAMMPS input script (e.g., in.lj)",
+                "msg": (
+                    "Optional LAMMPS input script. Empty selects the package-owned "
+                    "bounded Lennard-Jones workload."
+                ),
                 "type": str,
-                "default": None,
-            },
-            {
-                "name": "lmp_bin",
-                "msg": "Path to LAMMPS binary (default: lmp in PATH)",
-                "type": str,
-                "default": "lmp",
+                "default": "",
             },
             {
                 "name": "cuda_arch",
@@ -91,11 +99,11 @@ class Lammps(Application):
             {
                 "name": "io_dump_interval",
                 "msg": (
-                    "If >0, use the package-owned Lennard-Jones workload and dump "
-                    "every N steps in system/Spack or container mode"
+                    "Trajectory interval for the package-owned Lennard-Jones "
+                    "workload selected when script is empty"
                 ),
                 "type": int,
-                "default": 0,
+                "default": 100,
             },
             {
                 "name": "io_lattice_size",
@@ -110,6 +118,74 @@ class Lammps(Application):
                 "default": 5000,
             },
         ]
+
+    def _deployment_contract(self) -> PackageDeploymentContract:
+        """Describe portable LAMMPS deployment and completion semantics."""
+        if self.config.get("deploy_mode") == "container":
+            status = RuntimeStatus("unknown", "container_runtime_not_probed")
+            capabilities: tuple[str, ...] = ()
+        else:
+            probe = probe_program(
+                "lmp",
+                environment=self._deployment_environment(),
+                arguments=("-help",),
+            )
+            status = probe.status
+            capabilities = (
+                ("mpi_execution", "molecular_dynamics") if status.usable is True else ()
+            )
+        runtime = RuntimeRequirement(
+            requirement_id="lammps",
+            description="LAMMPS runtime able to execute molecular dynamics under MPI",
+            required_capabilities=("mpi_execution", "molecular_dynamics"),
+            available_capabilities=capabilities,
+            status=status,
+            provider_resolutions=(
+                ProviderResolution(
+                    provider="spack",
+                    query_kind="spec",
+                    query_value="lammps",
+                ),
+            ),
+        )
+        completed = ReadinessContract(
+            mechanism="process_exit",
+            condition="successful_exit",
+        )
+        return PackageDeploymentContract(
+            package="builtin.lammps",
+            execution_profiles=(
+                ExecutionProfile(
+                    name="generated_workload",
+                    execution_kind="batch",
+                    when=(ConfigurationCondition("script", "is_empty"),),
+                    runtime_requirements=("lammps",),
+                    readiness=completed,
+                ),
+                ExecutionProfile(
+                    name="input_script",
+                    execution_kind="batch",
+                    when=(ConfigurationCondition("script", "is_not_empty"),),
+                    runtime_requirements=("lammps",),
+                    readiness=completed,
+                ),
+            ),
+            runtime_requirements=(runtime,),
+            configuration_rules=(
+                ConfigurationRule(
+                    when=(ConfigurationCondition("script", "is_empty"),),
+                    requires=(
+                        ConfigurationCondition("io_dump_interval", "greater_than", 0),
+                        ConfigurationCondition("io_lattice_size", "greater_than", 0),
+                        ConfigurationCondition("io_run_steps", "greater_than", 0),
+                    ),
+                    description=(
+                        "The generated workload requires positive bounded size, "
+                        "duration, and trajectory interval values."
+                    ),
+                ),
+            ),
+        )
 
     # ------------------------------------------------------------------
     # Container Dockerfile generators
@@ -172,8 +248,37 @@ class Lammps(Application):
         """
         super()._configure(**kwargs)
 
+        self._validate_legacy_runtime_configuration()
+        self._validate_workload_configuration()
+
         if self.config.get("deploy_mode") == "default":
             self._ensure_output_dir()
+
+    def _validate_legacy_runtime_configuration(self) -> None:
+        """Reject concrete launcher overrides while accepting the old default."""
+        configured = self.config.get("lmp_bin")
+        if configured in (None, "", "lmp"):
+            return
+        raise ValueError(
+            "LAMMPS lmp_bin is no longer configurable; make LAMMPS available "
+            "through the JARVIS pipeline execution environment PATH"
+        )
+
+    def _validate_workload_configuration(self) -> None:
+        """Ensure every launch selects a real user or generated input."""
+        script = self.config.get("script")
+        if script not in (None, ""):
+            if not isinstance(script, str):
+                raise TypeError("script must be a path string")
+            return
+        raw_values: dict[str, object] = {
+            "io_dump_interval": self.config.get("io_dump_interval", 100),
+            "io_lattice_size": self.config.get("io_lattice_size", 80),
+            "io_run_steps": self.config.get("io_run_steps", 5000),
+        }
+        for name, value in raw_values.items():
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -238,15 +343,13 @@ class Lammps(Application):
         lives in the pipeline shared directory so every allocated node sees
         the same immutable launch input.
         """
-        interval: object = self.config.get("io_dump_interval", 0)
-        if interval == 0:
-            script: object = self.config.get("script")
-            if script is None or script == "":
-                return None
-            if not isinstance(script, str):
-                raise TypeError("script must be a path string")
+        self._validate_workload_configuration()
+        script: object = self.config.get("script")
+        if script not in (None, ""):
+            assert isinstance(script, str)
             return os.path.expanduser(os.path.expandvars(script))
 
+        interval: object = self.config.get("io_dump_interval", 100)
         raw_values: dict[str, object] = {
             "io_dump_interval": interval,
             "io_lattice_size": self.config.get("io_lattice_size", 80),
@@ -323,6 +426,7 @@ class Lammps(Application):
         Branches on deploy_mode: uses MpiExecInfo with container engine for
         container mode, MpiExecInfo with hostfile for default mode.
         """
+        self._validate_legacy_runtime_configuration()
         script_path = self._generated_input_script()
         self._ensure_output_dir()
         self._remove_stale_log()
@@ -358,7 +462,7 @@ class Lammps(Application):
             ).run()
         else:
             cmd = [
-                self.config["lmp_bin"],
+                "lmp",
                 f"-log {shlex.quote(self._log_path())}",
             ]
             if script_path:

@@ -9,11 +9,12 @@ import time
 import inspect
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, Any, Callable, List, Optional, cast
+from typing import TYPE_CHECKING, Dict, Any, Callable, List, Mapping, Optional, cast
 from jarvis_cd.core.config import Jarvis
 from jarvis_cd.util.hostfile import Hostfile
 
 if TYPE_CHECKING:
+    from jarvis_cd.deployment import PackageDeploymentContract
     from jarvis_cd.artifacts import (
         ArtifactObservation,
         ArtifactReporter,
@@ -717,6 +718,55 @@ class Pkg:
         """
         return []
 
+    def _deployment_environment(self) -> dict[str, str]:
+        """Return the effective environment used by package readiness probes.
+
+        The mapping is never included in the public deployment document.  It
+        merely lets a package test the same activated PATH and provider state
+        that its launch will inherit.
+        """
+        environment = dict(os.environ)
+        for values in (self.env, self.mod_env):
+            if not isinstance(values, Mapping):
+                continue
+            environment.update(
+                {
+                    key: value
+                    for key, value in values.items()
+                    if isinstance(key, str) and isinstance(value, str)
+                }
+            )
+        return environment
+
+    def _deployment_contract(self) -> Optional["PackageDeploymentContract"]:
+        """Return package-owned deployment metadata when implemented.
+
+        Legacy packages deliberately return ``None``.  This keeps deployment
+        semantics opt-in instead of inferring them from class names, source
+        paths, or application-specific prompts.
+        """
+        return None
+
+    def deployment_contract(self) -> Optional["PackageDeploymentContract"]:
+        """Return and type-check this package's versioned deployment contract."""
+        from jarvis_cd.deployment import PackageDeploymentContract
+
+        contract = self._deployment_contract()
+        if contract is not None and not isinstance(contract, PackageDeploymentContract):
+            raise TypeError(
+                "package deployment contract must be a PackageDeploymentContract"
+            )
+        return contract
+
+    def describe_deployment(self) -> Optional[Dict[str, Any]]:
+        """Serialize package deployment/readiness metadata for generic clients.
+
+        :return: A ``jarvis.package-deployment.v1`` document, or ``None`` for a
+            package that has not declared the contract.
+        """
+        contract = self.deployment_contract()
+        return None if contract is None else contract.to_dict()
+
     def _configure(self, **kwargs):
         """
         Override this method to handle package configuration.
@@ -822,6 +872,12 @@ class Pkg:
                 "default": "",
             },
         ]
+
+        # These controls remain part of the CLI and persisted package config,
+        # but generic agents should reason from the package-owned deployment
+        # contract instead of choosing installers, paths, or debug machinery.
+        for parameter in common_menu:
+            parameter["agent_visible"] = False
 
         # Combine package-specific and common menus
         return package_menu + common_menu

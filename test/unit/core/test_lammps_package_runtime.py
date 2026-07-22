@@ -213,7 +213,7 @@ def test_default_launch_owns_deterministic_lammps_log(
     package = object.__new__(lammps_package.Lammps)
     package.config = {
         "kokkos_gpu": False,
-        "lmp_bin": "/opt/spack/bin/lmp",
+        "lmp_bin": "lmp",
         "nprocs": 2,
         "out": str(output_dir),
         "ppn": 2,
@@ -231,6 +231,7 @@ def test_default_launch_owns_deterministic_lammps_log(
     expected_log = output_dir.resolve() / "log.lammps"
     assert _CapturedExec.commands[0] == f"rm -f {shlex.quote(str(expected_log))}"
     command = _CapturedExec.commands[1]
+    assert shlex.split(command)[0] == "lmp"
     assert f"-log {shlex.quote(str(expected_log))}" in command
     assert f"-in {shlex.quote(str(script))}" in command
 
@@ -248,7 +249,7 @@ def test_default_launch_generates_package_owned_lennard_jones_input(
         "io_lattice_size": 6,
         "io_run_steps": 100,
         "kokkos_gpu": False,
-        "lmp_bin": "/opt/spack/bin/lmp",
+        "lmp_bin": "lmp",
         "nprocs": 2,
         "out": str(output_dir),
         "ppn": 2,
@@ -348,7 +349,7 @@ def test_container_launch_creates_log_directory_before_lammps(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Container LAMMPS must be able to open its explicit log at startup."""
+    """Container LAMMPS gets its log directory and a real default input."""
     output_dir = tmp_path / "container output"
     package = object.__new__(lammps_package.Lammps)
     package.config = {
@@ -380,10 +381,12 @@ def test_container_launch_creates_log_directory_before_lammps(
     assert _CapturedExec.commands[0] == f"rm -f {shlex.quote(str(expected_log))}"
     argv = shlex.split(_CapturedExec.commands[1])
     assert argv[:2] == ["bash", "-c"]
-    assert argv[2] == (
+    expected_prefix = (
         f"mkdir -p {shlex.quote(str(output_dir.resolve()))} "
         f"&& exec /usr/local/bin/lmp -log {shlex.quote(str(expected_log))}"
     )
+    assert argv[2].startswith(expected_prefix + " -in ")
+    assert "generated_io_input-" in argv[2]
 
 
 def test_container_launch_keeps_package_owned_generated_input(
@@ -438,7 +441,7 @@ def test_launch_fails_closed_when_stale_log_cannot_be_removed(
     package = object.__new__(lammps_package.Lammps)
     package.config = {
         "kokkos_gpu": False,
-        "lmp_bin": "/opt/spack/bin/lmp",
+        "lmp_bin": "lmp",
         "nprocs": 1,
         "out": str(tmp_path),
         "ppn": 1,
@@ -447,6 +450,7 @@ def test_launch_fails_closed_when_stale_log_cannot_be_removed(
     package.pipeline = SimpleNamespace(get_hostfile=lambda: None)
     package.env = {}
     package.mod_env = {}
+    package.shared_dir = tmp_path
     _FailedCleanupExec.commands = []
     monkeypatch.setattr(lammps_package, "Exec", _FailedCleanupExec)
 
