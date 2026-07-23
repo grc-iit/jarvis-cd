@@ -2255,7 +2255,6 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
         "service_bind_host": "127.0.0.1",
         "service_advertise_host": "127.0.0.1",
         "service_port": 0,
-        "service_startup_timeout": 30,
     }
     package.pipeline = SimpleNamespace(get_hostfile=lambda: object())
     package.env = {}
@@ -2286,6 +2285,7 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
     assert "--force-offscreen-rendering" not in command
     assert "--bind-host 127.0.0.1" in command
     assert "--advertise-host 127.0.0.1" in command
+    assert "--startup-timeout 600" in command
     assert exec_info.env["JARVIS_SERVICE_RUNTIME_PATH"].endswith(
         "service-runtimes.jsonl"
     )
@@ -2312,10 +2312,12 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
     )
     assert staged_descriptor == descriptor
 
+    package.config["service_startup_timeout"] = 30
     package._start_service(dict(package.mod_env))
     deduplicated_command, _ = _CapturedExec.commands[1]
     assert deduplicated_command.count("--mesa") == 1
     assert "--force-offscreen-rendering" not in deduplicated_command
+    assert "--startup-timeout 30" in deduplicated_command
     assert [call[0] for call in _ResolvedWhich.calls] == ["pvpython", "pvpython"]
     assert _ResolvedWhich.calls[0][1].env["PATH"] == "/runtime/paraview/bin"
 

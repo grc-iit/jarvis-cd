@@ -365,7 +365,7 @@ dataset_descriptor: /site/descriptors/asteroid-subset.json
 service_bind_host: 127.0.0.1
 service_advertise_host: 127.0.0.1
 service_port: 0
-service_startup_timeout: 120
+service_startup_timeout: 600
 nprocs: 1
 ```
 

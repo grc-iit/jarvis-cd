@@ -163,9 +163,12 @@ class Paraview(Application):
             },
             {
                 "name": "service_startup_timeout",
-                "msg": "Seconds allowed for the real HTTP health probe",
+                "msg": (
+                    "Seconds allowed for dataset initialization and the real "
+                    "HTTP health probe"
+                ),
                 "type": int,
-                "default": 120,
+                "default": 600,
             },
         ]
 
@@ -487,7 +490,7 @@ class Paraview(Application):
         service_port = self._configured_int("service_port", 0)
         if not 0 <= service_port <= 65535:
             raise ValueError("service_port must be between 0 and 65535")
-        startup_timeout = self._configured_int("service_startup_timeout", 120)
+        startup_timeout = self._configured_int("service_startup_timeout", 600)
         command = [
             sys.executable,
             str(supervisor),
