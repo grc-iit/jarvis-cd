@@ -2190,7 +2190,15 @@ class ParaViewBackend:
         scalar_bar_setter = getattr(display, "SetScalarBarVisibility", None)
         if not callable(scalar_bar_setter):
             raise RuntimeError("ParaView display cannot control its scalar bar")
-        scalar_bar_setter(self.view, False)
+        previous_proxies = self._representation_transfer_proxies.get(
+            representation_id,
+            (),
+        )
+        # ParaView's scalar-bar helper requires an actor-bound lookup table.
+        # Fresh solid displays have none, and asking the helper to hide an
+        # unbound bar can corrupt older offscreen runtimes before ColorBy.
+        if previous_proxies:
+            scalar_bar_setter(self.view, False)
         color = cast(Mapping[str, Any], record["color"])
         if color["mode"] == "solid":
             # ParaView 5.x reads the current association before disabling scalar
@@ -2215,10 +2223,6 @@ class ParaViewBackend:
             )
         )
         self.simple.ColorBy(display, color_field, separate=True)
-        previous_proxies = self._representation_transfer_proxies.get(
-            representation_id,
-            (),
-        )
         lookup = self.simple.GetColorTransferFunction(
             field["name"],
             display,

@@ -463,12 +463,13 @@ def test_same_node_supports_independent_surface_and_point_actors() -> None:
 
 
 def test_solid_color_normalizes_unset_paraview_association() -> None:
-    """Solid actors disable scalar coloring from a fresh ParaView display."""
+    """Fresh solid actors never toggle a scalar bar without a bound lookup table."""
     backend, simple, _source = _representation_backend()
     display = backend._representation_displays["rep_root"]
 
     backend._apply_representation_record(backend._representations["rep_root"])
 
+    assert display.scalar_bar_calls == []
     assert display.ColorArrayName == ["POINTS", ""]
     assert simple.color_calls[-1] == (display, None, False)
     assert display.DiffuseColor == [0.8, 0.8, 0.8]
