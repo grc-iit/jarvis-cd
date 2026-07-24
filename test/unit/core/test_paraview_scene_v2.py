@@ -471,7 +471,7 @@ def test_solid_color_normalizes_unset_paraview_association() -> None:
 
     assert display.scalar_bar_calls == []
     assert display.ColorArrayName == ["POINTS", ""]
-    assert simple.color_calls[-1] == (display, None, False)
+    assert simple.color_calls == []
     assert display.DiffuseColor == [0.8, 0.8, 0.8]
 
 
@@ -736,6 +736,7 @@ def test_field_change_and_solid_color_retire_exact_transfer_proxies() -> None:
     assert (display, "temperature") not in simple.opacities
     assert representation_id not in backend._representation_transfer_proxies
     assert display.scalar_bar_calls[-1] is False
+    assert simple.color_calls[-1] == (display, None, False)
 
 
 def test_failed_field_change_restores_old_transfer_proxies_without_leak() -> None:
