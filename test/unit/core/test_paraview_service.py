@@ -2297,6 +2297,7 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
     service_root = service_roots[0]
     assert (service_root / "service.py").is_file()
     assert (service_root / "service_http.py").is_file()
+    assert (service_root / "scene_manifest.py").is_file()
     assert (service_root / "service_supervisor.py").is_file()
     assert (service_root / "output").is_dir()
     authorization_file = service_root / "authorization.token"

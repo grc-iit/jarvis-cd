@@ -232,7 +232,8 @@ Supported operations are:
 - `fit_camera` over explicit visible actor IDs and explicit timesteps;
 - `set_camera` for explicit camera components;
 - `inspect_selection` against one exact actor;
-- `export_artifact` for the exact current visible actor set.
+- `export_artifact` for the exact current visible actor set;
+- `export_scene` for a canonical reusable declarative scene manifest.
 
 Commands are serialized against authoritative state. A stale
 `expected_revision` returns HTTP 409 `revision_conflict`. Repeating an exact
@@ -352,6 +353,25 @@ markers, stale sequences, changed ledger prefixes, unsafe paths, and
 pre-existing output without a marker fail explicitly. Rollback deletes only
 private staging and never removes a published event.
 
+`export_scene` accepts a normalized relative `.json` filename and an `exact` or
+`compatible` fingerprint constraint. It projects the authoritative state into
+`jarvis.paraview.scene-manifest.v1`: portable topological aliases replace
+runtime node/actor IDs; measurement-derived transfer ranges are frozen while
+their source policy remains provenance; and camera, scalar-bar, filter,
+timestep, package/runtime version, descriptor fingerprint, compatibility, and
+resource requirements remain explicit. Dataset member paths, execution and
+scheduler identity, service host/port, and authorization never enter the
+manifest. The output is a finalized `visualization_scene` JARVIS artifact with
+media type `application/vnd.jarvis.paraview.scene+json`.
+
+An accepted `initial_scene` is copied into the new execution as a finalized
+`provenance` artifact whose metadata identifies the source scene artifact,
+source final revision, manifest checksum, and current descriptor fingerprint.
+Both imported and exported scene artifacts therefore appear through
+`jarvis execution artifacts` and `ExecutionHandle.artifacts()`. JSON payloads
+use the same checksum-bound marker, link, append, recovery, and rollback
+protocol as PNG outputs.
+
 ## ParaView package configuration
 
 Service mode requires `nprocs=1` and a durable `ppl run` or `ppl submit`
@@ -362,12 +382,23 @@ pkg_type: builtin.paraview
 pkg_name: viewer
 mode: service
 dataset_descriptor: /site/descriptors/asteroid-subset.json
+initial_scene: /site/scenes/asteroid-evidence.json
 service_bind_host: 127.0.0.1
 service_advertise_host: 127.0.0.1
 service_port: 0
 service_startup_timeout: 600
 nprocs: 1
 ```
+
+`initial_scene` is optional and declared with
+`jarvis.configuration-input-binding.v1` as a regular local file. A relay may
+therefore stage a Host-local scene through its transparent input-binding
+contract. JARVIS privately copies at most 2 MiB into the owned service root,
+and the service validates the entire scene against the opened dataset before
+the health endpoint can report ready. Rejections emit
+`JARVIS_PARAVIEW_SCENE_REJECTION` followed by a bounded
+`jarvis.paraview.scene-rejection.v1` JSON record; filesystem paths and secrets
+are not included.
 
 The package resolves `pvpython` from the pipeline execution environment. It
 probes that executable and selects one supported headless backend itself:

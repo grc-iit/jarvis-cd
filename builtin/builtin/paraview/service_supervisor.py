@@ -43,6 +43,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--startup-timeout", type=float, required=True)
     parser.add_argument("--service-instance-id", required=True)
     parser.add_argument("--authorization-file", required=True)
+    parser.add_argument("--initial-scene")
     args = parser.parse_args(argv)
 
     if not 1 <= args.startup_timeout <= 600:
@@ -88,6 +89,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--authorization-file",
         str(authorization_path),
     ]
+    if args.initial_scene:
+        command.extend(["--initial-scene", args.initial_scene])
     stopping = threading.Event()
     lifecycle: Optional[ServiceLifecycle] = None
     process: Optional[subprocess.Popen[str]] = None

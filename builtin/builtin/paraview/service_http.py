@@ -57,6 +57,7 @@ _OPERATIONS = frozenset(
         "set_camera",
         "inspect_selection",
         "export_artifact",
+        "export_scene",
     }
 )
 
@@ -306,14 +307,21 @@ class ServiceStateController:
 
             checkpoint = self.backend.begin_command()
             try:
-                result = self.backend.execute(operation, arguments, command_id)
+                backend_arguments = dict(arguments)
+                if operation == "export_scene":
+                    backend_arguments["_final_revision"] = current_revision + 1
+                result = self.backend.execute(
+                    operation,
+                    backend_arguments,
+                    command_id,
+                )
                 if not isinstance(result, dict):
                     raise RuntimeError("ParaView backend returned a non-object result")
                 # Export is already the exact current frame and publication is
                 # deterministic. Every scene mutation must prove a new frame.
                 candidate_frame = (
                     current_frame
-                    if operation == "export_artifact"
+                    if operation in {"export_artifact", "export_scene"}
                     else self._bounded_frame(self.backend.render_png())
                 )
                 candidate_revision = current_revision + 1

@@ -5,12 +5,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import importlib
+import importlib.metadata
 import json
 import math
 import os
 import re
 import signal
 import stat
+import sys
 import tempfile
 import threading
 import time
@@ -20,8 +22,24 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple, cast
 
 try:
+    from .scene_manifest import (
+        SCENE_ARTIFACT_MEDIA_TYPE,
+        SceneManifestError,
+        build_scene_manifest,
+        canonical_scene_bytes,
+        load_scene_manifest,
+        validate_scene_manifest,
+    )
     from .service_http import CommandError, ServiceStateController, create_server
 except ImportError:  # Staged pvpython scripts are executed outside a package.
+    from scene_manifest import (  # type: ignore[no-redef]
+        SCENE_ARTIFACT_MEDIA_TYPE,
+        SceneManifestError,
+        build_scene_manifest,
+        canonical_scene_bytes,
+        load_scene_manifest,
+        validate_scene_manifest,
+    )
     from service_http import CommandError, ServiceStateController, create_server
 
 MAX_NODES = 32
@@ -61,6 +79,7 @@ class ParaViewBackend:
         execution_id: str,
         package_name: str,
         package_id: str,
+        initial_scene: Optional[Mapping[str, Any]] = None,
     ) -> None:
         """Open one descriptor and create only the stable root scene objects."""
         try:
@@ -155,6 +174,13 @@ class ParaViewBackend:
         bounds = root_output["bounds"]
         self._dataset_bounds = None if bounds is None else tuple(bounds)
         self._dataset_timesteps = list(self._timesteps)
+        self._scene_import: Optional[Dict[str, Any]] = None
+        if initial_scene is not None:
+            imported = self._import_scene_manifest(initial_scene)
+            self._scene_import = self._publish_imported_scene(
+                initial_scene,
+                imported,
+            )
 
     def dataset_state(self) -> Dict[str, Any]:
         """Return immutable descriptor identity and root discovery facts."""
@@ -205,6 +231,7 @@ class ParaViewBackend:
             "set_camera": self._set_camera,
             "inspect_selection": self._inspect_selection,
             "export_artifact": self._export_artifact,
+            "export_scene": self._export_scene,
         }
         handler = handlers.get(operation)
         if handler is None:
@@ -1383,6 +1410,348 @@ class ParaViewBackend:
         }
         return {"selection": _json_copy(self._selection)}
 
+    def _import_scene_manifest(
+        self,
+        value: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """Preflight and atomically reconstruct one declarative initial scene."""
+        root = self._nodes[ROOT_NODE_ID]
+        validated = validate_scene_manifest(
+            value,
+            descriptor=self.descriptor,
+            discovery={
+                "topology": root["output"]["topology"],
+                "bounds": _json_copy_optional(root["output"]["bounds"]),
+                "arrays": _json_copy_list(root["output"]["arrays"]),
+                "timestep_count": len(self._timesteps),
+            },
+        )
+        canonical = canonical_scene_bytes(validated)
+        manifest_digest = hashlib.sha256(canonical).hexdigest()
+        scene = cast(Mapping[str, Any], validated["scene"])
+        node_ids: Dict[str, str] = {"root": ROOT_NODE_ID}
+        checkpoint = self.begin_command()
+        operation = "set_timestep"
+        try:
+            if self._timesteps:
+                self._set_timestep(
+                    {"index": scene["timestep_index"]},
+                    f"scene-import-time-{manifest_digest[:16]}",
+                )
+            filters = cast(Sequence[Mapping[str, Any]], scene["filters"])
+            for index, filter_record in enumerate(filters, start=1):
+                operation = f"filter:{filter_record['filter_id']}"
+                created = self._create_filter(
+                    {
+                        "input_node_id": node_ids[cast(str, filter_record["input"])],
+                        "type": filter_record["type"],
+                        "parameters": filter_record["parameters"],
+                    },
+                    f"scene-import-filter-{index:02d}-{manifest_digest[:16]}",
+                )
+                node_ids[cast(str, filter_record["filter_id"])] = cast(
+                    str,
+                    created["node"]["node_id"],
+                )
+            actors = cast(Sequence[Mapping[str, Any]], scene["actors"])
+            for index, actor in enumerate(actors):
+                operation = f"actor:{actor['actor_id']}"
+                self._set_representation(
+                    {
+                        "representation_id": (
+                            ROOT_REPRESENTATION_ID if index == 0 else None
+                        ),
+                        "node_id": node_ids[cast(str, actor["node"])],
+                        "type": actor["type"],
+                        "visible": actor["visible"],
+                        "opacity": actor["opacity"],
+                        "point_size_px": actor["point_size_px"],
+                        "color": actor["color"],
+                    },
+                    f"scene-import-actor-{index:02d}-{manifest_digest[:16]}",
+                )
+            operation = "camera"
+            self._set_camera(
+                cast(Mapping[str, Any], scene["camera"]),
+                f"scene-import-camera-{manifest_digest[:16]}",
+            )
+            self.commit_command(checkpoint)
+        except Exception as exc:
+            if self._transaction_open:
+                self.rollback_command(checkpoint)
+            if isinstance(exc, SceneManifestError):
+                raise
+            if isinstance(exc, CommandError):
+                details = dict(exc.details)
+                details["operation"] = operation
+                raise SceneManifestError(
+                    exc.code,
+                    "initial_scene could not be applied to the opened dataset",
+                    details=details,
+                ) from exc
+            raise SceneManifestError(
+                "scene_import_failed",
+                "initial_scene could not be reconstructed",
+                details={"operation": operation},
+            ) from exc
+        source = cast(Mapping[str, Any], validated["source"])
+        return {
+            "schema_version": "jarvis.paraview.scene-import.v1",
+            "source_artifact_id": source["artifact_id"],
+            "source_final_revision": source["final_revision"],
+            "manifest_sha256": manifest_digest,
+            "descriptor_fingerprint": _json_copy(
+                cast(Mapping[str, Any], self.descriptor["fingerprint"])
+            ),
+        }
+
+    def _export_scene(
+        self,
+        arguments: Mapping[str, Any],
+        command_id: str,
+    ) -> Dict[str, Any]:
+        """Stage one canonical reusable scene through the durable artifact ledger."""
+        _require_fields(
+            arguments,
+            {"filename", "fingerprint_constraint", "_final_revision"},
+            "export_scene",
+        )
+        filename = _safe_relative_json(arguments.get("filename"))
+        fingerprint_constraint = arguments.get("fingerprint_constraint")
+        if fingerprint_constraint not in {"exact", "compatible"}:
+            raise CommandError(
+                "invalid_arguments",
+                "fingerprint_constraint must be exact or compatible",
+            )
+        final_revision = _bounded_int(
+            arguments.get("_final_revision"),
+            "_final_revision",
+            minimum=1,
+        )
+        if len(self._artifacts) >= MAX_ARTIFACTS:
+            raise CommandError(
+                "artifact_limit", "the service artifact limit was reached"
+            )
+        candidate_path = self.output_dir / filename
+        output_parent = candidate_path.parent.resolve()
+        if (
+            output_parent != self.output_dir
+            and self.output_dir not in output_parent.parents
+        ):
+            raise CommandError("invalid_arguments", "artifact path escapes output root")
+        output_path = output_parent / candidate_path.name
+        scene_digest = self._scene_digest()
+        artifact_id = _deterministic_id(
+            "art",
+            self.service_instance_id + "\x00" + command_id,
+        )
+        visible_ids = sorted(
+            representation_id
+            for representation_id, record in self._representations.items()
+            if record["visible"]
+        )
+        try:
+            jarvis_version = importlib.metadata.version("jarvis-cd")
+        except importlib.metadata.PackageNotFoundError:
+            jarvis_version = "unknown"
+        manifest = build_scene_manifest(
+            descriptor=self.descriptor,
+            pipeline=self.pipeline_state(),
+            final_revision=final_revision,
+            artifact_id=artifact_id,
+            jarvis_version=jarvis_version,
+            paraview_version=self._paraview_version(),
+            fingerprint_constraint=cast(str, fingerprint_constraint),
+        )
+        payload = canonical_scene_bytes(manifest)
+        replay = _find_artifact_event(artifact_id)
+        if replay is not None:
+            _validate_artifact_replay(
+                replay,
+                logical_name=filename.as_posix(),
+                output_path=output_path,
+                service_instance_id=self.service_instance_id,
+                command_id=command_id,
+                representation_ids=visible_ids,
+                scene_digest=scene_digest,
+                execution_id=self.execution_id,
+                package_name=self.package_name,
+                package_id=self.package_id,
+                kind="visualization_scene",
+                role="output",
+                media_type=SCENE_ARTIFACT_MEDIA_TYPE,
+                format_name="json",
+                message="ParaView service exported a reusable scene",
+                artifact_metadata={
+                    "descriptor_fingerprint": _json_copy(
+                        cast(Mapping[str, Any], self.descriptor["fingerprint"])
+                    ),
+                    "final_revision": final_revision,
+                },
+            )
+            if not any(
+                artifact["artifact_id"] == artifact_id for artifact in self._artifacts
+            ):
+                self._artifacts.append(replay)
+            return {
+                "artifact": _json_copy(replay),
+                "scene_manifest": _json_copy(manifest),
+            }
+        staged_path = _stage_payload(
+            payload,
+            output_dir=output_path.parent,
+            suffix=".json",
+        )
+        digest = hashlib.sha256(payload).hexdigest()
+        try:
+            artifact = _prepare_artifact_event(
+                artifact_id=artifact_id,
+                logical_name=filename.as_posix(),
+                path=output_path,
+                size_bytes=len(payload),
+                sha256=digest,
+                service_instance_id=self.service_instance_id,
+                command_id=command_id,
+                representation_ids=visible_ids,
+                scene_digest=scene_digest,
+                kind="visualization_scene",
+                role="output",
+                media_type=SCENE_ARTIFACT_MEDIA_TYPE,
+                format_name="json",
+                message="ParaView service exported a reusable scene",
+                artifact_metadata={
+                    "descriptor_fingerprint": _json_copy(
+                        cast(Mapping[str, Any], self.descriptor["fingerprint"])
+                    ),
+                    "final_revision": final_revision,
+                },
+            )
+        except Exception:
+            staged_path.unlink(missing_ok=True)
+            raise
+        self._staged_artifacts[artifact_id] = {
+            "event": artifact,
+            "staged_path": staged_path,
+            "output_path": output_path,
+            "command_id": command_id,
+            "representation_ids": list(visible_ids),
+            "scene_digest": scene_digest,
+        }
+        self._artifacts.append(artifact)
+        return {
+            "artifact": _json_copy(artifact),
+            "scene_manifest": _json_copy(manifest),
+        }
+
+    def _publish_imported_scene(
+        self,
+        manifest: Mapping[str, Any],
+        evidence: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """Copy an accepted initial scene into this execution's artifact ledger."""
+        payload = canonical_scene_bytes(manifest)
+        manifest_digest = hashlib.sha256(payload).hexdigest()
+        artifact_id = _deterministic_id(
+            "art",
+            self.service_instance_id + "\x00initial-scene-import\x00" + manifest_digest,
+        )
+        command_id = "initial-scene-import-" + manifest_digest[:24]
+        output_path = self.output_dir / "initial-scene-import.json"
+        visible_ids = sorted(
+            representation_id
+            for representation_id, record in self._representations.items()
+            if record["visible"]
+        )
+        scene_digest = self._scene_digest()
+        artifact_metadata = {
+            "descriptor_fingerprint": _json_copy(
+                cast(Mapping[str, Any], self.descriptor["fingerprint"])
+            ),
+            "source_artifact_id": evidence["source_artifact_id"],
+            "source_final_revision": evidence["source_final_revision"],
+            "manifest_sha256": manifest_digest,
+            "imported": True,
+        }
+        checkpoint = self.begin_command()
+        try:
+            replay = _find_artifact_event(artifact_id)
+            if replay is not None:
+                _validate_artifact_replay(
+                    replay,
+                    logical_name="initial-scene-import.json",
+                    output_path=output_path,
+                    service_instance_id=self.service_instance_id,
+                    command_id=command_id,
+                    representation_ids=visible_ids,
+                    scene_digest=scene_digest,
+                    execution_id=self.execution_id,
+                    package_name=self.package_name,
+                    package_id=self.package_id,
+                    kind="visualization_scene",
+                    role="provenance",
+                    media_type=SCENE_ARTIFACT_MEDIA_TYPE,
+                    format_name="json",
+                    message="ParaView service imported a reusable scene",
+                    artifact_metadata=artifact_metadata,
+                )
+                self._artifacts.append(replay)
+            else:
+                staged_path = _stage_payload(
+                    payload,
+                    output_dir=self.output_dir,
+                    suffix=".json",
+                )
+                try:
+                    artifact = _prepare_artifact_event(
+                        artifact_id=artifact_id,
+                        logical_name="initial-scene-import.json",
+                        path=output_path,
+                        size_bytes=len(payload),
+                        sha256=manifest_digest,
+                        service_instance_id=self.service_instance_id,
+                        command_id=command_id,
+                        representation_ids=visible_ids,
+                        scene_digest=scene_digest,
+                        kind="visualization_scene",
+                        role="provenance",
+                        media_type=SCENE_ARTIFACT_MEDIA_TYPE,
+                        format_name="json",
+                        message="ParaView service imported a reusable scene",
+                        artifact_metadata=artifact_metadata,
+                    )
+                except Exception:
+                    staged_path.unlink(missing_ok=True)
+                    raise
+                self._staged_artifacts[artifact_id] = {
+                    "event": artifact,
+                    "staged_path": staged_path,
+                    "output_path": output_path,
+                    "command_id": command_id,
+                    "representation_ids": list(visible_ids),
+                    "scene_digest": scene_digest,
+                }
+                self._artifacts.append(artifact)
+            self.commit_command(checkpoint)
+        except Exception:
+            if self._transaction_open:
+                self.rollback_command(checkpoint)
+            raise
+        rendered = dict(evidence)
+        rendered["imported_artifact_id"] = artifact_id
+        return cast(Dict[str, Any], rendered)
+
+    def _paraview_version(self) -> str:
+        """Return a portable ParaView runtime version without its install path."""
+        getter = getattr(self.simple, "GetParaViewVersion", None)
+        if callable(getter):
+            value = getter()
+            if isinstance(value, str) and re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9._+:-]{0,127}",
+                value,
+            ):
+                return value
+        return "unknown"
+
     def _export_artifact(
         self,
         arguments: Mapping[str, Any],
@@ -2351,6 +2720,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument("--execution-id", required=True)
     parser.add_argument("--service-instance-id", required=True)
     parser.add_argument("--authorization-file", required=True)
+    parser.add_argument("--initial-scene")
     args = parser.parse_args(argv)
     bound_execution_id = os.environ.get("JARVIS_EXECUTION_ID")
     package_name = os.environ.get("JARVIS_PACKAGE_NAME")
@@ -2362,14 +2732,35 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     bearer_token = _read_authorization_token(Path(args.authorization_file))
     descriptor_path = Path(args.descriptor)
     descriptor = _load_json_file(descriptor_path)
-    backend = ParaViewBackend(
-        descriptor=descriptor,
-        output_dir=Path(args.output_dir),
-        service_instance_id=args.service_instance_id,
-        execution_id=args.execution_id,
-        package_name=package_name,
-        package_id=package_id,
-    )
+    try:
+        initial_scene = (
+            None
+            if args.initial_scene is None
+            else load_scene_manifest(Path(args.initial_scene))
+        )
+        backend = ParaViewBackend(
+            descriptor=descriptor,
+            output_dir=Path(args.output_dir),
+            service_instance_id=args.service_instance_id,
+            execution_id=args.execution_id,
+            package_name=package_name,
+            package_id=package_id,
+            initial_scene=initial_scene,
+        )
+    except SceneManifestError as exc:
+        print(
+            "JARVIS_PARAVIEW_SCENE_REJECTION "
+            + json.dumps(
+                exc.as_dict(),
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            file=sys.stderr,
+            flush=True,
+        )
+        return 2
     controller = ServiceStateController(
         backend=backend,
         execution_id=args.execution_id,
@@ -2816,6 +3207,12 @@ def _prepare_artifact_event(
     representation_ids: Sequence[str],
     scene_digest: str,
     cluster_location: Optional[str] = None,
+    kind: str = "image",
+    role: str = "output",
+    media_type: str = "image/png",
+    format_name: str = "png",
+    message: str = "ParaView service exported an image",
+    artifact_metadata: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Reserve a deterministic artifact event without publishing durable state."""
     artifact_path_value = os.environ.get("JARVIS_ARTIFACT_PATH")
@@ -2866,6 +3263,12 @@ def _prepare_artifact_event(
                     execution_id=cast(str, execution_id),
                     package_name=cast(str, package_name),
                     package_id=cast(str, package_id),
+                    kind=kind,
+                    role=role,
+                    media_type=media_type,
+                    format_name=format_name,
+                    message=message,
+                    artifact_metadata=artifact_metadata,
                 )
                 if marker is not None:
                     _validate_published_artifact_file(event, path)
@@ -2901,6 +3304,12 @@ def _prepare_artifact_event(
                 execution_id=cast(str, execution_id),
                 package_name=cast(str, package_name),
                 package_id=cast(str, package_id),
+                kind=kind,
+                role=role,
+                media_type=media_type,
+                format_name=format_name,
+                message=message,
+                artifact_metadata=artifact_metadata,
             )
             if marker_event.get("sequence") != sequence:
                 raise RuntimeError(
@@ -2911,6 +3320,21 @@ def _prepare_artifact_event(
             return _json_copy(marker_event)
         location = cluster_location or path.as_posix()
         _normalized_absolute_path(location)
+        metadata = {
+            "application": "paraview",
+            "service_instance_id": service_instance_id,
+            "command_id": command_id,
+            "generation_stage": "final",
+            "representation_ids": list(representation_ids),
+            "scene_digest": scene_digest,
+        }
+        if artifact_metadata is not None:
+            overlap = set(metadata) & set(artifact_metadata)
+            if overlap:
+                raise RuntimeError(
+                    "ParaView artifact metadata conflicts with reserved fields"
+                )
+            metadata.update(_json_copy(artifact_metadata))
         event = {
             "schema_version": "jarvis.artifact.v1",
             "package_name": package_name,
@@ -2918,28 +3342,21 @@ def _prepare_artifact_event(
             "execution_id": execution_id,
             "artifact_id": artifact_id,
             "logical_name": logical_name,
-            "kind": "image",
-            "role": "output",
+            "kind": kind,
+            "role": role,
             "structure": "file",
             "ownership": "shared",
             "state": "finalized",
             "location": {"kind": "cluster_path", "value": location},
-            "media_type": "image/png",
-            "format": "png",
+            "media_type": media_type,
+            "format": format_name,
             "size_bytes": size_bytes,
             "checksum": "sha256:" + sha256,
-            "message": "ParaView service exported an image",
+            "message": message,
             "revision": 1,
             "sequence": sequence,
             "observed_at_epoch": time.time(),
-            "metadata": {
-                "application": "paraview",
-                "service_instance_id": service_instance_id,
-                "command_id": command_id,
-                "generation_stage": "final",
-                "representation_ids": list(representation_ids),
-                "scene_digest": scene_digest,
-            },
+            "metadata": metadata,
         }
         if len(_artifact_event_payload(event)) > 64 * 1024:
             raise RuntimeError("ParaView artifact event exceeds the JARVIS limit")
@@ -2961,9 +3378,30 @@ def _validate_artifact_event_request(
     execution_id: str,
     package_name: str,
     package_id: str,
+    kind: str,
+    role: str,
+    media_type: str,
+    format_name: str,
+    message: str,
+    artifact_metadata: Optional[Mapping[str, Any]],
 ) -> None:
     """Require a published or recoverable event to match one exact retry."""
     metadata = event.get("metadata")
+    expected_metadata = {
+        "application": "paraview",
+        "service_instance_id": service_instance_id,
+        "command_id": command_id,
+        "generation_stage": "final",
+        "representation_ids": list(representation_ids),
+        "scene_digest": scene_digest,
+    }
+    if artifact_metadata is not None:
+        overlap = set(expected_metadata) & set(artifact_metadata)
+        if overlap:
+            raise RuntimeError(
+                "ParaView artifact metadata conflicts with reserved fields"
+            )
+        expected_metadata.update(_json_copy(artifact_metadata))
     if (
         event.get("logical_name") != logical_name
         or event.get("execution_id") != execution_id
@@ -2973,11 +3411,12 @@ def _validate_artifact_event_request(
         != {"kind": "cluster_path", "value": cluster_location or path.as_posix()}
         or event.get("size_bytes") != size_bytes
         or event.get("checksum") != "sha256:" + sha256
-        or not isinstance(metadata, dict)
-        or metadata.get("service_instance_id") != service_instance_id
-        or metadata.get("command_id") != command_id
-        or metadata.get("representation_ids") != list(representation_ids)
-        or metadata.get("scene_digest") != scene_digest
+        or event.get("kind") != kind
+        or event.get("role") != role
+        or event.get("media_type") != media_type
+        or event.get("format") != format_name
+        or event.get("message") != message
+        or metadata != expected_metadata
     ):
         raise RuntimeError(
             "deterministic ParaView artifact retry conflicts with durable state"
@@ -3139,7 +3578,7 @@ def _validated_marker_stage_path(marker: Mapping[str, Any], output_path: Path) -
         not staged_path.is_absolute()
         or staged_path.parent != output_path.parent
         or not staged_path.name.startswith(".paraview-artifact.")
-        or not staged_path.name.endswith(".tmp.png")
+        or staged_path.suffix not in {".png", ".json"}
         or staged_path == output_path
     ):
         raise RuntimeError("ParaView artifact marker staged path is unsafe")
@@ -3273,7 +3712,7 @@ def _publish_artifact_event_locked(
 def _commit_staged_artifacts(
     staged_artifacts: Mapping[str, Mapping[str, Any]],
 ) -> None:
-    """Publish one validated PNG and its append-only event at semantic commit."""
+    """Publish one validated payload and its append-only event at semantic commit."""
     if not staged_artifacts:
         return
     if len(staged_artifacts) != 1:
@@ -3379,7 +3818,7 @@ def _commit_staged_artifacts(
             _validate_published_artifact_file(event, output_path)
         else:
             if not transaction_stage.is_file() or transaction_stage.is_symlink():
-                raise RuntimeError("staged ParaView PNG is missing or unsafe")
+                raise RuntimeError("staged ParaView artifact is missing or unsafe")
             _validate_published_artifact_file(event, transaction_stage)
             os.link(transaction_stage, output_path)
             if os.name != "nt":
@@ -3397,16 +3836,38 @@ def _commit_staged_artifacts(
 def _validate_published_artifact_file(
     event: Mapping[str, Any], output_path: Path
 ) -> None:
-    """Require a durable PNG to match its exact published event."""
+    """Require a durable payload to match its exact published event."""
     if not output_path.is_file() or output_path.is_symlink():
         raise RuntimeError("published ParaView artifact file is missing or unsafe")
     payload = output_path.read_bytes()
     if (
         event.get("size_bytes") != len(payload)
         or event.get("checksum") != "sha256:" + hashlib.sha256(payload).hexdigest()
-        or not payload.startswith(b"\x89PNG\r\n\x1a\n")
     ):
         raise RuntimeError("published ParaView artifact file failed validation")
+    media_type = event.get("media_type")
+    if media_type == "image/png":
+        if not payload.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise RuntimeError("published ParaView PNG failed validation")
+        return
+    if media_type == SCENE_ARTIFACT_MEDIA_TYPE:
+        try:
+            value = json.loads(
+                payload.decode("utf-8"),
+                object_pairs_hook=_reject_duplicate_keys,
+            )
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise RuntimeError(
+                "published ParaView scene manifest is invalid JSON"
+            ) from exc
+        if (
+            not isinstance(value, dict)
+            or canonical_scene_bytes(value) != payload
+            or value.get("schema_version") != "jarvis.paraview.scene-manifest.v1"
+        ):
+            raise RuntimeError("published ParaView scene manifest failed validation")
+        return
+    raise RuntimeError("published ParaView artifact media type is unsupported")
 
 
 def _find_artifact_event(artifact_id: str) -> Optional[Dict[str, Any]]:
@@ -3547,39 +4008,50 @@ def _validate_artifact_replay(
     execution_id: str,
     package_name: str,
     package_id: str,
+    kind: str = "image",
+    role: str = "output",
+    media_type: str = "image/png",
+    format_name: str = "png",
+    message: str = "ParaView service exported an image",
+    artifact_metadata: Optional[Mapping[str, Any]] = None,
 ) -> None:
-    """Validate an on-disk event and PNG before returning replay success."""
+    """Validate an on-disk event and payload before returning replay success."""
     metadata = event.get("metadata")
     location = event.get("location")
+    expected_metadata = {
+        "application": "paraview",
+        "service_instance_id": service_instance_id,
+        "command_id": command_id,
+        "generation_stage": "final",
+        "representation_ids": list(representation_ids),
+        "scene_digest": scene_digest,
+    }
+    if artifact_metadata is not None:
+        overlap = set(expected_metadata) & set(artifact_metadata)
+        if overlap:
+            raise RuntimeError(
+                "ParaView artifact metadata conflicts with reserved fields"
+            )
+        expected_metadata.update(_json_copy(artifact_metadata))
     if (
         event.get("logical_name") != logical_name
         or event.get("execution_id") != execution_id
         or event.get("package_name") != package_name
         or event.get("package_id") != package_id
         or location != {"kind": "cluster_path", "value": output_path.as_posix()}
-        or not isinstance(metadata, dict)
-        or metadata.get("service_instance_id") != service_instance_id
-        or metadata.get("command_id") != command_id
-        or metadata.get("representation_ids") != list(representation_ids)
-        or metadata.get("scene_digest") != scene_digest
+        or event.get("kind") != kind
+        or event.get("role") != role
+        or event.get("media_type") != media_type
+        or event.get("format") != format_name
+        or event.get("message") != message
+        or metadata != expected_metadata
     ):
         raise CommandError(
             "artifact_replay_conflict",
             "published artifact does not match the retried scene command",
             status=HTTPStatus.CONFLICT,
         )
-    if not output_path.is_file() or output_path.is_symlink():
-        raise RuntimeError("published ParaView artifact file is missing or unsafe")
-    payload = output_path.read_bytes()
-    expected_size = event.get("size_bytes")
-    expected_checksum = event.get("checksum")
-    if (
-        isinstance(expected_size, bool)
-        or not isinstance(expected_size, int)
-        or len(payload) != expected_size
-        or expected_checksum != "sha256:" + hashlib.sha256(payload).hexdigest()
-    ):
-        raise RuntimeError("published ParaView artifact file failed replay validation")
+    _validate_published_artifact_file(event, output_path)
 
 
 @contextmanager
@@ -4014,6 +4486,55 @@ def _stage_png(
             temporary.unlink(missing_ok=True)
 
 
+def _stage_payload(
+    payload: bytes,
+    *,
+    output_dir: Path,
+    suffix: str,
+) -> Path:
+    """Persist one bounded private artifact payload under a transactional name."""
+    if (
+        not isinstance(payload, bytes)
+        or not payload
+        or len(payload) > MAX_EXPORTED_ARTIFACT_BYTES
+        or suffix not in {".json"}
+    ):
+        raise RuntimeError("ParaView artifact payload is invalid")
+    output_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if os.name != "nt":
+        output_dir.chmod(0o700)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=output_dir,
+        prefix=".paraview-artifact.",
+        suffix=f".tmp{suffix}",
+    )
+    temporary = Path(temporary_name)
+    descriptor_open = True
+    try:
+        try:
+            stream = os.fdopen(descriptor, "wb")
+        except BaseException:
+            os.close(descriptor)
+            descriptor_open = False
+            raise
+        descriptor_open = False
+        with stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        if temporary.stat().st_size != len(payload):
+            raise RuntimeError("ParaView artifact payload changed during staging")
+        if os.name != "nt":
+            temporary.chmod(0o600)
+        return temporary
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+    finally:
+        if descriptor_open:
+            os.close(descriptor)
+
+
 def _fsync_directory(path: Path) -> None:
     """Persist one directory update where descriptor fsync is supported."""
     if os.name == "nt":
@@ -4226,6 +4747,23 @@ def _safe_relative_png(value: object) -> PurePosixPath:
         )
     if path.suffix.casefold() != ".png":
         raise CommandError("invalid_arguments", "export_artifact supports PNG output")
+    return path
+
+
+def _safe_relative_json(value: object) -> PurePosixPath:
+    rendered = _bounded_text(value, "filename", maximum=1024)
+    if "\\" in rendered:
+        raise CommandError("invalid_arguments", "filename must use POSIX separators")
+    path = PurePosixPath(rendered)
+    if path.is_absolute() or path.as_posix() != rendered or ".." in path.parts:
+        raise CommandError(
+            "invalid_arguments", "filename must be normalized and relative"
+        )
+    if path.suffix.casefold() != ".json":
+        raise CommandError(
+            "invalid_arguments",
+            "export_scene supports canonical JSON output",
+        )
     return path
 
 

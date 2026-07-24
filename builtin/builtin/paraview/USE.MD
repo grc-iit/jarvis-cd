@@ -12,5 +12,28 @@ jarvis execution service-runtimes <execution-id> \
   --pipeline-id <pipeline> +json
 ```
 
+To start from a previously exported canonical scene, set
+`initial_scene=/path/to/scene.json` when appending or editing the service step.
+The setting is a declared local-file input and is materialized by JARVIS before
+launch. Omit it for the generic root-only scene. Export the current reusable
+scene with a revisioned service command:
+
+```json
+{
+  "schema_version": "jarvis.paraview.command.v2",
+  "command_id": "export-reusable-scene",
+  "operation": "export_scene",
+  "expected_revision": 12,
+  "arguments": {
+    "filename": "scenes/reusable-scene.json",
+    "fingerprint_constraint": "exact"
+  }
+}
+```
+
+Use `fingerprint_constraint:"compatible"` only when the target descriptor may
+differ but must retain the exported kind, format, topology, bounds, timestep
+count, and required fields.
+
 See [the service-runtime reference](../../../docs/service-runtimes.md) for
 configuration and command examples.

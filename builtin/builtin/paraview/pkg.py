@@ -14,6 +14,7 @@ from typing import Any, cast
 from jarvis_cd.core.pkg import Application
 from jarvis_cd.deployment import (
     ConfigurationCondition,
+    ConfigurationInputBinding,
     ConfigurationRule,
     ExecutionProfile,
     PackageDeploymentContract,
@@ -32,6 +33,7 @@ _MODE_EXECUTABLES = {
 }
 _HEADLESS_ARGUMENTS = ("--mesa", "--force-offscreen-rendering")
 _VERSION_COMPONENT = re.compile(r"\d+")
+_MAX_INITIAL_SCENE_BYTES = 2 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -59,13 +61,13 @@ class Paraview(Application):
     This class provides methods to launch the Paraview application.
     """
 
-    def _init(self):
+    def _init(self) -> None:
         """
         Initialize paths
         """
         pass
 
-    def _configure_menu(self):
+    def _configure_menu(self) -> list[dict[str, Any]]:
         """
         Create a CLI menu for the configurator method.
         For thorough documentation of these parameters, view:
@@ -142,6 +144,19 @@ class Paraview(Application):
                 ),
                 "type": str,
                 "default": "",
+            },
+            {
+                "name": "initial_scene",
+                "msg": (
+                    "Optional canonical reusable scene-manifest JSON file; "
+                    "requires mode=service"
+                ),
+                "type": str,
+                "default": "",
+                "input_binding": ConfigurationInputBinding(
+                    kind="local_file",
+                    structure="regular_file",
+                ).to_dict(),
             },
             {
                 "name": "service_bind_host",
@@ -221,6 +236,7 @@ class Paraview(Application):
                     requires=(
                         ConfigurationCondition("script", "is_not_empty"),
                         ConfigurationCondition("dataset_descriptor", "is_empty"),
+                        ConfigurationCondition("initial_scene", "is_empty"),
                     ),
                     description=(
                         "Batch execution requires a user script and does not "
@@ -231,6 +247,7 @@ class Paraview(Application):
                     when=(ConfigurationCondition("mode", "equals", "server"),),
                     requires=(
                         ConfigurationCondition("dataset_descriptor", "is_empty"),
+                        ConfigurationCondition("initial_scene", "is_empty"),
                     ),
                     description=(
                         "Plain client-server execution does not consume a live-view "
@@ -314,11 +331,17 @@ class Paraview(Application):
         if mode not in _MODE_EXECUTABLES:
             raise ValueError(f"Unsupported ParaView mode: {mode!r}")
         configured = self.config.get("dataset_descriptor")
+        initial_scene = self.config.get("initial_scene") or ""
         if mode != "service":
             if configured not in (None, ""):
                 raise ValueError(
                     "ParaView dataset_descriptor requires mode='service' for "
                     "live dataset viewing"
+                )
+            if initial_scene not in (None, ""):
+                raise ValueError(
+                    "ParaView initial_scene requires mode='service' for "
+                    "declarative scene import"
                 )
             return
 
@@ -329,8 +352,12 @@ class Paraview(Application):
                 "ParaView dataset_descriptor must be JSON text or a file path"
             )
         self._load_dataset_descriptor(configured, DatasetDescriptor)
+        if not isinstance(initial_scene, str):
+            raise ValueError("ParaView initial_scene must be a JSON file path")
+        if initial_scene:
+            self._read_initial_scene(initial_scene)
 
-    def start(self):
+    def start(self) -> None:
         """
         Launch an application. E.g., OrangeFS will launch the servers, clients,
         and metadata services on all necessary pkgs.
@@ -471,6 +498,10 @@ class Paraview(Application):
             package_root / "service_http.py",
             service_root / "service_http.py",
         )
+        self._stage_payload(
+            package_root / "scene_manifest.py",
+            service_root / "scene_manifest.py",
+        )
         supervisor = self._stage_payload(
             package_root / "service_supervisor.py",
             service_root / "service_supervisor.py",
@@ -516,6 +547,14 @@ class Paraview(Application):
             "--authorization-file",
             str(authorization_path),
         ]
+        initial_scene_value = cast(str, self.config.get("initial_scene") or "")
+        if initial_scene_value:
+            initial_scene_path = service_root / "initial-scene.json"
+            self._write_private_payload(
+                initial_scene_path,
+                self._read_initial_scene(initial_scene_value),
+            )
+            command.extend(["--initial-scene", str(initial_scene_path)])
         environment.update(
             {
                 "JARVIS_ARTIFACT_TRANSPORT": "sidecar",
@@ -774,6 +813,23 @@ class Paraview(Application):
                 raise ValueError("dataset_descriptor file is missing or too large")
             payload = path.read_text(encoding="utf-8")
         return descriptor_type.from_json(payload)
+
+    @staticmethod
+    def _read_initial_scene(configured: str) -> bytes:
+        """Read one bounded regular scene input before private service staging."""
+        rendered = os.path.expandvars(configured).strip()
+        if not rendered:
+            raise ValueError("initial_scene file path cannot be empty")
+        path = Path(rendered).expanduser()
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("initial_scene must be a regular file")
+        size = path.stat().st_size
+        if not 2 <= size <= _MAX_INITIAL_SCENE_BYTES:
+            raise ValueError("initial_scene file is empty or too large")
+        payload = path.read_bytes()
+        if len(payload) != size:
+            raise ValueError("initial_scene changed while it was being read")
+        return payload
 
     def _stage_progress_reporter(self) -> Path:
         """Copy the standalone reporter into the package's mounted shared path."""
