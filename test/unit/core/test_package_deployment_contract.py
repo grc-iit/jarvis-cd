@@ -271,6 +271,8 @@ class _RootProbeExec:
         self.stderr = {"localhost": ""}
         if "5.12" in command or "explicit" in command:
             self.stdout["localhost"] = "--mesa\n"
+        elif "--mesa --help" in command:
+            self.exit_code["localhost"] = 1
 
     def run(self) -> "_RootProbeExec":
         """Return the completed deterministic capability probe."""

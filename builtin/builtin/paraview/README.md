@@ -14,6 +14,17 @@ and array facts, and a SHA-256 fingerprint. It cannot contain a camera,
 threshold, color transfer, or scene recipe. Those are explicit versioned
 commands sent to the running service.
 
+Service mode also accepts an optional `initial_scene` file using the
+`jarvis.paraview.scene-manifest.v1` declarative contract. JARVIS declares this
+setting as a regular local-file input, so relay can synchronize a Host-local
+manifest without agent-managed upload or repeated edits. The service preflights
+the descriptor fingerprint policy, topology, bounds, timesteps, fields,
+filters, actors, color ranges, scalar bars, camera, plugins, and resource
+limits before readiness. It rejects executable Python, `.pvsm` state, paths,
+unknown fields, and unsupported plugins with a structured
+`jarvis.paraview.scene-rejection.v1` record. Empty `initial_scene` preserves
+the generic root-only workflow.
+
 Service-state v2 is an explicit scene graph, not a set of global view aliases.
 It starts with a stable reader node and visible root actor. Commands create
 branching slice, clip, threshold, and point-scalar contour nodes; create or
@@ -89,3 +100,14 @@ intentionally not part of the package contract.
 
 See [`docs/service-runtimes.md`](../../../docs/service-runtimes.md) for the
 exact report, state, command, SSE, and artifact schemas.
+
+`export_scene` writes a canonical JSON scene artifact through the same durable,
+recoverable JARVIS artifact ledger as image export. The path-free manifest
+records its source descriptor fingerprint, exact or compatible fingerprint
+policy, package and ParaView versions, final service revision, portable filter
+and actor aliases, frozen effective transfer ranges with measurement-policy
+provenance, scalar-bar choices, timestep, and camera. It deliberately omits
+authorization, service ports, execution/scheduler identities, and dataset
+member locations. Import copies the accepted manifest into the new execution
+as a queryable `provenance` artifact; later live commands continue at normal
+service revisions.

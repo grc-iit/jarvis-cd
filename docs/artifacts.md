@@ -72,3 +72,12 @@ scripts, and owned stdout/stderr streams where those streams exist. Diagnostic
 artifacts are discoverable metadata, not an authorization to download their
 contents; relay or agent-facing content access must apply a separate bounded
 access policy.
+
+The generic ParaView service publishes canonical reusable scenes as
+`visualization_scene` file artifacts with media type
+`application/vnd.jarvis.paraview.scene+json`. A live `export_scene` command
+uses role `output`; a successfully accepted `initial_scene` is copied into the
+new execution with role `provenance`. Their metadata binds the descriptor
+fingerprint, final/source revision, exact scene checksum, and source artifact
+identity without placing authorization, ports, scheduler identity, or dataset
+member paths inside the reusable manifest.
