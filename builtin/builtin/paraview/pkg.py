@@ -47,9 +47,13 @@ class _ParaViewRuntime:
         """Return package-selected launcher arguments for semantic headless mode."""
         if not force_offscreen:
             return ()
-        for argument in _HEADLESS_ARGUMENTS:
-            if argument in self.capabilities:
-                return (argument,)
+        arguments = tuple(
+            argument
+            for argument in _HEADLESS_ARGUMENTS
+            if argument in self.capabilities
+        )
+        if arguments:
+            return arguments
         raise RuntimeError(
             f"ParaView launcher {self.executable!r} does not advertise a supported "
             "headless rendering capability (--mesa or --force-offscreen-rendering)"
@@ -643,9 +647,20 @@ class Paraview(Application):
                 for value in output.values()
                 if isinstance(value, str)
             )
-            capabilities = frozenset(
+            capabilities = {
                 argument for argument in _HEADLESS_ARGUMENTS if argument in help_text
-            )
+            }
+            # Some ParaView launchers accept the Mesa selector in their wrapper
+            # even though the delegated pvpython help omits that wrapper option.
+            # Probe the parser without rendering so known-safe companion flags
+            # are preserved instead of silently selecting an incomplete mode.
+            if "--mesa" not in capabilities:
+                mesa_result = Exec(
+                    f"{shlex.quote(resolved)} --mesa --help",
+                    exec_info,
+                ).run()
+                if not self._failed_exit_codes(mesa_result):
+                    capabilities.add("--mesa")
             if require_headless and not capabilities:
                 continue
             usable.append(
@@ -653,7 +668,7 @@ class Paraview(Application):
                     position,
                     _ParaViewRuntime(
                         executable=resolved,
-                        capabilities=capabilities,
+                        capabilities=frozenset(capabilities),
                     ),
                 )
             )

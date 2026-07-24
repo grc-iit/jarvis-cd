@@ -2281,8 +2281,7 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
     command, exec_info = _CapturedExec.commands[0]
     assert "service_supervisor.py" in command
     assert "/runtime/paraview/bin/pvpython" in command
-    assert "--pvpython-options=--mesa" in command
-    assert "--force-offscreen-rendering" not in command
+    assert "--pvpython-options=--mesa --force-offscreen-rendering" in command
     assert "--bind-host 127.0.0.1" in command
     assert "--advertise-host 127.0.0.1" in command
     assert "--startup-timeout 600" in command
@@ -2317,7 +2316,7 @@ def test_package_service_mode_stages_generic_runtime_and_owned_output(
     package._start_service(dict(package.mod_env))
     deduplicated_command, _ = _CapturedExec.commands[1]
     assert deduplicated_command.count("--mesa") == 1
-    assert "--force-offscreen-rendering" not in deduplicated_command
+    assert deduplicated_command.count("--force-offscreen-rendering") == 1
     assert "--startup-timeout 30" in deduplicated_command
     assert [call[0] for call in _ResolvedWhich.calls] == ["pvpython", "pvpython"]
     assert _ResolvedWhich.calls[0][1].env["PATH"] == "/runtime/paraview/bin"
@@ -2409,8 +2408,8 @@ def test_package_parameters_describe_live_view_service_mode() -> None:
     assert "pvbatch_options" not in parameters
 
 
-def test_package_selects_one_deterministic_headless_backend() -> None:
-    """Mesa is preferred when available, with force-offscreen as fallback."""
+def test_package_selects_all_compatible_headless_controls() -> None:
+    """Mesa selection and forced offscreen rendering remain complementary."""
     both = package_module._ParaViewRuntime(
         executable="/runtime/bin/pvpython",
         capabilities=frozenset({"--force-offscreen-rendering", "--mesa"}),
@@ -2420,9 +2419,40 @@ def test_package_selects_one_deterministic_headless_backend() -> None:
         capabilities=frozenset({"--force-offscreen-rendering"}),
     )
 
-    assert both.arguments(force_offscreen=True) == ("--mesa",)
+    assert both.arguments(force_offscreen=True) == (
+        "--mesa",
+        "--force-offscreen-rendering",
+    )
     assert fallback.arguments(force_offscreen=True) == ("--force-offscreen-rendering",)
     assert both.arguments(force_offscreen=False) == ()
+
+
+def test_package_probes_hidden_mesa_wrapper_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A launcher wrapper may accept Mesa while omitting it from delegated help."""
+    package = cast(Any, object.__new__(package_module.Paraview))
+    package.config = {"cwd": ""}
+    package.pipeline = SimpleNamespace(get_hostfile=lambda: object())
+    _ResolvedWhich.calls = []
+    monkeypatch.setattr(package_module, "Which", _ResolvedWhich)
+    monkeypatch.setattr(package_module, "Exec", _CapturedExec)
+    monkeypatch.setattr(
+        _CapturedExec,
+        "help_text",
+        "--force-offscreen-rendering\n",
+    )
+
+    runtime = package._resolve_runtime(
+        "service",
+        {"PATH": "/runtime/paraview/bin"},
+    )
+
+    assert runtime.capabilities == frozenset({"--mesa", "--force-offscreen-rendering"})
+    assert runtime.arguments(force_offscreen=True) == (
+        "--mesa",
+        "--force-offscreen-rendering",
+    )
 
 
 @pytest.mark.parametrize(
