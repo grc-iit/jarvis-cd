@@ -139,6 +139,28 @@ The directory where results are stored. You can use environment variables:
 - `${CONFIG_DIR}` - Pipeline's config directory
 - `${HOME}` - User's home directory
 
+### run_timeout (optional)
+
+A wall-clock budget, in seconds, for a single combination. Omitted (the
+default), a run is unbounded.
+
+Set it when any package can wedge. The per-run error handling only catches
+exceptions, and a hang is not an exception -- so without a budget one stuck
+package blocks the sweep forever, and under a scheduler it consumes the
+whole allocation and you lose every result, including the combinations that
+would have passed.
+
+On expiry the run is torn down (bounded, best-effort, so a wedged `stop()`
+cannot re-hang the sweep), that row is recorded as `failed` with the reason
+in the `error` column, and the next combination starts.
+
+```yaml
+run_timeout: 1800   # 30 minutes per combination
+```
+
+Pick a value comfortably above the slowest healthy run -- it is a
+deadlock backstop, not a performance bound.
+
 ### scheduler (optional)
 
 A top-level `scheduler:` block plays one of two roles depending on

@@ -59,3 +59,22 @@ Clean produced data
 ```bash
 jarvis pipeline clean
 ```
+## v3 options (#526 regression pipelines)
+
+- `num_nodes` (default `0` = all hosts) — launch on the first N hosts of the
+  pipeline hostfile. Enables node-count sweeps ({1,2,4} nodes) inside one
+  allocation without changing the pipeline hostfile.
+- `single_instance` (default `false`) — pin ior to the FIRST host: the
+  single-client baseline (e.g. NFS) on multi-node pipelines. Applied after
+  `num_nodes` subsetting (it wins in the degenerate combination).
+- `stonewall` (default `0` = off) — ior `-D <seconds>`: cap each write/read
+  phase at a fixed number of seconds.
+- `log` defaults to `<shared_dir>/ior.log`. Pipelines with MORE THAN ONE ior
+  package must set a distinct `log:` per package or their stats overwrite
+  each other.
+
+In containerized pipelines (`base_deploy_mode: container` + a prebuilt SIF)
+ior and mpiexec come from the image and run inside the per-node apptainer
+instance; multi-node ranks spawn over the instance sshd on
+`container_ssh_port`. The package passes an inline `--host` list in container
+mode so the hostfile file itself need not be visible inside the instance.

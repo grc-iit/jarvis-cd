@@ -164,9 +164,16 @@ class SlurmScheduler(Scheduler):
             if value is True:
                 lines.append(f"#SBATCH {flag}")
             else:
-                lines.append(f"#SBATCH {flag}={value}")
+                # Expand ${VAR} host-side: slurm does NOT expand env vars in
+                # #SBATCH directives, so an unexpanded ${HOME} in output:/error:
+                # is taken literally (relative to WorkDir), the file can't be
+                # opened, and the job fails at launch with no logs. os.path.
+                # expandvars leaves slurm patterns (%j, %x, ...) and unset vars
+                # untouched. This mirrors how the rest of jarvis expands env
+                # vars in YAML paths (container_binds, tmp_bind_root).
+                lines.append(f"#SBATCH {flag}={os.path.expandvars(str(value))}")
         for raw in self.spec.get('sbatch_args', []) or []:
-            lines.append(f"#SBATCH {raw}")
+            lines.append(f"#SBATCH {os.path.expandvars(str(raw))}")
         return lines
 
     def render(self) -> str:

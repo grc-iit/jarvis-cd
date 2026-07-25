@@ -1,0 +1,17 @@
+FROM ##DEPLOY_BASE##
+
+# JuiceFS ships as a single static binary (no apt package); fuse3 provides
+# the FUSE userspace the mount needs. Version is inlined (not an ARG) so the
+# content also converts cleanly on the apptainer-native build path.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        fuse3 libfuse3-3 \
+        curl ca-certificates \
+        openssh-server openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/run/sshd \
+    && curl -fsSL "https://github.com/juicedata/juicefs/releases/download/v1.2.3/juicefs-1.2.3-linux-amd64.tar.gz" \
+       | tar -xz -C /usr/local/bin juicefs \
+    && juicefs version
+
+EXPOSE 22
+CMD ["/bin/bash"]
