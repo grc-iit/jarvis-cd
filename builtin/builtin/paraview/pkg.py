@@ -31,7 +31,7 @@ _MODE_EXECUTABLES = {
     "server": "pvserver",
     "service": "pvpython",
 }
-_HEADLESS_ARGUMENTS = ("--mesa", "--force-offscreen-rendering")
+_HEADLESS_ARGUMENTS = ("--force-offscreen-rendering", "--mesa")
 _VERSION_COMPONENT = re.compile(r"\d+")
 _MAX_INITIAL_SCENE_BYTES = 2 * 1024 * 1024
 
@@ -47,13 +47,9 @@ class _ParaViewRuntime:
         """Return package-selected launcher arguments for semantic headless mode."""
         if not force_offscreen:
             return ()
-        arguments = tuple(
-            argument
-            for argument in _HEADLESS_ARGUMENTS
-            if argument in self.capabilities
-        )
-        if arguments:
-            return arguments
+        for argument in _HEADLESS_ARGUMENTS:
+            if argument in self.capabilities:
+                return (argument,)
         raise RuntimeError(
             f"ParaView launcher {self.executable!r} does not advertise a supported "
             "headless rendering capability (--mesa or --force-offscreen-rendering)"

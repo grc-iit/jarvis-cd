@@ -401,10 +401,12 @@ the health endpoint can report ready. Rejections emit
 are not included.
 
 The package resolves `pvpython` from the pipeline execution environment. It
-probes that executable and selects one supported headless backend itself:
-`--mesa` when advertised, otherwise `--force-offscreen-rendering`. Site paths
-and raw launcher flags are not semantic package parameters. A missing or
-unusable dependency fails before the supervisor starts.
+probes that executable and selects one supported headless control itself:
+`--force-offscreen-rendering` when advertised, otherwise `--mesa`. Selecting
+only one avoids forwarding wrapper-only options into the delegated
+`pvpython-real` process. Site paths and raw launcher flags are not semantic
+package parameters. A missing or unusable dependency fails before the
+supervisor starts.
 
 The backend is loopback-only. The relay connector runs inside the owned
 allocation and dials `127.0.0.1`; JARVIS rejects non-loopback bind or advertised

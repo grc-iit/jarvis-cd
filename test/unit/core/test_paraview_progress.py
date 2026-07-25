@@ -256,7 +256,8 @@ def test_generic_paraview_batch_resolves_runtime_and_hostfile(
     package.start()
 
     command, exec_info = _CapturedExec.commands[0]
-    assert command.startswith("/runtime/paraview/bin/pvbatch --mesa")
+    assert command.startswith("/runtime/paraview/bin/pvbatch --force-offscreen-rendering")
+    assert command.count("--mesa") == 0
     assert command.count("--force-offscreen-rendering") == 1
     assert exec_info.hostfile is hostfile
     assert exec_info.env["JARVIS_PACKAGE_NAME"] == "builtin.paraview"
