@@ -147,6 +147,22 @@ class TestPipelineCoverage(unittest.TestCase):
         except Exception as e:
             self.fail(f"rm() raised unexpectedly: {e}")
 
+    def test_rm_rejects_referenced_interceptor(self):
+        """An interceptor cannot be removed while a package still references it."""
+        pipeline = self._make_pipeline("rm_interceptor_in_use")
+        pipeline.append("builtin.example_interceptor", package_alias="monitor")
+        pipeline.append(
+            "builtin.echo",
+            package_alias="workload",
+            config_args=['interceptors=["monitor"]'],
+        )
+
+        with self.assertRaisesRegex(ValueError, "referenced by: workload"):
+            pipeline.rm("monitor")
+
+        reloaded = Pipeline("rm_interceptor_in_use")
+        self.assertIn("monitor", reloaded.interceptors)
+
     # ------------------------------------------------------------------
     # status()
     # ------------------------------------------------------------------
@@ -238,6 +254,129 @@ class TestPipelineCoverage(unittest.TestCase):
         reloaded = Pipeline("append_valid")
         self.assertEqual(reloaded.packages[0]["config"]["retry_count"], 4)
 
+    def test_append_routes_interceptor_without_implicit_attachment(self):
+        """Appending an Interceptor stores it separately without changing applications."""
+        pipeline = self._make_pipeline("append_interceptor")
+
+        pipeline.append(
+            "builtin.example_interceptor",
+            package_alias="monitor",
+            config_args=["debug_mode=false"],
+        )
+        pipeline.append("builtin.echo", package_alias="workload")
+
+        self.assertEqual(pipeline.packages[0]["pkg_id"], "workload")
+        self.assertEqual(pipeline.packages[0]["config"]["interceptors"], [])
+        self.assertEqual(
+            pipeline.interceptors["monitor"]["pkg_type"],
+            "builtin.example_interceptor",
+        )
+        self.assertIs(pipeline.get_pkg("monitor"), pipeline.interceptors["monitor"])
+
+        reloaded = Pipeline("append_interceptor")
+        self.assertEqual(reloaded.packages[0]["config"]["interceptors"], [])
+        self.assertEqual(
+            reloaded.interceptors["monitor"]["config"]["debug_mode"], False
+        )
+
+    def test_append_supports_selective_named_interceptor_instances(self):
+        """Applications can select independently configured interceptor aliases."""
+        pipeline = self._make_pipeline("append_interceptor_selection")
+
+        pipeline.append(
+            "builtin.darshan",
+            package_alias="darshan_ior",
+            config_args=["log_dir=/tmp/ior_logs", "job_id=ior"],
+        )
+        pipeline.append(
+            "builtin.darshan",
+            package_alias="darshan_clio",
+            config_args=["log_dir=/tmp/clio_logs", "job_id=clio"],
+        )
+        pipeline.append(
+            "builtin.ior",
+            package_alias="ior",
+            config_args=['interceptors=["darshan_ior"]'],
+        )
+        pipeline.append(
+            "builtin.echo",
+            package_alias="clio",
+            config_args=['interceptors=["darshan_clio"]'],
+        )
+
+        self.assertEqual(
+            pipeline.interceptors["darshan_ior"]["config"]["log_dir"],
+            "/tmp/ior_logs",
+        )
+        self.assertEqual(
+            pipeline.interceptors["darshan_clio"]["config"]["log_dir"],
+            "/tmp/clio_logs",
+        )
+        self.assertEqual(
+            pipeline.packages[0]["config"]["interceptors"], ["darshan_ior"]
+        )
+        self.assertEqual(
+            pipeline.packages[1]["config"]["interceptors"], ["darshan_clio"]
+        )
+
+    def test_append_rejects_unknown_interceptor_reference_atomically(self):
+        """An application cannot reference an interceptor absent from the pipeline."""
+        pipeline = self._make_pipeline("append_interceptor_missing")
+
+        with self.assertRaisesRegex(ValueError, "unknown interceptor"):
+            pipeline.append(
+                "builtin.echo",
+                package_alias="workload",
+                config_args=['interceptors=["missing"]'],
+            )
+
+        self.assertEqual(pipeline.packages, [])
+
+    def test_save_rejects_non_interceptor_in_interceptor_section(self):
+        """A top-level interceptor definition must derive from Interceptor."""
+        pipeline = self._make_pipeline("invalid_interceptor_type")
+        pipeline.interceptors["not_an_interceptor"] = {
+            "pkg_type": "builtin.echo",
+            "pkg_id": "not_an_interceptor",
+            "pkg_name": "echo",
+            "global_id": "invalid_interceptor_type.not_an_interceptor",
+            "config": pipeline._get_package_default_config("builtin.echo"),
+        }
+
+        with self.assertRaisesRegex(ValueError, "is not an Interceptor package"):
+            pipeline.save()
+
+    def test_interceptor_modifies_only_the_explicitly_linked_package(self):
+        """Runtime environment mutation follows explicit package references."""
+        pipeline = self._make_pipeline("interceptor_runtime_link")
+        pipeline.append(
+            "builtin.example_interceptor",
+            package_alias="monitor",
+            config_args=["library_path=/tmp/libmonitor.so"],
+        )
+        pipeline.append("builtin.echo", package_alias="plain")
+        pipeline.append(
+            "builtin.echo",
+            package_alias="observed",
+            config_args=['interceptors=["monitor"]'],
+        )
+
+        plain = pipeline._load_package_instance(pipeline.packages[0], pipeline.env)
+        observed = pipeline._load_package_instance(pipeline.packages[1], pipeline.env)
+        pipeline._apply_interceptors_to_package(plain, pipeline.packages[0])
+        pipeline._apply_interceptors_to_package(observed, pipeline.packages[1])
+
+        self.assertNotIn("LD_PRELOAD", plain.mod_env)
+        self.assertEqual(observed.mod_env["LD_PRELOAD"], "/tmp/libmonitor.so")
+
+    def test_append_rejects_cross_kind_alias_collision(self):
+        """Package and interceptor IDs share one pipeline namespace."""
+        pipeline = self._make_pipeline("append_interceptor_collision")
+        pipeline.append("builtin.example_interceptor", package_alias="shared")
+
+        with self.assertRaisesRegex(ValueError, "already exists"):
+            pipeline.append("builtin.echo", package_alias="shared")
+
     # ------------------------------------------------------------------
     # configure_package()
     # ------------------------------------------------------------------
@@ -256,6 +395,16 @@ class TestPipelineCoverage(unittest.TestCase):
         # Reload pipeline and confirm nprocs was persisted
         pipeline2 = Pipeline("cfgpkg_test")
         self.assertEqual(pipeline2.packages[0]["config"].get("nprocs"), 8)
+
+    def test_configure_package_updates_interceptor_config(self):
+        """Generic package configuration also addresses Interceptor instances."""
+        pipeline = self._make_pipeline("cfg_interceptor")
+        pipeline.append("builtin.example_interceptor", package_alias="monitor")
+
+        pipeline.configure_package("monitor", ["debug_mode=false"])
+
+        reloaded = Pipeline("cfg_interceptor")
+        self.assertIs(reloaded.interceptors["monitor"]["config"]["debug_mode"], False)
 
     def test_configure_package_can_reset_a_value_to_its_default(self):
         """Explicit default values replace an earlier non-default value."""

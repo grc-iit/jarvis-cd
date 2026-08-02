@@ -802,6 +802,30 @@ jarvis ppl append builtin.ior benchmark_run
 jarvis ppl append my_repo.custom_app my_app
 ```
 
+`ppl append` determines package behavior from the selected class. Classes derived
+from `Interceptor` are stored as named pipeline interceptors. Applications and
+services select interceptor aliases explicitly through their common
+`interceptors` setting:
+
+```bash
+# Configure two independent instances of the same interceptor.
+jarvis ppl append builtin.darshan darshan_ior \
+  log_dir=/tmp/ior_logs job_id=ior
+jarvis ppl append builtin.darshan darshan_clio \
+  log_dir=/tmp/clio_logs job_id=clio
+
+# Apply each instance only to its intended package.
+jarvis ppl append builtin.ior ior \
+  'interceptors=["darshan_ior"]'
+jarvis ppl append my_repo.clio_core clio \
+  'interceptors=["darshan_clio"]'
+```
+
+Interceptor aliases share the pipeline package namespace. JARVIS verifies that
+every referenced alias exists and derives from `Interceptor` before saving or
+starting the pipeline. Removing an interceptor that is still referenced fails
+instead of silently running the target package without interception.
+
 #### Remove Packages from Pipeline
 ```bash
 # Remove package by instance name
