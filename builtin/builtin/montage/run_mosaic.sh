@@ -19,6 +19,9 @@ RAW_DIR="${1:-/opt/montage-bench/raw_images}"
 HDR="${2:-/opt/montage-bench/region.hdr}"
 OUT="${3:-${HOME}/montage_out}"
 HOSTS="${4:-}"
+REGION="${MONTAGE_REGION:-M17}"
+BAND="${MONTAGE_BAND:-J}"
+SIZE="${MONTAGE_SIZE:-0.2}"
 
 mkdir -p "$OUT"/{projected,diffs,corrected}
 
@@ -28,7 +31,7 @@ mkdir -p "$OUT"/{projected,diffs,corrected}
 # reachable now. Bounded so a persistent outage fails fast with a clear
 # message instead of hanging the pipeline start.
 if [ ! -s "$HDR" ] || [ -z "$(ls -A "$RAW_DIR" 2>/dev/null)" ]; then
-    echo "Benchmark region not pre-staged; fetching M17 J-band at runtime..."
+    echo "Archive region not pre-staged; fetching ${REGION} ${BAND}-band at runtime..."
     mkdir -p "$RAW_DIR"
     cd "$(dirname "$HDR")"
     # Montage's homegrown HTTP fetcher (svc/svc.c) can't parse
@@ -38,9 +41,9 @@ if [ ! -s "$HDR" ] || [ -z "$(ls -A "$RAW_DIR" 2>/dev/null)" ]; then
     # mArchiveExec with a curl loop — libcurl handles authenticated
     # proxies, so the FITS pulls work behind a squid with creds.
     env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-        mHdr "M17" 0.2 "$(basename "$HDR")"
+        mHdr "$REGION" "$SIZE" "$(basename "$HDR")"
     env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
-        mArchiveList 2mass J "M17" 0.2 0.2 remote.tbl
+        mArchiveList 2mass "$BAND" "$REGION" "$SIZE" "$SIZE" remote.tbl
     fetched=0
     while read -r url; do
         fname=$(basename "$url")
