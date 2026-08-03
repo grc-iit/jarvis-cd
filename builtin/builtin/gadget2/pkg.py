@@ -359,7 +359,61 @@ class Gadget2(Application):
         staged = self._output_dir() / relative
         if staged.is_symlink() or not staged.is_file():
             raise RuntimeError("staged Gadget2 parameter file is unavailable")
+        self._prepare_native_output_directory(staged)
         return staged
+
+    @staticmethod
+    def _prepare_native_output_directory(parameter: Path) -> Path:
+        """Create the parameter-declared output directory inside owned storage."""
+
+        try:
+            lines = parameter.read_text(encoding="utf-8").splitlines()
+        except (OSError, UnicodeError) as exc:
+            raise ValueError(
+                "Gadget2 parameter file must be readable UTF-8 text"
+            ) from exc
+        values: list[str] = []
+        for raw_line in lines:
+            statement = raw_line.partition("%")[0].partition(";")[0].strip()
+            if not statement:
+                continue
+            tokens = statement.split()
+            if tokens[0] != "OutputDir":
+                continue
+            if len(tokens) != 2:
+                raise ValueError("Gadget2 OutputDir must contain one path token")
+            values.append(tokens[1])
+        if len(values) != 1:
+            raise ValueError(
+                "Gadget2 parameter file must declare OutputDir exactly once"
+            )
+
+        raw_output = values[0]
+        if "\\" in raw_output:
+            raise ValueError("Gadget2 OutputDir must use a confined POSIX path")
+        relative = PurePosixPath(raw_output)
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or (relative.parts and ":" in relative.parts[0])
+        ):
+            raise ValueError("Gadget2 OutputDir must use a confined POSIX path")
+        lexical_target = parameter.parent.joinpath(*relative.parts)
+        if lexical_target.is_symlink():
+            raise ValueError("Gadget2 OutputDir cannot be a symbolic link")
+        root = parameter.parent.resolve()
+        target = lexical_target.resolve(strict=False)
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("Gadget2 OutputDir escapes staged input storage") from exc
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise RuntimeError("could not create Gadget2 OutputDir") from exc
+        if target.is_symlink() or not target.is_dir():
+            raise ValueError("Gadget2 OutputDir must resolve to a directory")
+        return target
 
     def _start_native(self) -> None:
         """Launch the staged scientific input and propagate every rank failure."""

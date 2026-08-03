@@ -146,11 +146,15 @@ def _package(tmp_path: Path, config: dict[str, Any]) -> Any:
     return package
 
 
-def _write_bundle(destination: Path) -> Path:
+def _write_bundle(
+    destination: Path,
+    *,
+    parameter: bytes = (
+        b"InitCondFile ICs/galaxy.dat\nOutputDir output/\nEnergyFile energy.txt\n"
+    ),
+) -> Path:
     files = {
-        "galaxy/galaxy.param": (
-            b"InitCondFile ICs/galaxy.dat\nOutputDir output/\nEnergyFile energy.txt\n"
-        ),
+        "galaxy/galaxy.param": parameter,
         "galaxy/ICs/galaxy.dat": b"gadget2-initial-condition\x00\x01",
     }
     manifest = {
@@ -246,11 +250,43 @@ def test_bundle_is_verified_and_staged_before_native_launch(tmp_path: Path) -> N
     staged_ic = workdir / "ICs" / "galaxy.dat"
     assert staged_parameter.read_bytes().startswith(b"InitCondFile")
     assert staged_ic.read_bytes() == b"gadget2-initial-condition\x00\x01"
+    assert (workdir / "output").is_dir()
     assert bundle.read_bytes() == source_bytes
     command = _CapturedExec.commands[-1]
     assert command == "Gadget2 galaxy.param"
     assert _CapturedExec.infos[-1].cwd == str(workdir.resolve())
     assert isinstance(_CapturedExec.infos[-1], gadget2_package.MpiExecInfo)
+
+
+@pytest.mark.parametrize(
+    ("parameter", "message"),
+    [
+        (b"InitCondFile ICs/galaxy.dat\n", "declare OutputDir exactly once"),
+        (
+            b"OutputDir output/\nOutputDir other/\n",
+            "declare OutputDir exactly once",
+        ),
+        (b"OutputDir ../escape/\n", "confined POSIX path"),
+        (b"OutputDir /tmp/escape/\n", "confined POSIX path"),
+        (b"OutputDir C:/escape/\n", "confined POSIX path"),
+        (b"OutputDir output\\escape\n", "confined POSIX path"),
+        (b"OutputDir output path\n", "one path token"),
+    ],
+)
+def test_native_output_directory_is_single_and_confined(
+    tmp_path: Path,
+    parameter: bytes,
+    message: str,
+) -> None:
+    """A supplied parameter cannot direct Gadget2 outside staged storage."""
+
+    bundle = _write_bundle(tmp_path / "galaxy.tar", parameter=parameter)
+    package = _package(tmp_path, _base_config(input_bundle=str(bundle)))
+
+    with pytest.raises(ValueError, match=message):
+        package.start()
+
+    assert _CapturedExec.commands == []
 
 
 def test_parameter_override_must_name_a_declared_bundle_file(tmp_path: Path) -> None:
