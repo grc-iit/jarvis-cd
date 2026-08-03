@@ -74,7 +74,7 @@ else
     PASS=0; FAIL=0
     for p in "${PDBS[@]}"; do
         tag=$(basename "$p" .pdb)
-        if ls "$OUT_DIR/$tag/"*_solvate.gro >/dev/null 2>&1; then
+        if [ -s "$OUT_DIR/$tag/solvated.gro" ]; then
             PASS=$((PASS+1))
         else
             FAIL=$((FAIL+1))
