@@ -29,6 +29,7 @@ def _module() -> ModuleType:
 def _write_products(root: Path) -> None:
     (root / "channel").mkdir(parents=True)
     (root / "channel" / "input.i3d").write_text("input\n", encoding="utf-8")
+    (root / "channel" / "jarvis-input.i3d").write_text("input\n", encoding="utf-8")
     (root / "channel" / "adios2_config.xml").write_text("<xml/>\n", encoding="utf-8")
     (root / "channel" / "xcompact3d.log").write_text(
         "UT 6.666662e-1 -4.6e-7\n", encoding="utf-8"
@@ -56,6 +57,7 @@ def test_finalization_reports_owned_results_and_excludes_staged_inputs(
             {
                 module.PurePosixPath("channel/input.i3d"),
                 module.PurePosixPath("channel/adios2_config.xml"),
+                module.PurePosixPath("channel/jarvis-input.i3d"),
             }
         ),
     )
@@ -70,6 +72,7 @@ def test_finalization_reports_owned_results_and_excludes_staged_inputs(
     assert collection.structure is ArtifactStructure.COLLECTION
     assert collection.state is ArtifactState.FINALIZED
     assert "channel/input.i3d" not in collection.metadata["member_names"]
+    assert "channel/jarvis-input.i3d" not in collection.metadata["member_names"]
     names = {item.logical_name: item for item in observations[1:]}
     assert names["xcompact3d-log"].format == "xcompact3d-runtime-log"
     assert names["xcompact3d-checkpoint"].checksum is not None

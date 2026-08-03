@@ -199,9 +199,12 @@ def test_bundle_selects_one_manifest_input_without_modifying_it(tmp_path: Path) 
     package.start()
 
     staged = tmp_path / "shared" / "run" / "channel" / "input_test_z.i3d"
+    launch_input = staged.parent / "jarvis-input.i3d"
     assert staged.read_bytes().endswith(b"idir_stream=3\n/End\n")
+    assert launch_input.read_bytes() == staged.read_bytes()
     command = _CapturedExec.commands[-1]
-    assert shlex.quote(str(staged.resolve())) in command
+    assert command.startswith("xcompact3d jarvis-input.i3d ")
+    assert shlex.quote(str(staged.resolve())) not in command
     assert str((staged.parent / "xcompact3d.log").resolve()) in command
     assert _CapturedExec.infos[-1].cwd == str(staged.parent.resolve())
 
@@ -217,9 +220,33 @@ def test_single_input_is_copied_to_owned_output_before_launch(tmp_path: Path) ->
     package.start()
 
     staged = tmp_path / "shared" / "run" / "input.i3d"
+    launch_input = staged.parent / "jarvis-input.i3d"
     assert staged.read_bytes() == source.read_bytes()
-    assert shlex.quote(str(staged.resolve())) in _CapturedExec.commands[-1]
+    assert launch_input.read_bytes() == staged.read_bytes()
+    assert _CapturedExec.commands[-1].startswith("xcompact3d jarvis-input.i3d ")
+    assert shlex.quote(str(staged.resolve())) not in _CapturedExec.commands[-1]
     assert _CapturedExec.infos[-1].cwd == str(staged.parent.resolve())
+
+
+def test_reserved_runtime_input_name_cannot_replace_a_bundle_member(
+    tmp_path: Path,
+) -> None:
+    """A bundle cannot make the short runtime alias overwrite another input."""
+
+    bundle = _write_bundle(tmp_path / "channel.tar")
+    package = _package(
+        tmp_path,
+        _base_config(input_bundle=str(bundle), input_path="channel/input_test_z.i3d"),
+    )
+    collision = tmp_path / "shared" / "run" / "channel" / "jarvis-input.i3d"
+    collision.parent.mkdir(parents=True)
+    collision.write_text("unrelated\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="runtime input alias already exists"):
+        package.start()
+
+    assert collision.read_text(encoding="utf-8") == "unrelated\n"
+    assert _CapturedExec.commands == []
 
 
 def test_ambiguous_or_undeclared_inputs_fail_before_launch(tmp_path: Path) -> None:

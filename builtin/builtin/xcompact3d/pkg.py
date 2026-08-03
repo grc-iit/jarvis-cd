@@ -30,6 +30,7 @@ from jarvis_cd.shell.process import Mkdir, Rm
 
 _EXECUTABLE_CANDIDATES = ("xcompact3d", "incompact3d")
 _MAX_INPUT_BYTES = 64 * 1024 * 1024
+_RUNTIME_INPUT_NAME = "jarvis-input.i3d"
 
 
 class Xcompact3d(Application):
@@ -337,12 +338,25 @@ class Xcompact3d(Application):
             relative = selected.relative_to(bundle.root)
             stage_input_bundle(bundle, output_dir)
             staged = output_dir / relative
-            return staged, staged.parent
+            return self._stage_runtime_input(staged), staged.parent
 
         configured_input = self.config.get("inputs")
         assert isinstance(configured_input, str) and configured_input
         staged = self._stage_single_input(configured_input, output_dir)
-        return staged, output_dir
+        return self._stage_runtime_input(staged), output_dir
+
+    @staticmethod
+    def _stage_runtime_input(selected: Path) -> Path:
+        """Copy the selected input to a short, reserved solver argument."""
+
+        launch_input = selected.parent / _RUNTIME_INPUT_NAME
+        if launch_input == selected:
+            return selected
+        if launch_input.exists() or launch_input.is_symlink():
+            raise ValueError("Xcompact3D runtime input alias already exists")
+        shutil.copyfile(selected, launch_input, follow_symlinks=False)
+        os.chmod(launch_input, 0o600)
+        return launch_input
 
     def start(self) -> None:
         """Launch Xcompact3D and fail the pipeline on any rank failure."""
@@ -363,10 +377,11 @@ class Xcompact3d(Application):
                 raise RuntimeError("Xcompact3D executable is unavailable through PATH")
             exec_kwargs = {}
         log_path = cwd / "xcompact3d.log"
+        input_argument = input_path.name
         command = " ".join(
             (
                 shlex.quote(executable),
-                shlex.quote(str(input_path)),
+                shlex.quote(input_argument),
                 ">",
                 shlex.quote(str(log_path)),
                 "2>&1",

@@ -24,6 +24,7 @@ from jarvis_cd.input_bundle import extract_input_bundle
 _MAX_DISCOVERED_ENTRIES = 4096
 _MAX_REPORTED_MEMBERS = 256
 _MAX_CHECKSUM_BYTES = 64 * 1024 * 1024
+_RUNTIME_INPUT_NAME = "jarvis-input.i3d"
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,9 +322,19 @@ def adapter_from_package(package: dict[str, Any]) -> Xcompact3dArtifactAdapter |
         input_paths.update(
             PurePosixPath(item.path) for item in materialized.manifest.files
         )
+        requested = package.get("input_path")
+        selected = (
+            PurePosixPath(requested)
+            if isinstance(requested, str) and requested
+            else PurePosixPath(
+                materialized.entrypoint.relative_to(materialized.root).as_posix()
+            )
+        )
+        input_paths.add(selected.parent / _RUNTIME_INPUT_NAME)
     configured_input = package.get("inputs")
     if isinstance(configured_input, str) and configured_input:
         input_paths.add(PurePosixPath(Path(configured_input).name))
+        input_paths.add(PurePosixPath(_RUNTIME_INPUT_NAME))
     return Xcompact3dArtifactAdapter(output_dir, frozenset(input_paths))
 
 
