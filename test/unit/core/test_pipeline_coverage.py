@@ -319,6 +319,27 @@ class TestPipelineCoverage(unittest.TestCase):
             pipeline.packages[1]["config"]["interceptors"], ["darshan_clio"]
         )
 
+    def test_append_accepts_native_gadget2_without_hidden_legacy_paths(self):
+        """The advertised native profile does not require stock-case controls."""
+        pipeline = self._make_pipeline("append_gadget2_native")
+
+        pipeline.append(
+            "builtin.gadget2",
+            package_alias="galaxy",
+            config_args=[
+                "input_bundle=/tmp/galaxy.tar",
+                "parameter_path=galaxy/galaxy.param",
+                "out=galaxy-run",
+                "nprocs=4",
+                "ppn=4",
+            ],
+        )
+
+        config = pipeline.packages[0]["config"]
+        self.assertEqual(config["input_bundle"], "/tmp/galaxy.tar")
+        self.assertIsNone(config["gadget2_path"])
+        self.assertIsNone(config["output"])
+
     def test_append_rejects_unknown_interceptor_reference_atomically(self):
         """An application cannot reference an interceptor absent from the pipeline."""
         pipeline = self._make_pipeline("append_interceptor_missing")
@@ -826,6 +847,24 @@ class TestPipelineCoverage(unittest.TestCase):
             with self.assertRaises(ValueError) as ctx:
                 pipeline._validate_required_config("builtin.ior", {})
         self.assertIn("Missing required", str(ctx.exception))
+
+    def test_validate_required_honors_explicit_conditional_override(self):
+        """A package may defer a conditionally required field to configuration."""
+        pipeline = self._make_pipeline("vrc_conditional")
+
+        from unittest.mock import MagicMock, patch
+
+        mock_pkg = MagicMock()
+        mock_pkg.configure_menu.return_value = [
+            {
+                "name": "legacy_profile_path",
+                "default": None,
+                "required": False,
+            },
+        ]
+
+        with patch.object(pipeline, "_load_package_instance", return_value=mock_pkg):
+            pipeline._validate_required_config("builtin.ior", {})
 
 
 if __name__ == "__main__":

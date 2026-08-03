@@ -4253,10 +4253,17 @@ class Pipeline:
                         name = menu_item.get("name")
                         default_value = menu_item.get("default")
 
-                        # If parameter has no default and is not provided in config, it's required
+                        # Preserve the historical ``default=None`` convention,
+                        # while allowing packages with conditional profiles to
+                        # declare that a nullable-looking legacy setting is not
+                        # unconditionally required. PkgArgParse already treats
+                        # the explicit ``required`` field as authoritative.
+                        required = menu_item.get("required")
+                        if required is None:
+                            required = default_value is None
                         if (
                             name
-                            and default_value is None
+                            and required is True
                             and (name not in config or config[name] is None)
                         ):
                             missing_required.append(name)

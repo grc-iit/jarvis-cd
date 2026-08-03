@@ -200,6 +200,10 @@ def test_agent_contract_exposes_bundle_profile_and_hides_legacy_defaults() -> No
     }
     assert menu["parameter_path"]["default"] == ""
     assert menu["out"]["default"] == "run"
+    assert menu["gadget2_path"]["default"] is None
+    assert menu["gadget2_path"]["required"] is False
+    assert menu["output"]["default"] is None
+    assert menu["output"]["required"] is False
     assert all(
         menu[name]["agent_visible"] is False
         for name in {

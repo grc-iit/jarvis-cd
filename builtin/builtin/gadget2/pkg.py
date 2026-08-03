@@ -102,6 +102,7 @@ class Gadget2(Application):
                 "msg": "Legacy source-tree path used by stock examples",
                 "type": str,
                 "default": None,
+                "required": False,
                 "agent_visible": False,
             },
             {
@@ -117,6 +118,7 @@ class Gadget2(Application):
                 "msg": "Legacy stock-case output directory",
                 "type": str,
                 "default": None,
+                "required": False,
                 "agent_visible": False,
             },
             {
