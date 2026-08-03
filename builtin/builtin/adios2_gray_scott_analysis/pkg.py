@@ -453,12 +453,6 @@ class Adios2GrayScottAnalysis(Application):
 
     def _configure(self, **kwargs: Any) -> None:
         super()._configure(**kwargs)
-        output = self.resolve_shared_path(
-            self.config.get("output_file"),
-            field="output_file",
-            default="gray-scott-morphology.json",
-        )
-        cast(dict[str, Any], self.config)["output_file"] = str(output)
         self._validate_configuration()
         configured = self.config.get("input_bundle")
         if configured not in (None, ""):
@@ -514,8 +508,9 @@ class Adios2GrayScottAnalysis(Application):
             self.config.get("high_input"), label="high_input", directory=True
         )
         output = self.config.get("output_file")
-        if not isinstance(output, str) or not Path(output).is_absolute():
-            raise ValueError("output_file must resolve to an absolute path")
+        if not isinstance(output, str) or not output:
+            raise ValueError("output_file must be a non-empty path")
+        self._output_path()
         if self.config.get("input_bundle") in (None, ""):
             self._absolute_existing_path(
                 self.config.get("low_configuration"),
@@ -527,6 +522,14 @@ class Adios2GrayScottAnalysis(Application):
                 label="high_configuration",
                 directory=False,
             )
+
+    def _output_path(self) -> Path:
+        """Resolve the configured result beneath the package shared directory."""
+        return self.resolve_shared_path(
+            self.config.get("output_file"),
+            field="output_file",
+            default="gray-scott-morphology.json",
+        )
 
     def _prepare_bundle_run(self) -> tuple[str, Path, Path, Path]:
         configured = self.config.get("input_bundle")
@@ -569,6 +572,8 @@ class Adios2GrayScottAnalysis(Application):
     def start(self) -> None:
         """Build if requested, analyze both inputs, and validate the result."""
         self._validate_configuration()
+        output = self._output_path()
+        cast(dict[str, Any], self.config)["output_file"] = str(output)
         configured = self.config.get("input_bundle")
         if configured not in (None, ""):
             executable, low_config, high_config, cwd = self._prepare_bundle_run()
@@ -584,14 +589,13 @@ class Adios2GrayScottAnalysis(Application):
                 label="high_configuration",
                 directory=False,
             )
-            cwd = Path(str(self.config["output_file"])).parent
+            cwd = output.parent
         low_input = self._absolute_existing_path(
             self.config["low_input"], label="low_input", directory=True
         )
         high_input = self._absolute_existing_path(
             self.config["high_input"], label="high_input", directory=True
         )
-        output = Path(str(self.config["output_file"]))
         output.parent.mkdir(parents=True, exist_ok=True)
         threshold = _finite_number(
             self.config.get("active_threshold"), label="active_threshold"

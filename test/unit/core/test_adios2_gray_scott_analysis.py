@@ -234,6 +234,40 @@ def test_analysis_menu_and_deployment_expose_source_bundle_profile(
     }
 
 
+def test_analysis_configuration_preserves_agent_supplied_output_value(
+    tmp_path: Path,
+) -> None:
+    """Configuration persistence retains the value verified by the MCP client."""
+    module = _module()
+    low_input = tmp_path / "low.bp"
+    high_input = tmp_path / "high.bp"
+    low_input.mkdir()
+    high_input.mkdir()
+    low_config = tmp_path / "low.json"
+    high_config = tmp_path / "high.json"
+    low_config.write_bytes(_configuration(feed=0.02, kill=0.048, output="low.bp"))
+    high_config.write_bytes(_configuration(feed=0.03, kill=0.0545, output="high.bp"))
+    package = object.__new__(module.Adios2GrayScottAnalysis)
+    package.shared_dir = str(tmp_path / "shared")
+    package.config = {
+        "active_threshold": 0.1,
+        "executable": "gray-scott-analyze",
+        "high_configuration": str(high_config),
+        "high_input": str(high_input),
+        "input_bundle": "",
+        "low_configuration": str(low_config),
+        "low_input": str(low_input),
+        "nprocs": 1,
+        "output_file": "result.json",
+        "ppn": 1,
+    }
+
+    package._configure(**package.config)
+
+    assert package.config["output_file"] == "result.json"
+    assert package._output_path() == (tmp_path / "shared" / "result.json").resolve()
+
+
 class _SuccessfulExec:
     calls: list[tuple[str, Any]] = []
 
