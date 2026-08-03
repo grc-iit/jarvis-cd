@@ -36,6 +36,7 @@ class WrfLegacy(Application):
                 "msg": "The location of wrf.exe",
                 "type": str,
                 "default": None,
+                "required": False,
             },
             {
                 "name": "engine",
@@ -49,6 +50,7 @@ class WrfLegacy(Application):
                 "msg": "Path where the bp5 will be stored",
                 "type": str,
                 "default": None,
+                "required": False,
             },
             {
                 "name": "db_path",

@@ -235,6 +235,7 @@ def test_maintained_profiles_are_agent_visible_and_keep_legacy_controls() -> Non
     openfoam_menu = {item["name"]: item for item in openfoam._configure_menu()}
     assert {"input_bundle", "script_location", "script"}.issubset(openfoam_menu)
     assert openfoam_menu["input_bundle"]["input_binding"]["kind"] == "local_file"
+    assert openfoam_menu["script_location"]["required"] is False
     openfoam_contract = openfoam._deployment_contract()
     assert openfoam_contract.package == "builtin.openfoam"
     assert {profile.name for profile in openfoam_contract.execution_profiles} == {
@@ -252,6 +253,8 @@ def test_maintained_profiles_are_agent_visible_and_keep_legacy_controls() -> Non
     wrf_menu = {item["name"]: item for item in wrf._configure_menu()}
     assert {"input_bundle", "wrf_prefix", "wrf_location", "engine"}.issubset(wrf_menu)
     assert wrf_menu["input_bundle"]["input_binding"]["kind"] == "local_file"
+    assert wrf_menu["wrf_location"]["required"] is False
+    assert wrf_menu["Execution_order"]["required"] is False
     wrf_contract = wrf._deployment_contract()
     assert wrf_contract.package == "builtin.wrf"
     assert {profile.name for profile in wrf_contract.execution_profiles} == {

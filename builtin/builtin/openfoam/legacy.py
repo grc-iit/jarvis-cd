@@ -35,6 +35,7 @@ class OpenfoamLegacy(Application):
                 "msg": "Case directory containing Allrun script",
                 "type": str,
                 "default": None,
+                "required": False,
             },
             {
                 "name": "script",
