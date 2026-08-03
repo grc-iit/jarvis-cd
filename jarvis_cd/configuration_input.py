@@ -7,15 +7,24 @@ import os
 import re
 import stat
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence, cast
 
 from jarvis_cd.deployment import ConfigurationInputBinding
 from jarvis_cd.util.private_path import reject_private_path_redirection
 
-MAX_CONFIGURATION_INPUT_BYTES = 16 * 1024 * 1024
+MAX_CONFIGURATION_INPUT_BYTES = 512 * 1024 * 1024
 _PARAMETER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _SAFE_SUFFIX_PATTERN = re.compile(r"^\.[A-Za-z0-9][A-Za-z0-9._-]{0,31}$")
+
+
+@dataclass(frozen=True, slots=True)
+class _FileFingerprint:
+    """Stable size and SHA-256 identity for one bounded regular file."""
+
+    size_bytes: int
+    sha256: str
 
 
 def materialize_configuration_inputs(
@@ -74,13 +83,12 @@ def materialize_configuration_inputs(
                 f"declared configuration input {parameter!r} must be a path string"
             )
         source = _configuration_input_source(value, parameter=parameter)
-        payload, digest = _read_bounded_regular_file(source, parameter=parameter)
+        fingerprint = _fingerprint_bounded_regular_file(source, parameter=parameter)
         target = _materialized_target(
             shared_root,
             parameter=parameter,
             source=source,
-            payload=payload,
-            digest=digest,
+            fingerprint=fingerprint,
         )
         materialized[parameter] = str(target)
     return materialized
@@ -115,7 +123,7 @@ def configuration_input_materialization_matches(
     try:
         ConfigurationInputBinding.from_dict(cast(Mapping[str, object], raw_binding))
         source = _configuration_input_source(requested, parameter=parameter)
-        source_payload, source_digest = _read_bounded_regular_file(
+        source_fingerprint = _fingerprint_bounded_regular_file(
             source,
             parameter=parameter,
         )
@@ -124,17 +132,17 @@ def configuration_input_materialization_matches(
         target = Path(os.path.abspath(os.fspath(materialized)))
         reject_private_path_redirection(target)
         if target.parent != expected_root or target.name != _materialized_name(
-            source, source_digest
+            source, source_fingerprint.sha256
         ):
             return False
-        target_payload, target_digest = _read_bounded_regular_file(
+        target_fingerprint = _fingerprint_bounded_regular_file(
             target,
             parameter=parameter,
             require_single_link=True,
         )
     except (OSError, RuntimeError, TypeError, ValueError):
         return False
-    return source_digest == target_digest and source_payload == target_payload
+    return source_fingerprint == target_fingerprint
 
 
 def _configuration_input_source(
@@ -157,13 +165,52 @@ def _configuration_input_source(
     return source
 
 
-def _read_bounded_regular_file(
+def _fingerprint_bounded_regular_file(
     path: Path,
     *,
     parameter: str,
     require_single_link: bool = False,
-) -> tuple[bytes, str]:
-    """Read one stable regular file through a no-follow descriptor."""
+) -> _FileFingerprint:
+    """Hash one stable bounded file without retaining its payload in memory."""
+
+    descriptor, linked_before, opened_before = _open_bounded_regular_file(
+        path,
+        parameter=parameter,
+        require_single_link=require_single_link,
+    )
+    digest = hashlib.sha256()
+    observed_size = 0
+    try:
+        while chunk := os.read(descriptor, 1024 * 1024):
+            observed_size += len(chunk)
+            if observed_size > MAX_CONFIGURATION_INPUT_BYTES:
+                raise ValueError(
+                    f"declared configuration input {parameter!r} exceeded its bound"
+                )
+            digest.update(chunk)
+        opened_after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    _validate_file_after_read(
+        path,
+        parameter=parameter,
+        linked_before=linked_before,
+        opened_before=opened_before,
+        opened_after=opened_after,
+        observed_size=observed_size,
+        require_single_link=require_single_link,
+    )
+    return _FileFingerprint(observed_size, digest.hexdigest())
+
+
+def _open_bounded_regular_file(
+    path: Path,
+    *,
+    parameter: str,
+    require_single_link: bool,
+) -> tuple[int, os.stat_result, os.stat_result]:
+    """Open one stable bounded regular file without following its final link."""
+
     try:
         linked_before = path.lstat()
     except OSError as exc:
@@ -193,29 +240,32 @@ def _read_bounded_regular_file(
         raise ValueError(
             f"declared configuration input {parameter!r} could not be opened safely"
         ) from exc
-    try:
-        opened_before = os.fstat(descriptor)
-        if (
-            not stat.S_ISREG(opened_before.st_mode)
-            or _is_path_redirection(opened_before)
-            or _file_identity(opened_before) != _file_identity(linked_before)
-            or (require_single_link and opened_before.st_nlink != 1)
-        ):
-            raise ValueError(
-                f"declared configuration input {parameter!r} changed before reading"
-            )
-        chunks: list[bytes] = []
-        remaining = MAX_CONFIGURATION_INPUT_BYTES + 1
-        while remaining:
-            chunk = os.read(descriptor, min(1024 * 1024, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        payload = b"".join(chunks)
-        opened_after = os.fstat(descriptor)
-    finally:
+    opened_before = os.fstat(descriptor)
+    if (
+        not stat.S_ISREG(opened_before.st_mode)
+        or _is_path_redirection(opened_before)
+        or _file_identity(opened_before) != _file_identity(linked_before)
+        or (require_single_link and opened_before.st_nlink != 1)
+    ):
         os.close(descriptor)
+        raise ValueError(
+            f"declared configuration input {parameter!r} changed before reading"
+        )
+    return descriptor, linked_before, opened_before
+
+
+def _validate_file_after_read(
+    path: Path,
+    *,
+    parameter: str,
+    linked_before: os.stat_result,
+    opened_before: os.stat_result,
+    opened_after: os.stat_result,
+    observed_size: int,
+    require_single_link: bool,
+) -> None:
+    """Reject a file that changed identity while it was being streamed."""
+
     try:
         linked_after = path.lstat()
     except OSError as exc:
@@ -223,8 +273,8 @@ def _read_bounded_regular_file(
             f"declared configuration input {parameter!r} changed while reading"
         ) from exc
     if (
-        len(payload) > MAX_CONFIGURATION_INPUT_BYTES
-        or len(payload) != opened_before.st_size
+        observed_size > MAX_CONFIGURATION_INPUT_BYTES
+        or observed_size != opened_before.st_size
         or _is_path_redirection(linked_after)
         or (require_single_link and linked_after.st_nlink != 1)
         or _file_identity(opened_after) != _file_identity(opened_before)
@@ -233,7 +283,55 @@ def _read_bounded_regular_file(
         raise ValueError(
             f"declared configuration input {parameter!r} changed while reading"
         )
-    return payload, hashlib.sha256(payload).hexdigest()
+
+
+def _copy_bounded_regular_file(
+    source: Path,
+    destination_descriptor: int,
+    *,
+    parameter: str,
+    expected: _FileFingerprint,
+) -> None:
+    """Stream one stable source into an already-created private destination."""
+
+    source_descriptor, linked_before, opened_before = _open_bounded_regular_file(
+        source,
+        parameter=parameter,
+        require_single_link=False,
+    )
+    digest = hashlib.sha256()
+    observed_size = 0
+    try:
+        while chunk := os.read(source_descriptor, 1024 * 1024):
+            observed_size += len(chunk)
+            if observed_size > MAX_CONFIGURATION_INPUT_BYTES:
+                raise ValueError(
+                    f"declared configuration input {parameter!r} exceeded its bound"
+                )
+            digest.update(chunk)
+            offset = 0
+            while offset < len(chunk):
+                written = os.write(destination_descriptor, chunk[offset:])
+                if written <= 0:
+                    raise OSError("short write while materializing configuration input")
+                offset += written
+        opened_after = os.fstat(source_descriptor)
+    finally:
+        os.close(source_descriptor)
+    _validate_file_after_read(
+        source,
+        parameter=parameter,
+        linked_before=linked_before,
+        opened_before=opened_before,
+        opened_after=opened_after,
+        observed_size=observed_size,
+        require_single_link=False,
+    )
+    observed = _FileFingerprint(observed_size, digest.hexdigest())
+    if observed != expected:
+        raise ValueError(
+            f"declared configuration input {parameter!r} changed before materialization"
+        )
 
 
 def _materialized_target(
@@ -241,8 +339,7 @@ def _materialized_target(
     *,
     parameter: str,
     source: Path,
-    payload: bytes,
-    digest: str,
+    fingerprint: _FileFingerprint,
 ) -> Path:
     bindings_root = shared_root / "configuration-inputs"
     parameter_root = bindings_root / parameter
@@ -253,32 +350,32 @@ def _materialized_target(
         if os.name != "nt":
             directory.chmod(0o700)
 
-    target = parameter_root / _materialized_name(source, digest)
+    target = parameter_root / _materialized_name(source, fingerprint.sha256)
     if target == source:
         return target
     if target.exists():
-        existing, existing_digest = _read_bounded_regular_file(
+        existing = _fingerprint_bounded_regular_file(
             target,
             parameter=parameter,
             require_single_link=True,
         )
-        if existing_digest == digest and existing == payload:
+        if existing == fingerprint:
             return target
 
     descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{digest}.",
+        prefix=f".{fingerprint.sha256}.",
         suffix=".tmp",
         dir=parameter_root,
     )
     temporary = Path(temporary_name)
     descriptor_open = True
     try:
-        offset = 0
-        while offset < len(payload):
-            written = os.write(descriptor, payload[offset:])
-            if written <= 0:
-                raise OSError("short write while materializing configuration input")
-            offset += written
+        _copy_bounded_regular_file(
+            source,
+            descriptor,
+            parameter=parameter,
+            expected=fingerprint,
+        )
         os.fsync(descriptor)
         if os.name != "nt":
             descriptor_chmod = cast(Any, getattr(os, "fchmod"))
@@ -294,12 +391,12 @@ def _materialized_target(
             os.close(descriptor)
         if temporary.exists():
             temporary.unlink()
-    persisted, persisted_digest = _read_bounded_regular_file(
+    persisted = _fingerprint_bounded_regular_file(
         target,
         parameter=parameter,
         require_single_link=True,
     )
-    if persisted_digest != digest or persisted != payload:
+    if persisted != fingerprint:
         raise RuntimeError(
             f"materialized configuration input {parameter!r} failed verification"
         )
