@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -162,6 +162,35 @@ def test_lammps_default_artifacts_resolve_to_execution_package_shared_root() -> 
 
     assert adapter is not None
     assert adapter.output_dir.as_posix() == "/execution/shared/lammps"
+
+
+def test_lammps_bundle_entrypoint_drives_declared_output_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Artifact semantics inspect the same manifest entrypoint LAMMPS executes."""
+
+    script = tmp_path / "materialized" / "in.copper"
+    script.parent.mkdir()
+    script.write_text("write_data copper.data\n", encoding="utf-8")
+    module = _module()
+    monkeypatch.setattr(
+        module,
+        "extract_input_bundle",
+        lambda _bundle, _destination: SimpleNamespace(entrypoint=script),
+    )
+
+    adapter = module.adapter_from_package(
+        {
+            "pkg_type": "builtin.lammps",
+            "input_bundle": "/staged/copper.tar",
+            "out": "/execution/shared/lammps",
+            "shared_dir": "/execution/shared/lammps",
+        }
+    )
+
+    assert adapter is not None
+    assert adapter.script_path == script
 
 
 def test_container_lammps_reports_only_host_visible_output() -> None:

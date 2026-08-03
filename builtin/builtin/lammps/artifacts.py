@@ -19,6 +19,7 @@ from jarvis_cd.artifacts import (
     new_artifact_id,
 )
 from jarvis_cd.artifacts.schema import JsonValue
+from jarvis_cd.input_bundle import extract_input_bundle
 
 _MAX_DIRECTORY_ENTRIES = 4096
 _MAX_SCRIPT_BYTES = 1024 * 1024
@@ -303,6 +304,20 @@ def adapter_from_package(package: dict[str, Any]) -> LammpsArtifactAdapter | Non
         else _optional_absolute_path(package.get("runtime_cwd"))
     )
     script_path = _configured_script_path(package.get("script"), script_base)
+    input_bundle = package.get("input_bundle")
+    if isinstance(input_bundle, str) and input_bundle:
+        shared_dir = _optional_absolute_path(package.get("shared_dir"))
+        if shared_dir is None:
+            raise ValueError(
+                "LAMMPS input-bundle artifacts require a package shared directory"
+            )
+        if script_path is not None:
+            raise ValueError("LAMMPS script and input_bundle cannot be combined")
+        materialized = extract_input_bundle(
+            input_bundle,
+            Path(shared_dir.as_posix()) / "input-bundles",
+        )
+        script_path = materialized.entrypoint
     return LammpsArtifactAdapter(output_dir=output_dir, script_path=script_path)
 
 

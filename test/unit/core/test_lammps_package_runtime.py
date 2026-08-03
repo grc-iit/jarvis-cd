@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
+import json
 import shlex
+import tarfile
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -10,6 +14,10 @@ from typing import Any
 
 import pytest
 
+from jarvis_cd.input_bundle import (
+    INPUT_BUNDLE_MANIFEST_NAME,
+    INPUT_BUNDLE_SCHEMA_VERSION,
+)
 from jarvis_cd.shell import LocalExecInfo, PsshExecInfo
 from jarvis_cd.util.hostfile import Hostfile
 
@@ -38,12 +46,14 @@ class _CapturedExec:
     """Capture a package launch without executing the application."""
 
     commands: list[str] = []
+    exec_infos: list[Any] = []
 
     def __init__(self, command: str, exec_info: Any) -> None:
         self.command = command
         self.exec_info = exec_info
         self.exit_code = {"localhost": 0}
         self.commands.append(command)
+        self.exec_infos.append(exec_info)
 
     def run(self) -> _CapturedExec:
         """Record the launch only."""
@@ -105,6 +115,7 @@ def _capture_output_directory_creation(
     """Keep package launch tests isolated from PSSH output creation."""
     _CapturedMkdir.paths = []
     _CapturedRm.calls = []
+    _CapturedExec.exec_infos = []
     monkeypatch.setattr(lammps_package, "Mkdir", _CapturedMkdir)
     monkeypatch.setattr(lammps_package, "Rm", _CapturedRm)
 
@@ -117,6 +128,41 @@ def test_portable_defaults_use_package_shared_output_and_cpu() -> None:
     assert menu["out"]["default"] == "."
     assert "JARVIS package shared directory" in menu["out"]["msg"]
     assert menu["kokkos_gpu"]["default"] is False
+    assert menu["input_bundle"]["default"] == ""
+    assert menu["input_bundle"]["input_binding"]["kind"] == "local_file"
+
+
+def _write_lammps_input_bundle(destination: Path) -> Path:
+    files = {
+        "in.copper": b"pair_style eam\npair_coeff * * Cu.eam\nrun 0\n",
+        "Cu.eam": b"potential\n",
+    }
+    manifest = {
+        "schema_version": INPUT_BUNDLE_SCHEMA_VERSION,
+        "entrypoint": "in.copper",
+        "files": [
+            {
+                "path": name,
+                "role": role,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
+            for name, role, payload in (
+                ("in.copper", "lammps_input", files["in.copper"]),
+                ("Cu.eam", "potential", files["Cu.eam"]),
+            )
+        ],
+    }
+    manifest_payload = json.dumps(manifest, sort_keys=True).encode("utf-8")
+    with tarfile.open(destination, mode="w") as archive:
+        manifest_info = tarfile.TarInfo(INPUT_BUNDLE_MANIFEST_NAME)
+        manifest_info.size = len(manifest_payload)
+        archive.addfile(manifest_info, io.BytesIO(manifest_payload))
+        for name, payload in files.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+    return destination
 
 
 def test_default_output_resolves_inside_execution_package_shared_root(
@@ -278,6 +324,60 @@ def test_default_launch_generates_package_owned_lennard_jones_input(
     assert f"-in {shlex.quote(str(generated))}" in _CapturedExec.commands[1]
 
 
+def test_default_launch_stages_multi_file_input_bundle(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """LAMMPS receives its entrypoint and support files in one owned cwd."""
+
+    output_dir = tmp_path / "output"
+    bundle = _write_lammps_input_bundle(tmp_path / "copper.tar")
+    package = object.__new__(lammps_package.Lammps)
+    package.config = {
+        "input_bundle": str(bundle),
+        "kokkos_gpu": False,
+        "nprocs": 2,
+        "out": str(output_dir),
+        "ppn": 2,
+        "script": "",
+    }
+    package.pipeline = SimpleNamespace(get_hostfile=lambda: None)
+    package.env = {}
+    package.mod_env = {}
+    package.shared_dir = tmp_path / "shared"
+    _CapturedExec.commands = []
+    monkeypatch.setattr(lammps_package, "Exec", _CapturedExec)
+
+    package.start()
+
+    staged_script = output_dir / "in.copper"
+    assert staged_script.read_bytes().startswith(b"pair_style eam")
+    assert (output_dir / "Cu.eam").read_bytes() == b"potential\n"
+    assert f"-in {shlex.quote(str(staged_script))}" in _CapturedExec.commands[1]
+    assert _CapturedExec.exec_infos[-1].cwd == str(output_dir.resolve())
+
+
+def test_input_bundle_is_mutually_exclusive_with_script(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Ambiguous caller inputs fail before directory or process side effects."""
+
+    package = object.__new__(lammps_package.Lammps)
+    package.config = {
+        "input_bundle": str(tmp_path / "inputs.tar"),
+        "script": str(tmp_path / "in.lmp"),
+    }
+    package.shared_dir = tmp_path / "shared"
+    _CapturedExec.commands = []
+    monkeypatch.setattr(lammps_package, "Exec", _CapturedExec)
+
+    with pytest.raises(ValueError, match="cannot be combined"):
+        package.start()
+
+    assert _CapturedExec.commands == []
+
+
 def test_generated_inputs_are_content_addressed_for_concurrent_executions(
     tmp_path: Path,
 ) -> None:
@@ -381,8 +481,9 @@ def test_container_launch_creates_log_directory_before_lammps(
     assert _CapturedExec.commands[0] == f"rm -f {shlex.quote(str(expected_log))}"
     argv = shlex.split(_CapturedExec.commands[1])
     assert argv[:2] == ["bash", "-c"]
+    output = shlex.quote(str(output_dir.resolve()))
     expected_prefix = (
-        f"mkdir -p {shlex.quote(str(output_dir.resolve()))} "
+        f"mkdir -p {output} && cd {output} "
         f"&& exec /usr/local/bin/lmp -log {shlex.quote(str(expected_log))}"
     )
     assert argv[2].startswith(expected_prefix + " -in ")
