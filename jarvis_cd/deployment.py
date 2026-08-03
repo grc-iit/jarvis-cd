@@ -262,6 +262,7 @@ def probe_program(
     *,
     environment: Mapping[str, str],
     arguments: Sequence[str] = ("--help",),
+    accepted_return_codes: Sequence[int] = (0,),
     timeout_seconds: float = 15,
 ) -> ProgramProbeResult:
     """Probe a program through ``PATH`` without exposing its resolved location.
@@ -273,6 +274,14 @@ def probe_program(
     _validate_text(program, "runtime program")
     if _looks_absolute(program):
         raise ValueError("runtime probes must use a semantic program name")
+    accepted = tuple(accepted_return_codes)
+    if not accepted or any(
+        isinstance(code, bool) or not isinstance(code, int) or not 0 <= code <= 255
+        for code in accepted
+    ):
+        raise ValueError("accepted runtime probe return codes must be bounded integers")
+    if len(set(accepted)) != len(accepted):
+        raise ValueError("accepted runtime probe return codes must be unique")
     if timeout_seconds <= 0:
         raise ValueError("runtime probe timeout must be positive")
     resolved = which(program, path=environment.get("PATH"))
@@ -291,7 +300,7 @@ def probe_program(
         )
     except (OSError, subprocess.SubprocessError):
         return ProgramProbeResult(RuntimeStatus("unavailable", "runtime_probe_failed"))
-    if completed.returncode != 0:
+    if completed.returncode not in accepted:
         return ProgramProbeResult(RuntimeStatus("unavailable", "runtime_probe_failed"))
     return ProgramProbeResult(
         RuntimeStatus("ready", "runtime_probe_succeeded"),

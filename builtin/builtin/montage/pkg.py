@@ -151,6 +151,7 @@ class Montage(Application):
                 program,
                 environment=self._deployment_environment(),
                 arguments=(),
+                accepted_return_codes=(0, 1),
             )
             for program in ("mExec", "mExamine", "mViewer")
         )
