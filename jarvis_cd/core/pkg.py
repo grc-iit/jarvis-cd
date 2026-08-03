@@ -876,8 +876,13 @@ class Pkg:
         # These controls remain part of the CLI and persisted package config,
         # but generic agents should reason from the package-owned deployment
         # contract instead of choosing installers, paths, or debug machinery.
+        # Explicit interceptor selection is different: it is a semantic edge in
+        # the pipeline graph and therefore must be discoverable for applications
+        # and services. Interceptors cannot themselves reference interceptors.
         for parameter in common_menu:
-            parameter["agent_visible"] = False
+            parameter["agent_visible"] = parameter[
+                "name"
+            ] == "interceptors" and not isinstance(self, Interceptor)
 
         # Combine package-specific and common menus
         return package_menu + common_menu

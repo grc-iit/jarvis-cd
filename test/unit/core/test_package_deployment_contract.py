@@ -10,7 +10,7 @@ from typing import Any
 
 import pytest
 
-from jarvis_cd.core.pkg import Pkg
+from jarvis_cd.core.pkg import Interceptor, Pkg
 from jarvis_cd.deployment import (
     ConfigurationCondition,
     ConfigurationInputBinding,
@@ -43,21 +43,36 @@ def test_legacy_package_has_no_inferred_deployment_contract() -> None:
     assert package.describe_deployment() is None
 
 
-def test_common_implementation_controls_are_not_agent_visible() -> None:
-    """Generic agents see semantic package inputs, not JARVIS admin controls."""
+def test_only_explicit_interceptor_links_are_agent_visible_common_settings() -> None:
+    """Generic agents see graph edges but not JARVIS administration controls."""
     package = object.__new__(Pkg)
 
     parameters = package.configure_menu()
+    by_name = {parameter["name"]: parameter for parameter in parameters}
 
     assert parameters
-    assert all(parameter["agent_visible"] is False for parameter in parameters)
-    assert {parameter["name"] for parameter in parameters} >= {
+    assert by_name["interceptors"]["agent_visible"] is True
+    assert all(
+        parameter["agent_visible"] is False
+        for parameter in parameters
+        if parameter["name"] != "interceptors"
+    )
+    assert set(by_name) >= {
         "install_method",
         "install_query",
         "install",
         "hostfile",
         "timeout",
     }
+
+
+def test_interceptor_packages_do_not_advertise_nested_interceptor_links() -> None:
+    """An interceptor never invites an invalid nested-interceptor configuration."""
+    package = object.__new__(Interceptor)
+
+    parameters = {item["name"]: item for item in package.configure_menu()}
+
+    assert parameters["interceptors"]["agent_visible"] is False
 
 
 def test_standalone_descriptor_preserves_canonical_package_identity(

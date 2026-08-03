@@ -825,6 +825,9 @@ Interceptor aliases share the pipeline package namespace. JARVIS verifies that
 every referenced alias exists and derives from `Interceptor` before saving or
 starting the pipeline. Removing an interceptor that is still referenced fails
 instead of silently running the target package without interception.
+The common `interceptors` setting is included in agent-visible package metadata
+for applications and services, while interceptor packages hide it because
+nested interception is invalid.
 
 #### Remove Packages from Pipeline
 ```bash
