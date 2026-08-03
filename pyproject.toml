@@ -57,6 +57,9 @@ jarvis_cd = ["*.yaml", "*.yml"]
 "*" = ["*.py", "*.yaml", "*.yml", "*.md", "*.txt", "*.conf", "*.xml", "*.param", "*.f", "*.input", "*.png", "*.sh"]
 builtin = ["pipelines/**/*.yaml", "pipelines/**/*.yml"]
 
+[tool.setuptools.data-files]
+"." = ["wfcommons-schema.json"]
+
 [project.scripts]
 jarvis = "jarvis_cd.core.cli:main"
 
