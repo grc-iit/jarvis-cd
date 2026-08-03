@@ -43,6 +43,34 @@ V: the activator chemical, which is produced during the reaction and also remove
 | **Noise(noise)** | add noise for the simulation | 0.01~0.1 |
 | **I/O frequency(plotgap)** | the frequecey of I/O between simulation steps  | 1~10 |
 
+## Portable source and configuration bundles
+
+`input_bundle` selects the source-build profile. The value is a regular tar
+archive using the closed `jarvis.package-input-bundle.v1` manifest. The
+manifest must declare exactly one `build_spec`, at least one
+`scientific_input`, and the `adios2_configuration` referenced by each selected
+scientific input. Source and license members may use descriptive roles such as
+`upstream_source` and `upstream_license`.
+
+`configuration_path` selects one manifest-declared `scientific_input` by a
+confined POSIX-relative path. When it is empty, the manifest entrypoint is
+used. JARVIS verifies every archive member digest and validates the selected
+Gray-Scott JSON before scheduler submission. Output, checkpoint, restart, and
+ADIOS2 paths in bundle configurations must be relative, so their materialized
+locations remain owned by the execution.
+
+```bash
+jarvis ppl append adios2_gray_scott \
+  input_bundle=/staged/gray-scott-source.tar \
+  configuration_path=config/feed-low.json \
+  nprocs=4 ppn=4
+```
+
+The source build requires CMake, MPI compilers, and an MPI-enabled ADIOS2
+development installation. JARVIS configures and builds the `gray-scott` target
+inside the package's execution-owned workspace. Internet source discovery and
+mutable checkout paths are not used.
+
 
 
 
