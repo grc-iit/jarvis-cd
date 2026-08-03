@@ -241,7 +241,7 @@ class Gadget2(Application):
         super()._configure(**kwargs)
         if self._uses_native_bundle():
             self._validate_native_configuration()
-            if self.config.get("deploy_mode") == "default":
+            if self.config.get("deploy_mode", "default") == "default":
                 self.gadget2_bin = self._discover_executable(
                     self._deployment_environment()
                 )
@@ -280,7 +280,7 @@ class Gadget2(Application):
             values[name] = value
         if values["ppn"] > values["nprocs"]:
             raise ValueError("ppn cannot exceed nprocs")
-        if self.config.get("deploy_mode") != "default":
+        if self.config.get("deploy_mode", "default") != "default":
             raise ValueError("input_bundle requires native deploy_mode=default")
 
     def _output_dir(self) -> Path:

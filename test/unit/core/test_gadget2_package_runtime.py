@@ -223,6 +223,15 @@ def test_agent_contract_exposes_bundle_profile_and_hides_legacy_defaults() -> No
     assert [item["id"] for item in contract["runtime_requirements"]] == ["gadget2"]
 
 
+def test_native_validation_treats_absent_deploy_mode_as_default() -> None:
+    """New pipeline members resolve an omitted deploy mode to native execution."""
+    package = object.__new__(gadget2_package.Gadget2)
+    package.config = _base_config(input_bundle="galaxy.tar")
+    del package.config["deploy_mode"]
+
+    package._validate_native_configuration()
+
+
 def test_bundle_is_verified_and_staged_before_native_launch(tmp_path: Path) -> None:
     """The solver runs from an owned copy while caller bytes remain immutable."""
 

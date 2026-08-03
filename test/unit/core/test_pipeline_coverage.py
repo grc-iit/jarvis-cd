@@ -320,14 +320,20 @@ class TestPipelineCoverage(unittest.TestCase):
         )
 
     def test_append_accepts_native_gadget2_without_hidden_legacy_paths(self):
-        """The advertised native profile does not require stock-case controls."""
+        """The MCP-shaped native profile needs no stock-case or deploy controls."""
         pipeline = self._make_pipeline("append_gadget2_native")
+        bundle = os.path.join(self.test_dir, "galaxy.tar")
+        with open(bundle, "wb") as stream:
+            stream.write(b"immutable-gadget2-input")
 
         pipeline.append(
             "builtin.gadget2",
             package_alias="galaxy",
-            config_args=[
-                "input_bundle=/tmp/galaxy.tar",
+        )
+        pipeline.configure_package(
+            "galaxy",
+            [
+                f"input_bundle={bundle}",
                 "parameter_path=galaxy/galaxy.param",
                 "out=galaxy-run",
                 "nprocs=4",
@@ -336,7 +342,9 @@ class TestPipelineCoverage(unittest.TestCase):
         )
 
         config = pipeline.packages[0]["config"]
-        self.assertEqual(config["input_bundle"], "/tmp/galaxy.tar")
+        self.assertNotEqual(config["input_bundle"], bundle)
+        self.assertTrue(os.path.isfile(config["input_bundle"]))
+        self.assertNotIn("deploy_mode", config)
         self.assertIsNone(config["gadget2_path"])
         self.assertIsNone(config["output"])
 
