@@ -825,6 +825,10 @@ Interceptor aliases share the pipeline package namespace. JARVIS verifies that
 every referenced alias exists and derives from `Interceptor` before saving or
 starting the pipeline. Removing an interceptor that is still referenced fails
 instead of silently running the target package without interception.
+Interceptor configuration does not enter the pipeline-wide environment: each
+instance applies its runtime variables only to the packages that name its alias.
+Consequently, the two Darshan instances above retain distinct log directories
+and job identifiers even when both target packages run in one pipeline.
 The common `interceptors` setting is included in agent-visible package metadata
 for applications and services, while interceptor packages hide it because
 nested interception is invalid.

@@ -3212,13 +3212,16 @@ class Pipeline:
         print("Reconfiguring pipeline packages with existing configurations...")
         self.configure_all_packages()
 
-    def _configure_package_instance(self, pkg_def: Dict[str, Any], pkg_type_label: str):
+    def _configure_package_instance(
+        self, pkg_def: Dict[str, Any], pkg_type_label: str
+    ) -> None:
         """
         Configure a single package or interceptor instance.
 
         :param pkg_def: Package definition dictionary
         :param pkg_type_label: Label for logging ("package" or "interceptor")
         """
+        from jarvis_cd.core.pkg import Interceptor
         from jarvis_cd.util.logger import logger
 
         try:
@@ -3236,8 +3239,12 @@ class Pipeline:
                 else:
                     pkg_def["config"] = pkg_instance.config.copy()
 
-                # Update the package environment in the pipeline's env
-                self.env.update(pkg_instance.env)
+                # Interceptor runtime mutations belong only to explicitly linked
+                # packages. Configuration may prepare resources using an
+                # interceptor-local environment, but must not leak that state into
+                # every later package through the pipeline-wide environment.
+                if not isinstance(pkg_instance, Interceptor):
+                    self.env.update(pkg_instance.env)
 
             # Print END message
             logger.success(f"[{pkg_def['pkg_type']}] [CONFIGURE] END")
