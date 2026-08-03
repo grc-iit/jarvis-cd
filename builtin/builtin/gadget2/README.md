@@ -1,48 +1,79 @@
-GADGET is a freely available code for cosmological N-body/SPH simulations on massively parallel computers with distributed memory. GADGET uses an explicit communication model that is implemented with the standardized MPI communication interface. The code can be run on essentially all supercomputer systems presently in use, including clusters of workstations or individual PCs.
+# Gadget2
 
-GADGET computes gravitational forces with a hierarchical tree algorithm (optionally in combination with a particle-mesh scheme for long-range gravitational forces) and represents fluids by means of smoothed particle hydrodynamics (SPH). The code can be used for studies of isolated systems, or for simulations that include the cosmological expansion of space, both with or without periodic boundary conditions. In all these types of simulations, GADGET follows the evolution of a self-gravitating collisionless N-body system, and allows gas dynamics to be optionally included. Both the force computation and the time stepping of GADGET are fully adaptive, with a dynamic range which is, in principle, unlimited.
+The JARVIS Gadget2 package runs distributed-memory N-body and SPH simulations.
+The agent-facing profile accepts a complete, digest-verified JARVIS input bundle
+instead of selecting one of the repository's stock demonstrations. This lets a
+caller supply a scientific parameter file, initial conditions, and any related
+support files without giving the package authority over arbitrary host paths.
 
-https://wwwmpa.mpa-garching.mpg.de/gadget/
+The Gadget2 project is documented at
+<https://wwwmpa.mpa-garching.mpg.de/gadget/>.
 
-# Installation
+## Native runtime
 
-```bash
-spack install hdf5@1.14.1 gsl@2.1 fftw@2
-scspkg create gadget2
-cd $(scspkg pkg src gadget2)
-git clone https://github.com/lukemartinlogan/gadget2.git
-export GADGET2_PATH=$(scspkg pkg src gadget2)/gadget2
-export FFTW_PATH=$(spack find --format "{PREFIX}" fftw@2)
+Provide an MPI-enabled `Gadget2` or `gadget2` executable through `PATH`. The
+runtime must be built with the FFTW 2, GSL, MPI, and optional HDF5 dependencies
+required by its selected compile-time options. JARVIS probes the executable and
+reports the runtime readiness through the package deployment contract.
+
+The benchmark and scientific profile do not install software or select an
+arbitrary source repository at runtime. Site operators prepare and pin the
+runtime independently.
+
+## Scientific input bundle
+
+The `input_bundle` must be a JARVIS input-bundle archive. Its manifest declares
+every file, its SHA-256 digest, size, role, and one entrypoint. The entrypoint is
+normally a `.param` file. `parameter_path` can select another declared `.param`
+member, but cannot name an undeclared or escaping path.
+
+For example, a bundle can contain:
+
+```text
+jarvis-input-manifest.json
+galaxy/
+  galaxy.param
+  ICs/
+    galaxy_littleendian.dat
 ```
 
-# Create environment
+The parameter file can use paths relative to its own directory, such as:
 
-```bash
-spack load hdf5@1.14.1 gsl@2.1 fftw@2
-jarvis env build gadget2 +GADGET2_PATH +FFTW_PATH
+```text
+InitCondFile  ICs/galaxy_littleendian.dat
+OutputDir     output/
+EnergyFile   energy.txt
+InfoFile     info.txt
+SnapshotFileBase snapshot
 ```
 
-# Gassphere Pipeline
+JARVIS verifies the archive, extracts it into package-owned storage, copies the
+verified tree into the configured output root, and runs Gadget2 from the
+parameter file's directory. The caller-owned archive is never modified.
+
+## Pipeline example
 
 ```bash
-jarvis pipeline create gassphere
-jarvis pipeline env copy gadget2
-jarvis pipeline append gadget2
-jarvis pkg configure gadget2 \
-test_case=gadget2 \
-out=${HOME}/gadget2
-jarvis pipeline run
+jarvis ppl create galaxy-study
+jarvis ppl append builtin.gadget2 galaxy \
+  input_bundle=/data/inputs/galaxy-study.tar \
+  parameter_path=galaxy/galaxy.param \
+  out=galaxy-run \
+  nprocs=8 \
+  ppn=4
+jarvis ppl run
 ```
 
-# NGenIC Pipeline
+Relative `out` paths resolve beneath the package shared directory. The package
+reports the bounded result tree, energy and runtime tables, snapshot sets, and
+restart sets through JARVIS artifact semantics. A zero process exit is not
+sufficient for finalization: required energy, information, and snapshot products
+must also exist.
 
-```bash
-jarvis pipeline create gassphere
-jarvis pipeline env copy gadget2
-jarvis pipeline append gadget2
-jarvis pkg configure gadget2 \
-test_case=gassphere-ngen \
-out=${HOME}/gadget2 \
-ic=hello
-jarvis pipeline run
-```
+## Retained stock profile
+
+Existing pipelines that configure `gadget2_path`, `test_case`, and `output`
+continue to use the historical stock-case profile. Those controls remain hidden
+from agent-facing metadata so a generated scientific study cannot silently fall
+back to the default `gassphere` example. New scientific workflows should use an
+input bundle.
