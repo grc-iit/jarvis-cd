@@ -49,6 +49,7 @@ class _CapturedExec:
     """Execute no external programs while materializing expected products."""
 
     commands: list[str] = []
+    working_directories: list[str] = []
     failures: dict[str, int] = {}
 
     def __init__(self, command: str, exec_info: Any) -> None:
@@ -56,24 +57,30 @@ class _CapturedExec:
         self.exec_info = exec_info
         self.exit_code = {"localhost": self.failures.get(command, 0)}
         self.commands.append(command)
+        self.working_directories.append(str(exec_info.cwd))
 
     def run(self) -> _CapturedExec:
         """Materialize products corresponding to a successful Montage command."""
         return_code = self.exit_code["localhost"]
         if return_code == 0:
             tokens = shlex.split(self.command)
+
+            def resolve(value: str) -> Path:
+                path = Path(value)
+                return path if path.is_absolute() else Path(self.exec_info.cwd) / path
+
             if tokens and tokens[0] == "mExec":
-                output = Path(tokens[tokens.index("-o") + 1])
+                output = resolve(tokens[tokens.index("-o") + 1])
                 output.write_bytes(b"SIMPLE  " + bytes(4096))
             elif tokens and tokens[0] == "mExamine":
-                stats = Path(tokens[tokens.index(">") + 1])
+                stats = resolve(tokens[tokens.index(">") + 1])
                 stats.write_text(
                     '[struct stat="OK", npixel=4096, nnull=32, '
                     "aveflux=1.25, rmsflux=0.50]\n",
                     encoding="utf-8",
                 )
             elif tokens and tokens[0] == "mViewer":
-                composite = Path(tokens[tokens.index("-out") + 1])
+                composite = resolve(tokens[tokens.index("-out") + 1])
                 composite.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(2048))
         callback = getattr(self.exec_info, "line_callback", None)
         if callback is not None:
@@ -103,6 +110,17 @@ def _bundle(tmp_path: Path, band: str) -> SimpleNamespace:
         ),
         root=root,
     )
+
+
+def _stage_bundle(bundle: SimpleNamespace, destination: Path) -> Path:
+    """Stage one bundle-shaped fixture into a mutable scratch directory."""
+    destination.mkdir(parents=True, exist_ok=True)
+    source = destination / bundle.band / f"source-{bundle.band}.fits"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"SIMPLE  " + bytes(4096))
+    header = destination / "region.hdr"
+    header.write_text("SIMPLE mosaic header\n", encoding="utf-8")
+    return header
 
 
 def _package(tmp_path: Path, **updates: object) -> Any:
@@ -204,16 +222,8 @@ def test_montage_offline_profile_runs_three_bands_and_finalizes_once(
         f"/inputs/{band}.tar": _bundle(tmp_path, band) for band in ("j", "h", "k")
     }
 
-    def stage(bundle: SimpleNamespace, destination: Path) -> Path:
-        destination.mkdir(parents=True, exist_ok=True)
-        source = destination / bundle.band / f"source-{bundle.band}.fits"
-        source.parent.mkdir(parents=True)
-        source.write_bytes(b"SIMPLE  " + bytes(4096))
-        header = destination / "region.hdr"
-        header.write_text("SIMPLE mosaic header\n", encoding="utf-8")
-        return header
-
     _CapturedExec.commands = []
+    _CapturedExec.working_directories = []
     _CapturedExec.failures = {}
     monkeypatch.setattr(montage_package, "Exec", _CapturedExec)
     monkeypatch.setattr(
@@ -221,8 +231,7 @@ def test_montage_offline_profile_runs_three_bands_and_finalizes_once(
         "extract_input_bundle",
         lambda path, _destination: bundles[path],
     )
-    monkeypatch.setattr(montage_package, "stage_input_bundle", stage)
-
+    monkeypatch.setattr(montage_package, "stage_input_bundle", _stage_bundle)
     package.start()
 
     assert sum(command.startswith("mExec ") for command in _CapturedExec.commands) == 3
@@ -233,6 +242,26 @@ def test_montage_offline_profile_runs_three_bands_and_finalizes_once(
         sum(command.startswith("mViewer ") for command in _CapturedExec.commands) == 1
     )
     assert callback.finalizations == [0]
+    mexec_invocations = [
+        (command, Path(cwd))
+        for command, cwd in zip(
+            _CapturedExec.commands,
+            _CapturedExec.working_directories,
+            strict=True,
+        )
+        if command.startswith("mExec ")
+    ]
+    assert {
+        shlex.split(command)[shlex.split(command).index("-r") + 1]
+        for command, _ in mexec_invocations
+    } == {"staged/j", "staged/h", "staged/k"}
+    assert all(
+        "-f staged/region.hdr -o mosaic.fits" in command
+        for command, _ in mexec_invocations
+    )
+    assert all(cwd != Path(package.shared_dir) for _, cwd in mexec_invocations)
+    assert all(len(str(cwd)) < 128 for _, cwd in mexec_invocations)
+    assert all(not cwd.exists() for _, cwd in mexec_invocations)
     output = Path(package.shared_dir)
     assert (output / "montage-j.fits").is_file()
     assert (output / "montage-h.fits").is_file()
@@ -257,29 +286,42 @@ def test_montage_propagates_the_first_command_failure(
         "extract_input_bundle",
         lambda path, _destination: bundles[path],
     )
-    monkeypatch.setattr(
-        montage_package,
-        "stage_input_bundle",
-        lambda bundle, destination: destination / bundle.manifest.entrypoint,
-    )
+    monkeypatch.setattr(montage_package, "stage_input_bundle", _stage_bundle)
     _CapturedExec.commands = []
+    _CapturedExec.working_directories = []
     _CapturedExec.failures = {}
-    output = Path(package.shared_dir)
-    failed_command = " ".join(
-        (
-            "mExec",
-            "-r",
-            shlex.quote(str(output / "inputs-j" / "j")),
-            "-f",
-            shlex.quote(str(output / "inputs-j" / "region.hdr")),
-            "-o",
-            shlex.quote(str(output / "montage-j.fits")),
-            "2MASS",
-            "J",
-            shlex.quote(str(output / "work-j")),
-        )
+    failed_command = (
+        "mExec -r staged/j -f staged/region.hdr -o mosaic.fits 2MASS J workspace"
     )
     _CapturedExec.failures[failed_command] = 7
 
     with pytest.raises(RuntimeError, match="Montage J mosaic failed"):
         package.start()
+    assert _CapturedExec.working_directories
+    assert all(
+        not Path(directory).exists() for directory in _CapturedExec.working_directories
+    )
+
+
+def test_montage_rejects_different_band_headers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A three-band run cannot silently combine different mosaic regions."""
+    package = _package(tmp_path)
+    Path(package.shared_dir).mkdir(parents=True)
+    bundles = {
+        f"/inputs/{band}.tar": _bundle(tmp_path, band) for band in ("j", "h", "k")
+    }
+    bundles["/inputs/h.tar"].entrypoint.write_text(
+        "different mosaic header\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        montage_package,
+        "extract_input_bundle",
+        lambda path, _destination: bundles[path],
+    )
+
+    with pytest.raises(ValueError, match="share one mosaic header"):
+        package._prepare_offline_inputs()

@@ -7,6 +7,7 @@ import math
 import os
 import re
 import shlex
+import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -381,19 +382,71 @@ class Montage(Application):
 
     def _prepare_offline_inputs(
         self,
-    ) -> tuple[dict[str, tuple[Path, Path]], dict[str, str]]:
-        """Extract and stage the exact J/H/K bundle bytes for one execution."""
+    ) -> tuple[
+        dict[str, tuple[MaterializedInputBundle, PurePosixPath]],
+        dict[str, str],
+    ]:
+        """Extract and validate the exact J/H/K bundle bytes for one execution."""
         output = Path(self._output_dir())
-        prepared: dict[str, tuple[Path, Path]] = {}
+        prepared: dict[str, tuple[MaterializedInputBundle, PurePosixPath]] = {}
         digests: dict[str, str] = {}
+        common_header: bytes | None = None
         for band, configured in self._configured_bundles().items():
             bundle = extract_input_bundle(configured, output / "input-bundles")
             raw_relative = self._bundle_raw_directory(bundle)
-            destination = output / f"inputs-{band}"
-            header = stage_input_bundle(bundle, destination)
-            prepared[band] = (destination / Path(raw_relative.as_posix()), header)
+            header_bytes = bundle.entrypoint.read_bytes()
+            if common_header is None:
+                common_header = header_bytes
+            elif header_bytes != common_header:
+                raise ValueError(
+                    "Montage J, H, and K bundles must share one mosaic header"
+                )
+            prepared[band] = (bundle, raw_relative)
             digests[band] = bundle.bundle_sha256
         return prepared, digests
+
+    @staticmethod
+    def _short_scratch_parent() -> Path:
+        """Select a writable real directory for Montage's bounded path workspace."""
+        candidates = (Path("/dev/shm"), Path(tempfile.gettempdir()))
+        for candidate in candidates:
+            try:
+                if (
+                    candidate.is_dir()
+                    and not candidate.is_symlink()
+                    and os.access(candidate, os.W_OK | os.X_OK)
+                ):
+                    return candidate
+            except OSError:
+                continue
+        raise RuntimeError("Montage requires a writable local scratch directory")
+
+    @staticmethod
+    def _publish_scratch_file(source: Path, destination: Path) -> None:
+        """Atomically copy one regular scratch product into durable package storage."""
+        if source.is_symlink() or not source.is_file():
+            raise RuntimeError(f"Montage scratch product is missing: {source.name}")
+        if destination.exists() or destination.is_symlink():
+            raise RuntimeError(
+                f"Montage durable product already exists: {destination.name}"
+            )
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=f".{destination.name}.",
+            dir=destination.parent,
+        )
+        temporary = Path(temporary_name)
+        try:
+            with (
+                source.open("rb") as source_stream,
+                os.fdopen(descriptor, "wb") as destination_stream,
+            ):
+                shutil.copyfileobj(source_stream, destination_stream)
+                destination_stream.flush()
+                os.fsync(destination_stream.fileno())
+            os.chmod(temporary, 0o600)
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     @staticmethod
     def _parse_statistics(text: str, *, band: str, mosaic: str) -> dict[str, Any]:
@@ -526,60 +579,99 @@ class Montage(Application):
             if callback is not None
             else None
         )
-        info = LocalExecInfo(
-            env=self.mod_env,
-            cwd=str(output),
-            timeout=1800,
-            line_callback=intermediate,
-        )
-        for band in _BANDS:
-            raw, header = prepared[band]
-            workspace = output / f"work-{band}"
-            workspace.mkdir(mode=0o700)
-            mosaic = output / f"montage-{band}.fits"
-            command = " ".join(
+        scratch_parent = self._short_scratch_parent()
+        with tempfile.TemporaryDirectory(prefix="jm-", dir=scratch_parent) as name:
+            scratch = Path(name)
+            if len(str(scratch)) >= 128:
+                raise RuntimeError(
+                    "Montage local scratch path exceeds its safe execution bound"
+                )
+            for band in _BANDS:
+                bundle, raw_relative = prepared[band]
+                band_scratch = scratch / band
+                band_scratch.mkdir(mode=0o700)
+                staged = band_scratch / "staged"
+                header = stage_input_bundle(bundle, staged)
+                raw_argument = (PurePosixPath("staged") / raw_relative).as_posix()
+                header_argument = header.relative_to(band_scratch).as_posix()
+                if max(len(raw_argument), len(header_argument)) >= 96:
+                    raise RuntimeError(
+                        "Montage bundle paths exceed its safe execution bound"
+                    )
+                info = LocalExecInfo(
+                    env=self.mod_env,
+                    cwd=str(band_scratch),
+                    timeout=1800,
+                    line_callback=intermediate,
+                )
+                command = " ".join(
+                    (
+                        "mExec",
+                        "-r",
+                        shlex.quote(raw_argument),
+                        "-f",
+                        shlex.quote(header_argument),
+                        "-o",
+                        "mosaic.fits",
+                        "2MASS",
+                        band.upper(),
+                        "workspace",
+                    )
+                )
+                self._require_success(
+                    Exec(command, info).run(), f"Montage {band.upper()} mosaic"
+                )
+                scratch_mosaic = band_scratch / "mosaic.fits"
+                self._validate_fits(scratch_mosaic)
+                self._require_success(
+                    Exec("mExamine mosaic.fits > statistics.txt", info).run(),
+                    f"Montage {band.upper()} statistics",
+                )
+                scratch_statistics = band_scratch / "statistics.txt"
+                if scratch_statistics.is_symlink() or not scratch_statistics.is_file():
+                    raise RuntimeError(f"Montage {band.upper()} statistics are missing")
+                self._parse_statistics(
+                    scratch_statistics.read_text(encoding="utf-8", errors="strict"),
+                    band=band,
+                    mosaic=f"montage-{band}.fits",
+                )
+                self._publish_scratch_file(
+                    scratch_mosaic,
+                    output / f"montage-{band}.fits",
+                )
+                self._publish_scratch_file(
+                    scratch_statistics,
+                    output / f"montage-{band}-statistics.txt",
+                )
+
+            composite = scratch / _COMPOSITE_NAME
+            viewer = " ".join(
                 (
-                    "mExec",
-                    "-r",
-                    shlex.quote(str(raw)),
-                    "-f",
-                    shlex.quote(str(header)),
-                    "-o",
-                    shlex.quote(str(mosaic)),
-                    "2MASS",
-                    band.upper(),
-                    shlex.quote(str(workspace)),
+                    "mViewer",
+                    "-blue",
+                    "j/mosaic.fits",
+                    "-1s max gaussian-log",
+                    "-green",
+                    "h/mosaic.fits",
+                    "-1s max gaussian-log",
+                    "-red",
+                    "k/mosaic.fits",
+                    "-1s max gaussian-log",
+                    "-out",
+                    _COMPOSITE_NAME,
                 )
             )
+            viewer_info = LocalExecInfo(
+                env=self.mod_env,
+                cwd=str(scratch),
+                timeout=1800,
+                line_callback=intermediate,
+            )
             self._require_success(
-                Exec(command, info).run(), f"Montage {band.upper()} mosaic"
+                Exec(viewer, viewer_info).run(), "Montage J/H/K composite"
             )
-            statistics = output / f"montage-{band}-statistics.txt"
-            examine = (
-                f"mExamine {shlex.quote(str(mosaic))} > {shlex.quote(str(statistics))}"
-            )
-            self._require_success(
-                Exec(examine, info).run(),
-                f"Montage {band.upper()} statistics",
-            )
-        composite = output / _COMPOSITE_NAME
-        viewer = " ".join(
-            (
-                "mViewer",
-                "-blue",
-                shlex.quote(str(output / "montage-j.fits")),
-                "-1s max gaussian-log",
-                "-green",
-                shlex.quote(str(output / "montage-h.fits")),
-                "-1s max gaussian-log",
-                "-red",
-                shlex.quote(str(output / "montage-k.fits")),
-                "-1s max gaussian-log",
-                "-out",
-                shlex.quote(str(composite)),
-            )
-        )
-        self._require_success(Exec(viewer, info).run(), "Montage J/H/K composite")
+            self._validate_composite(composite)
+            self._publish_scratch_file(composite, output / _COMPOSITE_NAME)
         self._write_result(output, digests)
         terminal = (
             RuntimePhaseLineCallback(callback, terminal=True)
