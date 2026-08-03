@@ -10,6 +10,7 @@ Jarvis-CD is a unified platform for deploying scientific applications, storage s
 
 - [Package Deployment Contracts](package-deployment.md) - Versioned execution, runtime resolution, configuration, and readiness metadata
 - [Package Input Bundles](input-bundles.md) - Digest-verified multi-file application inputs and mutable run staging
+- [WarpX Package](warpx.md) - Execution-owned inputs, runtime controls, and output artifacts
 - [Pipeline Configuration](pipelines.md) — Full YAML format, install managers (container/spack), environment management, multi-node, devcontainers
 - [Package Development Guide](package_dev_guide.md) — Create new packages, Dockerfile templates, container and spack support
 - [Pipeline Tests](pipeline_tests.md) — Automated testing with grid search and parameter sweeps
