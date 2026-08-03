@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 from jarvis_cd.configuration_input import (
+    MAX_CONFIGURATION_INPUT_BYTES,
     configuration_input_materialization_matches,
     materialize_configuration_inputs,
 )
@@ -194,6 +195,66 @@ def test_malformed_declared_input_binding_fails_closed(tmp_path: Path) -> None:
                 }
             ],
             config={"script": str(source)},
+            shared_dir=(tmp_path / "shared").resolve(),
+        )
+
+
+def test_scientific_bundle_above_legacy_limit_is_streamed(tmp_path: Path) -> None:
+    """Large bounded inputs materialize without the obsolete 16 MiB ceiling."""
+
+    source = tmp_path / "study.tar"
+    chunk = b"bounded-scientific-input\n" * 4096
+    with source.open("wb") as stream:
+        while stream.tell() <= 17 * 1024 * 1024:
+            stream.write(chunk)
+    shared_dir = (tmp_path / "shared").resolve()
+    shared_dir.mkdir()
+
+    configured = materialize_configuration_inputs(
+        menu=[
+            {
+                "name": "input_bundle",
+                "input_binding": dict(_INPUT_BINDING),
+            }
+        ],
+        config={"input_bundle": str(source)},
+        shared_dir=shared_dir,
+    )
+
+    target = Path(configured["input_bundle"])
+    assert target.stat().st_size == source.stat().st_size
+    assert configuration_input_materialization_matches(
+        menu=[
+            {
+                "name": "input_bundle",
+                "input_binding": dict(_INPUT_BINDING),
+            }
+        ],
+        parameter="input_bundle",
+        requested=source,
+        materialized=target,
+        shared_dir=shared_dir,
+    )
+
+
+def test_configuration_input_still_rejects_files_above_global_bound(
+    tmp_path: Path,
+) -> None:
+    """Streaming does not remove the global denial-of-service size bound."""
+
+    source = tmp_path / "oversized.tar"
+    with source.open("wb") as stream:
+        stream.truncate(MAX_CONFIGURATION_INPUT_BYTES + 1)
+
+    with pytest.raises(ValueError, match="must be one bounded regular file"):
+        materialize_configuration_inputs(
+            menu=[
+                {
+                    "name": "input_bundle",
+                    "input_binding": dict(_INPUT_BINDING),
+                }
+            ],
+            config={"input_bundle": str(source)},
             shared_dir=(tmp_path / "shared").resolve(),
         )
 
