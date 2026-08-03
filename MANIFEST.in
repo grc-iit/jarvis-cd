@@ -8,4 +8,5 @@ include builtin/builtin/paraview/service.py
 include builtin/builtin/paraview/service_http.py
 include builtin/builtin/paraview/service_supervisor.py
 include builtin/builtin/wfcommons/artifacts.py
+include builtin/builtin/xcompact3d/artifacts.py
 include wfcommons-schema.json
