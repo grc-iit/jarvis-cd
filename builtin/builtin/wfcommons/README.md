@@ -1,69 +1,91 @@
 # WfCommons
 
-Generate a synthetic scientific workflow from a [WfCommons](https://wfcommons.org/)
-recipe, translate it into a runnable [WfBench](https://github.com/wfcommons/wfbench)
-benchmark, and execute the tasks locally in topological order.
+`builtin.wfcommons` generates and executes one bounded synthetic workflow cell
+using WfCommons and WfBench. Multiple package aliases compose a parameter grid;
+the package does not hide a benchmark-specific matrix inside one step.
 
-## What it runs
+JARVIS owns the process lifecycle, output root, pinned WfFormat schema, and
+artifact finalization. The scheduled workload never installs Python packages or
+downloads a schema. Operators prepare a WfCommons 1.4 runtime before execution,
+while agents select only scientific and workload dimensions.
 
-1. **Generate** — picks the named recipe (`montage`, `genome`, `cycles`, `blast`,
-   `bwa`, `srasearch`, `epigenomics`, `seismology`, `soykb`) and instantiates a
-   `WorkflowGenerator` with `num_tasks` tasks. Writes the WfFormat JSON to
-   `<out>/workflow.json`.
-2. **Translate** — uses `WfBenchTranslator` to produce an executable benchmark
-   workflow under `<out>/bench/` (per-task `wfbench` commands + I/O stubs).
-3. **Execute** — walks the DAG in topological order with a thread pool of
-   `max_workers` workers, shelling out to each task's `wfbench` command.
+## Configuration menu
 
-## Config
+| Key | Default | Responsibility |
+| --- | ---: | --- |
+| `recipe` | `montage` | WfCommons scientific workflow family. |
+| `num_tasks` | `100` | Requested generated task count. Recipe generators may produce a nearby realizable count, which the result records separately. |
+| `data_footprint_mb` | `0` | Total workflow data footprint in MB. Zero retains recipe defaults. |
+| `seed` | `424200` | Deterministic workflow topology seed. Reuse a seed to compare footprints at fixed topology. |
+| `cpu_work` | `1` | Positive WfBench CPU work units. Zero is rejected because WfBench would not exercise its intended I/O path. |
+| `percent_cpu` | `1.0` | Fraction of WfBench work threads assigned to CPU work. |
+| `drop_page_cache` | `false` | Enables WfBench's per-file `POSIX_FADV_DONTNEED` behavior. It does not claim a privileged system-wide cold cache. |
+| `clio_prefix` | `false` | Prefixes manifest-declared data paths with `clio::` for an explicitly attached storage interceptor. |
+| `out` | `run` | Package-owned result directory under the JARVIS shared root. |
+| `timeout_seconds` | `3600` | Hard cell timeout, bounded to one day. |
+| `nprocs`, `ppn` | `1`, `1` | The workflow driver is single-process. Generated tasks are controlled by WfBench. |
+| `runtime_python` | empty | Hidden operator setting. Empty uses `WFCOMMONS_PYTHON`, then the JARVIS Python executable. |
 
-| Key | Default | Notes |
-| --- | --- | --- |
-| `recipe` | `montage` | One of the 9 wfcommons recipes. |
-| `num_tasks` | `100` | Workflow size. |
-| `cpu_work` | `100` | CPU work units per `wfbench` task. |
-| `data_footprint` | `100M` | Data size per task; passed to translator. |
-| `max_workers` | `4` | Concurrency for the local task pool. |
-| `out` | `$HOME/wfcommons_out` | Output directory (json + bench/ + logs/). |
-| `keep_outputs` | `false` | Retain bulky `bench/data/` after the run. |
-| `venv` | `$HOME/.jarvis-wfcommons-venv` | Bare-metal venv path (default mode only). |
+## Runtime contract
 
-## Deployment modes
+Native execution requires Bash and a prepared Python runtime whose imported
+`wfcommons.__version__` is exactly `1.4`. The package's deployment description
+probes that contract. Configuration never creates a venv, upgrades pip, or
+installs from the network.
 
-- **`base_deploy_mode: container`** — builds a python venv with `wfcommons[bench]`
-  inside the build container and ships it via the deploy image.
-- **`base_deploy_mode: default`** — creates a venv at `venv:` on the local host
-  and `pip install`s wfcommons there (idempotent).
+The optional container build creates that runtime before workload execution,
+pins WfCommons 1.4, and verifies the WfFormat schema against repository digest
+`716e7b625a37a144674afbf8e6a008c21bbd0fd467ccbb7be39deab9fb8f6aab`.
+The built image digest is the deployable runtime identity.
 
-## Example
+## Results and artifacts
+
+Every successful step closes these package-owned artifacts:
+
+- `wfcommons-result.json`, schema `jarvis.wfcommons-result.v1`;
+- the generated WfFormat workflow manifest;
+- the WfBench workflow log;
+- a sorted Python distribution lock from the prepared runtime;
+- the exact staged WfFormat schema.
+
+The result binds the requested and observed task counts, MB footprint, seed,
+elapsed time, DAG edge count, topology hash, runtime versions, return code, and
+SHA-256 digest of every member. Nonzero execution leaves present products
+`incomplete`; it never finalizes them as successful outputs.
+
+## Four-cell example
+
+The following shape compares two task counts and two footprints without a
+benchmark-specific adapter:
 
 ```yaml
-name: wfcommons_container_test
-base_deploy_mode: container
-container_engine: docker
-container_base: ubuntu:24.04
-
+name: wfcommons_epigenomics_grid
 pkgs:
   - pkg_type: builtin.wfcommons
-    pkg_name: wfcommons_container
-    recipe: montage
-    num_tasks: 25
-    cpu_work: 100
-    data_footprint: 100M
-    out: /tmp/wfcommons_out
+    pkg_name: tasks_100_data_8
+    recipe: epigenomics
+    num_tasks: 100
+    data_footprint_mb: 8
+    seed: 424300
+  - pkg_type: builtin.wfcommons
+    pkg_name: tasks_100_data_32
+    recipe: epigenomics
+    num_tasks: 100
+    data_footprint_mb: 32
+    seed: 424300
+  - pkg_type: builtin.wfcommons
+    pkg_name: tasks_500_data_8
+    recipe: epigenomics
+    num_tasks: 500
+    data_footprint_mb: 8
+    seed: 424700
+  - pkg_type: builtin.wfcommons
+    pkg_name: tasks_500_data_32
+    recipe: epigenomics
+    num_tasks: 500
+    data_footprint_mb: 32
+    seed: 424700
 ```
 
-Run with:
-
-```
-jarvis ppl load yaml builtin/pipelines/examples/wfcommons_container_test.yaml
-jarvis ppl run
-```
-
-## Notes
-
-- The runner is single-process; task-level parallelism is governed by
-  `max_workers`, not by MPI. Set `nprocs: 1`, `ppn: 1`.
-- The WfBench tasks fabricate CPU + I/O load; they don't carry the actual
-  scientific kernel of (say) Montage. Use it for scheduler / storage / system
-  benchmarking, not for science.
+WfBench fabricates the CPU and I/O behavior of a workflow family; it does not
+execute the scientific kernels represented by recipe task names.
