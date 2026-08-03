@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+import jarvis_cd.deployment as deployment_module
 from jarvis_cd.core.pkg import Interceptor, Pkg
 from jarvis_cd.deployment import (
     ConfigurationCondition,
@@ -21,13 +22,14 @@ from jarvis_cd.deployment import (
     ReadinessContract,
     RuntimeRequirement,
     RuntimeStatus,
+    probe_program,
 )
 
 _BUILTIN_REPOSITORY_ROOT = Path(__file__).resolve().parents[3] / "builtin"
 sys.path.insert(0, str(_BUILTIN_REPOSITORY_ROOT))
 
-from builtin.lammps import pkg as lammps_module  # noqa: E402
-from builtin.paraview import pkg as paraview_module  # noqa: E402
+from builtin.lammps import pkg as lammps_module  # pyright: ignore[reportMissingImports]  # noqa: E402
+from builtin.paraview import pkg as paraview_module  # pyright: ignore[reportMissingImports]  # noqa: E402
 from jarvis_cd.core.config import Jarvis  # noqa: E402
 
 
@@ -150,6 +152,48 @@ def test_configuration_input_binding_is_closed_and_machine_readable() -> None:
             kind="local_file",
             structure="regular_file",
             schema_version="jarvis.configuration-input-binding.v2",
+        )
+
+
+def test_program_probe_can_accept_a_documented_usage_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI tools that use exit 1 for side-effect-free usage remain probeable."""
+    monkeypatch.setattr(
+        deployment_module,
+        "which",
+        lambda _program, *, path: "/runtime/bin/mExec" if path else None,
+    )
+    monkeypatch.setattr(
+        deployment_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout='[struct stat="ERROR", msg="Usage: mExec ..."]\n',
+            stderr="",
+        ),
+    )
+
+    accepted = probe_program(
+        "mExec",
+        environment={"PATH": "/runtime/bin"},
+        arguments=(),
+        accepted_return_codes=(0, 1),
+    )
+    strict = probe_program(
+        "mExec",
+        environment={"PATH": "/runtime/bin"},
+        arguments=(),
+    )
+
+    assert accepted.status.usable is True
+    assert "Usage: mExec" in accepted.output
+    assert strict.status.usable is False
+    with pytest.raises(ValueError, match="bounded integers"):
+        probe_program(
+            "mExec",
+            environment={"PATH": "/runtime/bin"},
+            accepted_return_codes=(),
         )
 
 
