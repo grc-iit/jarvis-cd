@@ -36,6 +36,25 @@ from builtin.lbm_cfd.contract import (
 from builtin.lbm_cfd.runtime import DeferredRuntimeCallback
 
 
+def _lbm_command(executable: Path, lattice: str) -> str:
+    if lattice not in LATTICES:
+        raise ValueError(f"unsupported LBM-CFD lattice: {lattice}")
+    dimensions = " ".join(str(value) for value in DIMENSIONS)
+    return " ".join(
+        (
+            shlex.quote(str(executable)),
+            f"--{lattice}",
+            "--dim",
+            dimensions,
+            "--steps",
+            str(TIME_STEPS),
+            "--output-vorticity",
+            "--output-dir",
+            shlex.quote(lattice),
+        )
+    )
+
+
 class LbmCfd(Application):
     """Execute the same bounded bluff-body wake with three lattice stencils."""
 
@@ -169,8 +188,7 @@ class LbmCfd(Application):
             Exec("make CXX=mpicxx CXXFLAGS='-std=c++14 -O3'", local_info).run(),
             "LBM-CFD build",
         )
-        executable = shlex.quote(str(run_dir / "bin" / "lbmcfd3d"))
-        dimensions = " ".join(str(value) for value in DIMENSIONS)
+        executable = run_dir / "bin" / "lbmcfd3d"
         for lattice in LATTICES:
             output = run_dir / lattice
             output.mkdir(mode=0o700)
@@ -183,19 +201,10 @@ class LbmCfd(Application):
                 timeout=1800,
                 line_callback=preliminary,
             )
-            command = " ".join(
-                (
-                    executable,
-                    f"--{lattice}",
-                    "--dim",
-                    dimensions,
-                    "--steps",
-                    str(TIME_STEPS),
-                    "--output-vorticity",
-                    "--output-dir",
-                    shlex.quote(str(output)),
-                )
-            )
+            # LBM-CFD stores its output directory in a fixed-size native buffer.
+            # Keep the process argument relative to the execution-owned cwd so a
+            # long JARVIS root cannot silently truncate the destination.
+            command = _lbm_command(executable, lattice)
             self._require_success(
                 Exec(command, mpi_info).run(), f"LBM-CFD {lattice.upper()}"
             )

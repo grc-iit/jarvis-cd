@@ -7,6 +7,7 @@ import io
 import json
 import math
 import os
+import shlex
 import sys
 import tarfile
 from collections.abc import Callable
@@ -42,7 +43,10 @@ from builtin.lbm_cfd.contract import (  # pyright: ignore[reportMissingImports] 
 from builtin.lbm_cfd.artifacts import (  # pyright: ignore[reportMissingImports]  # noqa: E402
     adapter_from_package as lbm_artifact_adapter,
 )
-from builtin.lbm_cfd.pkg import LbmCfd  # pyright: ignore[reportMissingImports]  # noqa: E402
+from builtin.lbm_cfd.pkg import (  # pyright: ignore[reportMissingImports]  # noqa: E402
+    LbmCfd,
+    _lbm_command,
+)
 from builtin.openfoam.artifacts import (  # pyright: ignore[reportMissingImports]  # noqa: E402
     adapter_from_package as openfoam_artifact_adapter,
 )
@@ -286,6 +290,19 @@ def test_maintained_profiles_are_discoverable_by_exact_package_name(
         assert jarvis.find_package("lbm_cfd") == "builtin.lbm_cfd"
     finally:
         Jarvis._instance = previous
+
+
+def test_lbm_launcher_uses_bounded_relative_output_directory() -> None:
+    """Long execution roots must not enter LBM-CFD's fixed-size path buffer."""
+
+    executable = Path("/very/long/jarvis/execution/root/bin/lbmcfd3d")
+    command = _lbm_command(executable, "d3q15")
+
+    assert command.startswith(shlex.quote(str(executable)))
+    assert command.endswith("--output-dir d3q15")
+    assert "/very/long/jarvis/execution/root/d3q15" not in command
+    with pytest.raises(ValueError, match="unsupported LBM-CFD lattice"):
+        _lbm_command(executable, "d3q99")
 
 
 def test_release_manifest_includes_complete_maintained_profile_modules() -> None:
