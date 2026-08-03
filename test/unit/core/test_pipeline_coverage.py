@@ -369,6 +369,68 @@ class TestPipelineCoverage(unittest.TestCase):
         self.assertNotIn("LD_PRELOAD", plain.mod_env)
         self.assertEqual(observed.mod_env["LD_PRELOAD"], "/tmp/libmonitor.so")
 
+    def test_configured_interceptor_environments_remain_package_local(self) -> None:
+        """Two configured Darshan aliases retain independent runtime settings."""
+        pipeline = self._make_pipeline("interceptor_runtime_isolation")
+        pipeline.append(
+            "builtin.darshan",
+            package_alias="darshan_ior",
+            config_args=[
+                "log_dir=/tmp/ior_logs",
+                "job_id=ior",
+            ],
+        )
+        pipeline.append(
+            "builtin.darshan",
+            package_alias="darshan_clio",
+            config_args=[
+                "log_dir=/tmp/clio_logs",
+                "job_id=clio",
+            ],
+        )
+        pipeline.append(
+            "builtin.echo",
+            package_alias="ior",
+            config_args=['interceptors=["darshan_ior"]'],
+        )
+        pipeline.append(
+            "builtin.echo",
+            package_alias="clio",
+            config_args=['interceptors=["darshan_clio"]'],
+        )
+        pipeline.append("builtin.echo", package_alias="plain")
+
+        pipeline.interceptors["darshan_ior"]["config"]["deploy_mode"] = "container"
+        pipeline.interceptors["darshan_clio"]["config"]["deploy_mode"] = "container"
+
+        with patch("builtin.darshan.pkg.Mkdir.run"):
+            pipeline._configure_package_instance(
+                pipeline.interceptors["darshan_ior"], "interceptor"
+            )
+            pipeline._configure_package_instance(
+                pipeline.interceptors["darshan_clio"], "interceptor"
+            )
+
+        self.assertNotIn("DARSHAN_LOG_DIR", pipeline.env)
+        self.assertNotIn("PBS_JOBID", pipeline.env)
+
+        ior = pipeline._load_package_instance(pipeline.packages[0], pipeline.env)
+        clio = pipeline._load_package_instance(pipeline.packages[1], pipeline.env)
+        plain = pipeline._load_package_instance(pipeline.packages[2], pipeline.env)
+        pipeline._apply_interceptors_to_package(ior, pipeline.packages[0])
+        pipeline._apply_interceptors_to_package(clio, pipeline.packages[1])
+        pipeline._apply_interceptors_to_package(plain, pipeline.packages[2])
+
+        self.assertEqual(ior.env["DARSHAN_LOG_DIR"], "/tmp/ior_logs")
+        self.assertEqual(ior.env["PBS_JOBID"], "ior")
+        self.assertEqual(ior.mod_env["LD_PRELOAD"], "/opt/darshan/lib/libdarshan.so")
+        self.assertEqual(clio.env["DARSHAN_LOG_DIR"], "/tmp/clio_logs")
+        self.assertEqual(clio.env["PBS_JOBID"], "clio")
+        self.assertEqual(clio.mod_env["LD_PRELOAD"], "/opt/darshan/lib/libdarshan.so")
+        self.assertNotIn("DARSHAN_LOG_DIR", plain.env)
+        self.assertNotIn("PBS_JOBID", plain.env)
+        self.assertNotIn("LD_PRELOAD", plain.mod_env)
+
     def test_append_rejects_cross_kind_alias_collision(self):
         """Package and interceptor IDs share one pipeline namespace."""
         pipeline = self._make_pipeline("append_interceptor_collision")
