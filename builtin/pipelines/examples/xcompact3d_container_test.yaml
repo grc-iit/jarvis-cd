@@ -21,5 +21,9 @@ pkgs:
     pkg_name: xcompact3d_container
     nprocs: 2
     ppn: 2
-    case: TGV
-    out: /tmp/xcompact3d_out
+    # Replace this path with a jarvis.package-input-bundle.v1 archive that is
+    # visible to JARVIS. The bundle should include the selected .i3d file and
+    # support resources such as adios2_config.xml.
+    input_bundle: /path/to/xcompact3d-inputs.tar
+    input_path: channel/input_test_x.i3d
+    out: run
