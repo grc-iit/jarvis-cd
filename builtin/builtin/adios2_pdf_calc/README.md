@@ -17,12 +17,36 @@ PDF Calc reads ADIOS2 data produced by the Gray-Scott simulation and computes st
 |-----------|------|---------|-------------|
 | `nprocs` | int | 2 | Number of MPI processes |
 | `ppn` | int | 16 | Processes per node |
+| `executable` | str | `pdf_calc` | Installed executable resolved through `PATH` |
+| `input_bundle` | str | empty | Optional digest-verified source bundle |
 | `input_file` | str | *Required* | Input file from Gray-Scott simulation |
 | `output_file` | str | *Required* | Output file for PDF analysis results |
 | `nbins` | int | 1000 | Number of bins for PDF calculation |
 | `output_inputdata` | str | NO | Write original variables (YES/NO) |
 
 ## Usage
+
+### Digest-verified source build
+
+When `pdf_calc` is not installed, `input_bundle` may point to a regular tar
+archive using `jarvis.package-input-bundle.v1`. Its manifest must declare
+exactly one `build_spec` and one `adios2_configuration`. JARVIS verifies the
+complete archive before submission, then builds the `pdf_calc` target in an
+execution-owned workspace using CMake, MPI compilers, and the active ADIOS2
+development environment.
+
+```bash
+jarvis ppl append adios2_pdf_calc \
+  input_bundle=/staged/gray-scott-source.tar \
+  input_file=/shared/gray-scott/feed-low.bp \
+  output_file=feed-low-pdf.bp \
+  nbins=128 nprocs=1 ppn=1
+```
+
+Relative output paths are scoped to the PDF Calc package shared directory.
+Absolute input paths allow explicit consumption of a prior pipeline product.
+There is no implicit developer checkout, and a nonzero `pdf_calc` exit fails
+the package lifecycle.
 
 ### Standalone Usage
 
