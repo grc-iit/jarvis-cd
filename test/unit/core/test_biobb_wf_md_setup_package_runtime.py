@@ -128,6 +128,7 @@ def _package(tmp_path: Path, config: dict[str, Any]) -> Any:
     package.env = {}
     package.mod_env = {"PATH": "/runtime/bin"}
     package.python_bin = "python3"
+    package.gmx_bin = "gmx_mpi"
     package.pipeline = SimpleNamespace(get_hostfile=lambda: Hostfile(find_ips=False))
     package.runtime_line_callback = lambda: None
     return package
@@ -214,8 +215,30 @@ def test_native_run_copies_input_and_launches_package_owned_driver(
     assert "--water-type spce" in command
     assert "--box-type dodecahedron" in command
     assert "--distance-to-molecule 1.25" in command
+    assert "--gmx gmx_mpi" in command
     assert _CapturedExec.infos[-1].cwd == str(staged.parent.resolve())
     assert isinstance(_CapturedExec.infos[-1], LocalExecInfo)
+
+
+def test_gromacs_discovery_supports_mpi_named_spack_builds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A valid ``gmx_mpi`` installation satisfies the GROMACS runtime."""
+
+    monkeypatch.setattr(
+        biobb_package.shutil,
+        "which",
+        lambda program, *, path: (
+            "/spack/gromacs/bin/gmx_mpi"
+            if program == "gmx_mpi" and path == "/spack/bin"
+            else None
+        ),
+    )
+
+    assert (
+        biobb_package.BiobbWfMdSetup._discover_gromacs({"PATH": "/spack/bin"})
+        == "gmx_mpi"
+    )
 
 
 def test_native_run_rejects_missing_unsafe_or_colliding_input(tmp_path: Path) -> None:

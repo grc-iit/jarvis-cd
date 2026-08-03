@@ -18,7 +18,7 @@ fails. A successful process exit is the authoritative completion signal.
 Native execution requires:
 
 - `python3` with `biobb-model` and `biobb-gromacs` importable; and
-- `gmx` available through `PATH`.
+- `gmx` or the MPI-build name `gmx_mpi` available through `PATH`.
 
 The deployment descriptor reports these as separate runtime requirements. It
 also provides provider-neutral hints for Python distributions and a `gromacs`

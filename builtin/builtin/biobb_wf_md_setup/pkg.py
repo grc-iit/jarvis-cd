@@ -24,6 +24,7 @@ from jarvis_cd.shell.process import Mkdir, Rm
 
 _MAX_PDB_BYTES = 32 * 1024 * 1024
 _NATIVE_INPUT_NAME = "input.pdb"
+_GROMACS_EXECUTABLES = ("gmx", "gmx_mpi")
 _FORCE_FIELDS = frozenset(
     {
         "amber03",
@@ -57,6 +58,7 @@ class BiobbWfMdSetup(Application):
 
     def _init(self) -> None:
         self.python_bin: str | None = None
+        self.gmx_bin: str | None = None
 
     def _configure_menu(self) -> list[dict[str, Any]]:
         return [
@@ -238,14 +240,16 @@ class BiobbWfMdSetup(Application):
         """Describe the native BioBB and GROMACS runtime requirements."""
 
         environment = self._deployment_environment()
+        python_program = self._discover_python(environment) or "python3"
+        gromacs_program = self._discover_gromacs(environment) or "gmx"
         biobb_probe = probe_program(
-            "python3",
+            python_program,
             environment=environment,
             arguments=("-c", "import biobb_gromacs, biobb_model"),
             timeout_seconds=10,
         )
         gromacs_probe = probe_program(
-            "gmx",
+            gromacs_program,
             environment=environment,
             arguments=("--version",),
             timeout_seconds=10,
@@ -338,6 +342,7 @@ class BiobbWfMdSetup(Application):
         if self.config.get("deploy_mode") == "default":
             self._validate_native_configuration()
             self.python_bin = self._discover_python(self._deployment_environment())
+            self.gmx_bin = self._discover_gromacs(self._deployment_environment())
             self._ensure_output_dir()
 
     @staticmethod
@@ -345,6 +350,15 @@ class BiobbWfMdSetup(Application):
         """Return a Python command from the activated package environment."""
 
         for candidate in ("python3", "python"):
+            if shutil.which(candidate, path=environment.get("PATH")) is not None:
+                return candidate
+        return None
+
+    @staticmethod
+    def _discover_gromacs(environment: dict[str, str]) -> str | None:
+        """Return the first supported GROMACS executable available through PATH."""
+
+        for candidate in _GROMACS_EXECUTABLES:
             if shutil.which(candidate, path=environment.get("PATH")) is not None:
                 return candidate
         return None
@@ -439,6 +453,9 @@ class BiobbWfMdSetup(Application):
         python_bin = self.python_bin or self._discover_python(self.mod_env)
         if python_bin is None:
             raise RuntimeError("BioBB Python runtime is unavailable through PATH")
+        gmx_bin = self.gmx_bin or self._discover_gromacs(self.mod_env)
+        if gmx_bin is None:
+            raise RuntimeError("GROMACS runtime is unavailable through PATH")
         script = Path(__file__).with_name("run_md_setup.py").resolve()
         force_field = self.config.get("force_field")
         water_type = self.config.get("water_type")
@@ -466,7 +483,7 @@ class BiobbWfMdSetup(Application):
             "--distance-to-molecule",
             str(float(distance)),
             "--gmx",
-            "gmx",
+            gmx_bin,
         ]
         if self.config.get("ignore_input_hydrogens") is True:
             args.append("--ignore-input-hydrogens")
