@@ -269,7 +269,12 @@ class Adios2GrayScott(Application):
                 "default": 10,
             },
             {"name": "noise", "msg": "Initial noise", "type": float, "default": 0.01},
-            {"name": "out_file", "msg": "Output dataset", "type": str, "default": None},
+            {
+                "name": "out_file",
+                "msg": "Optional output dataset; empty uses execution-owned storage",
+                "type": str,
+                "default": "",
+            },
             {
                 "name": "checkpoint",
                 "msg": "Write checkpoints",
@@ -497,7 +502,7 @@ class Adios2GrayScott(Application):
 
     def _configure_generated_settings(self) -> None:
         config = cast(dict[str, Any], self.config)
-        if config["out_file"] is None:
+        if not config["out_file"]:
             config["out_file"] = str(
                 self.resolve_shared_path(
                     "gray-scott-output/data/out.bp", field="out_file"

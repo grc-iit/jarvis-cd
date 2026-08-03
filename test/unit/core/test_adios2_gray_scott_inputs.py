@@ -171,6 +171,7 @@ def test_gray_scott_menu_and_deployment_expose_portable_bundle_profile(
         "structure": "regular_file",
     }
     assert menu["configuration_path"]["default"] == ""
+    assert menu["out_file"]["default"] == ""
     assert document is not None
     assert {profile["name"] for profile in document["execution_profiles"]} == {
         "installed_executable",
