@@ -248,7 +248,7 @@ def run(
                     "water_type": config.water_type,
                     "ignh": config.ignore_input_hydrogens,
                     "merge": config.merge_chains,
-                    "gmx_path": config.gmx,
+                    "binary_path": config.gmx,
                 },
             )
         )
@@ -267,7 +267,7 @@ def run(
                     "box_type": config.box_type,
                     "distance_to_molecule": config.distance_to_molecule,
                     "center_molecule": True,
-                    "gmx_path": config.gmx,
+                    "binary_path": config.gmx,
                 },
             )
         )
@@ -281,7 +281,7 @@ def run(
                 output_gro_path=str(solvated),
                 input_top_zip_path=str(processed_topology),
                 output_top_zip_path=str(solvated_topology),
-                properties={"gmx_path": config.gmx},
+                properties={"binary_path": config.gmx},
             )
         )
         _require_file(solvated, "solvated coordinates")

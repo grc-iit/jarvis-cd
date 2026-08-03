@@ -98,7 +98,7 @@ def _config(root: Path) -> Any:
         distance_to_molecule=1.25,
         ignore_input_hydrogens=True,
         merge_chains=False,
-        gmx="gmx",
+        gmx="gmx_mpi",
     )
 
 
@@ -140,8 +140,10 @@ def test_successful_driver_records_semantics_metrics_and_exact_outputs(
         "water_type": "spce",
         "ignh": True,
         "merge": False,
-        "gmx_path": "gmx",
+        "binary_path": "gmx_mpi",
     }
+    assert calls["editconf"]["properties"]["binary_path"] == "gmx_mpi"
+    assert calls["solvate"]["properties"]["binary_path"] == "gmx_mpi"
     assert calls["editconf"]["properties"]["box_type"] == "dodecahedron"
 
 
