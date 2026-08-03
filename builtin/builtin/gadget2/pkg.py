@@ -8,6 +8,10 @@ import shutil
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
+from .output_contract import (
+    Gadget2OutputContract,
+    parse_gadget2_output_contract,
+)
 from jarvis_cd.core.pkg import Application
 from jarvis_cd.deployment import (
     ConfigurationCondition,
@@ -195,7 +199,8 @@ class Gadget2(Application):
                     when=(ConfigurationCondition("input_bundle", "is_not_empty"),),
                     runtime_requirements=("gadget2",),
                     readiness=ReadinessContract(
-                        mechanism="process_exit", condition="successful_exit"
+                        mechanism="process_exit",
+                        condition="successful_exit_with_required_products",
                     ),
                     description=(
                         "Run one caller-supplied Gadget2 parameter and "
@@ -339,7 +344,7 @@ class Gadget2(Application):
             raise ValueError("selected Gadget2 parameter_path is not a regular file")
         return selected
 
-    def _prepare_native_input(self) -> Path:
+    def _prepare_native_input(self) -> tuple[Path, Gadget2OutputContract]:
         """Verify and copy one complete simulation bundle into owned storage."""
 
         self._validate_native_configuration()
@@ -359,49 +364,32 @@ class Gadget2(Application):
         staged = self._output_dir() / relative
         if staged.is_symlink() or not staged.is_file():
             raise RuntimeError("staged Gadget2 parameter file is unavailable")
-        self._prepare_native_output_directory(staged)
-        return staged
+        contract = self._prepare_native_output_directory(staged, relative=relative)
+        self._assert_native_outputs_absent(contract)
+        return staged, contract
 
-    @staticmethod
-    def _prepare_native_output_directory(parameter: Path) -> Path:
+    def _prepare_native_output_directory(
+        self,
+        parameter: Path,
+        *,
+        relative: Path,
+    ) -> Gadget2OutputContract:
         """Create the parameter-declared output directory inside owned storage."""
 
         try:
-            lines = parameter.read_text(encoding="utf-8").splitlines()
+            text = parameter.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
             raise ValueError(
                 "Gadget2 parameter file must be readable UTF-8 text"
             ) from exc
-        values: list[str] = []
-        for raw_line in lines:
-            statement = raw_line.partition("%")[0].partition(";")[0].strip()
-            if not statement:
-                continue
-            tokens = statement.split()
-            if tokens[0] != "OutputDir":
-                continue
-            if len(tokens) != 2:
-                raise ValueError("Gadget2 OutputDir must contain one path token")
-            values.append(tokens[1])
-        if len(values) != 1:
-            raise ValueError(
-                "Gadget2 parameter file must declare OutputDir exactly once"
-            )
-
-        raw_output = values[0]
-        if "\\" in raw_output:
-            raise ValueError("Gadget2 OutputDir must use a confined POSIX path")
-        relative = PurePosixPath(raw_output)
-        if (
-            relative.is_absolute()
-            or ".." in relative.parts
-            or (relative.parts and ":" in relative.parts[0])
-        ):
-            raise ValueError("Gadget2 OutputDir must use a confined POSIX path")
-        lexical_target = parameter.parent.joinpath(*relative.parts)
+        contract = parse_gadget2_output_contract(
+            text,
+            parameter_path=PurePosixPath(relative.as_posix()),
+        )
+        lexical_target = self._output_dir().joinpath(*contract.output_dir.parts)
         if lexical_target.is_symlink():
             raise ValueError("Gadget2 OutputDir cannot be a symbolic link")
-        root = parameter.parent.resolve()
+        root = self._output_dir().resolve()
         target = lexical_target.resolve(strict=False)
         try:
             target.relative_to(root)
@@ -413,12 +401,83 @@ class Gadget2(Application):
             raise RuntimeError("could not create Gadget2 OutputDir") from exc
         if target.is_symlink() or not target.is_dir():
             raise ValueError("Gadget2 OutputDir must resolve to a directory")
-        return target
+        return contract
+
+    def _contract_path(self, relative: PurePosixPath) -> Path:
+        """Resolve one parsed output path below the package-owned run root."""
+
+        root = self._output_dir().resolve()
+        lexical = self._output_dir().joinpath(*relative.parts)
+        resolved = lexical.resolve(strict=False)
+        try:
+            resolved.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(
+                "Gadget2 output path escapes staged input storage"
+            ) from exc
+        return lexical
+
+    def _snapshot_products(
+        self,
+        contract: Gadget2OutputContract,
+    ) -> list[Path]:
+        """Return bounded regular snapshots matching the declared file base."""
+
+        base = self._contract_path(contract.snapshot_file_base)
+        parent = base.parent
+        if parent.is_symlink() or not parent.is_dir():
+            return []
+        products: list[Path] = []
+        for candidate in parent.glob(f"{base.name}_*"):
+            if candidate.is_symlink() or not candidate.is_file():
+                continue
+            products.append(candidate)
+            if len(products) >= 4096:
+                break
+        return products
+
+    def _assert_native_outputs_absent(
+        self,
+        contract: Gadget2OutputContract,
+    ) -> None:
+        """Prevent staged or stale files from satisfying completion checks."""
+
+        for relative in (contract.energy_file, contract.info_file):
+            path = self._contract_path(relative)
+            if path.exists() or path.is_symlink():
+                raise ValueError(
+                    "Gadget2 required outputs must not exist before execution"
+                )
+        if self._snapshot_products(contract):
+            raise ValueError("Gadget2 snapshots must not exist before execution")
+
+    def _validate_native_completion(
+        self,
+        contract: Gadget2OutputContract,
+    ) -> None:
+        """Require non-empty scientific products after a successful process exit."""
+
+        missing: list[str] = []
+        for label, relative in (
+            ("EnergyFile", contract.energy_file),
+            ("InfoFile", contract.info_file),
+        ):
+            path = self._contract_path(relative)
+            if path.is_symlink() or not path.is_file() or path.stat().st_size <= 0:
+                missing.append(label)
+        snapshots = self._snapshot_products(contract)
+        if not any(snapshot.stat().st_size > 0 for snapshot in snapshots):
+            missing.append("SnapshotFileBase")
+        if missing:
+            raise RuntimeError(
+                "Gadget2 exited without required non-empty products: "
+                + ", ".join(missing)
+            )
 
     def _start_native(self) -> None:
         """Launch the staged scientific input and propagate every rank failure."""
 
-        parameter = self._prepare_native_input()
+        parameter, contract = self._prepare_native_input()
         executable = self.gadget2_bin or self._discover_executable(self.mod_env)
         if executable is None:
             raise RuntimeError("Gadget2 executable is unavailable through PATH")
@@ -437,6 +496,7 @@ class Gadget2(Application):
         failures = {host: code for host, code in result.exit_code.items() if code != 0}
         if failures:
             raise RuntimeError(f"Gadget2 execution failed: {failures}")
+        self._validate_native_completion(contract)
 
     def _configure_legacy(self) -> None:
         """Preserve the historical stock-case/container configuration."""

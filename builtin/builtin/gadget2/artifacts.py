@@ -9,6 +9,10 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from .output_contract import (
+    Gadget2OutputContract,
+    parse_gadget2_output_contract,
+)
 from jarvis_cd.artifacts import (
     ArtifactLocation,
     ArtifactObservation,
@@ -25,25 +29,25 @@ _MAX_DISCOVERED_FILES = 4096
 _MAX_REPORTED_MEMBERS = 512
 _MAX_CHECKSUM_BYTES = 256 * 1024 * 1024
 _LOG_PRODUCTS = {
-    "energy.txt": (
+    "energy_file": (
         "gadget2-energy",
         "scientific_dataset",
         "gadget2-energy-table",
         "text/plain",
     ),
-    "info.txt": (
+    "info_file": (
         "gadget2-info",
         "scientific_log",
         "gadget2-timestep-log",
         "text/plain",
     ),
-    "cpu.txt": (
+    "cpu_file": (
         "gadget2-cpu",
         "performance_log",
         "gadget2-cpu-log",
         "text/plain",
     ),
-    "timings.txt": (
+    "timings_file": (
         "gadget2-timings",
         "performance_log",
         "gadget2-timing-log",
@@ -66,6 +70,7 @@ class Gadget2ArtifactAdapter:
 
     output_dir: PurePosixPath
     input_paths: frozenset[PurePosixPath] = frozenset()
+    declared_outputs: Gadget2OutputContract | None = None
     _local_root: Path | None = None
     _finalized: bool = False
     _collection_artifact_id: str = field(default_factory=new_artifact_id)
@@ -146,26 +151,33 @@ class Gadget2ArtifactAdapter:
         files, truncated = self._discover_files()
         if not files and not truncated:
             return []
-        by_basename: dict[str, list[_OutputFile]] = {}
-        for item in files:
-            by_basename.setdefault(item.relative_path.name.casefold(), []).append(item)
+        declared = self.declared_outputs
+        if declared is None:
+            raise RuntimeError("Gadget2 artifact discovery requires declared outputs")
+        by_path = {item.relative_path: item for item in files}
+        snapshot_base = declared.snapshot_file_base
         snapshots = [
             item
             for item in files
-            if item.relative_path.name.casefold().startswith("snapshot_")
+            if item.relative_path.parent == snapshot_base.parent
+            and item.relative_path.name.startswith(f"{snapshot_base.name}_")
         ]
         restarts = [
             item
             for item in files
-            if item.relative_path.name.casefold().startswith("restart.")
+            if item.relative_path.parent == declared.output_dir
+            and item.relative_path.name.casefold().startswith("restart.")
         ]
-        missing = [
-            name
-            for name in ("energy.txt", "info.txt")
-            if len(by_basename.get(name, ())) != 1
-        ]
-        if not snapshots:
-            missing.append("snapshot")
+        missing: list[str] = []
+        for label, path in (
+            ("EnergyFile", declared.energy_file),
+            ("InfoFile", declared.info_file),
+        ):
+            product = by_path.get(path)
+            if product is None or product.size_bytes <= 0:
+                missing.append(label)
+        if not any(snapshot.size_bytes > 0 for snapshot in snapshots):
+            missing.append("SnapshotFileBase")
         valid = return_code == 0 and not truncated and not missing
         state = ArtifactState.FINALIZED if valid else ArtifactState.INCOMPLETE
         if missing:
@@ -181,11 +193,15 @@ class Gadget2ArtifactAdapter:
         observations = [
             self._collection_observation(files, state=state, message=message)
         ]
-        for basename, identity in _LOG_PRODUCTS.items():
-            matches = by_basename.get(basename, ())
-            if len(matches) == 1:
+        for field_name, identity in _LOG_PRODUCTS.items():
+            declared_path = getattr(declared, field_name)
+            if declared_path is not None and declared_path in by_path:
                 observations.append(
-                    self._file_observation(matches[0], identity=identity, state=state)
+                    self._file_observation(
+                        by_path[declared_path],
+                        identity=identity,
+                        state=state,
+                    )
                 )
         if snapshots:
             observations.append(
@@ -355,10 +371,45 @@ def adapter_from_package(package: dict[str, Any]) -> Gadget2ArtifactAdapter | No
     materialized = extract_input_bundle(
         input_bundle, Path(shared_dir.as_posix()) / "input-bundles"
     )
+    parameter_path = _selected_parameter_path(
+        package.get("parameter_path"),
+        entrypoint=materialized.manifest.entrypoint,
+        declared=frozenset(item.path for item in materialized.manifest.files),
+    )
+    parameter = materialized.root / parameter_path
+    try:
+        parameter_text = parameter.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ValueError("Gadget2 parameter file must be readable UTF-8 text") from exc
+    declared_outputs = parse_gadget2_output_contract(
+        parameter_text,
+        parameter_path=parameter_path,
+    )
     input_paths = frozenset(
         PurePosixPath(item.path) for item in materialized.manifest.files
     )
-    return Gadget2ArtifactAdapter(output_dir, input_paths)
+    return Gadget2ArtifactAdapter(output_dir, input_paths, declared_outputs)
+
+
+def _selected_parameter_path(
+    value: object,
+    *,
+    entrypoint: str,
+    declared: frozenset[str],
+) -> PurePosixPath:
+    """Resolve the package-selected parameter within the bundle manifest."""
+
+    raw = entrypoint if value in (None, "") else value
+    if not isinstance(raw, str) or not raw or "\\" in raw:
+        raise ValueError("Gadget2 parameter_path must be a manifest path")
+    path = PurePosixPath(raw)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError("Gadget2 parameter_path must be a confined manifest path")
+    if path.as_posix() not in declared:
+        raise ValueError("Gadget2 parameter_path is not declared by the input bundle")
+    if path.suffix.casefold() != ".param":
+        raise ValueError("Gadget2 parameter_path must end in .param")
+    return path
 
 
 def _configured_output_dir(

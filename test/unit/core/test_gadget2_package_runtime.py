@@ -6,9 +6,10 @@ import hashlib
 import io
 import json
 import shlex
+import sys
 import tarfile
-from importlib.util import module_from_spec, spec_from_file_location
-from pathlib import Path
+from importlib import import_module
+from pathlib import Path, PurePosixPath
 from types import ModuleType, SimpleNamespace
 from typing import Any
 
@@ -25,19 +26,12 @@ from jarvis_cd.util.hostfile import Hostfile
 def _load_package() -> ModuleType:
     """Load the builtin package without changing repository imports."""
 
-    path = (
-        Path(__file__).resolve().parents[3]
-        / "builtin"
-        / "builtin"
-        / "gadget2"
-        / "pkg.py"
-    )
-    spec = spec_from_file_location("test_gadget2_runtime_package", path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Could not load Gadget2 package from {path}")
-    module = module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    repository_root = Path(__file__).resolve().parents[3] / "builtin"
+    sys.path.insert(0, str(repository_root))
+    try:
+        return import_module("builtin.gadget2.pkg")
+    finally:
+        sys.path.remove(str(repository_root))
 
 
 gadget2_package = _load_package()
@@ -49,6 +43,8 @@ class _CapturedExec:
     commands: list[str] = []
     infos: list[Any] = []
     return_code = 0
+    emit_products = True
+    product_bytes = b"scientific-product\n"
 
     def __init__(self, command: str, exec_info: Any) -> None:
         self.command = command
@@ -58,8 +54,30 @@ class _CapturedExec:
         self.infos.append(exec_info)
 
     def run(self) -> _CapturedExec:
-        """Return the captured result."""
+        """Materialize parameter-declared products and return the result."""
 
+        if (
+            self.return_code == 0
+            and self.emit_products
+            and not self.command.startswith("bash -c ")
+        ):
+            cwd = Path(self.exec_info.cwd)
+            parameter_name = shlex.split(self.command)[-1]
+            parameter = cwd / parameter_name
+            contract = gadget2_package.parse_gadget2_output_contract(
+                parameter.read_text(encoding="utf-8"),
+                parameter_path=PurePosixPath(cwd.name) / parameter_name,
+            )
+            run_root = cwd.parent
+            for relative in (contract.energy_file, contract.info_file):
+                product = run_root.joinpath(*relative.parts)
+                product.parent.mkdir(parents=True, exist_ok=True)
+                product.write_bytes(self.product_bytes)
+            snapshot_base = run_root.joinpath(*contract.snapshot_file_base.parts)
+            snapshot_base.parent.mkdir(parents=True, exist_ok=True)
+            snapshot_base.with_name(f"{snapshot_base.name}_000").write_bytes(
+                self.product_bytes
+            )
         return self
 
 
@@ -103,6 +121,8 @@ def _capture_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
     _CapturedExec.commands = []
     _CapturedExec.infos = []
     _CapturedExec.return_code = 0
+    _CapturedExec.emit_products = True
+    _CapturedExec.product_bytes = b"scientific-product\n"
     _CapturedRm.calls = []
     monkeypatch.setattr(gadget2_package, "Exec", _CapturedExec)
     monkeypatch.setattr(gadget2_package, "Mkdir", _CapturedMkdir)
@@ -150,7 +170,8 @@ def _write_bundle(
     destination: Path,
     *,
     parameter: bytes = (
-        b"InitCondFile ICs/galaxy.dat\nOutputDir output/\nEnergyFile energy.txt\n"
+        b"InitCondFile ICs/galaxy.dat\nOutputDir output/\n"
+        b"EnergyFile energy.txt\nInfoFile info.txt\nSnapshotFileBase snapshot\n"
     ),
 ) -> Path:
     files = {
@@ -225,6 +246,10 @@ def test_agent_contract_exposes_bundle_profile_and_hides_legacy_defaults() -> No
         "input_bundle"
     ]
     assert [item["id"] for item in contract["runtime_requirements"]] == ["gadget2"]
+    assert contract["execution_profiles"][0]["readiness"] == {
+        "mechanism": "process_exit",
+        "condition": "successful_exit_with_required_products",
+    }
 
 
 def test_native_validation_treats_absent_deploy_mode_as_default() -> None:
@@ -261,16 +286,40 @@ def test_bundle_is_verified_and_staged_before_native_launch(tmp_path: Path) -> N
 @pytest.mark.parametrize(
     ("parameter", "message"),
     [
-        (b"InitCondFile ICs/galaxy.dat\n", "declare OutputDir exactly once"),
         (
-            b"OutputDir output/\nOutputDir other/\n",
+            b"EnergyFile energy.txt\nInfoFile info.txt\nSnapshotFileBase snapshot\n",
             "declare OutputDir exactly once",
         ),
-        (b"OutputDir ../escape/\n", "confined POSIX path"),
-        (b"OutputDir /tmp/escape/\n", "confined POSIX path"),
-        (b"OutputDir C:/escape/\n", "confined POSIX path"),
-        (b"OutputDir output\\escape\n", "confined POSIX path"),
-        (b"OutputDir output path\n", "one path token"),
+        (
+            b"OutputDir output/\nOutputDir other/\nEnergyFile energy.txt\n"
+            b"InfoFile info.txt\nSnapshotFileBase snapshot\n",
+            "declare OutputDir exactly once",
+        ),
+        (
+            b"OutputDir ../escape/\nEnergyFile energy.txt\nInfoFile info.txt\n"
+            b"SnapshotFileBase snapshot\n",
+            "confined POSIX path",
+        ),
+        (
+            b"OutputDir /tmp/escape/\nEnergyFile energy.txt\nInfoFile info.txt\n"
+            b"SnapshotFileBase snapshot\n",
+            "confined POSIX path",
+        ),
+        (
+            b"OutputDir C:/escape/\nEnergyFile energy.txt\nInfoFile info.txt\n"
+            b"SnapshotFileBase snapshot\n",
+            "confined POSIX path",
+        ),
+        (
+            b"OutputDir output\\escape\nEnergyFile energy.txt\nInfoFile info.txt\n"
+            b"SnapshotFileBase snapshot\n",
+            "confined POSIX path",
+        ),
+        (
+            b"OutputDir output path\nEnergyFile energy.txt\nInfoFile info.txt\n"
+            b"SnapshotFileBase snapshot\n",
+            "one path token",
+        ),
     ],
 )
 def test_native_output_directory_is_single_and_confined(
@@ -332,6 +381,47 @@ def test_native_process_failure_fails_the_package_lifecycle(tmp_path: Path) -> N
 
     with pytest.raises(RuntimeError, match="Gadget2 execution failed"):
         package.start()
+
+
+def test_zero_exit_without_scientific_products_fails_lifecycle(tmp_path: Path) -> None:
+    """Gadget2's zero-status fatal paths cannot become successful executions."""
+
+    bundle = _write_bundle(tmp_path / "galaxy.tar")
+    package = _package(tmp_path, _base_config(input_bundle=str(bundle)))
+    _CapturedExec.emit_products = False
+
+    with pytest.raises(RuntimeError, match="without required non-empty products"):
+        package.start()
+
+
+def test_zero_byte_scientific_products_fail_lifecycle(tmp_path: Path) -> None:
+    """Placeholder files do not satisfy the native completion contract."""
+
+    bundle = _write_bundle(tmp_path / "galaxy.tar")
+    package = _package(tmp_path, _base_config(input_bundle=str(bundle)))
+    _CapturedExec.product_bytes = b""
+
+    with pytest.raises(RuntimeError, match="EnergyFile, InfoFile, SnapshotFileBase"):
+        package.start()
+
+
+def test_completion_uses_parameter_declared_product_names(tmp_path: Path) -> None:
+    """The native lifecycle does not guess stock Gadget2 filenames."""
+
+    parameter = (
+        b"InitCondFile ICs/galaxy.dat\nOutputDir products/\n"
+        b"EnergyFile conserved.dat\nInfoFile progress.log\n"
+        b"SnapshotFileBase states/galaxy\n"
+    )
+    bundle = _write_bundle(tmp_path / "galaxy.tar", parameter=parameter)
+    package = _package(tmp_path, _base_config(input_bundle=str(bundle)))
+
+    package.start()
+
+    root = tmp_path / "shared" / "run" / "galaxy" / "products"
+    assert (root / "conserved.dat").stat().st_size > 0
+    assert (root / "progress.log").stat().st_size > 0
+    assert (root / "states" / "galaxy_000").stat().st_size > 0
 
 
 def test_legacy_stock_profile_retains_its_existing_launch_shape(tmp_path: Path) -> None:

@@ -36,7 +36,11 @@ def _load_artifacts() -> ModuleType:
 
 def _write_bundle(destination: Path) -> Path:
     files = {
-        "galaxy/galaxy.param": b"InitCondFile ICs/galaxy.dat\n",
+        "galaxy/galaxy.param": (
+            b"InitCondFile ICs/galaxy.dat\nOutputDir output/\n"
+            b"EnergyFile energy.txt\nInfoFile info.txt\nCpuFile cpu.txt\n"
+            b"TimingsFile timings.txt\nSnapshotFileBase snapshot\n"
+        ),
         "galaxy/ICs/galaxy.dat": b"initial-condition\x00\x01",
     }
     manifest = {
@@ -65,6 +69,14 @@ def _write_bundle(destination: Path) -> Path:
 
 
 def _adapter(module: ModuleType, tmp_path: Path) -> Any:
+    declared = module.parse_gadget2_output_contract(
+        (
+            "OutputDir output/\nEnergyFile energy.txt\nInfoFile info.txt\n"
+            "CpuFile cpu.txt\nTimingsFile timings.txt\n"
+            "SnapshotFileBase snapshot\n"
+        ),
+        parameter_path=module.PurePosixPath("galaxy/galaxy.param"),
+    )
     adapter = module.Gadget2ArtifactAdapter(
         module.PurePosixPath("/scratch/gadget2/run"),
         frozenset(
@@ -73,6 +85,7 @@ def _adapter(module: ModuleType, tmp_path: Path) -> Any:
                 module.PurePosixPath("galaxy/ICs/galaxy.dat"),
             }
         ),
+        declared,
     )
     adapter._local_root = tmp_path / "run"
     return adapter
@@ -81,7 +94,12 @@ def _adapter(module: ModuleType, tmp_path: Path) -> Any:
 def _write_products(root: Path) -> None:
     (root / "galaxy" / "ICs").mkdir(parents=True)
     (root / "galaxy" / "galaxy.param").write_text(
-        "InitCondFile ICs/galaxy.dat\n", encoding="utf-8"
+        (
+            "InitCondFile ICs/galaxy.dat\nOutputDir output/\n"
+            "EnergyFile energy.txt\nInfoFile info.txt\nCpuFile cpu.txt\n"
+            "TimingsFile timings.txt\nSnapshotFileBase snapshot\n"
+        ),
+        encoding="utf-8",
     )
     (root / "galaxy" / "ICs" / "galaxy.dat").write_bytes(b"initial-condition\x00\x01")
     products = root / "galaxy" / "output"
@@ -143,6 +161,57 @@ def test_missing_scientific_products_cannot_be_finalized(tmp_path: Path) -> None
     assert observations
     assert all(item.state is ArtifactState.INCOMPLETE for item in observations)
     assert "missing" in observations[0].message.casefold()
+
+
+def test_zero_byte_declared_products_cannot_be_finalized(tmp_path: Path) -> None:
+    """Names alone cannot turn an aborted zero-status run into valid artifacts."""
+
+    module = _load_artifacts()
+    adapter = _adapter(module, tmp_path)
+    root = tmp_path / "run" / "galaxy" / "output"
+    root.mkdir(parents=True)
+    (root / "energy.txt").write_bytes(b"")
+    (root / "info.txt").write_bytes(b"")
+    (root / "snapshot_000").write_bytes(b"")
+
+    observations = adapter.finalize_artifacts_for_exit(0)
+
+    assert observations
+    assert all(item.state is ArtifactState.INCOMPLETE for item in observations)
+
+
+def test_parameter_declared_names_drive_artifact_discovery(tmp_path: Path) -> None:
+    """Custom scientific filenames are discovered without stock-name guesses."""
+
+    module = _load_artifacts()
+    declared = module.parse_gadget2_output_contract(
+        (
+            "OutputDir products/\nEnergyFile conserved.dat\n"
+            "InfoFile progress.log\nSnapshotFileBase states/galaxy\n"
+        ),
+        parameter_path=module.PurePosixPath("galaxy/custom.param"),
+    )
+    adapter = module.Gadget2ArtifactAdapter(
+        module.PurePosixPath("/scratch/gadget2/run"),
+        frozenset(),
+        declared,
+    )
+    adapter._local_root = tmp_path / "run"
+    products = tmp_path / "run" / "galaxy" / "products"
+    (products / "states").mkdir(parents=True)
+    (products / "conserved.dat").write_text("0 -1\n", encoding="utf-8")
+    (products / "progress.log").write_text("Step 1\n", encoding="utf-8")
+    (products / "states" / "galaxy_000").write_bytes(b"snapshot")
+
+    observations = adapter.finalize_artifacts_for_exit(0)
+
+    by_name = {item.logical_name: item for item in observations}
+    assert all(item.state is ArtifactState.FINALIZED for item in observations)
+    assert by_name["gadget2-energy"].location.value.endswith("conserved.dat")
+    assert by_name["gadget2-info"].location.value.endswith("progress.log")
+    assert by_name["gadget2-snapshots"].metadata["member_names"] == [
+        "galaxy/products/states/galaxy_000"
+    ]
 
 
 def test_nonzero_exit_marks_observed_products_incomplete(tmp_path: Path) -> None:
