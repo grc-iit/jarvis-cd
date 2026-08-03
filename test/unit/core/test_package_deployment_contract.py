@@ -161,6 +161,12 @@ def test_lammps_contract_defaults_to_generated_batch_and_spack_resolution(
         "kind": "local_file",
         "structure": "regular_file",
     }
+    assert menu["input_bundle"]["default"] == ""
+    assert menu["input_bundle"]["input_binding"] == {
+        "schema_version": "jarvis.configuration-input-binding.v1",
+        "kind": "local_file",
+        "structure": "regular_file",
+    }
     assert "`lattice fcc <density>`" in menu["script"]["msg"]
     assert "`region ... units lattice`" in menu["script"]["msg"]
     assert (
@@ -175,7 +181,11 @@ def test_lammps_contract_defaults_to_generated_batch_and_spack_resolution(
     assert {
         (profile["name"], profile["execution_kind"])
         for profile in document["execution_profiles"]
-    } == {("generated_workload", "batch"), ("input_script", "batch")}
+    } == {
+        ("generated_workload", "batch"),
+        ("input_script", "batch"),
+        ("input_bundle", "batch"),
+    }
     profiles = {profile["name"]: profile for profile in document["execution_profiles"]}
     assert profiles["generated_workload"]["description"] == (
         "Built-in bounded Lennard-Jones smoke workload with a package-generated "
@@ -187,6 +197,7 @@ def test_lammps_contract_defaults_to_generated_batch_and_spack_resolution(
         in profiles["input_script"]["description"]
     )
     assert "`mass 1 1.0`" in profiles["input_script"]["description"]
+    assert "Digest-verified multi-file" in profiles["input_bundle"]["description"]
     runtime = document["runtime_requirements"][0]
     assert runtime["status"] == {
         "state": "ready",

@@ -15,3 +15,20 @@ custom partitioning (chunks) for binning, and static or dynamic grouping of atom
 
 ## lammps tutorial
 Please refer to this [website](https://docs.lammps.org/) for more details.
+
+## Multi-file inputs
+
+Use `script` for one self-contained input file. Use `input_bundle` when the input refers to
+potentials, included scripts, data files, or other neighboring files:
+
+```bash
+jarvis ppl append builtin.lammps copper \
+  input_bundle=/path/to/copper-inputs.tar \
+  nprocs=4 ppn=4 out=copper-results
+```
+
+The archive must follow the
+[JARVIS package input-bundle contract](../../../docs/input-bundles.md). JARVIS verifies its
+closed manifest, file sizes, and SHA-256 digests, then copies the payload into the
+execution-owned output directory before launching LAMMPS from that directory. `script` and
+`input_bundle` are mutually exclusive.
