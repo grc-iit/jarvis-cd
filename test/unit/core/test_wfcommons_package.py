@@ -120,12 +120,18 @@ def test_agent_contract_exposes_one_reproducible_study_cell(
     """Agents configure science dimensions while operators own the runtime path."""
 
     package = _package(Path("."))
+    probes: list[tuple[str, dict[str, str]]] = []
+
+    def probe(program: str, **kwargs: Any) -> SimpleNamespace:
+        probes.append((program, kwargs["environment"]))
+        return SimpleNamespace(
+            status=wfcommons_package.RuntimeStatus("ready", "runtime_probe_succeeded")
+        )
+
     monkeypatch.setattr(
         wfcommons_package,
         "probe_program",
-        lambda *args, **kwargs: SimpleNamespace(
-            status=wfcommons_package.RuntimeStatus("ready", "runtime_probe_succeeded")
-        ),
+        probe,
     )
 
     menu = {item["name"]: item for item in package._configure_menu()}
@@ -134,6 +140,8 @@ def test_agent_contract_exposes_one_reproducible_study_cell(
     assert menu["runtime_python"]["agent_visible"] is False
     assert "venv" not in menu
     contract = package._deployment_contract().to_dict()
+    assert probes[0][0] == "python3"
+    assert probes[0][1]["PATH"].split(wfcommons_package.os.pathsep)[0] == "/runtime/bin"
     assert contract["package"] == "builtin.wfcommons"
     assert contract["execution_profiles"] == [
         {

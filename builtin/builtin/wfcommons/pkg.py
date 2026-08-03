@@ -159,8 +159,14 @@ class Wfcommons(Application):
             wfcommons_capabilities: tuple[str, ...] = ()
             bash_capabilities: tuple[str, ...] = ()
         else:
-            environment = self._deployment_environment()
-            python = self._runtime_python()
+            environment = dict(self._deployment_environment())
+            python_path = Path(self._runtime_python())
+            python = python_path.name
+            if python_path.is_absolute():
+                existing_path = environment.get("PATH", "")
+                environment["PATH"] = os.pathsep.join(
+                    value for value in (str(python_path.parent), existing_path) if value
+                )
             expected = self._expected_version()
             version_probe = probe_program(
                 python,
