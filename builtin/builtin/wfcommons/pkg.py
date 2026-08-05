@@ -264,4 +264,4 @@ class Wfcommons(Application):
     def _get_stat(self, stat_dict):
         stat_dict[f'{self.pkg_id}.recipe'] = self.config['recipe']
         stat_dict[f'{self.pkg_id}.num_tasks'] = self.config['num_tasks']
-        stat_dict[f'{self.pkg_id}.runtime'] = self.start_time
+        stat_dict[f'{self.pkg_id}.runtime'] = self.runtime

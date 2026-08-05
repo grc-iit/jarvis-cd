@@ -165,9 +165,16 @@ class Exec(CoreExec):
                 # sshd running inside apptainer instances on remote nodes.
                 # Export PATH so remote orted finds application binaries
                 # (the remote SSH login shell may override the container PATH).
-                if '--mca plm rsh' not in mpi_cmd:
+                #
+                # Exclude the slurm plm rather than naming the ssh launcher:
+                # OpenMPI <=4 (ORTE) calls the ssh launcher 'rsh', OpenMPI 5
+                # (PRRTE) renamed it 'ssh'. '^slurm' defeats slurm's srun-based
+                # launch (which would spawn prted OUTSIDE the container) and
+                # lets PRRTE/ORTE auto-select its ssh launcher under either
+                # name -- no in-container version probe needed.
+                if '--mca plm ' not in mpi_cmd:
                     mpi_cmd = mpi_cmd.replace(
-                        'mpiexec ', 'mpiexec --mca plm rsh ', 1)
+                        'mpiexec ', 'mpiexec --mca plm ^slurm ', 1)
                 mpi_cmd = mpi_cmd.replace(
                     'mpiexec ', 'mpiexec -x PATH -x LD_LIBRARY_PATH ', 1)
                 wrapped_cmd, local_info = self._prepare_container(mpi_cmd)

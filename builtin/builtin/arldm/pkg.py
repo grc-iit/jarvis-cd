@@ -147,4 +147,4 @@ class Arldm(Application):
         pass
 
     def _get_stat(self, stat_dict):
-        stat_dict[f'{self.pkg_id}.runtime'] = self.start_time
+        stat_dict[f'{self.pkg_id}.runtime'] = self.runtime

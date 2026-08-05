@@ -4,6 +4,7 @@ Tests for pipeline test functionality (grid search experiments).
 import os
 import csv
 import sys
+import time
 import yaml
 import tempfile
 import shutil
@@ -13,8 +14,12 @@ from pathlib import Path
 # Add the project root to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
+from unittest.mock import patch
+
 from jarvis_cd.core.pipeline_test import (
     is_pipeline_test,
+    alarm_timeout,
+    Deadline,
     PipelineTest,
     load_yaml_auto,
 )
@@ -437,8 +442,10 @@ class TestPipelineTestVariableApplication(unittest.TestCase):
 
         self.assertEqual(result['scheduler'], {'nodes': 4})
 
-    def test_apply_top_level_scheduler_propagates_with_no_vars(self):
-        """Top-level scheduler propagates to config even when no vars touch it."""
+    def test_apply_top_level_scheduler_not_stamped_without_vars(self):
+        """A top-level scheduler describes the ONE job wrapping the whole
+        test; without scheduler.X vars it must NOT be stamped onto each
+        iteration config, or every combo would submit a nested sbatch."""
         test = PipelineTest()
         test.scheduler = {'name': 'slurm', 'nodes': 2}
         base_config = {
@@ -448,7 +455,7 @@ class TestPipelineTestVariableApplication(unittest.TestCase):
 
         result = test._apply_variables(base_config, {})
 
-        self.assertEqual(result['scheduler'], {'name': 'slurm', 'nodes': 2})
+        self.assertNotIn('scheduler', result)
 
 
 class TestPipelineTestLoading(unittest.TestCase):
@@ -895,6 +902,197 @@ class TestPipelineTestCsvLog(unittest.TestCase):
 
         # Should not raise any errors
         test._write_csv_log()
+
+
+class TestPipelineTestRunTimeout(unittest.TestCase):
+    """Tests for the per-combination run_timeout guard."""
+
+    def test_alarm_timeout_fires_on_hang(self):
+        """A call that outlives the budget raises TimeoutError."""
+        with self.assertRaises(TimeoutError):
+            with alarm_timeout(1, 'budget exceeded'):
+                time.sleep(30)
+
+    def test_alarm_timeout_allows_fast_call(self):
+        """A call that finishes in time is untouched."""
+        with alarm_timeout(30, 'budget exceeded'):
+            result = 'finished'
+        self.assertEqual(result, 'finished')
+
+    def test_alarm_timeout_disabled_when_unset(self):
+        """None preserves the historical unbounded behaviour."""
+        with alarm_timeout(None, 'never'):
+            result = 'finished'
+        self.assertEqual(result, 'finished')
+
+    def test_alarm_timeout_does_not_leak_alarm(self):
+        """No stray SIGALRM is delivered after the block exits."""
+        with alarm_timeout(1, 'budget exceeded'):
+            pass
+        # Outliving the former budget must not raise.
+        time.sleep(1.5)
+
+    def test_run_timeout_parsed_from_yaml(self):
+        """run_timeout is read off the test definition."""
+        temp_dir = tempfile.mkdtemp()
+        try:
+            yaml_path = os.path.join(temp_dir, 'test.yaml')
+            with open(yaml_path, 'w') as f:
+                yaml.dump({
+                    'config': {
+                        'name': 'demo',
+                        'pkgs': [{'pkg_type': 'builtin.ior',
+                                  'pkg_name': 'ior'}],
+                    },
+                    'repeat': 1,
+                    'run_timeout': 1800,
+                }, f)
+
+            test = PipelineTest()
+            test.load(yaml_path)
+
+            self.assertEqual(test.run_timeout, 1800)
+        finally:
+            shutil.rmtree(temp_dir)
+
+    def test_run_timeout_defaults_to_none(self):
+        """Omitting run_timeout leaves the sweep unbounded as before."""
+        test = PipelineTest()
+        self.assertIsNone(test.run_timeout)
+
+    def test_deadline_records_expiry(self):
+        """The Deadline flag is set from inside the signal handler."""
+        deadline = Deadline()
+        self.assertFalse(deadline.expired)
+        with self.assertRaises(TimeoutError):
+            with alarm_timeout(1, 'budget exceeded', deadline):
+                time.sleep(30)
+        self.assertTrue(deadline.expired)
+
+    def test_deadline_not_marked_when_call_completes(self):
+        """A run that finishes in time leaves the Deadline untouched."""
+        deadline = Deadline()
+        with alarm_timeout(30, 'budget exceeded', deadline):
+            pass
+        self.assertFalse(deadline.expired)
+
+    def test_teardown_runs_when_timeout_is_rewrapped(self):
+        """Teardown must fire even though start() re-wraps TimeoutError.
+
+        Pipeline.start catches whatever a package raises and re-raises it as
+        RuntimeError, so the TimeoutError never reaches the sweep runner.
+        Keying recovery off the exception type silently skipped teardown and
+        leaked redis / container instances into the next combination.
+        """
+        stopped = []
+
+        class HangingPipeline:
+            scheduler = None
+            packages = []
+
+            def load(self, *args, **kwargs):
+                pass
+
+            def configure_all_packages(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                try:
+                    time.sleep(30)
+                except TimeoutError as e:
+                    # Mirrors jarvis_cd/core/pipeline.py:510
+                    raise RuntimeError(
+                        f"Pipeline startup failed at package 'bench': {e}"
+                    ) from e
+
+            def stop(self):
+                stopped.append(True)
+
+        test = PipelineTest()
+        test.name = 'demo'
+        test.combinations = [{'ior.nprocs': 1}]
+        test.run_timeout = 1
+
+        with patch('jarvis_cd.core.pipeline_test.Pipeline', HangingPipeline):
+            with self.assertRaises(RuntimeError):
+                test._run_single({'name': 'demo', 'pkgs': []},
+                                 {'ior.nprocs': 1}, 0)
+
+        self.assertEqual(len(stopped), 1,
+                         'teardown did not run after a re-wrapped timeout')
+
+    def test_no_teardown_for_ordinary_failure(self):
+        """A non-timeout failure is re-raised without the timeout teardown."""
+        stopped = []
+
+        class FailingPipeline:
+            scheduler = None
+            packages = []
+
+            def load(self, *args, **kwargs):
+                pass
+
+            def configure_all_packages(self, *args, **kwargs):
+                pass
+
+            def start(self):
+                raise RuntimeError('package blew up immediately')
+
+            def stop(self):
+                stopped.append(True)
+
+        test = PipelineTest()
+        test.name = 'demo'
+        test.combinations = [{'ior.nprocs': 1}]
+        test.run_timeout = 600
+
+        with patch('jarvis_cd.core.pipeline_test.Pipeline', FailingPipeline):
+            with self.assertRaises(RuntimeError):
+                test._run_single({'name': 'demo', 'pkgs': []},
+                                 {'ior.nprocs': 1}, 0)
+
+        self.assertEqual(stopped, [])
+
+    def test_timed_out_run_is_recorded_failed_and_sweep_continues(self):
+        """A hung combination fails that row only; later rows still run."""
+        temp_dir = tempfile.mkdtemp()
+        try:
+            test = PipelineTest()
+            test.name = 'demo'
+            test.output = temp_dir
+            test.config = {
+                'name': 'demo',
+                'pkgs': [{'pkg_type': 'builtin.ior', 'pkg_name': 'ior'}],
+            }
+            test.combinations = [{'ior.nprocs': 1},
+                                 {'ior.nprocs': 2},
+                                 {'ior.nprocs': 3}]
+            test.run_timeout = 1
+
+            calls = []
+
+            def fake_run_single(config, variables, repeat_idx):
+                nprocs = variables['ior.nprocs']
+                calls.append(nprocs)
+                if nprocs == 1:
+                    raise TimeoutError('run exceeded run_timeout of 1s')
+                return {'combination_idx': nprocs,
+                        'repeat_idx': repeat_idx,
+                        'variables': variables.copy(),
+                        'runtime': 1.0}
+
+            test._run_single = fake_run_single
+            test.run()
+
+            # Every combination was attempted despite the first hanging.
+            self.assertEqual(calls, [1, 2, 3])
+            self.assertEqual(len(test.results), 3)
+            self.assertEqual(test.results[0]['status'], 'failed')
+            self.assertIn('run_timeout', test.results[0]['error'])
+            self.assertEqual(test.results[1]['status'], 'success')
+            self.assertEqual(test.results[2]['status'], 'success')
+        finally:
+            shutil.rmtree(temp_dir)
 
 
 if __name__ == '__main__':

@@ -177,4 +177,4 @@ class Ycsbc(Application):
         if n:
             stat_dict[f'{self.pkg_id}.throughput'] = total
             stat_dict[f'{self.pkg_id}.throughput_per_node'] = total / n
-        stat_dict[f'{self.pkg_id}.runtime'] = self.start_time
+        stat_dict[f'{self.pkg_id}.runtime'] = self.runtime

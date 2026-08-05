@@ -127,4 +127,4 @@ class Fio(Application):
         Rm(self.config['out'] + '*', self._exec_info()).run()
 
     def _get_stat(self, stat_dict):
-        stat_dict[f'{self.pkg_id}.runtime'] = self.start_time
+        stat_dict[f'{self.pkg_id}.runtime'] = self.runtime

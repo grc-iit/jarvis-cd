@@ -945,9 +945,16 @@ All packages inherit from the base `Pkg` class and can override these methods:
 def _init(self):
     """Initialize package-specific variables"""
     self.my_variable = None
-    self.start_time = None
     self.output_file = None
 ```
+
+> **Do not assign `self.runtime` here.** It is owned by the framework:
+> `Pipeline.start()` measures it and `Pipeline._load_package_instance` replays
+> it onto each later instance. `_init` runs *inside* that replay path, so
+> re-initializing it to `None` silently blanks the `<pkg_id>.runtime` column in
+> pipeline-test results. `self.start_time` is deprecated and never populated —
+> it exists only so legacy packages reading it get `None` instead of an
+> `AttributeError`.
 
 #### `_configure_menu(self) -> List[Dict[str, Any]]`
 **Purpose**: Define configuration options for the package  
@@ -1110,6 +1117,19 @@ def status(self) -> str:
 **Called**: By `PipelineTest` after each pipeline run to aggregate results
 **Notes**: Only implement this if your package is used in pipeline tests. Prefix all keys with `self.pkg_id` to avoid conflicts between packages.
 
+> **`_get_stat` runs on a fresh instance.** Every phase — `start()`, `stop()`,
+> `_get_stat()` — gets its own package object from
+> `Pipeline._load_package_instance`, so **nothing you assigned during `start()`
+> is still there.** Read your metrics back off disk (a log file under
+> `self.shared_dir`), never out of in-memory state like `self.exec.stdout`.
+> `self.runtime` is the one exception: the framework explicitly replays it onto
+> the new instance. (`self.start_time` is deprecated and always `None`.)
+>
+> `_get_stat` is called inside a `try/except` that logs a warning and moves on,
+> so an `AttributeError` on the first line silently discards **every** stat the
+> package would have reported — not just the one that raised. Failures here look
+> like blank CSV columns, not errors.
+
 ```python
 def _get_stat(self, stat_dict):
     """
@@ -1118,14 +1138,19 @@ def _get_stat(self, stat_dict):
     :param stat_dict: Dictionary to populate with statistics.
     :return: None
     """
-    # Example: parse stdout for a throughput value
-    output = self.exec.stdout.get('localhost', '')
+    # Framework-supplied; safe on a fresh instance.
+    stat_dict[f'{self.pkg_id}.runtime'] = self.runtime
+
+    # Everything else comes off disk -- in-memory run state is gone by now.
+    log_path = self.config.get('log')
+    if not log_path or not os.path.isfile(log_path):
+        return
+    with open(log_path, 'r') as f:
+        output = f.read()
+
     match = re.search(r'Bandwidth:\s+([0-9.]+)\s+MB/s', output)
     if match:
         stat_dict[f'{self.pkg_id}.bandwidth_mb_s'] = float(match.group(1))
-
-    # Always record runtime
-    stat_dict[f'{self.pkg_id}.runtime'] = self.start_time
 ```
 
 **Key naming conventions**:
