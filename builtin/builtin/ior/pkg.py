@@ -8,7 +8,19 @@ It is mainly targeted for HPC systems and parallel I/O.
 import os
 import pathlib
 import re
+import shlex
+
 from jarvis_cd.core.pkg import Application
+from jarvis_cd.deployment import (
+    ConfigurationCondition,
+    ExecutionProfile,
+    PackageDeploymentContract,
+    ProviderResolution,
+    ReadinessContract,
+    RuntimeRequirement,
+    RuntimeStatus,
+    probe_program,
+)
 from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo, Rm, Mkdir
 from jarvis_cd.shell.process import GdbServer
 
@@ -141,6 +153,55 @@ class Ior(Application):
     # Configuration
     # ------------------------------------------------------------------
 
+    def _deployment_contract(self) -> PackageDeploymentContract:
+        """Describe IOR's runtime requirement and completion semantics."""
+        if self.config.get("deploy_mode") == "container":
+            status = RuntimeStatus("unknown", "container_runtime_not_probed")
+            capabilities: tuple[str, ...] = ()
+        else:
+            probe = probe_program(
+                "ior",
+                environment=self._deployment_environment(),
+                arguments=("--version",),
+            )
+            status = probe.status
+            capabilities = (
+                ("mpi_execution", "parallel_io_benchmark")
+                if status.usable is True
+                else ()
+            )
+        runtime = RuntimeRequirement(
+            requirement_id="ior",
+            description="IOR runtime able to benchmark parallel I/O under MPI",
+            required_capabilities=("mpi_execution", "parallel_io_benchmark"),
+            available_capabilities=capabilities,
+            status=status,
+            provider_resolutions=(
+                ProviderResolution(
+                    provider="spack",
+                    query_kind="spec",
+                    query_value="ior",
+                ),
+            ),
+        )
+        return PackageDeploymentContract(
+            package="builtin.ior",
+            execution_profiles=(
+                ExecutionProfile(
+                    name="benchmark",
+                    execution_kind="batch",
+                    when=(ConfigurationCondition("nprocs", "greater_than", 0),),
+                    runtime_requirements=("ior",),
+                    readiness=ReadinessContract(
+                        mechanism="process_exit",
+                        condition="successful_exit",
+                    ),
+                    description="Parallel I/O benchmark using the selected API and workload.",
+                ),
+            ),
+            runtime_requirements=(runtime,),
+        )
+
     def _configure(self, **kwargs):
         """
         Configure IOR.
@@ -207,7 +268,8 @@ class Ior(Application):
 
         ior_cmd = " ".join(cmd)
         if cfg.get("log"):
-            ior_cmd += f" 2>&1 | tee {cfg['log']}"
+            logged_command = f"{ior_cmd} 2>&1 | tee {shlex.quote(str(cfg['log']))}"
+            ior_cmd = f"bash -o pipefail -c {shlex.quote(logged_command)}"
 
         gdb_server = GdbServer(ior_cmd, cfg.get("dbg_port", 4000))
         cmd_list = [
@@ -218,7 +280,7 @@ class Ior(Application):
             },
             {"cmd": ior_cmd, "nprocs": None},
         ]
-        Exec(
+        result = Exec(
             cmd_list,
             MpiExecInfo(
                 nprocs=cfg["nprocs"],
@@ -232,6 +294,22 @@ class Ior(Application):
                 env=self.mod_env,
             ),
         ).run()
+        failures = {host: code for host, code in result.exit_code.items() if code != 0}
+        if failures:
+            diagnostics: dict[str, str] = {}
+            for host in failures:
+                output: list[str] = []
+                for stream_name in ("stdout", "stderr"):
+                    streams = getattr(result, stream_name, {})
+                    if not isinstance(streams, dict):
+                        continue
+                    value = streams.get(host)
+                    if value:
+                        output.append(str(value).strip())
+                if output:
+                    diagnostics[host] = "\n".join(output)[-4096:]
+            detail = f"; output={diagnostics!r}" if diagnostics else ""
+            raise RuntimeError(f"IOR execution failed: {failures}{detail}")
 
     def stop(self):
         """Stop IOR (no-op — IOR runs to completion)."""

@@ -192,6 +192,7 @@ jobs:
             test/unit/core/test_lammps_artifacts.py \
             test/unit/core/test_lammps_progress.py \
             test/unit/core/test_lammps_package_runtime.py \
+            test/unit/core/test_ior_package_runtime.py \
             test/unit/core/test_paraview_artifacts.py \
             test/unit/core/test_paraview_scene_v2.py \
             test/unit/core/test_paraview_service.py \
