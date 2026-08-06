@@ -18,6 +18,7 @@ import tempfile
 import yaml
 from contextlib import ExitStack
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Mapping, Optional
 from uuid import uuid4
@@ -58,6 +59,7 @@ _EXECUTION_MARKER = RECORD_NAME
 _EXECUTION_MARKER_SCHEMA = LEGACY_RECORD_SCHEMA
 _EXECUTION_CLEANUP_SCHEMA = "jarvis.execution-cleanup.v1"
 _MAX_EXPLICIT_EXECUTION_CLEANUP = 1024
+_SCHEDULER_MISSING_GRACE_SECONDS = 60.0
 
 
 def _absolute_scheduler_log_path(value: object) -> str:
@@ -67,6 +69,26 @@ def _absolute_scheduler_log_path(value: object) -> str:
     if os.name == "nt" and value.startswith("/"):
         return posixpath.normpath(value)
     return os.path.normpath(os.path.abspath(value))
+
+
+def _prepare_scheduler_log_parents(scheduler_spec: Mapping[str, Any]) -> None:
+    """Create concrete scheduler log directories before external submission."""
+    for key in ("output", "error"):
+        configured_path = str(scheduler_spec[key])
+        if os.name == "nt" and configured_path.startswith("/"):
+            # A POSIX scheduler path cannot be materialized by a Windows
+            # controller. This preserves cross-platform rendering/tests; an
+            # actual Windows-local path is still prepared below.
+            continue
+        path = Path(configured_path)
+        parent = path.parent
+        if "%" in str(parent):
+            raise ValueError(
+                f"scheduler.{key} replacement tokens are supported only in filenames"
+            )
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not parent.is_dir():
+            raise RuntimeError(f"scheduler.{key} parent is not a directory: {parent}")
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> Dict[str, Any]:
@@ -1279,6 +1301,7 @@ class Pipeline:
                 scheduler_spec[scheduler_key] = _absolute_scheduler_log_path(
                     scheduler_spec[scheduler_key]
                 )
+            _prepare_scheduler_log_parents(scheduler_spec)
             snapshot_dir, input_dir, snapshot_sha256 = self._write_execution_snapshot(
                 execution_root,
                 scheduler_spec,
@@ -1589,7 +1612,79 @@ class Pipeline:
 
     def get_execution(self, execution_id: str) -> ExecutionRecord:
         """Return the latest durable state for one exact execution identity."""
-        return self._execution_store().get(execution_id)
+        store = self._execution_store()
+        record = store.get(execution_id)
+        if (
+            record.mode != "scheduler"
+            or record.terminal
+            or not record.submitted
+            or record.scheduler_provider is None
+            or record.scheduler_native_id is None
+        ):
+            return record
+
+        from jarvis_cd.core.scheduler import query_scheduler_execution
+
+        observation = query_scheduler_execution(
+            record.scheduler_provider,
+            record.scheduler_native_id,
+        )
+        if observation.state == "unknown":
+            return record
+        if observation.state == "missing":
+            created = datetime.fromisoformat(record.created_at.replace("Z", "+00:00"))
+            age_seconds = (datetime.now(timezone.utc) - created).total_seconds()
+            if age_seconds < _SCHEDULER_MISSING_GRACE_SECONDS:
+                return record
+            state = "failed"
+            terminal = True
+            return_code = 1
+            error = (
+                f"scheduler {record.scheduler_provider} no longer reports accepted "
+                f"job {record.scheduler_native_id}, and its JARVIS runtime never "
+                "activated within the reconciliation grace period"
+            )
+        else:
+            state = observation.state
+            terminal = observation.terminal
+            return_code = observation.return_code
+            error = (
+                f"scheduler {record.scheduler_provider} reported "
+                f"{observation.provider_state} for job {record.scheduler_native_id}"
+                if state in {"failed", "canceled"}
+                else None
+            )
+        metadata = {
+            "scheduler_observation": {
+                "schema_version": "jarvis.scheduler.observation.v1",
+                "provider": record.scheduler_provider,
+                "native_id": record.scheduler_native_id,
+                "state": observation.state,
+                "provider_state": observation.provider_state,
+                "diagnostic": observation.diagnostic,
+            }
+        }
+        if (
+            state == record.state
+            and terminal == record.terminal
+            and return_code == record.return_code
+            and error == record.error
+        ):
+            return record
+        try:
+            return store.update(
+                execution_id,
+                state=state,
+                terminal=terminal,
+                return_code=return_code,
+                error=error,
+                metadata=metadata,
+            )
+        except ValueError:
+            latest = store.get(execution_id)
+            if latest.terminal:
+                return latest
+            raise
 
     def list_executions(self) -> List[ExecutionRecord]:
         """Return all durable executions owned by this pipeline."""
