@@ -102,9 +102,35 @@ output: "${HOME}/experiment_results"
 This section contains the skeleton of a pipeline. It has the same exact parameters as a regular pipeline script, including:
 - `name`: Pipeline name
 - `env`: Environment reference (optional)
+- `host_pkgs`: Host baremetal prerequisites (optional) — see below
 - `pkgs`: List of packages with their configurations
 - `interceptors`: List of interceptors (optional)
 - Container configuration (optional)
+
+#### host_pkgs in a test
+
+`host_pkgs` declares tooling that must exist on the host for Jarvis itself to
+work — most often apptainer or docker for a containerized sweep. See
+[Host Prerequisites](pipelines.md#host-prerequisites-host_pkgs) for the full
+description of the field.
+
+```yaml
+config:
+  name: ior_apptainer_sweep
+  container_engine: apptainer
+  host_pkgs:
+    - install_method: spack
+      install_query: apptainer
+  pkgs:
+    - pkg_type: builtin.ior
+      pkg_name: ior
+```
+
+The block is checked once when the test loads, before any combination runs. A
+sweep of N combinations should not build N-1 results before discovering the
+host cannot run it. Because `host_pkgs` lives inside `config:`, it also rides
+along into each iteration's pipeline and is re-checked there — but probes are
+memoized per process, so those re-checks cost nothing.
 
 ### vars
 

@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
+from jarvis_cd.core.host_pkg import HostPkg
 from jarvis_cd.core.pipeline import Pipeline
 from jarvis_cd.util.logger import logger, Color
 
@@ -127,6 +128,8 @@ class PipelineTest:
         """Initialize pipeline test instance."""
         self.name = None
         self.config = {}  # The base pipeline configuration
+        # Host baremetal prerequisites declared in ``config.host_pkgs``.
+        self.host_pkgs = []
         self.vars = {}  # Variable definitions
         self.loop = []  # Loop structure
         self.repeat = 1
@@ -312,6 +315,15 @@ class PipelineTest:
         # Load test components
         self.config = test_def['config']
         self.name = self.config.get('name', pipeline_file.stem)
+
+        # Host prerequisites live in the pipeline definition, so they
+        # ride along in `config:` and are re-checked by every iteration's
+        # Pipeline load. Check once here as well: a sweep of N
+        # combinations should not build N-1 outputs before discovering
+        # the host cannot run it. The probe is memoized, so the
+        # per-iteration checks that follow cost nothing.
+        self.host_pkgs = HostPkg.parse(self.config.get('host_pkgs'))
+        HostPkg.check_all(self.host_pkgs, context=self.name)
         self.vars = test_def.get('vars', {})
         self.loop = test_def.get('loop', [])
         self.repeat = test_def.get('repeat', 1)

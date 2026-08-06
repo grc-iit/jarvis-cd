@@ -118,6 +118,13 @@ name: my_pipeline
 # Must be a named environment reference or omitted
 env: my_custom_environment  # References a named environment
 
+# Host baremetal prerequisites (optional)
+# Tools Jarvis itself shells out to, verified before the pipeline runs.
+# See "Host Prerequisites (host_pkgs)" below.
+host_pkgs:
+  - install_method: spack
+    install_query: apptainer
+
 # Main packages (required)
 pkgs:
   - pkg_type: repo.package_name
@@ -225,6 +232,81 @@ jarvis ppl env build my_custom_env module load gcc/9.3.0 openmpi/4.1.0
 name: my_pipeline
 # No env field - automatically captures current environment
 ```
+
+### Host Prerequisites (`host_pkgs`)
+
+`host_pkgs` declares software that must exist on the **host baremetal** for
+Jarvis itself to work. This is different from `pkgs`, which is the workload
+Jarvis deploys: `host_pkgs` is the tooling Jarvis shells out to.
+
+The motivating case is a containerized pipeline. `container_engine: apptainer`
+makes Jarvis run `apptainer build` on the host, so apptainer has to be on the
+host's `PATH` before the pipeline starts. Apptainer is not something the
+pipeline can containerize its way out of needing.
+
+```yaml
+name: ior_apptainer_host_pkgs_test
+base_deploy_mode: container
+container_engine: apptainer
+
+host_pkgs:
+  - install_method: spack
+    install_query: apptainer
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior
+```
+
+| Key | Description |
+|-----|-------------|
+| `install_method` | Backend that verifies/installs the package: `spack`, `pip`, or `conda` |
+| `install_query` | The string that backend installs (e.g. a spack spec, a pip requirement). Also what Jarvis probes for, and what the error message tells you to run |
+
+#### What Jarvis does with it
+
+Two things, both before the pipeline does any other work:
+
+1. **Verify.** Every declared package is probed on the host. Anything missing
+   aborts the run with the exact command that fixes it:
+
+   ```
+   Missing 1 required host package(s) for 'ior_apptainer_host_pkgs_test'.
+   These must be installed on the host baremetal before jarvis can run this
+   pipeline:
+     - apptainer (install_method: spack)
+         install it with: spack install apptainer
+   ```
+
+   This is a check, not an install. `spack install apptainer` can run for
+   hours, which is not something a pipeline launch should do unprompted.
+
+2. **Activate.** Packages that *are* present contribute their environment
+   (what `spack load apptainer` sets) to the process environment, so the
+   subprocesses Jarvis spawns to do the containerizing actually find them.
+   The activation is written into the process environment rather than only
+   the pipeline's `env` dict, because the container-build calls run under a
+   plain `LocalExecInfo()` and therefore inherit an unmodified environment.
+
+#### When the check runs
+
+| Path | Checked |
+|------|---------|
+| `jarvis ppl run yaml <file>` | At load, before any package is processed |
+| `jarvis ppl run` (saved current pipeline) | In `run()` |
+| `jarvis ppl submit [file]` | Before the job is queued, on the submitting host |
+| Pipeline tests (`config.host_pkgs`) | Once at load, then per iteration |
+
+Probes are memoized per process, so a sweep that re-loads the same pipeline
+for each combination pays for the probe once.
+
+`host_pkgs` round-trips through the saved pipeline config, so
+`jarvis ppl submit` against the current pipeline re-checks it without
+re-reading the source YAML.
+
+Submitting is checked on the *submitting* host: the job script re-runs Jarvis
+on the compute node and would hit the same missing package, but only after
+sitting in the queue and burning an allocation to fail.
 
 ### Install Manager
 
@@ -1650,6 +1732,28 @@ Error: yaml.scanner.ScannerError: while parsing a block mapping
 1. Validate YAML syntax: `python -c "import yaml; yaml.safe_load(open('pipeline.yaml'))"`
 2. Check indentation (use spaces, not tabs)
 3. Quote string values with special characters
+
+**Problem**: A declared host prerequisite is missing
+```
+Error: Missing 1 required host package(s) for 'my_pipeline'. These must be
+installed on the host baremetal before jarvis can run this pipeline:
+  - apptainer (install_method: spack)
+      install it with: spack install apptainer
+```
+
+**Solutions**:
+1. Run the command the error names (`spack install apptainer`). Jarvis
+   reports the missing prerequisite rather than installing it, because an
+   install can run for hours.
+2. If the tool is already installed but Jarvis cannot see it, check that the
+   backend can find it — for spack, that means `spack location -i <spec>`
+   succeeds, and that `SPACK_ROOT` is set if `spack` is not already on `PATH`
+   (the shell-function form from your rc files is invisible to the
+   non-interactive shell Jarvis probes with).
+3. If the pipeline does not actually need it on this host, remove the entry
+   from `host_pkgs`.
+
+See [Host Prerequisites](#host-prerequisites-host_pkgs).
 
 #### Package Configuration Issues
 

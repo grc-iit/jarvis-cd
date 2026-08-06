@@ -44,3 +44,35 @@ jobs:
         with:
           files: coverage.xml
           fail_ci_if_error: false
+
+  # Exercises the `host_pkgs` prerequisite check on a host that is missing
+  # the prerequisite. Runs inside a bare ubuntu container precisely because
+  # that container has no spack and no apptainer: the example pipeline is a
+  # containerized apptainer pipeline whose SIF build needs apptainer on the
+  # *host*, so this is the real "declared but not installed" case rather
+  # than a simulated one.
+  host-pkgs:
+    runs-on: ubuntu-24.04
+    container:
+      image: ubuntu:24.04
+
+    steps:
+      - name: Install container prerequisites
+        # The bare image has no git/python, and actions/checkout needs git.
+        run: |
+          apt-get update -y
+          apt-get install -y --no-install-recommends \
+            git python3 python3-pip python3-venv ca-certificates
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Jarvis
+        # PEP 668 marks the distro interpreter as externally managed; this
+        # throwaway container is the environment, so install into it.
+        run: pip3 install --break-system-packages -e .
+
+      - name: Verify host_pkgs check catches missing spack apptainer
+        run: bash ci/test_host_pkgs.sh

@@ -51,24 +51,26 @@ class TestPrepareContainerApptainer(unittest.TestCase):
         )
         return make_exec(info)
 
-    def test_apptainer_wraps_with_apptainer_exec(self):
-        """container='apptainer' → wrapped cmd execs into the running
-        instance: contains 'apptainer exec' and 'instance://myimg' (the
-        container_image doubles as the instance name)."""
+    def test_apptainer_wraps_with_instance_exec(self):
+        """container='apptainer', container_image='myimg' → the command enters
+        the running instance rather than re-launching the SIF."""
         exec_obj = self._make_apptainer_exec(
             container_image='myimg', shared_dir='/shared')
         wrapped_cmd, _ = exec_obj._prepare_container('echo hello')
         self.assertIn('apptainer exec', wrapped_cmd)
         self.assertIn('instance://myimg', wrapped_cmd)
+        # The SIF is launched once by Pipeline._start_containerized_pipeline;
+        # a per-exec SIF launch would start a second, unshared container.
+        self.assertNotIn('.sif', wrapped_cmd)
 
-    def test_apptainer_uses_instance_name_not_sif_path(self):
-        """The wrapped command targets the long-running instance by name
-        (instance://<image>); shared_dir no longer injects a .sif path."""
+    def test_apptainer_ignores_shared_dir(self):
+        """shared_dir no longer resolves a SIF path: the instance name is the
+        only thing that selects the container."""
         exec_obj = self._make_apptainer_exec(
             container_image='myimg', shared_dir='/shared/mypkg')
         wrapped_cmd, _ = exec_obj._prepare_container('echo hello')
         self.assertIn('instance://myimg', wrapped_cmd)
-        self.assertNotIn('.sif', wrapped_cmd)
+        self.assertNotIn('/shared', wrapped_cmd)
 
     def test_apptainer_passes_env_vars(self):
         """container='apptainer', env={'MY_VAR': 'val'} → wrapped cmd contains
@@ -92,9 +94,10 @@ class TestPrepareContainerApptainer(unittest.TestCase):
         _, returned_info = exec_obj._prepare_container('echo hello')
         self.assertEqual(returned_info.env, {})
 
-    def test_apptainer_gpu_flag_not_forwarded(self):
-        """--nv is applied at `apptainer instance start` time, not on exec,
-        so it is deliberately NOT forwarded into the wrapped exec command."""
+    def test_apptainer_gpu_flag_not_forwarded_per_exec(self):
+        """gpu=True does NOT emit '--nv' here: apptainer ignores --nv on a
+        running instance, so it is baked in at `instance start` time
+        (see Pipeline._start_containerized_pipeline)."""
         info = ExecInfo(
             exec_type=ExecType.LOCAL,
             container='apptainer',
@@ -104,6 +107,8 @@ class TestPrepareContainerApptainer(unittest.TestCase):
         exec_obj = make_exec(info)
         wrapped_cmd, _ = exec_obj._prepare_container('echo hello')
         self.assertNotIn('--nv', wrapped_cmd)
+        # Dropping --nv must not also drop the instance targeting: the
+        # command still has to enter the running instance.
         self.assertIn('instance://gpuimg', wrapped_cmd)
 
     def test_apptainer_no_gpu_flag_when_false(self):
@@ -112,9 +117,9 @@ class TestPrepareContainerApptainer(unittest.TestCase):
         wrapped_cmd, _ = exec_obj._prepare_container('echo hello')
         self.assertNotIn('--nv', wrapped_cmd)
 
-    def test_apptainer_bind_mounts_not_forwarded(self):
-        """Bind mounts are applied at instance-start time and are silently
-        ignored on a running instance, so they are NOT forwarded on exec."""
+    def test_apptainer_bind_mounts_not_forwarded_per_exec(self):
+        """bind_mounts are likewise silently ignored on a running instance, so
+        they are baked in at `instance start` time and not emitted here."""
         exec_obj = self._make_apptainer_exec(bind_mounts=['/host/path:/container/path'])
         wrapped_cmd, _ = exec_obj._prepare_container('echo hello')
         self.assertNotIn('--bind', wrapped_cmd)
