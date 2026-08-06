@@ -226,6 +226,81 @@ name: my_pipeline
 # No env field - automatically captures current environment
 ```
 
+### Host Prerequisites (`host_pkgs`)
+
+`host_pkgs` declares software that must exist on the **host baremetal** for
+Jarvis itself to work. This is different from `pkgs`, which is the workload
+Jarvis deploys: `host_pkgs` is the tooling Jarvis shells out to.
+
+The motivating case is a containerized pipeline. `container_engine: apptainer`
+makes Jarvis run `apptainer build` on the host, so apptainer has to be on the
+host's `PATH` before the pipeline starts. Apptainer is not something the
+pipeline can containerize its way out of needing.
+
+```yaml
+name: ior_apptainer_host_pkgs_test
+base_deploy_mode: container
+container_engine: apptainer
+
+host_pkgs:
+  - install_method: spack
+    install_query: apptainer
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior
+```
+
+| Key | Description |
+|-----|-------------|
+| `install_method` | Backend that verifies/installs the package: `spack`, `pip`, or `conda` |
+| `install_query` | The string that backend installs (e.g. a spack spec, a pip requirement). Also what Jarvis probes for, and what the error message tells you to run |
+
+#### What Jarvis does with it
+
+Two things, both before the pipeline does any other work:
+
+1. **Verify.** Every declared package is probed on the host. Anything missing
+   aborts the run with the exact command that fixes it:
+
+   ```
+   Missing 1 required host package(s) for 'ior_apptainer_host_pkgs_test'.
+   These must be installed on the host baremetal before jarvis can run this
+   pipeline:
+     - apptainer (install_method: spack)
+         install it with: spack install apptainer
+   ```
+
+   This is a check, not an install. `spack install apptainer` can run for
+   hours, which is not something a pipeline launch should do unprompted.
+
+2. **Activate.** Packages that *are* present contribute their environment
+   (what `spack load apptainer` sets) to the process environment, so the
+   subprocesses Jarvis spawns to do the containerizing actually find them.
+   The activation is written into the process environment rather than only
+   the pipeline's `env` dict, because the container-build calls run under a
+   plain `LocalExecInfo()` and therefore inherit an unmodified environment.
+
+#### When the check runs
+
+| Path | Checked |
+|------|---------|
+| `jarvis ppl run yaml <file>` | At load, before any package is processed |
+| `jarvis ppl run` (saved current pipeline) | In `run()` |
+| `jarvis ppl submit [file]` | Before the job is queued, on the submitting host |
+| Pipeline tests (`config.host_pkgs`) | Once at load, then per iteration |
+
+Probes are memoized per process, so a sweep that re-loads the same pipeline
+for each combination pays for the probe once.
+
+`host_pkgs` round-trips through the saved pipeline config, so
+`jarvis ppl submit` against the current pipeline re-checks it without
+re-reading the source YAML.
+
+Submitting is checked on the *submitting* host: the job script re-runs Jarvis
+on the compute node and would hit the same missing package, but only after
+sitting in the queue and burning an allocation to fail.
+
 ### Install Manager
 
 The `base_deploy_mode` field determines how packages are installed and deployed. It is a **pipeline-level** setting that applies to all packages uniformly.

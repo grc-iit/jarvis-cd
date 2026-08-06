@@ -1,0 +1,57 @@
+# Pipeline: IOR Apptainer Test with declared host prerequisites
+# Purpose: Demonstrate `host_pkgs` -- software that must exist on the host
+#          baremetal for jarvis itself to work, as opposed to `pkgs`, which
+#          is the workload jarvis deploys.
+#
+# Why this pipeline needs it: `container_engine: apptainer` makes jarvis shell
+# out to the host's `apptainer build` to produce the SIF. Apptainer is a host
+# tool, not something the pipeline can containerize its way out of needing.
+# Declaring it here makes jarvis verify it up front and fail with the exact
+# install command, instead of failing later with `apptainer: command not
+# found` from inside the build -- after directories and packages already
+# exist. When apptainer IS present, the same check activates its environment
+# (`spack load apptainer`) so the build subprocess finds it on PATH.
+#
+# Run:  jarvis ppl run yaml builtin/pipelines/examples/ior_apptainer_host_pkgs_test.yaml
+
+name: ior_apptainer_host_pkgs_test
+base_deploy_mode: container
+
+# Host baremetal prerequisites, checked before anything else happens.
+#   install_method: which backend verifies/installs it (spack, pip, conda)
+#   install_query:  the string that backend installs -- also what jarvis
+#                   probes for, and what the error message tells you to run
+host_pkgs:
+  - install_method: spack
+    install_query: apptainer
+
+container_engine: apptainer
+container_base: ubuntu:24.04
+
+pkgs:
+  # HDF5 + ADIOS2 must precede IOR: they deposit libhdf5*.so* and
+  # libadios2*.so* into the build container's /usr/local/lib so IOR's
+  # Dockerfile.deploy COPY of those globs finds them at deploy time.
+  - pkg_type: builtin.hdf5
+    pkg_name: hdf5
+    parallel: true
+  - pkg_type: builtin.adios2
+    pkg_name: adios2
+    use_hdf5: true
+    use_mpi: true
+    use_fortran: false
+    use_python: false
+  - pkg_type: builtin.ior
+    pkg_name: ior_apptainer
+    nprocs: 4
+    ppn: 4
+    block: 1G
+    xfer: 1M
+    api: posix
+    out: ${HOME}/jarvis_ior_test_file
+    log: ${HOME}/jarvis_ior_output.log
+    write: true
+    read: true
+    fpp: false
+    reps: 1
+    direct: false

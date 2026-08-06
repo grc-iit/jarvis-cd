@@ -11,6 +11,7 @@ import copy
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from jarvis_cd.core.config import load_class, Jarvis
+from jarvis_cd.core.host_pkg import HostPkg
 from jarvis_cd.util.logger import logger
 from jarvis_cd.util.hostfile import Hostfile
 
@@ -64,6 +65,12 @@ class Pipeline:
         # their own. None means no default ('default' deploy_mode).
         # Per-package install_method (not this field) selects the Installer.
         self.base_deploy_mode = None
+
+        # Host baremetal prerequisites (top-level YAML key ``host_pkgs``):
+        # [{'install_method': 'spack', 'install_query': 'apptainer'}, ...].
+        # Verified -- and their environments activated -- before the
+        # pipeline does any work. See jarvis_cd/core/host_pkg.py.
+        self.host_pkgs = []
 
         # Launcher overrides (set from YAML top-level keys ``ssh_cmd``,
         # ``pssh_cmd``, ``mpi_cmd``). None = built-in defaults.
@@ -144,6 +151,12 @@ class Pipeline:
                 "pipeline YAML before calling submit().")
         if not self.name:
             raise ValueError("Pipeline name not set; cannot submit job.")
+
+        # Check host prerequisites on the submitting host before the job
+        # is queued. The job script re-runs jarvis on the compute node,
+        # which would hit the same missing package -- but only after
+        # sitting in the queue and burning an allocation to fail.
+        HostPkg.check_all(self.host_pkgs, env=self.env, context=self.name)
 
         from jarvis_cd.core.scheduler import make_scheduler
         shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
@@ -348,6 +361,12 @@ class Pipeline:
         # Add base_deploy_mode (default deploy_mode propagated to pkgs).
         if self.base_deploy_mode:
             pipeline_config['base_deploy_mode'] = self.base_deploy_mode
+
+        # Persist host prerequisites so a later `jarvis ppl submit` /
+        # `ppl run` against the saved current pipeline re-checks them
+        # without re-reading the original YAML.
+        if self.host_pkgs:
+            pipeline_config['host_pkgs'] = self.host_pkgs
 
         # Persist launcher overrides so reloads round-trip and
         # downstream `ppl run` invocations see the same launcher even
@@ -645,11 +664,21 @@ class Pipeline:
         :param load_type: Type of pipeline file to load (e.g., 'yaml')
         :param pipeline_file: Path to pipeline file to load and run
         """
-        try:
-            # Load pipeline file if specified
-            if load_type and pipeline_file:
-                self.load(load_type, pipeline_file)
+        # Load pipeline file if specified. Both of these run outside the
+        # try below: nothing has started yet, so the except's stop()
+        # recovery has nothing to tear down, and routing a missing host
+        # package through it would bury the actionable message under a
+        # "Attempting to stop packages..." trace.
+        if load_type and pipeline_file:
+            self.load(load_type, pipeline_file)
 
+        # Verify host prerequisites before doing anything. Loading a
+        # YAML above already checked (and the probe is memoized, so this
+        # is free); this call is what covers `jarvis ppl run` against a
+        # saved current pipeline, which never re-reads the source YAML.
+        HostPkg.check_all(self.host_pkgs, env=self.env, context=self.name)
+
+        try:
             # Configure all packages before starting.
             # This runs _configure() on each package, which sets up
             # environment variables (e.g., CHI_SERVER_CONF) needed by start().
@@ -1050,6 +1079,13 @@ class Pipeline:
         self.mpi_cmd = pipeline_config.get('mpi_cmd', None)
         self._apply_launcher_overrides()
 
+        # Host prerequisites round-trip through the saved config. Only
+        # parsed here (no check): loading a saved pipeline is also what
+        # `jarvis ppl status`/`ppl print` do, and those should not fail
+        # on a host that merely cannot run the pipeline. The check runs
+        # on the paths that actually execute: run() and submit().
+        self.host_pkgs = HostPkg.parse(pipeline_config.get('host_pkgs'))
+
         # Load base_deploy_mode. The legacy ``install_manager`` key is
         # still read once with a deprecation warning so saved pipelines
         # from before the rename keep loading.
@@ -1177,6 +1213,17 @@ class Pipeline:
                 "The 'env' field must be either a string (named environment) or omitted (auto-build)."
             )
         
+        # Host prerequisites are verified before anything else touches
+        # the filesystem or spawns a package. A containerized pipeline
+        # shells out to the host's apptainer/docker to build its image,
+        # so a missing host package has to stop the load here -- not
+        # surface as `apptainer: command not found` after jarvis has
+        # already created directories and started services. Activating
+        # here also means the container build below inherits the
+        # prerequisite's PATH.
+        self.host_pkgs = HostPkg.parse(pipeline_def.get('host_pkgs'))
+        HostPkg.check_all(self.host_pkgs, env=self.env, context=self.name)
+
         # Initialize other attributes
         self.created_at = str(Path().cwd())
         self.last_loaded_file = str(pipeline_file.absolute())
