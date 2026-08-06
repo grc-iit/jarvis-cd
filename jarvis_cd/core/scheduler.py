@@ -625,6 +625,7 @@ class SlurmScheduler(Scheduler):
                 "--format=%i|%T",
             ]
         )
+        queue_reports_absent = False
         if queue is not None and queue.returncode == 0:
             queue_record = _matching_slurm_status_line(queue.stdout, native_id, 2)
             if queue_record is not None:
@@ -632,6 +633,7 @@ class SlurmScheduler(Scheduler):
                     queue_record[1],
                     return_code=None,
                 )
+            queue_reports_absent = True
 
         accounting, accounting_diagnostic = _run_scheduler_query(
             [
@@ -663,7 +665,7 @@ class SlurmScheduler(Scheduler):
                 return_code=_parse_slurm_exit_code(accounting_record[2]),
             )
 
-        if _slurm_queue_reports_missing(queue):
+        if queue_reports_absent or _slurm_queue_reports_missing(queue):
             return SchedulerExecutionStatus(
                 state="missing",
                 terminal=False,

@@ -961,6 +961,33 @@ def test_slurm_query_reports_missing_when_queue_rejects_id_without_accounting() 
     assert "no longer reports" in (observation.diagnostic or "")
 
 
+def test_slurm_query_reports_missing_when_queue_is_empty_and_accounting_is_disabled() -> (
+    None
+):
+    empty_queue = subprocess.CompletedProcess(
+        args=["squeue"],
+        returncode=0,
+        stdout="",
+        stderr="",
+    )
+    disabled_accounting = subprocess.CompletedProcess(
+        args=["sacct"],
+        returncode=1,
+        stdout="",
+        stderr="Slurm accounting storage is disabled\n",
+    )
+
+    with patch(
+        "jarvis_cd.core.scheduler.subprocess.run",
+        side_effect=[empty_queue, disabled_accounting],
+    ):
+        observation = SlurmScheduler.query_execution("24680")
+
+    assert observation.state == "missing"
+    assert observation.terminal is False
+    assert "no longer reports" in (observation.diagnostic or "")
+
+
 def test_scheduler_log_artifacts_resolve_same_ids_and_finalize(
     tmp_path: Path,
 ) -> None:
