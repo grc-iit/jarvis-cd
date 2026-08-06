@@ -1,139 +1,68 @@
-"""
-This module provides classes and methods to launch OpenFOAM-dev simulations.
-OpenFOAM (Open Field Operation And Manipulation) is an open-source CFD
-framework from the OpenFOAM Foundation.
-"""
-from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
-from jarvis_cd.shell.process import Mkdir, Rm
+"""Maintained OpenFOAM package with legacy and supplied-study profiles."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from builtin.openfoam.airfoil import OpenfoamAirfoil
+from builtin.openfoam.legacy import OpenfoamLegacy
 
 
-class Openfoam(Application):
-    """
-    OpenFOAM container package supporting both default (bare-metal) and
-    container deployment.
+class Openfoam(OpenfoamAirfoil, OpenfoamLegacy):
+    """Run either the legacy OpenFOAM launcher or a digest-bound airfoil study."""
 
-    Set deploy_mode='container' to build and run OpenFOAM-dev inside a
-    Docker/Podman/Apptainer container with ADIOS2 and system OpenMPI.
-    Set deploy_mode='default' to use a system-installed OpenFOAM via MPI.
+    def _init(self) -> None:
+        OpenfoamAirfoil._init(self)
 
-    ``start`` runs ``./Allrun`` (or a user-specified script) in the case
-    directory under MPI, matching the tutorial case convention.
-    """
+    def _configure_menu(self) -> list[dict[str, Any]]:
+        """Expose one additive menu without duplicate process controls."""
 
-    def _init(self):
-        pass
+        merged: list[dict[str, Any]] = []
+        names: set[str] = set()
+        for item in (
+            *OpenfoamAirfoil._configure_menu(self),
+            *OpenfoamLegacy._configure_menu(self),
+        ):
+            name = str(item["name"])
+            if name not in names:
+                merged.append(item)
+                names.add(name)
+        return merged
 
-    def _configure_menu(self):
-        return [
-            {
-                'name': 'nprocs',
-                'msg': 'Number of MPI processes',
-                'type': int,
-                'default': 1,
-            },
-            {
-                'name': 'ppn',
-                'msg': 'Processes per node',
-                'type': int,
-                'default': 4,
-            },
-            {
-                'name': 'script_location',
-                'msg': 'Case directory containing Allrun script',
-                'type': str,
-                'default': None,
-            },
-            {
-                'name': 'script',
-                'msg': 'Script to execute inside script_location',
-                'type': str,
-                'default': './Allrun',
-            },
-            {
-                'name': 'base_image',
-                'msg': 'Base Docker image for build container',
-                'type': str,
-                'default': 'sci-hpc-base',
-            },
-        ]
+    # Pkg leaves these override points untyped, so Pyright infers None-only returns.
+    def _build_phase(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+    ) -> tuple[str, str] | None:
+        return OpenfoamLegacy._build_phase(self)
 
-    # ------------------------------------------------------------------
-    # Container Dockerfile generators
-    # ------------------------------------------------------------------
+    def _build_deploy_phase(  # pyright: ignore[reportIncompatibleMethodOverride]
+        self,
+    ) -> tuple[str, str] | None:
+        return OpenfoamLegacy._build_deploy_phase(self)
 
-    def _build_phase(self):
-        if self.config.get('deploy_mode') != 'container':
-            return None
-        content = self._read_build_script('build.sh', {
-            'BASE_IMAGE': self.config.get('base_image', 'sci-hpc-base'),
-        })
-        return content, 'openfoam-dev'
+    def _configure(self, **kwargs: Any) -> None:
+        """Select the supplied-input profile only when a bundle is explicit."""
 
-    def _build_deploy_phase(self):
-        if self.config.get('deploy_mode') != 'container':
-            return None
-        content = self._read_dockerfile('Dockerfile.deploy', {
-            'BUILD_IMAGE': self.build_image_name(),
-            'DEPLOY_BASE': 'ubuntu:24.04',
-        })
-        return content, 'openfoam-dev'
+        if kwargs.get("input_bundle") or self.config.get("input_bundle"):
+            OpenfoamAirfoil._configure(self, **kwargs)
+            return
+        OpenfoamLegacy._configure(self, **kwargs)
 
-    # ------------------------------------------------------------------
-    # Configuration
-    # ------------------------------------------------------------------
+    def start(self) -> None:
+        """Launch the explicitly configured OpenFOAM profile."""
 
-    def _configure(self, **kwargs):
-        """
-        Configure OpenFOAM.
+        if self.config.get("input_bundle"):
+            OpenfoamAirfoil.start(self)
+            return
+        OpenfoamLegacy.start(self)
 
-        Calls super()._configure() which updates self.config and (when
-        deploy_mode == 'container') triggers build_phase / build_deploy_phase.
-        """
-        super()._configure(**kwargs)
+    def stop(self) -> None:
+        """Stop the selected profile when it owns a long-running process."""
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
+        OpenfoamLegacy.stop(self)
 
-    def start(self):
-        """
-        Launch OpenFOAM.
+    def clean(self) -> None:
+        """Preserve supplied-study results and apply legacy cleanup semantics."""
 
-        In container mode, runs the case's Allrun script via MPI inside the
-        deploy container. In default mode, runs from PATH.
-        """
-        script = self.config.get('script', './Allrun')
-        cwd = self.config.get('script_location')
-        foam_env = 'source /opt/OpenFOAM/OpenFOAM-dev/etc/bashrc'
-        cmd = f'bash -c "{foam_env} && {script}"'
-
-        if self.config.get('deploy_mode') == 'container':
-            Exec(cmd, MpiExecInfo(
-                nprocs=self.config['nprocs'],
-                ppn=self.config['ppn'],
-                hostfile=self.hostfile,
-                port=self.ssh_port,
-                container=self._container_engine,
-                container_image=self.deploy_image_name(),
-                shared_dir=self.shared_dir,
-                private_dir=self.private_dir,
-                env=self.mod_env,
-                cwd=cwd,
-            )).run()
-        else:
-            Exec(cmd, MpiExecInfo(
-                nprocs=self.config['nprocs'],
-                ppn=self.config['ppn'],
-                hostfile=self.hostfile,
-                env=self.mod_env,
-                cwd=cwd,
-            )).run()
-
-    def stop(self):
-        """Stop OpenFOAM (no-op — runs to completion)."""
-        pass
-
-    def clean(self):
-        """OpenFOAM leaves case output in script_location; no global cleanup."""
-        pass
+        if not self.config.get("input_bundle"):
+            OpenfoamLegacy.clean(self)

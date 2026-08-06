@@ -21,11 +21,12 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 
 _DIRECTIVE_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
@@ -43,6 +44,42 @@ class SchedulerArtifactPathResolution:
     path: Optional[str]
     diagnostic_code: Optional[str] = None
     diagnostic: Optional[str] = None
+
+
+SchedulerExecutionState = Literal[
+    "submitted",
+    "running",
+    "completed",
+    "failed",
+    "canceled",
+    "missing",
+    "unknown",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class SchedulerExecutionStatus:
+    """One bounded observation of provider-owned execution state."""
+
+    state: SchedulerExecutionState
+    terminal: bool
+    return_code: Optional[int]
+    provider_state: Optional[str]
+    diagnostic: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        """Reject internally inconsistent provider observations."""
+        terminal_states = {"completed", "failed", "canceled"}
+        if self.terminal != (self.state in terminal_states):
+            raise ValueError("scheduler observation terminal state is inconsistent")
+        if self.state == "completed" and self.return_code != 0:
+            raise ValueError("completed scheduler observations require return_code=0")
+        if self.state == "failed" and self.return_code in {None, 0}:
+            raise ValueError("failed scheduler observations require a nonzero code")
+        if self.return_code is not None and (
+            isinstance(self.return_code, bool) or not isinstance(self.return_code, int)
+        ):
+            raise ValueError("scheduler observation return_code is invalid")
 
 
 def _validated_single_line(value: Any, *, field: str, limit: int = 4096) -> str:
@@ -204,6 +241,18 @@ class Scheduler:
         identities from arbitrary application stdout.
         """
         raise NotImplementedError
+
+    @classmethod
+    def query_execution(cls, native_id: str) -> SchedulerExecutionStatus:
+        """Query one provider-native execution identity."""
+        del native_id
+        return SchedulerExecutionStatus(
+            state="unknown",
+            terminal=False,
+            return_code=None,
+            provider_state=None,
+            diagnostic=f"JARVIS cannot query scheduler provider {cls.NAME!r}",
+        )
 
     @property
     def array_requested(self) -> bool:
@@ -561,6 +610,86 @@ class SlurmScheduler(Scheduler):
             "identity_source": "scheduler_submit_api",
         }
 
+    @classmethod
+    def query_execution(cls, native_id: str) -> SchedulerExecutionStatus:
+        """Query live and accounting SLURM state for one exact scalar job."""
+        if _SLURM_NATIVE_ID.fullmatch(native_id) is None:
+            raise ValueError("SLURM execution query requires a numeric job ID")
+
+        queue, queue_diagnostic = _run_scheduler_query(
+            [
+                "squeue",
+                "--noheader",
+                "--jobs",
+                native_id,
+                "--format=%i|%T",
+            ]
+        )
+        queue_reports_absent = False
+        if queue is not None and queue.returncode == 0:
+            queue_record = _matching_slurm_status_line(queue.stdout, native_id, 2)
+            if queue_record is not None:
+                return _slurm_execution_status(
+                    queue_record[1],
+                    return_code=None,
+                )
+            queue_reports_absent = True
+
+        accounting, accounting_diagnostic = _run_scheduler_query(
+            [
+                "sacct",
+                "--noheader",
+                "--parsable2",
+                "--allocations",
+                "--jobs",
+                native_id,
+                "--format=JobIDRaw,State,ExitCode",
+            ]
+        )
+        if accounting is not None and accounting.returncode == 0:
+            accounting_record = _matching_slurm_status_line(
+                accounting.stdout,
+                native_id,
+                3,
+            )
+            if accounting_record is None:
+                return SchedulerExecutionStatus(
+                    state="missing",
+                    terminal=False,
+                    return_code=None,
+                    provider_state=None,
+                    diagnostic="SLURM accounting has no record for the accepted job",
+                )
+            return _slurm_execution_status(
+                accounting_record[1],
+                return_code=_parse_slurm_exit_code(accounting_record[2]),
+            )
+
+        if queue_reports_absent or _slurm_queue_reports_missing(queue):
+            return SchedulerExecutionStatus(
+                state="missing",
+                terminal=False,
+                return_code=None,
+                provider_state=None,
+                diagnostic=(
+                    "SLURM no longer reports the accepted job; accounting did not "
+                    "provide a historical allocation record"
+                ),
+            )
+
+        diagnostics = [
+            value
+            for value in (queue_diagnostic, accounting_diagnostic)
+            if value is not None
+        ]
+        return SchedulerExecutionStatus(
+            state="unknown",
+            terminal=False,
+            return_code=None,
+            provider_state=None,
+            diagnostic="; ".join(diagnostics) or "SLURM state query was unavailable",
+        )
+
     @property
     def array_requested(self) -> bool:
         """Return whether spec or raw arguments request a SLURM job array."""
@@ -635,6 +764,147 @@ class SlurmScheduler(Scheduler):
 _SCHEDULERS: Dict[str, type[Scheduler]] = {
     SlurmScheduler.NAME: SlurmScheduler,
 }
+
+
+def _run_scheduler_query(
+    argv: list[str],
+) -> tuple[Optional[subprocess.CompletedProcess[str]], Optional[str]]:
+    """Run one bounded scheduler query without invoking a shell."""
+    try:
+        completed = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return None, f"{argv[0]} query failed: {str(exc)[:1024]}"
+    if completed.returncode == 0:
+        return completed, None
+    diagnostic = (completed.stderr or completed.stdout or "").strip()
+    if len(diagnostic) > 1024:
+        diagnostic = "[truncated] " + diagnostic[-1024:]
+    return completed, (
+        f"{argv[0]} query exited {completed.returncode}"
+        + (f": {diagnostic}" if diagnostic else "")
+    )
+
+
+def _matching_slurm_status_line(
+    stdout: str,
+    native_id: str,
+    field_count: int,
+) -> Optional[list[str]]:
+    """Return the exact allocation row while ignoring step records."""
+    for raw_line in stdout.splitlines():
+        fields = [field.strip() for field in raw_line.strip().strip("|").split("|")]
+        if len(fields) == field_count and fields[0] == native_id:
+            return fields
+    return None
+
+
+def _slurm_queue_reports_missing(
+    completed: Optional[subprocess.CompletedProcess[str]],
+) -> bool:
+    """Recognize SLURM's exact absent-job response without broad error guessing."""
+    if completed is None or completed.returncode == 0:
+        return False
+    diagnostic = (completed.stderr or completed.stdout or "").strip().lower()
+    return diagnostic == "slurm_load_jobs error: invalid job id specified"
+
+
+def _parse_slurm_exit_code(value: str) -> Optional[int]:
+    """Parse SLURM's ``exit:signal`` field without guessing malformed data."""
+    match = re.fullmatch(r"([0-9]{1,10}):([0-9]{1,10})", value.strip())
+    if match is None:
+        return None
+    exit_code = int(match.group(1))
+    signal = int(match.group(2))
+    if exit_code != 0:
+        return exit_code
+    if signal != 0:
+        return 128 + signal
+    return 0
+
+
+def _slurm_execution_status(
+    provider_state: str,
+    *,
+    return_code: Optional[int],
+) -> SchedulerExecutionStatus:
+    """Map a SLURM lifecycle value into JARVIS execution semantics."""
+    normalized = provider_state.strip().upper().split(maxsplit=1)[0].rstrip("+")
+    submitted_states = {
+        "PENDING",
+        "CONFIGURING",
+        "REQUEUED",
+        "REQUEUE_FED",
+        "REQUEUE_HOLD",
+        "RESIZING",
+    }
+    running_states = {"RUNNING", "COMPLETING", "SIGNALING", "STAGE_OUT", "SUSPENDED"}
+    failed_states = {
+        "BOOT_FAIL",
+        "DEADLINE",
+        "FAILED",
+        "NODE_FAIL",
+        "OUT_OF_MEMORY",
+        "PREEMPTED",
+        "REVOKED",
+        "SPECIAL_EXIT",
+        "TIMEOUT",
+    }
+    if normalized in submitted_states:
+        state: SchedulerExecutionState = "submitted"
+        terminal = False
+        canonical_return_code = None
+    elif normalized in running_states:
+        state = "running"
+        terminal = False
+        canonical_return_code = None
+    elif normalized == "COMPLETED" and return_code in {None, 0}:
+        state = "completed"
+        terminal = True
+        canonical_return_code = 0
+    elif normalized.startswith("CANCELLED"):
+        state = "canceled"
+        terminal = True
+        canonical_return_code = return_code
+    elif normalized in failed_states or normalized == "COMPLETED":
+        state = "failed"
+        terminal = True
+        canonical_return_code = return_code if return_code not in {None, 0} else 1
+    else:
+        state = "unknown"
+        terminal = False
+        canonical_return_code = None
+    return SchedulerExecutionStatus(
+        state=state,
+        terminal=terminal,
+        return_code=canonical_return_code,
+        provider_state=normalized or None,
+        diagnostic=None,
+    )
+
+
+def query_scheduler_execution(
+    provider: str,
+    native_id: str,
+) -> SchedulerExecutionStatus:
+    """Query execution state through the named scheduler provider."""
+    scheduler_type = _SCHEDULERS.get(provider.strip().lower())
+    if scheduler_type is None:
+        return SchedulerExecutionStatus(
+            state="unknown",
+            terminal=False,
+            return_code=None,
+            provider_state=None,
+            diagnostic=f"JARVIS cannot query scheduler provider {provider!r}",
+        )
+    return scheduler_type.query_execution(native_id)
 
 
 def resolve_scheduler_artifact_path(

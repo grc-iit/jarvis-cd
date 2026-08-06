@@ -24,6 +24,7 @@ from jarvis_cd.deployment import (
     RuntimeStatus,
     probe_program,
 )
+from jarvis_cd.input_bundle import extract_input_bundle, stage_input_bundle
 from jarvis_cd.shell import Exec, LocalExecInfo, MpiExecInfo, PsshExecInfo
 from jarvis_cd.shell.process import Mkdir, Rm
 
@@ -65,6 +66,21 @@ class Lammps(Application):
                     "commands; for the standard reduced Lennard-Jones single-type "
                     "case, use `mass 1 1.0`. Empty selects the package-owned bounded "
                     "Lennard-Jones workload."
+                ),
+                "type": str,
+                "default": "",
+                "input_binding": ConfigurationInputBinding(
+                    kind="local_file",
+                    structure="regular_file",
+                ).to_dict(),
+            },
+            {
+                "name": "input_bundle",
+                "msg": (
+                    "Optional digest-verified JARVIS package input bundle. The "
+                    "manifest entrypoint is the LAMMPS input script and every "
+                    "support file is staged into the execution-owned output "
+                    "directory. Cannot be combined with script."
                 ),
                 "type": str,
                 "default": "",
@@ -169,7 +185,10 @@ class Lammps(Application):
                 ExecutionProfile(
                     name="generated_workload",
                     execution_kind="batch",
-                    when=(ConfigurationCondition("script", "is_empty"),),
+                    when=(
+                        ConfigurationCondition("script", "is_empty"),
+                        ConfigurationCondition("input_bundle", "is_empty"),
+                    ),
                     runtime_requirements=("lammps",),
                     readiness=completed,
                     description=(
@@ -180,7 +199,10 @@ class Lammps(Application):
                 ExecutionProfile(
                     name="input_script",
                     execution_kind="batch",
-                    when=(ConfigurationCondition("script", "is_not_empty"),),
+                    when=(
+                        ConfigurationCondition("script", "is_not_empty"),
+                        ConfigurationCondition("input_bundle", "is_empty"),
+                    ),
                     runtime_requirements=("lammps",),
                     readiness=completed,
                     description=(
@@ -193,11 +215,29 @@ class Lammps(Application):
                         "use `mass 1 1.0`."
                     ),
                 ),
+                ExecutionProfile(
+                    name="input_bundle",
+                    execution_kind="batch",
+                    when=(
+                        ConfigurationCondition("script", "is_empty"),
+                        ConfigurationCondition("input_bundle", "is_not_empty"),
+                    ),
+                    runtime_requirements=("lammps",),
+                    readiness=completed,
+                    description=(
+                        "Digest-verified multi-file LAMMPS input set whose "
+                        "manifest entrypoint and support files are staged into "
+                        "one execution-owned working directory."
+                    ),
+                ),
             ),
             runtime_requirements=(runtime,),
             configuration_rules=(
                 ConfigurationRule(
-                    when=(ConfigurationCondition("script", "is_empty"),),
+                    when=(
+                        ConfigurationCondition("script", "is_empty"),
+                        ConfigurationCondition("input_bundle", "is_empty"),
+                    ),
                     requires=(
                         ConfigurationCondition("io_dump_interval", "greater_than", 0),
                         ConfigurationCondition("io_lattice_size", "greater_than", 0),
@@ -291,9 +331,16 @@ class Lammps(Application):
     def _validate_workload_configuration(self) -> None:
         """Ensure every launch selects a real user or generated input."""
         script = self.config.get("script")
+        input_bundle = self.config.get("input_bundle")
+        if script not in (None, "") and input_bundle not in (None, ""):
+            raise ValueError("script and input_bundle cannot be combined")
         if script not in (None, ""):
             if not isinstance(script, str):
                 raise TypeError("script must be a path string")
+            return
+        if input_bundle not in (None, ""):
+            if not isinstance(input_bundle, str):
+                raise TypeError("input_bundle must be a path string")
             return
         raw_values: dict[str, object] = {
             "io_dump_interval": self.config.get("io_dump_interval", 100),
@@ -443,6 +490,25 @@ class Lammps(Application):
                 temporary_path.unlink()
         return str(script_path)
 
+    def _input_script(self) -> str | None:
+        """Resolve a caller script, stage a bundle, or create the default input."""
+
+        self._validate_workload_configuration()
+        configured_bundle: object = self.config.get("input_bundle")
+        if configured_bundle not in (None, ""):
+            if not isinstance(configured_bundle, str):
+                raise TypeError("input_bundle must be a path string")
+            if self.shared_dir is None:
+                raise RuntimeError(
+                    "LAMMPS input bundles require a pipeline shared directory"
+                )
+            bundle = extract_input_bundle(
+                configured_bundle,
+                Path(self.shared_dir) / "input-bundles",
+            )
+            return str(stage_input_bundle(bundle, self._output_dir()))
+        return self._generated_input_script()
+
     def start(self) -> None:
         """
         Launch LAMMPS.
@@ -451,7 +517,7 @@ class Lammps(Application):
         container mode, MpiExecInfo with hostfile for default mode.
         """
         self._validate_legacy_runtime_configuration()
-        script_path = self._generated_input_script()
+        script_path = self._input_script()
         self._ensure_output_dir()
         self._remove_stale_log()
         line_callback = self.progress_line_callback()
@@ -466,7 +532,7 @@ class Lammps(Application):
             lammps_command = " ".join(cmd)
             output_dir = shlex.quote(os.path.dirname(self._log_path()))
             container_command = shlex.quote(
-                f"mkdir -p {output_dir} && exec {lammps_command}"
+                f"mkdir -p {output_dir} && cd {output_dir} && exec {lammps_command}"
             )
             result = Exec(
                 f"bash -c {container_command}",

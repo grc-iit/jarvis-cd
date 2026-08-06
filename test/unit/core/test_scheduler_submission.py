@@ -780,6 +780,214 @@ def test_pipeline_persists_provider_owned_submission_identity(tmp_path: Path) ->
     assert saved_submissions[3]["state"] == "submitted"
 
 
+def test_pipeline_prepares_explicit_scheduler_log_parents_before_submit(
+    tmp_path: Path,
+) -> None:
+    pipeline = _real_pipeline(tmp_path)
+    output = tmp_path / "scheduler-logs" / "stdout-%j.log"
+    error = tmp_path / "scheduler-errors" / "stderr-%j.log"
+    pipeline.scheduler.update({"output": str(output), "error": str(error)})
+    pipeline.save()
+
+    def observe_submit(_command: str) -> SimpleNamespace:
+        assert output.parent.is_dir()
+        assert error.parent.is_dir()
+        return SimpleNamespace(
+            exit_code={"localhost": 0},
+            stdout={"localhost": "24680;ares\n"},
+            stderr={"localhost": ""},
+        )
+
+    executor = Mock()
+    executor.run.side_effect = lambda: observe_submit("unused")
+
+    with patch("jarvis_cd.shell.Exec", return_value=executor):
+        pipeline.submit(
+            submit=True,
+            wait=False,
+            execution_id="prepared-log-parents",
+        )
+
+
+def test_pipeline_reconciles_terminal_scheduler_state_on_query(
+    tmp_path: Path,
+) -> None:
+    pipeline = _real_pipeline(tmp_path)
+    executor = Mock()
+    executor.run.return_value = SimpleNamespace(
+        exit_code={"localhost": 0},
+        stdout={"localhost": "24680;ares\n"},
+        stderr={"localhost": ""},
+    )
+    with patch("jarvis_cd.shell.Exec", return_value=executor):
+        pipeline.submit(
+            submit=True,
+            wait=False,
+            execution_id="scheduler-completed",
+        )
+
+    observation = SimpleNamespace(
+        state="completed",
+        terminal=True,
+        return_code=0,
+        provider_state="COMPLETED",
+        diagnostic=None,
+    )
+    with patch(
+        "jarvis_cd.core.scheduler.query_scheduler_execution",
+        return_value=observation,
+        create=True,
+    ) as query:
+        record = pipeline.get_execution("scheduler-completed")
+
+    query.assert_called_once_with("slurm", "24680")
+    assert record.state == "completed"
+    assert record.terminal is True
+    assert record.return_code == 0
+    assert record.metadata["scheduler_observation"]["provider_state"] == "COMPLETED"
+
+
+def test_pipeline_terminalizes_scheduler_job_missing_after_grace(
+    tmp_path: Path,
+) -> None:
+    pipeline = _real_pipeline(tmp_path)
+    executor = Mock()
+    executor.run.return_value = SimpleNamespace(
+        exit_code={"localhost": 0},
+        stdout={"localhost": "24680;ares\n"},
+        stderr={"localhost": ""},
+    )
+    with patch("jarvis_cd.shell.Exec", return_value=executor):
+        pipeline.submit(
+            submit=True,
+            wait=False,
+            execution_id="scheduler-never-activated",
+        )
+
+    observation = SimpleNamespace(
+        state="missing",
+        terminal=False,
+        return_code=None,
+        provider_state=None,
+        diagnostic="SLURM accounting has no record for the accepted job",
+    )
+    with (
+        patch(
+            "jarvis_cd.core.scheduler.query_scheduler_execution",
+            return_value=observation,
+            create=True,
+        ),
+        patch("jarvis_cd.core.pipeline._SCHEDULER_MISSING_GRACE_SECONDS", 0),
+    ):
+        record = pipeline.get_execution("scheduler-never-activated")
+
+    assert record.state == "failed"
+    assert record.terminal is True
+    assert record.return_code == 1
+    assert "never activated" in (record.error or "")
+    assert record.metadata["scheduler_observation"]["state"] == "missing"
+
+
+def test_slurm_query_uses_accounting_for_completed_job() -> None:
+    scheduler_queue = subprocess.CompletedProcess(
+        args=["squeue"],
+        returncode=0,
+        stdout="",
+        stderr="",
+    )
+    scheduler_accounting = subprocess.CompletedProcess(
+        args=["sacct"],
+        returncode=0,
+        stdout="24680|COMPLETED|0:0\n24680.batch|COMPLETED|0:0\n",
+        stderr="",
+    )
+
+    with patch(
+        "jarvis_cd.core.scheduler.subprocess.run",
+        side_effect=[scheduler_queue, scheduler_accounting],
+    ) as execute:
+        observation = SlurmScheduler.query_execution("24680")
+
+    assert execute.call_count == 2
+    assert observation.state == "completed"
+    assert observation.terminal is True
+    assert observation.return_code == 0
+    assert observation.provider_state == "COMPLETED"
+
+
+def test_slurm_query_reports_missing_only_after_authoritative_empty_accounting() -> (
+    None
+):
+    empty_queue = subprocess.CompletedProcess(
+        args=["squeue"], returncode=0, stdout="", stderr=""
+    )
+    empty_accounting = subprocess.CompletedProcess(
+        args=["sacct"], returncode=0, stdout="", stderr=""
+    )
+
+    with patch(
+        "jarvis_cd.core.scheduler.subprocess.run",
+        side_effect=[empty_queue, empty_accounting],
+    ):
+        observation = SlurmScheduler.query_execution("24680")
+
+    assert observation.state == "missing"
+    assert observation.terminal is False
+    assert observation.return_code is None
+
+
+def test_slurm_query_reports_missing_when_queue_rejects_id_without_accounting() -> None:
+    missing_queue = subprocess.CompletedProcess(
+        args=["squeue"],
+        returncode=1,
+        stdout="",
+        stderr="slurm_load_jobs error: Invalid job id specified\n",
+    )
+    disabled_accounting = subprocess.CompletedProcess(
+        args=["sacct"],
+        returncode=1,
+        stdout="",
+        stderr="Slurm accounting storage is disabled\n",
+    )
+
+    with patch(
+        "jarvis_cd.core.scheduler.subprocess.run",
+        side_effect=[missing_queue, disabled_accounting],
+    ):
+        observation = SlurmScheduler.query_execution("22646")
+
+    assert observation.state == "missing"
+    assert observation.terminal is False
+    assert "no longer reports" in (observation.diagnostic or "")
+
+
+def test_slurm_query_reports_missing_when_queue_is_empty_and_accounting_is_disabled() -> (
+    None
+):
+    empty_queue = subprocess.CompletedProcess(
+        args=["squeue"],
+        returncode=0,
+        stdout="",
+        stderr="",
+    )
+    disabled_accounting = subprocess.CompletedProcess(
+        args=["sacct"],
+        returncode=1,
+        stdout="",
+        stderr="Slurm accounting storage is disabled\n",
+    )
+
+    with patch(
+        "jarvis_cd.core.scheduler.subprocess.run",
+        side_effect=[empty_queue, disabled_accounting],
+    ):
+        observation = SlurmScheduler.query_execution("24680")
+
+    assert observation.state == "missing"
+    assert observation.terminal is False
+    assert "no longer reports" in (observation.diagnostic or "")
+
+
 def test_scheduler_log_artifacts_resolve_same_ids_and_finalize(
     tmp_path: Path,
 ) -> None:
@@ -799,7 +1007,10 @@ def test_scheduler_log_artifacts_resolve_same_ids_and_finalize(
     executor = Mock()
     executor.run.return_value = execution
 
-    with patch("jarvis_cd.shell.Exec", return_value=executor) as execute:
+    with (
+        patch("jarvis_cd.shell.Exec", return_value=executor) as execute,
+        patch("jarvis_cd.core.pipeline._prepare_scheduler_log_parents"),
+    ):
         handle = pipeline.submit(
             submit=True,
             wait=False,
@@ -868,7 +1079,10 @@ def test_unprovable_scheduler_log_path_is_incomplete_without_failing_workload(
         stderr={"localhost": ""},
     )
 
-    with patch("jarvis_cd.shell.Exec", return_value=executor):
+    with (
+        patch("jarvis_cd.shell.Exec", return_value=executor),
+        patch("jarvis_cd.core.pipeline._prepare_scheduler_log_parents"),
+    ):
         handle = pipeline.submit(
             submit=True,
             wait=False,
@@ -934,7 +1148,10 @@ def test_fast_wait_runtime_resolution_is_idempotent_for_submitter(
         )
 
     executor.run.side_effect = finish_before_sbatch_returns
-    with patch("jarvis_cd.shell.Exec", return_value=executor):
+    with (
+        patch("jarvis_cd.shell.Exec", return_value=executor),
+        patch("jarvis_cd.core.pipeline._prepare_scheduler_log_parents"),
+    ):
         handle = pipeline.submit(
             submit=True,
             wait=True,
@@ -985,7 +1202,10 @@ def test_runtime_unresolved_log_does_not_fail_fast_wait_workload(
         )
 
     executor.run.side_effect = finish_before_sbatch_returns
-    with patch("jarvis_cd.shell.Exec", return_value=executor):
+    with (
+        patch("jarvis_cd.shell.Exec", return_value=executor),
+        patch("jarvis_cd.core.pipeline._prepare_scheduler_log_parents"),
+    ):
         handle = pipeline.submit(
             submit=True,
             wait=True,
@@ -1016,7 +1236,10 @@ def test_scheduler_artifact_resolution_rejects_mismatched_bound_identity(
     pipeline.save()
     executor = Mock()
     executor.run.side_effect = RuntimeError("submit transport disappeared")
-    with patch("jarvis_cd.shell.Exec", return_value=executor):
+    with (
+        patch("jarvis_cd.shell.Exec", return_value=executor),
+        patch("jarvis_cd.core.pipeline._prepare_scheduler_log_parents"),
+    ):
         with pytest.raises(RuntimeError, match="submit transport disappeared"):
             pipeline.submit(
                 submit=True,
@@ -1081,7 +1304,10 @@ def test_artifact_resolution_failure_preserves_durable_submission_identity(
         )
         raise RuntimeError("artifact store failed")
 
-    with patch("jarvis_cd.shell.Exec", return_value=executor):
+    with (
+        patch("jarvis_cd.shell.Exec", return_value=executor),
+        patch("jarvis_cd.core.pipeline._prepare_scheduler_log_parents"),
+    ):
         with patch.object(
             ExecutionStore,
             "resolve_scheduler_artifact_paths",

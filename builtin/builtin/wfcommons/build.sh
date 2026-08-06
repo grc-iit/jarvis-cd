@@ -29,8 +29,9 @@ printf "StrictHostKeyChecking no\nUserKnownHostsFile /dev/null\n" >> /etc/ssh/ss
 python3 -m venv /opt/wfcommons-env
 /opt/wfcommons-env/bin/pip install --no-cache-dir --upgrade pip wheel setuptools
 
-# Install the wfcommons python library.
-/opt/wfcommons-env/bin/pip install --no-cache-dir wfcommons
+# Install the package-owned WfCommons version. The resulting image digest and
+# runtime dependency lock bind the resolved dependency environment.
+/opt/wfcommons-env/bin/pip install --no-cache-dir 'wfcommons==1.4'
 
 # wfcommons 1.4's wheel build doesn't reliably ship `bin/wfbench` or
 # `bin/cpu-benchmark` (setup.py's scripts= + dynamic data_files don't
@@ -39,7 +40,7 @@ python3 -m venv /opt/wfcommons-env
 # g++, then drop both into the venv's bin/.
 mkdir -p /opt/wfcommons-src
 /opt/wfcommons-env/bin/pip download --no-cache-dir --no-deps \
-    --no-binary=:all: --dest /opt/wfcommons-src wfcommons
+    --no-binary=:all: --dest /opt/wfcommons-src 'wfcommons==1.4'
 tar -xzf /opt/wfcommons-src/wfcommons-*.tar.gz -C /opt/wfcommons-src
 WFC_SRC=$(ls -d /opt/wfcommons-src/wfcommons-*/ | head -1)
 make -C "${WFC_SRC%/}"
@@ -76,3 +77,12 @@ PY
 mkdir -p /opt/wfcommons-driver
 cp run_wfbench.py /opt/wfcommons-driver/run_wfbench.py
 chmod +x /opt/wfcommons-driver/run_wfbench.py
+
+# WfCommons otherwise downloads the latest WfFormat schema during execution.
+# Fetch at image-build time only and fail closed unless the pinned bytes match.
+curl -fsSL \
+    https://raw.githubusercontent.com/wfcommons/wfformat/master/wfcommons-schema.json \
+    -o /opt/wfcommons-driver/wfcommons-schema.json
+printf '%s  %s\n' \
+    '716e7b625a37a144674afbf8e6a008c21bbd0fd467ccbb7be39deab9fb8f6aab' \
+    /opt/wfcommons-driver/wfcommons-schema.json | sha256sum --check --strict

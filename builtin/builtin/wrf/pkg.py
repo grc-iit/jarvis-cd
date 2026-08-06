@@ -1,129 +1,57 @@
-"""
-This module provides classes and methods to launch the Wrf application.
-Wrf is ....
-"""
-from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo
-from jarvis_cd.shell.process import Rm
+"""Maintained WRF package with legacy and supplied-study profiles."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from builtin.wrf.legacy import WrfLegacy
+from builtin.wrf.tropical_cyclone import WrfTropicalCyclone
 
 
-class Wrf(Application):
-    """
-        This class provides methods to launch the Wrf application.
-        """
+class Wrf(WrfTropicalCyclone, WrfLegacy):
+    """Run either the legacy WRF launcher or a digest-bound TC comparison."""
 
-    def _init(self):
-        """
-        Initialize paths
-        """
-        pass
+    def _init(self) -> None:
+        WrfTropicalCyclone._init(self)
 
-    def _configure_menu(self):
-        """
-        Create a CLI menu for the configurator method.
-        For thorough documentation of these parameters, view:
-        https://github.com/scs-lab/jarvis-util/wiki/3.-Argument-Parsing
+    def _configure_menu(self) -> list[dict[str, Any]]:
+        """Expose one additive menu without duplicate process controls."""
 
-        :return: List(dict)
-        """
-        return [
-            {
-                'name': 'nprocs',
-                'msg': 'Number of processes',
-                'type': int,
-                'default': 1,
-            },
-            {
-                'name': 'ppn',
-                'msg': 'The number of processes per node',
-                'type': int,
-                'default': None,
-            },
-            {
-                'name': 'wrf_location',
-                'msg': 'The location of wrf.exe',
-                'type': str,
-                'default': None,
-            },
-            {
-                'name': 'engine',
-                'msg': 'Engine to be used',
-                'choices': ['bp5', 'hermes'],
-                'type': str,
-                'default': 'bp5',
-            },
-            {
-                'name': 'Execution_order',
-                'msg': 'Path where the bp5 will be stored',
-                'type': str,
-                'default': None,
-            },
-            {
-                'name': 'db_path',
-                'msg': 'Path where the DB will be stored',
-                'type': str,
-                'default': 'benchmark_metadata.db',
-            },
+        merged: list[dict[str, Any]] = []
+        names: set[str] = set()
+        for item in (
+            *WrfTropicalCyclone._configure_menu(self),
+            *WrfLegacy._configure_menu(self),
+        ):
+            name = str(item["name"])
+            if name not in names:
+                merged.append(item)
+                names.add(name)
+        return merged
 
+    def _configure(self, **kwargs: Any) -> None:
+        """Select the supplied-input profile only when a bundle is explicit."""
 
-        ]
+        if kwargs.get("input_bundle") or self.config.get("input_bundle"):
+            WrfTropicalCyclone._configure(self, **kwargs)
+            return
+        WrfLegacy._configure(self, **kwargs)
 
-    def _configure(self, **kwargs):
-        """
-        Converts the Jarvis configuration to application-specific configuration.
-        E.g., OrangeFS produces an orangefs.xml file.
+    def start(self) -> None:
+        """Launch the explicitly configured WRF profile."""
 
-        :param kwargs: Configuration parameters for this pkg.
-        :return: None
-        """
-        if self.config['engine'].lower() == 'bp5':
-            self.copy_template_file(f'{self.pkg_dir}/config/adios2.xml',
-                            f'{self.config["wrf_location"]}/adios2.xml')
-        elif self.config['engine'].lower() in ['hermes', 'hermes_derived']:
-                self.copy_template_file(f'{self.pkg_dir}/config/hermes.xml',
-                        f'{self.config["wrf_location"]}/adios2.xml', replacements={
-                    'ppn': self.config['ppn'],
-                    'db_path': self.config['db_path'],
-                    'Order': self.config['Execution_order'],
-                    })
-        else:
-            raise Exception('Engine not defined')
+        if self.config.get("input_bundle"):
+            WrfTropicalCyclone.start(self)
+            return
+        WrfLegacy.start(self)
 
+    def stop(self) -> None:
+        """Stop the selected profile when it owns a long-running process."""
 
+        WrfLegacy.stop(self)
 
-    def start(self):
-        """
-        Launch an application. E.g., OrangeFS will launch the servers, clients,
-        and metadata services on all necessary pkgs.
+    def clean(self) -> None:
+        """Preserve supplied-study results and apply legacy cleanup semantics."""
 
-        :return: None
-        """
-        Exec('wrf.exe',
-             MpiExecInfo(nprocs=self.config['nprocs'],
-                         ppn=self.config['ppn'],
-                         hostfile=self.hostfile,
-                         env=self.mod_env,
-                         cwd=self.config['wrf_location']
-                         )).run()
-
-        pass
-
-    def stop(self):
-        """
-        Stop a running application. E.g., OrangeFS will terminate the servers,
-        clients, and metadata services.
-
-        :return: None
-        """
-        pass
-
-    def clean(self):
-        """
-        Destroy all data for an application. E.g., OrangeFS will delete all
-        metadata and data directories in addition to the orangefs.xml file.
-
-        :return: None
-        """
-        output_file = [self.config['db_path']]
-        Rm(output_file, PsshExecInfo(hostfile=self.hostfile)).run()
-        pass
+        if not self.config.get("input_bundle"):
+            WrfLegacy.clean(self)

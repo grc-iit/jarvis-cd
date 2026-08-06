@@ -37,6 +37,14 @@ record to `running`. The generated scheduler script finalizes it as `completed`
 or `failed`, including failures in pre-run hooks, hostfile construction, and
 post-run hooks.
 
+`Pipeline.get_execution()` reconciles a submitted scheduler record with its
+configured provider. This closes the case where the scheduler accepts an ID
+but rejects the job before the generated script can activate and finalize the
+record, for example when a scheduler log directory is unavailable. The query
+stores a typed provider observation on a state transition. Missing jobs become
+failed only after the startup grace period; an unavailable provider query
+leaves the last durable state intact.
+
 ## Querying records
 
 Python clients can query an exact ID or list a named pipeline's history:

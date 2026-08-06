@@ -18,6 +18,7 @@ import tempfile
 import yaml
 from contextlib import ExitStack
 from copy import deepcopy
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Any, List, Mapping, Optional
 from uuid import uuid4
@@ -58,6 +59,7 @@ _EXECUTION_MARKER = RECORD_NAME
 _EXECUTION_MARKER_SCHEMA = LEGACY_RECORD_SCHEMA
 _EXECUTION_CLEANUP_SCHEMA = "jarvis.execution-cleanup.v1"
 _MAX_EXPLICIT_EXECUTION_CLEANUP = 1024
+_SCHEDULER_MISSING_GRACE_SECONDS = 60.0
 
 
 def _absolute_scheduler_log_path(value: object) -> str:
@@ -67,6 +69,26 @@ def _absolute_scheduler_log_path(value: object) -> str:
     if os.name == "nt" and value.startswith("/"):
         return posixpath.normpath(value)
     return os.path.normpath(os.path.abspath(value))
+
+
+def _prepare_scheduler_log_parents(scheduler_spec: Mapping[str, Any]) -> None:
+    """Create concrete scheduler log directories before external submission."""
+    for key in ("output", "error"):
+        configured_path = str(scheduler_spec[key])
+        if os.name == "nt" and configured_path.startswith("/"):
+            # A POSIX scheduler path cannot be materialized by a Windows
+            # controller. This preserves cross-platform rendering/tests; an
+            # actual Windows-local path is still prepared below.
+            continue
+        path = Path(configured_path)
+        parent = path.parent
+        if "%" in str(parent):
+            raise ValueError(
+                f"scheduler.{key} replacement tokens are supported only in filenames"
+            )
+        parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if not parent.is_dir():
+            raise RuntimeError(f"scheduler.{key} parent is not a directory: {parent}")
 
 
 def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> Dict[str, Any]:
@@ -1279,6 +1301,7 @@ class Pipeline:
                 scheduler_spec[scheduler_key] = _absolute_scheduler_log_path(
                     scheduler_spec[scheduler_key]
                 )
+            _prepare_scheduler_log_parents(scheduler_spec)
             snapshot_dir, input_dir, snapshot_sha256 = self._write_execution_snapshot(
                 execution_root,
                 scheduler_spec,
@@ -1589,7 +1612,79 @@ class Pipeline:
 
     def get_execution(self, execution_id: str) -> ExecutionRecord:
         """Return the latest durable state for one exact execution identity."""
-        return self._execution_store().get(execution_id)
+        store = self._execution_store()
+        record = store.get(execution_id)
+        if (
+            record.mode != "scheduler"
+            or record.terminal
+            or not record.submitted
+            or record.scheduler_provider is None
+            or record.scheduler_native_id is None
+        ):
+            return record
+
+        from jarvis_cd.core.scheduler import query_scheduler_execution
+
+        observation = query_scheduler_execution(
+            record.scheduler_provider,
+            record.scheduler_native_id,
+        )
+        if observation.state == "unknown":
+            return record
+        if observation.state == "missing":
+            created = datetime.fromisoformat(record.created_at.replace("Z", "+00:00"))
+            age_seconds = (datetime.now(timezone.utc) - created).total_seconds()
+            if age_seconds < _SCHEDULER_MISSING_GRACE_SECONDS:
+                return record
+            state = "failed"
+            terminal = True
+            return_code = 1
+            error = (
+                f"scheduler {record.scheduler_provider} no longer reports accepted "
+                f"job {record.scheduler_native_id}, and its JARVIS runtime never "
+                "activated within the reconciliation grace period"
+            )
+        else:
+            state = observation.state
+            terminal = observation.terminal
+            return_code = observation.return_code
+            error = (
+                f"scheduler {record.scheduler_provider} reported "
+                f"{observation.provider_state} for job {record.scheduler_native_id}"
+                if state in {"failed", "canceled"}
+                else None
+            )
+        metadata = {
+            "scheduler_observation": {
+                "schema_version": "jarvis.scheduler.observation.v1",
+                "provider": record.scheduler_provider,
+                "native_id": record.scheduler_native_id,
+                "state": observation.state,
+                "provider_state": observation.provider_state,
+                "diagnostic": observation.diagnostic,
+            }
+        }
+        if (
+            state == record.state
+            and terminal == record.terminal
+            and return_code == record.return_code
+            and error == record.error
+        ):
+            return record
+        try:
+            return store.update(
+                execution_id,
+                state=state,
+                terminal=terminal,
+                return_code=return_code,
+                error=error,
+                metadata=metadata,
+            )
+        except ValueError:
+            latest = store.get(execution_id)
+            if latest.terminal:
+                return latest
+            raise
 
     def list_executions(self) -> List[ExecutionRecord]:
         """Return all durable executions owned by this pipeline."""
@@ -2344,6 +2439,8 @@ class Pipeline:
         if not self.name:
             raise ValueError("Pipeline name not set")
 
+        self._validate_interceptor_links()
+
         pipeline_dir = self._pipeline_storage_dir()
         pipeline_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2537,6 +2634,7 @@ class Pipeline:
         """Start all packages in the pipeline"""
         from jarvis_cd.util.logger import logger
 
+        self._validate_interceptor_links()
         logger.pipeline(f"Starting pipeline: {self.name}")
 
         # Store started instances for later access (e.g., _get_stat)
@@ -3209,13 +3307,16 @@ class Pipeline:
         print("Reconfiguring pipeline packages with existing configurations...")
         self.configure_all_packages()
 
-    def _configure_package_instance(self, pkg_def: Dict[str, Any], pkg_type_label: str):
+    def _configure_package_instance(
+        self, pkg_def: Dict[str, Any], pkg_type_label: str
+    ) -> None:
         """
         Configure a single package or interceptor instance.
 
         :param pkg_def: Package definition dictionary
         :param pkg_type_label: Label for logging ("package" or "interceptor")
         """
+        from jarvis_cd.core.pkg import Interceptor
         from jarvis_cd.util.logger import logger
 
         try:
@@ -3233,8 +3334,12 @@ class Pipeline:
                 else:
                     pkg_def["config"] = pkg_instance.config.copy()
 
-                # Update the package environment in the pipeline's env
-                self.env.update(pkg_instance.env)
+                # Interceptor runtime mutations belong only to explicitly linked
+                # packages. Configuration may prepare resources using an
+                # interceptor-local environment, but must not leak that state into
+                # every later package through the pipeline-wide environment.
+                if not isinstance(pkg_instance, Interceptor):
+                    self.env.update(pkg_instance.env)
 
             # Print END message
             logger.success(f"[{pkg_def['pkg_type']}] [CONFIGURE] END")
@@ -3280,8 +3385,11 @@ class Pipeline:
         else:
             pkg_id = pkg_name
 
-        # Check for duplicate package IDs
-        existing_ids = [pkg["pkg_id"] for pkg in self.packages]
+        # Package and interceptor aliases share one pipeline namespace.
+        existing_ids = {
+            *(pkg["pkg_id"] for pkg in self.packages),
+            *self.interceptors.keys(),
+        }
         if pkg_id in existing_ids:
             raise ValueError(f"Package ID already exists in pipeline: {pkg_id}")
 
@@ -3297,11 +3405,12 @@ class Pipeline:
             "config": default_config,
         }
 
+        # Load once both to parse package-owned configuration and to identify
+        # whether this definition is an Application, Service, or Interceptor.
+        pkg_instance = self._load_package_instance(package_entry, self.env)
+
         # Apply configuration arguments if provided (before validation)
         if config_args:
-            # Load package instance
-            pkg_instance = self._load_package_instance(package_entry, self.env)
-
             argparse = pkg_instance.get_argparse()
             try:
                 # Use PkgArgParse to parse and convert arguments
@@ -3325,13 +3434,23 @@ class Pipeline:
         # Validate that all required parameters have values (after applying config_args)
         self._validate_required_config(package_spec, package_entry["config"])
 
-        # Add package to pipeline
-        self.packages.append(package_entry)
+        from jarvis_cd.core.pkg import Interceptor
+
+        if isinstance(pkg_instance, Interceptor):
+            nested = package_entry["config"].get("interceptors", [])
+            if nested:
+                raise ValueError("Interceptor packages cannot reference interceptors")
+            self.interceptors[pkg_id] = package_entry
+            added_kind = "interceptor"
+        else:
+            self._validate_package_interceptor_references(package_entry)
+            self.packages.append(package_entry)
+            added_kind = "package"
 
         # Save updated configuration
         self.save()
 
-        print(f"Added package {package_spec} as {pkg_id} to pipeline")
+        print(f"Added {added_kind} {package_spec} as {pkg_id} to pipeline")
 
     def rm(self, package_spec: str):
         """
@@ -3339,18 +3458,31 @@ class Pipeline:
 
         :param package_spec: Package specification to remove (pkg_id)
         """
-        # Find and remove the package
-        package_found = False
-
+        # Find and remove an application/service package.
+        removed_package = None
         for i, pkg_def in enumerate(self.packages):
             if pkg_def["pkg_id"] == package_spec:
                 removed_package = self.packages.pop(i)
-                package_found = True
                 break
 
-        if not package_found:
+        # Interceptors are addressed through the same generic package identity.
+        if removed_package is None and package_spec in self.interceptors:
+            dependents = [
+                pkg["pkg_id"]
+                for pkg in self.packages
+                if package_spec in pkg.get("config", {}).get("interceptors", [])
+            ]
+            if dependents:
+                raise ValueError(
+                    f"Cannot remove interceptor '{package_spec}'; referenced by: "
+                    + ", ".join(dependents)
+                )
+            removed_package = self.interceptors.pop(package_spec)
+
+        if removed_package is None:
             # List available packages to help the user
             available_ids = [pkg["pkg_id"] for pkg in self.packages]
+            available_ids.extend(self.interceptors)
             if available_ids:
                 print(f"Package '{package_spec}' not found in pipeline.")
                 print(f"Available packages: {', '.join(available_ids)}")
@@ -3398,12 +3530,7 @@ class Pipeline:
         :param config_args: Configuration arguments as command-line args (e.g., ['--nprocs', '4', 'block=32m'])
         :raises ValueError: If an argument is unknown or package configuration fails
         """
-        # Find package in pipeline
-        pkg_def = None
-        for pkg in self.packages:
-            if pkg["pkg_id"] == pkg_id:
-                pkg_def = pkg
-                break
+        pkg_def = self._find_package_definition(pkg_id)
 
         if not pkg_def:
             raise ValueError(f"Package not found: {pkg_id}")
@@ -3461,12 +3588,7 @@ class Pipeline:
 
         :param pkg_id: Package ID to show README for
         """
-        # Find package in pipeline
-        pkg_def = None
-        for pkg in self.packages:
-            if pkg["pkg_id"] == pkg_id:
-                pkg_def = pkg
-                break
+        pkg_def = self._find_package_definition(pkg_id)
 
         if not pkg_def:
             raise ValueError(f"Package not found: {pkg_id}")
@@ -3480,7 +3602,7 @@ class Pipeline:
 
     def show_package_build_script(self, pkg_id: str):
         """Print the build.sh script for a package within this pipeline."""
-        pkg_def = next((p for p in self.packages if p["pkg_id"] == pkg_id), None)
+        pkg_def = self._find_package_definition(pkg_id)
         if not pkg_def:
             raise ValueError(f"Package not found: {pkg_id}")
         try:
@@ -3491,7 +3613,7 @@ class Pipeline:
 
     def show_package_deploy_dockerfile(self, pkg_id: str):
         """Print Dockerfile.deploy for a package within this pipeline."""
-        pkg_def = next((p for p in self.packages if p["pkg_id"] == pkg_id), None)
+        pkg_def = self._find_package_definition(pkg_id)
         if not pkg_def:
             raise ValueError(f"Package not found: {pkg_id}")
         try:
@@ -3507,12 +3629,7 @@ class Pipeline:
         :param pkg_id: Package ID to show paths for
         :param path_flags: Dictionary of path flags to show
         """
-        # Find package in pipeline
-        pkg_def = None
-        for pkg in self.packages:
-            if pkg["pkg_id"] == pkg_id:
-                pkg_def = pkg
-                break
+        pkg_def = self._find_package_definition(pkg_id)
 
         if not pkg_def:
             raise ValueError(f"Package not found: {pkg_id}")
@@ -3647,6 +3764,8 @@ class Pipeline:
                     self.env = {}
         else:
             self.env = {}
+
+        self._validate_interceptor_links()
 
     def _load_from_file(self, load_type: str, pipeline_file: str):
         """Load pipeline from a file"""
@@ -3892,8 +4011,8 @@ class Pipeline:
             package_entry = self._process_package_definition(pkg_def, pkg_id)
             self.packages.append(package_entry)
 
-        # Validate that interceptor and package IDs are unique
-        self._validate_unique_ids()
+        # Validate type-correct interceptor definitions and explicit links.
+        self._validate_interceptor_links()
 
         # Propagate base_deploy_mode -> per-package deploy_mode
         self._propagate_deploy_mode()
@@ -4137,6 +4256,68 @@ class Pipeline:
                 f"Package and interceptor IDs must be unique within the pipeline."
             )
 
+    def _find_package_definition(self, pkg_id: str) -> Optional[Dict[str, Any]]:
+        """Return one application, service, or interceptor definition by alias."""
+        for package in self.packages:
+            if package["pkg_id"] == pkg_id:
+                return package
+        return self.interceptors.get(pkg_id)
+
+    def get_pkg(self, pkg_id: str) -> Optional[Dict[str, Any]]:
+        """Return one pipeline member regardless of its JARVIS package kind.
+
+        Generic clients can use this method after ``append`` without knowing
+        whether JARVIS stored the selected class as an application, service, or
+        interceptor.
+
+        :param pkg_id: Pipeline-local package alias.
+        :return: The stored package definition, or ``None`` when absent.
+        """
+        return self._find_package_definition(pkg_id)
+
+    def _validate_package_interceptor_references(self, package: Dict[str, Any]) -> None:
+        """Validate one package's explicit references to pipeline interceptors."""
+        package_id = str(package.get("pkg_id", "unknown"))
+        references = package.get("config", {}).get("interceptors", [])
+        if not isinstance(references, list):
+            raise ValueError(
+                f"Package '{package_id}' interceptors must be a list of aliases"
+            )
+        if not all(
+            isinstance(reference, str) and reference for reference in references
+        ):
+            raise ValueError(
+                f"Package '{package_id}' interceptor aliases must be non-empty strings"
+            )
+        if len(set(references)) != len(references):
+            raise ValueError(f"Package '{package_id}' repeats an interceptor reference")
+        missing = [
+            reference for reference in references if reference not in self.interceptors
+        ]
+        if missing:
+            raise ValueError(
+                f"Package '{package_id}' references unknown interceptor: {missing[0]}"
+            )
+
+    def _validate_interceptor_links(self) -> None:
+        """Fail closed unless all interceptor definitions and links are valid."""
+        from jarvis_cd.core.pkg import Interceptor
+
+        self._validate_unique_ids()
+        for interceptor_id, definition in self.interceptors.items():
+            instance = self._load_package_instance(definition, self.env)
+            if not isinstance(instance, Interceptor):
+                raise ValueError(
+                    f"Pipeline interceptor '{interceptor_id}' is not an Interceptor package"
+                )
+            nested = definition.get("config", {}).get("interceptors", [])
+            if nested:
+                raise ValueError(
+                    f"Interceptor package '{interceptor_id}' cannot reference interceptors"
+                )
+        for package in self.packages:
+            self._validate_package_interceptor_references(package)
+
     def _validate_required_config(self, package_spec: str, config: Dict[str, Any]):
         """
         Validate that all required configuration parameters have values.
@@ -4167,10 +4348,17 @@ class Pipeline:
                         name = menu_item.get("name")
                         default_value = menu_item.get("default")
 
-                        # If parameter has no default and is not provided in config, it's required
+                        # Preserve the historical ``default=None`` convention,
+                        # while allowing packages with conditional profiles to
+                        # declare that a nullable-looking legacy setting is not
+                        # unconditionally required. PkgArgParse already treats
+                        # the explicit ``required`` field as authoritative.
+                        required = menu_item.get("required")
+                        if required is None:
+                            required = default_value is None
                         if (
                             name
-                            and default_value is None
+                            and required is True
                             and (name not in config or config[name] is None)
                         ):
                             missing_required.append(name)
@@ -4206,45 +4394,39 @@ class Pipeline:
         )
 
         for interceptor_name in interceptors_list:
-            try:
-                # Find interceptor in pipeline-level interceptors
-                if interceptor_name not in self.interceptors:
-                    logger.error(
-                        f"Warning: Interceptor '{interceptor_name}' not found in pipeline interceptors"
-                    )
-                    continue
-
-                interceptor_def = self.interceptors[interceptor_name]
-
-                # Print BEGIN message with full interceptor type
-                logger.success(f"[{interceptor_def['pkg_type']}] [MODIFY_ENV] BEGIN")
-
-                # Load interceptor instance
-                interceptor_instance = self._load_package_instance(
-                    interceptor_def, self.env
+            if interceptor_name not in self.interceptors:
+                raise RuntimeError(
+                    f"Package '{pkg_def['pkg_id']}' references unknown interceptor "
+                    f"'{interceptor_name}'"
                 )
 
-                # Verify it's an interceptor and has modify_env method
-                if not hasattr(interceptor_instance, "modify_env"):
-                    logger.error(
-                        f"Warning: Package '{interceptor_name}' does not have modify_env() method"
-                    )
-                    continue
+            interceptor_def = self.interceptors[interceptor_name]
+            logger.success(f"[{interceptor_def['pkg_type']}] [MODIFY_ENV] BEGIN")
 
-                # Share the same mod_env reference between interceptor and package
-                interceptor_instance.mod_env = pkg_instance.mod_env
-                interceptor_instance.env = pkg_instance.env
+            interceptor_instance = self._load_package_instance(
+                interceptor_def, self.env
+            )
+            from jarvis_cd.core.pkg import Interceptor
 
-                # Call modify_env on the interceptor to modify the shared environment
+            if not isinstance(interceptor_instance, Interceptor):
+                raise RuntimeError(
+                    f"Pipeline interceptor '{interceptor_name}' is not an "
+                    "Interceptor package"
+                )
+
+            # The package executor consumes mod_env, so the interceptor mutates
+            # that exact object rather than a pipeline-global environment.
+            interceptor_instance.mod_env = pkg_instance.mod_env
+            interceptor_instance.env = pkg_instance.env
+            try:
                 interceptor_instance.modify_env()
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Interceptor '{interceptor_name}' failed for package "
+                    f"'{pkg_def['pkg_id']}': {exc}"
+                ) from exc
 
-                # The mod_env is shared, so changes are automatically applied to the package
-
-                # Print END message
-                logger.success(f"[{interceptor_def['pkg_type']}] [MODIFY_ENV] END")
-
-            except Exception as e:
-                logger.error(f"Error applying interceptor '{interceptor_name}': {e}")
+            logger.success(f"[{interceptor_def['pkg_type']}] [MODIFY_ENV] END")
 
     def _generate_pipeline_container_yaml(self):
         """

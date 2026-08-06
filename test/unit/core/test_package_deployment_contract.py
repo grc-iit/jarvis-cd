@@ -10,7 +10,8 @@ from typing import Any
 
 import pytest
 
-from jarvis_cd.core.pkg import Pkg
+import jarvis_cd.deployment as deployment_module
+from jarvis_cd.core.pkg import Interceptor, Pkg
 from jarvis_cd.deployment import (
     ConfigurationCondition,
     ConfigurationInputBinding,
@@ -21,13 +22,14 @@ from jarvis_cd.deployment import (
     ReadinessContract,
     RuntimeRequirement,
     RuntimeStatus,
+    probe_program,
 )
 
 _BUILTIN_REPOSITORY_ROOT = Path(__file__).resolve().parents[3] / "builtin"
 sys.path.insert(0, str(_BUILTIN_REPOSITORY_ROOT))
 
-from builtin.lammps import pkg as lammps_module  # noqa: E402
-from builtin.paraview import pkg as paraview_module  # noqa: E402
+from builtin.lammps import pkg as lammps_module  # pyright: ignore[reportMissingImports]  # noqa: E402
+from builtin.paraview import pkg as paraview_module  # pyright: ignore[reportMissingImports]  # noqa: E402
 from jarvis_cd.core.config import Jarvis  # noqa: E402
 
 
@@ -43,21 +45,36 @@ def test_legacy_package_has_no_inferred_deployment_contract() -> None:
     assert package.describe_deployment() is None
 
 
-def test_common_implementation_controls_are_not_agent_visible() -> None:
-    """Generic agents see semantic package inputs, not JARVIS admin controls."""
+def test_only_explicit_interceptor_links_are_agent_visible_common_settings() -> None:
+    """Generic agents see graph edges but not JARVIS administration controls."""
     package = object.__new__(Pkg)
 
     parameters = package.configure_menu()
+    by_name = {parameter["name"]: parameter for parameter in parameters}
 
     assert parameters
-    assert all(parameter["agent_visible"] is False for parameter in parameters)
-    assert {parameter["name"] for parameter in parameters} >= {
+    assert by_name["interceptors"]["agent_visible"] is True
+    assert all(
+        parameter["agent_visible"] is False
+        for parameter in parameters
+        if parameter["name"] != "interceptors"
+    )
+    assert set(by_name) >= {
         "install_method",
         "install_query",
         "install",
         "hostfile",
         "timeout",
     }
+
+
+def test_interceptor_packages_do_not_advertise_nested_interceptor_links() -> None:
+    """An interceptor never invites an invalid nested-interceptor configuration."""
+    package = object.__new__(Interceptor)
+
+    parameters = {item["name"]: item for item in package.configure_menu()}
+
+    assert parameters["interceptors"]["agent_visible"] is False
 
 
 def test_standalone_descriptor_preserves_canonical_package_identity(
@@ -138,6 +155,48 @@ def test_configuration_input_binding_is_closed_and_machine_readable() -> None:
         )
 
 
+def test_program_probe_can_accept_a_documented_usage_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CLI tools that use exit 1 for side-effect-free usage remain probeable."""
+    monkeypatch.setattr(
+        deployment_module,
+        "which",
+        lambda _program, *, path: "/runtime/bin/mExec" if path else None,
+    )
+    monkeypatch.setattr(
+        deployment_module.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout='[struct stat="ERROR", msg="Usage: mExec ..."]\n',
+            stderr="",
+        ),
+    )
+
+    accepted = probe_program(
+        "mExec",
+        environment={"PATH": "/runtime/bin"},
+        arguments=(),
+        accepted_return_codes=(0, 1),
+    )
+    strict = probe_program(
+        "mExec",
+        environment={"PATH": "/runtime/bin"},
+        arguments=(),
+    )
+
+    assert accepted.status.usable is True
+    assert "Usage: mExec" in accepted.output
+    assert strict.status.usable is False
+    with pytest.raises(ValueError, match="bounded integers"):
+        probe_program(
+            "mExec",
+            environment={"PATH": "/runtime/bin"},
+            accepted_return_codes=(),
+        )
+
+
 def test_lammps_contract_defaults_to_generated_batch_and_spack_resolution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -161,6 +220,12 @@ def test_lammps_contract_defaults_to_generated_batch_and_spack_resolution(
         "kind": "local_file",
         "structure": "regular_file",
     }
+    assert menu["input_bundle"]["default"] == ""
+    assert menu["input_bundle"]["input_binding"] == {
+        "schema_version": "jarvis.configuration-input-binding.v1",
+        "kind": "local_file",
+        "structure": "regular_file",
+    }
     assert "`lattice fcc <density>`" in menu["script"]["msg"]
     assert "`region ... units lattice`" in menu["script"]["msg"]
     assert (
@@ -175,7 +240,11 @@ def test_lammps_contract_defaults_to_generated_batch_and_spack_resolution(
     assert {
         (profile["name"], profile["execution_kind"])
         for profile in document["execution_profiles"]
-    } == {("generated_workload", "batch"), ("input_script", "batch")}
+    } == {
+        ("generated_workload", "batch"),
+        ("input_script", "batch"),
+        ("input_bundle", "batch"),
+    }
     profiles = {profile["name"]: profile for profile in document["execution_profiles"]}
     assert profiles["generated_workload"]["description"] == (
         "Built-in bounded Lennard-Jones smoke workload with a package-generated "
@@ -187,6 +256,7 @@ def test_lammps_contract_defaults_to_generated_batch_and_spack_resolution(
         in profiles["input_script"]["description"]
     )
     assert "`mass 1 1.0`" in profiles["input_script"]["description"]
+    assert "Digest-verified multi-file" in profiles["input_bundle"]["description"]
     runtime = document["runtime_requirements"][0]
     assert runtime["status"] == {
         "state": "ready",

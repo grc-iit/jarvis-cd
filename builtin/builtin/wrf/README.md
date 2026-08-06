@@ -1,4 +1,21 @@
-# WRF 
+# WRF
+
+## Digest-bound tropical-cyclone comparison
+
+`builtin.wrf` retains its legacy location and ADIOS2 settings and adds a native
+supplied-study profile selected by a nonempty `input_bundle`. The archive uses
+the closed `jarvis.package-input-bundle.v1` contract and carries a WRF v4.6.1
+ideal tropical-cyclone namelist and sounding. `wrf_prefix` names an
+operator-prepared installation containing `main/ideal.exe`, `main/wrf.exe`, and
+the runtime-data directory.
+
+The profile creates independent execution-owned constant-Z0q and Garratt cases,
+runs initialization and the 24-hour forecast for each, and derives bounded
+surface diagnostics with `ncdump`. A successful run publishes both NetCDF
+histories, both diagnostic documents, the closed comparison, and input
+provenance. A failed process cannot finalize those products. The package
+deployment contract exposes the native profile and the provider hint for WRF
+4.6.1 with the ideal tropical-cyclone compile target.
 
 ## what is the WRF application?
 WRF is a state-of-the-art atmospheric modeling system designed for both meteorological research and numerical weather prediction. It offers a host of options for atmospheric processes and can run on a variety of computing platforms. WRF excels in a broad range of applications across scales ranging from tens of meters to thousands of kilometers, including the following.

@@ -1,267 +1,486 @@
-"""
-WfCommons (https://wfcommons.org/) jarvis package.
+"""Generate and execute one bounded WfCommons/WfBench workflow cell."""
 
-Generates a synthetic scientific workflow from a wfcommons recipe
-(Montage, Genome, Cycles, etc.), translates it into a runnable WfBench
-benchmark workflow, and executes the resulting tasks locally in
-topological order via a thread pool.
+from __future__ import annotations
 
-Supports both bare-metal (default) and container deployment modes.
-"""
+import os
+import shlex
+import shutil
+import sys
+import sysconfig
+from pathlib import Path
+from typing import Any
+
 from jarvis_cd.core.pkg import Application
-from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo
-from jarvis_cd.shell.process import Mkdir, Rm
+from jarvis_cd.deployment import (
+    ConfigurationCondition,
+    ExecutionProfile,
+    PackageDeploymentContract,
+    ProviderResolution,
+    ReadinessContract,
+    RuntimeRequirement,
+    RuntimeStatus,
+    probe_program,
+)
+from jarvis_cd.shell import Exec, LocalExecInfo
+from jarvis_cd.shell.process import Rm
 
-
-RECIPES = [
-    'montage', 'genome', 'cycles', 'blast', 'bwa',
-    'srasearch', 'epigenomics', 'seismology', 'soykb', 'rnaseq',
-]
+RECIPES = (
+    "montage",
+    "genome",
+    "cycles",
+    "blast",
+    "bwa",
+    "srasearch",
+    "epigenomics",
+    "seismology",
+    "soykb",
+    "rnaseq",
+)
+_EXPECTED_WFCOMMONS_VERSION = "1.4"
+_MAX_TASKS = 100_000
+_MAX_DATA_FOOTPRINT_MB = 1_000_000
+_MAX_TIMEOUT_SECONDS = 86_400
 
 
 class Wfcommons(Application):
+    """Run one deterministic synthetic workflow study cell.
+
+    JARVIS owns runtime selection, the pinned WfFormat schema, the output
+    directory, process completion, and artifact reporting. A prepared runtime
+    must already contain the expected WfCommons version. Runtime installation
+    is intentionally outside scheduled scientific execution.
     """
-    Wfcommons workflow benchmark runner.
 
-    Generates a WfFormat workflow from a recipe, translates it with
-    WfBench, and executes the tasks. The translator is invoked locally
-    on a single node; task parallelism is controlled by `max_workers`.
-    """
+    def _init(self) -> None:
+        """Initialize the package without mutable global runtime state."""
 
-    def _init(self):
-        pass
+    def _configure_menu(self) -> list[dict[str, Any]]:
+        """Describe one scientific workflow cell and its execution bounds."""
 
-    def _configure_menu(self):
         return [
             {
-                'name': 'recipe',
-                'msg': 'WfCommons recipe to generate',
-                'type': str,
-                'choices': RECIPES,
-                'default': 'montage',
+                "name": "recipe",
+                "msg": "Synthetic scientific workflow recipe",
+                "type": str,
+                "choices": list(RECIPES),
+                "default": "montage",
             },
             {
-                'name': 'num_tasks',
-                'msg': 'Number of tasks in the generated workflow',
-                'type': int,
-                'default': 100,
+                "name": "num_tasks",
+                "msg": "Requested number of generated workflow tasks",
+                "type": int,
+                "default": 100,
             },
             {
-                'name': 'cpu_work',
-                'msg': ('CPU work units per wfbench task. MUST be > 0; '
-                        'wfbench gates io_alternate on cpu-benchmark progress '
-                        'updates, so cpu_work=0 silently disables ALL '
-                        'reads/writes. Use 1 for minimal CPU + maximal I/O.'),
-                'type': int,
-                'default': 1,
+                "name": "data_footprint_mb",
+                "msg": "Total generated workflow data footprint in MB; 0 uses recipe defaults",
+                "type": int,
+                "default": 0,
             },
             {
-                'name': 'data_footprint',
-                'msg': 'Per-file data size (e.g. 100M, 1G); 0 = recipe defaults',
-                'type': str,
-                'default': '0',
+                "name": "seed",
+                "msg": "Random seed controlling generated workflow topology",
+                "type": int,
+                "default": 424_200,
             },
             {
-                'name': 'percent_cpu',
-                'msg': ('CPU vs memory thread split for the cpu-benchmark '
-                        'process (cpu_threads = 10*percent_cpu, '
-                        'mem_threads = 10 - cpu_threads). Does NOT directly '
-                        'affect I/O volume. mem_threads spawn stress-ng — '
-                        'NOT installed on every system. Default 1.0 (all '
-                        'cpu, no mem threads) so the I/O path runs cleanly '
-                        'on systems without stress-ng.'),
-                'type': float,
-                'default': 1.0,
+                "name": "cpu_work",
+                "msg": "Positive WfBench CPU work units per task",
+                "type": int,
+                "default": 1,
             },
             {
-                'name': 'drop_page_cache',
-                'msg': ('After each read/write, call '
-                        'posix_fadvise(POSIX_FADV_DONTNEED) so the kernel '
-                        'drops the file from the page cache. Writes also '
-                        'fsync first so dirty pages become drop-eligible. '
-                        'Makes NFS-vs-CTE comparisons apples-to-apples: '
-                        'the CTE adapter has no client-side cache, so '
-                        'letting NFS warm-cache the workflow data '
-                        'biases the comparison. Toggling this sets '
-                        'WFBENCH_DROP_CACHE=1 in the wfbench env.'),
-                'type': bool,
-                'default': False,
+                "name": "percent_cpu",
+                "msg": "Fraction of WfBench work threads assigned to CPU work",
+                "type": float,
+                "default": 1.0,
             },
             {
-                'name': 'out',
-                'msg': 'Output directory (receives bench/ + bench/bash/)',
-                'type': str,
-                'default': '${HOME}/wfcommons_out',
+                "name": "drop_page_cache",
+                "msg": "Request per-file POSIX_FADV_DONTNEED behavior in WfBench",
+                "type": bool,
+                "default": False,
             },
             {
-                'name': 'clio_prefix',
-                'msg': 'Rewrite wfbench task paths to begin with "clio::" '
-                       '(opts every read/write into WRP CTE POSIX '
-                       'interception when libwrp_cte_posix.so is LD_PRELOADed)',
-                'type': bool,
-                'default': False,
+                "name": "clio_prefix",
+                "msg": "Prefix translated workflow data paths with clio::",
+                "type": bool,
+                "default": False,
             },
             {
-                'name': 'venv',
-                'msg': 'Path to a wfcommons venv (bare-metal mode only)',
-                'type': str,
-                'default': '${HOME}/.jarvis-wfcommons-venv',
+                "name": "out",
+                "msg": "Package-owned output directory relative to the shared root",
+                "type": str,
+                "default": "run",
             },
             {
-                'name': 'nprocs',
-                'msg': 'MPI ranks (driver runs single-process; tasks use max_workers)',
-                'type': int,
-                'default': 1,
+                "name": "timeout_seconds",
+                "msg": "Maximum elapsed time for this workflow cell",
+                "type": int,
+                "default": 3600,
             },
             {
-                'name': 'ppn',
-                'msg': 'MPI processes per node',
-                'type': int,
-                'default': 1,
+                "name": "nprocs",
+                "msg": "Scheduler process count; WfCommons cell execution is single-process",
+                "type": int,
+                "default": 1,
             },
             {
-                'name': 'base_image',
-                'msg': 'Base image for the build container',
-                'type': str,
-                'default': 'ubuntu:24.04',
+                "name": "ppn",
+                "msg": "Scheduler processes per node; must be one",
+                "type": int,
+                "default": 1,
+            },
+            {
+                "name": "runtime_python",
+                "msg": "Operator-owned Python executable containing WfCommons 1.4",
+                "type": str,
+                "default": "",
+                "agent_visible": False,
+            },
+            {
+                "name": "base_image",
+                "msg": "Base image for an operator-built container runtime",
+                "type": str,
+                "default": "ubuntu:24.04",
+                "agent_visible": False,
             },
         ]
 
-    # ------------------------------------------------------------------
-    # Container build hooks
-    # ------------------------------------------------------------------
+    def _deployment_contract(self) -> PackageDeploymentContract:
+        """Describe the prepared runtime and successful-exit contract."""
 
-    def _build_phase(self):
-        if self.config.get('deploy_mode') != 'container':
+        completed = ReadinessContract(
+            mechanism="process_exit", condition="successful_exit"
+        )
+        if self.config.get("deploy_mode") == "container":
+            wfcommons_status = RuntimeStatus("unknown", "container_runtime_not_probed")
+            bash_status = RuntimeStatus("unknown", "container_runtime_not_probed")
+            wfcommons_capabilities: tuple[str, ...] = ()
+            bash_capabilities: tuple[str, ...] = ()
+        else:
+            environment = dict(self._deployment_environment())
+            python_path = Path(self._runtime_python())
+            python = python_path.name
+            if python_path.is_absolute():
+                existing_path = environment.get("PATH", "")
+                environment["PATH"] = os.pathsep.join(
+                    value for value in (str(python_path.parent), existing_path) if value
+                )
+            expected = self._expected_version()
+            version_probe = probe_program(
+                python,
+                environment=environment,
+                arguments=(
+                    "-c",
+                    (
+                        "import wfcommons; import sys; "
+                        f"sys.exit(0 if getattr(wfcommons, '__version__', '') == {expected!r} else 3)"
+                    ),
+                ),
+            )
+            bash_probe = probe_program(
+                "bash", environment=environment, arguments=("--version",)
+            )
+            wfcommons_status = version_probe.status
+            bash_status = bash_probe.status
+            wfcommons_capabilities = (
+                ("synthetic_workflow_generation", "wfbench_execution", "wfformat")
+                if wfcommons_status.usable is True
+                else ()
+            )
+            bash_capabilities = (
+                ("bash_workflow_execution",) if bash_status.usable is True else ()
+            )
+        runtime = RuntimeRequirement(
+            requirement_id="wfcommons_runtime",
+            description=(
+                f"Prepared Python runtime containing WfCommons {_EXPECTED_WFCOMMONS_VERSION}"
+            ),
+            required_capabilities=(
+                "synthetic_workflow_generation",
+                "wfbench_execution",
+                "wfformat",
+            ),
+            available_capabilities=wfcommons_capabilities,
+            status=wfcommons_status,
+            provider_resolutions=(
+                ProviderResolution(
+                    provider="path", query_kind="program", query_value="python3"
+                ),
+            ),
+        )
+        bash = RuntimeRequirement(
+            requirement_id="bash",
+            description="Bash runtime used by the generated WfBench workflow",
+            required_capabilities=("bash_workflow_execution",),
+            available_capabilities=bash_capabilities,
+            status=bash_status,
+            provider_resolutions=(
+                ProviderResolution(
+                    provider="path", query_kind="program", query_value="bash"
+                ),
+            ),
+        )
+        return PackageDeploymentContract(
+            package="builtin.wfcommons",
+            execution_profiles=(
+                ExecutionProfile(
+                    name="synthetic_workflow_cell",
+                    execution_kind="batch",
+                    when=(ConfigurationCondition("recipe", "is_not_empty"),),
+                    runtime_requirements=("bash", "wfcommons_runtime"),
+                    readiness=completed,
+                    description=(
+                        "Generate and execute one deterministic WfBench workflow cell."
+                    ),
+                ),
+            ),
+            runtime_requirements=(bash, runtime),
+        )
+
+    def _build_phase(self) -> tuple[str, str] | None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """Build an operator-owned container runtime when requested."""
+
+        if self.config.get("deploy_mode") != "container":
             return None
-        content = self._read_build_script('build.sh', {
-            'BASE_IMAGE': self.config.get('base_image', 'ubuntu:24.04'),
-        })
-        return content, 'py311'
+        content = self._read_build_script(
+            "build.sh", {"BASE_IMAGE": self.config.get("base_image", "ubuntu:24.04")}
+        )
+        return content, "py311"
 
-    def _build_deploy_phase(self):
-        if self.config.get('deploy_mode') != 'container':
+    def _build_deploy_phase(self) -> tuple[str, str] | None:  # pyright: ignore[reportIncompatibleMethodOverride]
+        """Create the deploy image containing the prepared runtime."""
+
+        if self.config.get("deploy_mode") != "container":
             return None
-        content = self._read_dockerfile('Dockerfile.deploy', {
-            'BUILD_IMAGE': self.build_image_name(),
-            'DEPLOY_BASE': 'ubuntu:24.04',
-        })
-        return content, 'py311'
+        content = self._read_dockerfile(
+            "Dockerfile.deploy",
+            {
+                "BUILD_IMAGE": self.build_image_name(),
+                "DEPLOY_BASE": "ubuntu:24.04",
+            },
+        )
+        return content, "py311"
 
-    # ------------------------------------------------------------------
-    # Configure
-    # ------------------------------------------------------------------
+    def _configure(self, **kwargs: Any) -> None:
+        """Persist a valid cell without installing software or touching outputs."""
 
-    def _configure(self, **kwargs):
         super()._configure(**kwargs)
-
-        if self.config['recipe'] not in RECIPES:
-            raise ValueError(
-                f"recipe '{self.config['recipe']}' not in {RECIPES}"
-            )
-
-        # wfbench main() guards the cpu-benchmark spawn behind
-        # `if args.cpu_work:` (wfbench script line 443). When that block
-        # is skipped, nothing feeds the cpu_queue that io_alternate
-        # blocks on, so the io subprocess hangs until wfbench main kills
-        # it on shutdown — no reads, no writes, just process spawn
-        # overhead. Coerce cpu_work to a minimum of 1 so this path is
-        # always taken.
-        if int(self.config.get('cpu_work', 0)) <= 0:
-            self.log(
-                "cpu_work was 0; coercing to 1 so wfbench actually "
-                "performs I/O (cpu_work=0 silently disables it)"
-            )
-            self.config['cpu_work'] = 1
-
-        # Propagate the drop-page-cache toggle to the wfbench subprocess
-        # (wfbench reads WFBENCH_DROP_CACHE in _drop_page_cache helper).
-        if self.config.get('drop_page_cache', False):
-            self.setenv('WFBENCH_DROP_CACHE', '1')
-
-        if self.config.get('deploy_mode') == 'default':
-            # Output dir on every node so MPI/PSSH topo-execution works.
-            Mkdir(self.config['out'],
-                  PsshExecInfo(hostfile=self.hostfile,
-                               env=self.env)).run()
-            # Bare-metal venv with wfcommons. Idempotent — if the venv
-            # exists and imports wfcommons, skip the (slow) pip install.
-            venv = self.config['venv']
-            ensure = (
-                f"python3 -c 'import sys; sys.exit(0)' && "
-                f"if [ ! -x '{venv}/bin/python3' ]; then "
-                f"  python3 -m venv '{venv}'; "
-                f"fi && "
-                f"'{venv}/bin/pip' install --quiet --upgrade pip && "
-                f"'{venv}/bin/python3' -c 'import wfcommons' 2>/dev/null || "
-                f"'{venv}/bin/pip' install --quiet 'wfcommons[bench]'"
-            )
-            Exec(ensure, LocalExecInfo(env=self.env)).run()
-            self.setenv('WFCOMMONS_PYTHON', f"{venv}/bin/python3")
-
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
+        self._validate_configuration()
 
     @staticmethod
-    def _data_bytes(s):
-        """Parse '100M', '1G', '500k', or a plain integer to bytes."""
-        if s is None:
-            return 0
-        s = str(s).strip()
-        if not s:
-            return 0
-        units = {'k': 1024, 'm': 1024**2, 'g': 1024**3, 't': 1024**4}
-        suffix = s[-1].lower()
-        if suffix in units:
-            return int(float(s[:-1]) * units[suffix])
-        return int(s)
+    def _require_int(value: object, name: str, *, minimum: int, maximum: int) -> int:
+        """Return one bounded integer or fail without coercion."""
 
-    def _driver_args(self):
-        cfg = self.config
-        args = [
-            f"--recipe {cfg['recipe']}",
-            f"--num-tasks {cfg['num_tasks']}",
-            f"--cpu-work {cfg['cpu_work']}",
-            f"--data {self._data_bytes(cfg['data_footprint'])}",
-            f"--percent-cpu {cfg['percent_cpu']}",
-            f"--out '{cfg['out']}'",
-        ]
-        if cfg.get('clio_prefix'):
-            args.append('--clio-prefix')
-        return ' '.join(args)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < minimum
+            or value > maximum
+        ):
+            raise ValueError(f"{name} must be an integer from {minimum} to {maximum}")
+        return value
 
-    def start(self):
-        if self.config.get('deploy_mode') == 'container':
-            cmd = (
-                '/opt/wfcommons-env/bin/python3 '
-                '/opt/wfcommons-driver/run_wfbench.py '
-                + self._driver_args()
+    def _validate_configuration(self) -> None:
+        """Reject ambiguous, unsafe, or unsupported study settings."""
+
+        recipe = self.config.get("recipe")
+        if recipe not in RECIPES:
+            raise ValueError(f"recipe must be one of: {', '.join(RECIPES)}")
+        self._require_int(
+            self.config.get("num_tasks"), "num_tasks", minimum=1, maximum=_MAX_TASKS
+        )
+        self._require_int(
+            self.config.get("data_footprint_mb"),
+            "data_footprint_mb",
+            minimum=0,
+            maximum=_MAX_DATA_FOOTPRINT_MB,
+        )
+        self._require_int(
+            self.config.get("cpu_work"), "cpu_work", minimum=1, maximum=1_000_000
+        )
+        self._require_int(self.config.get("seed"), "seed", minimum=0, maximum=2**32 - 1)
+        self._require_int(
+            self.config.get("timeout_seconds"),
+            "timeout_seconds",
+            minimum=1,
+            maximum=_MAX_TIMEOUT_SECONDS,
+        )
+        percent_cpu = self.config.get("percent_cpu")
+        if (
+            isinstance(percent_cpu, bool)
+            or not isinstance(percent_cpu, (int, float))
+            or not 0 < float(percent_cpu) <= 1
+        ):
+            raise ValueError("percent_cpu must be greater than 0 and at most 1")
+        if self.config.get("nprocs") != 1 or self.config.get("ppn") != 1:
+            raise ValueError(
+                "WfCommons workflow cells require single-process execution"
             )
-            Exec(cmd, LocalExecInfo(
-                env=self.mod_env,
+        runtime_python = self.config.get("runtime_python", "")
+        if not isinstance(runtime_python, str):
+            raise ValueError("runtime_python must be a path string")
+        out = self.config.get("out")
+        if not isinstance(out, str) or not out.strip():
+            raise ValueError("out must be a non-empty path")
+
+    def _expected_version(self) -> str:
+        """Return the package-owned WfCommons version pin."""
+
+        return _EXPECTED_WFCOMMONS_VERSION
+
+    def _runtime_python(self) -> str:
+        """Resolve the operator-prepared Python executable."""
+
+        if self.config.get("deploy_mode") == "container":
+            return "/opt/wfcommons-env/bin/python3"
+        configured = self.config.get("runtime_python")
+        if isinstance(configured, str) and configured:
+            return os.path.expandvars(os.path.expanduser(configured))
+        environment = getattr(self, "mod_env", {})
+        from_environment = environment.get("WFCOMMONS_PYTHON")
+        if from_environment:
+            return from_environment
+        return sys.executable
+
+    def _output_dir(self) -> Path:
+        """Return the package-owned output directory."""
+
+        return self.resolve_shared_path(
+            self.config.get("out"), field="out", default="run"
+        )
+
+    def _schema_source(self) -> Path:
+        """Return the repository-pinned WfFormat schema."""
+
+        package_dir = self._package_dir()
+        package_copy = package_dir / "wfcommons-schema.json"
+        if package_copy.is_file() and not package_copy.is_symlink():
+            return package_copy
+        repository_copy = package_dir.parents[2] / "wfcommons-schema.json"
+        if repository_copy.is_file() and not repository_copy.is_symlink():
+            return repository_copy
+        installed_copy = Path(sysconfig.get_path("data")) / "wfcommons-schema.json"
+        if installed_copy.is_file() and not installed_copy.is_symlink():
+            return installed_copy
+        raise RuntimeError("Pinned WfFormat schema is missing from the package")
+
+    def _package_dir(self) -> Path:
+        """Return the configured package directory as an absolute path."""
+
+        package_dir = self.pkg_dir
+        if not isinstance(package_dir, str) or not package_dir:
+            raise RuntimeError("WfCommons package directory is unavailable")
+        return Path(package_dir).resolve()
+
+    @staticmethod
+    def _failures(result: Any) -> dict[str, int]:
+        """Return all nonzero host exits from one JARVIS shell result."""
+
+        return {host: code for host, code in result.exit_code.items() if code != 0}
+
+    def _driver_arguments(self, *, schema_path: Path) -> list[str]:
+        """Return one shell-safe driver argument vector."""
+
+        arguments = [
+            "--recipe",
+            str(self.config["recipe"]),
+            "--num-tasks",
+            str(self.config["num_tasks"]),
+            "--cpu-work",
+            str(self.config["cpu_work"]),
+            "--data-footprint-mb",
+            str(self.config["data_footprint_mb"]),
+            "--percent-cpu",
+            str(self.config["percent_cpu"]),
+            "--seed",
+            str(self.config["seed"]),
+            "--schema-file",
+            str(schema_path),
+            "--expected-wfcommons-version",
+            self._expected_version(),
+            "--out",
+            str(self._output_dir()),
+        ]
+        if self.config.get("clio_prefix"):
+            arguments.append("--clio-prefix")
+        return arguments
+
+    def start(self) -> None:
+        """Generate and execute one cell and fail on any process error."""
+
+        self._validate_configuration()
+        output_dir = self._output_dir()
+        if output_dir.exists():
+            raise ValueError(f"WfCommons output already exists: {output_dir}")
+        output_dir.mkdir(parents=True, mode=0o700)
+        schema_source = self._schema_source()
+        schema_path = output_dir / "wfcommons-schema.json"
+        shutil.copyfile(schema_source, schema_path, follow_symlinks=False)
+        os.chmod(schema_path, 0o400)
+        self.config["out"] = str(output_dir)  # pyright: ignore[reportArgumentType]
+
+        if self.config.get("deploy_mode") == "container":
+            driver = "/opt/wfcommons-driver/run_wfbench.py"
+            info = LocalExecInfo(
+                env=dict(self.mod_env),
+                cwd=str(output_dir),
+                timeout=self.config["timeout_seconds"],
+                line_callback=self.runtime_line_callback(),
                 container=self._container_engine,
                 container_image=self.deploy_image_name(),
                 shared_dir=self.shared_dir,
                 private_dir=self.private_dir,
-            )).run()
-        else:
-            driver = f"{self.pkg_dir}/run_wfbench.py"
-            cmd = (
-                f"{self.config['venv']}/bin/python3 {driver} "
-                + self._driver_args()
             )
-            Exec(cmd, LocalExecInfo(env=self.mod_env)).run()
+        else:
+            driver = str(self._package_dir() / "run_wfbench.py")
+            environment = dict(self.mod_env)
+            if self.config.get("drop_page_cache"):
+                environment["WFBENCH_DROP_CACHE"] = "1"
+            info = LocalExecInfo(
+                env=environment,
+                cwd=str(output_dir),
+                timeout=self.config["timeout_seconds"],
+                line_callback=self.runtime_line_callback(),
+            )
+        command = " ".join(
+            shlex.quote(value)
+            for value in (
+                self._runtime_python(),
+                driver,
+                *self._driver_arguments(schema_path=schema_path),
+            )
+        )
+        result = Exec(command, info).run()
+        failures = self._failures(result)
+        if failures:
+            rendered = ", ".join(f"{host}={code}" for host, code in failures.items())
+            raise RuntimeError(f"WfCommons execution failed: {rendered}")
 
-    def stop(self):
-        pass
+    def stop(self) -> None:
+        """Do nothing because the workflow cell runs to process completion."""
 
-    def clean(self):
-        if self.config.get('out'):
-            Rm(self.config['out'],
-               PsshExecInfo(hostfile=self.hostfile, env=self.env)).run()
+    def clean(self) -> None:
+        """Remove only the exact package-owned output directory."""
 
-    def _get_stat(self, stat_dict):
-        stat_dict[f'{self.pkg_id}.recipe'] = self.config['recipe']
-        stat_dict[f'{self.pkg_id}.num_tasks'] = self.config['num_tasks']
-        stat_dict[f'{self.pkg_id}.runtime'] = self.start_time
+        output_dir = self._output_dir()
+        if output_dir == Path(output_dir.anchor):
+            raise ValueError("refusing to clean a filesystem root as WfCommons output")
+        result = Rm(str(output_dir), LocalExecInfo(env=self.env), recursive=True).run()
+        failures = self._failures(result)
+        if failures:
+            raise RuntimeError(
+                f"Failed to clean WfCommons output {output_dir}: {failures}"
+            )
+
+    def _get_stat(self, stat_dict: dict[str, Any]) -> None:
+        """Expose the requested workflow cell in JARVIS statistics."""
+
+        stat_dict[f"{self.pkg_id}.recipe"] = self.config["recipe"]
+        stat_dict[f"{self.pkg_id}.num_tasks"] = self.config["num_tasks"]
+        stat_dict[f"{self.pkg_id}.data_footprint_mb"] = self.config["data_footprint_mb"]
+        stat_dict[f"{self.pkg_id}.runtime"] = getattr(self, "start_time", None)
+
+
+__all__ = ["RECIPES", "Wfcommons"]

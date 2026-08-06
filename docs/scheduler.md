@@ -44,6 +44,14 @@ The pipeline's compatibility `last_submission` record includes the execution ID,
 the execution root, the sealed input and runtime paths, the script and hostfile
 paths, and a SHA-256 digest of the two sealed input documents.
 
+Before invoking the scheduler, JARVIS creates the concrete parent directories
+for `scheduler.output` and `scheduler.error`. Scheduler replacement tokens such
+as SLURM `%j` are supported in the filename, where the provider can resolve
+them after submission, but not in a parent directory whose name is unknown
+before the scheduler accepts the job. A directory preparation failure is a
+terminal pre-submission error, so JARVIS never returns an accepted-looking
+handle for a job that could not open its configured logs.
+
 The pipeline binds `self.hostfile` to that same path at load time, so
 every package in the pipeline that consults `self.hostfile` reads the
 allocation-derived host list with no extra wiring.
@@ -219,6 +227,14 @@ The generated script is written to
 `<pipeline_shared_dir>/executions/<execution-id>/submit.slurm`. A fresh
 execution ID is generated for every CLI submission; API callers may provide a
 bounded path-safe ID for end-to-end correlation.
+
+For a submitted nonterminal record, `Pipeline.get_execution()` also asks the
+selected scheduler provider for current state. The SLURM provider checks the
+live queue and then accounting when available. A provider-reported terminal
+state is committed into the same durable execution record. If SLURM no longer
+recognizes an accepted job and no historical record is available, JARVIS waits
+through a bounded startup grace period before recording failure; generic query
+errors do not silently terminalize the execution.
 
 ## Execution cleanup and pipeline destruction
 

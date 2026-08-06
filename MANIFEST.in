@@ -7,3 +7,9 @@ include builtin/builtin/paraview/artifacts.py
 include builtin/builtin/paraview/service.py
 include builtin/builtin/paraview/service_http.py
 include builtin/builtin/paraview/service_supervisor.py
+recursive-include builtin/builtin/lbm_cfd *.md *.py
+recursive-include builtin/builtin/openfoam *.md *.py
+recursive-include builtin/builtin/wrf *.md *.py
+include builtin/builtin/wfcommons/artifacts.py
+include builtin/builtin/xcompact3d/artifacts.py
+include wfcommons-schema.json
