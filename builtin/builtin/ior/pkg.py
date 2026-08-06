@@ -10,6 +10,8 @@ import re
 from jarvis_cd.core.pkg import Application
 from jarvis_cd.shell import Exec, MpiExecInfo, PsshExecInfo, Rm, Mkdir
 from jarvis_cd.shell.process import GdbServer
+from jarvis_cd.util.container_utils import (
+    container_kwargs, eff_hostfile, single_instance_menu_opt)
 
 
 class Ior(Application):
@@ -104,7 +106,28 @@ class Ior(Application):
                 'msg': 'Use direct I/O (O_DIRECT) for POSIX API, bypassing I/O buffers',
                 'type': bool,
                 'default': False,
-            }
+            },
+            {
+                'name': 'num_nodes',
+                'msg': 'Number of nodes to launch on (first N hosts of the '
+                       'pipeline hostfile). 0 means all hosts. Enables '
+                       'node-count sweeps inside one allocation without '
+                       'changing the pipeline hostfile.',
+                'type': int,
+                'default': 0,
+            },
+            {
+                'name': 'stonewall',
+                'msg': 'Stonewalling deadline in seconds (ior -D): cap each '
+                       'write/read phase at this many seconds. 0 disables.',
+                'type': int,
+                'default': 0,
+            },
+            single_instance_menu_opt(
+                msg='Pin ior to the FIRST host even when the pipeline '
+                    'hostfile has >1 host - the single-client baseline '
+                    '(e.g. NFS) on multi-node pipelines. Applied after '
+                    'num_nodes subsetting.'),
         ]
 
     # ------------------------------------------------------------------
@@ -166,9 +189,49 @@ class Ior(Application):
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def _eff_hostfile(self):
+        """The hostfile this ior run actually launches on.
+
+        Order matters: ``num_nodes`` subsets to the first N hosts (the
+        node-count sweep axis), then the ``single_instance`` collapse pins
+        to host[0] (the single-client baseline; it wins in the degenerate
+        combination). In container mode the result is stripped of its
+        backing file path so mpiexec (running inside the instance) gets an
+        inline ``--host`` list instead of a path the instance may not see.
+        """
+        hf = self.hostfile
+        if hf is not None and self.config.get('num_nodes', 0) > 0:
+            hf = hf.subset(self.config['num_nodes'])
+        hf = eff_hostfile(self, hostfile=hf)
+        if (hf is not None and hf.path is not None
+                and self._container_engine != 'none'):
+            hf = hf.copy()
+        return hf
+
     def start(self):
         """Launch IOR via MpiExecInfo; Exec handles container wrapping transparently."""
         cfg = self.config
+
+        # Stale-log guard: a partial/failed run must never report the
+        # previous combo's bandwidths. shared_dir is bound at an identical
+        # path in the container, so a host-side remove is sufficient.
+        log_path = cfg.get('log')
+        if log_path and os.path.isfile(log_path):
+            try:
+                os.remove(log_path)
+            except OSError:
+                pass
+
+        hostfile = self._eff_hostfile()
+
+        # Ensure the output parent dir exists in the deployment context:
+        # inside the container instance when containerized (the path may be
+        # an in-container-only mount), a harmless mkdir -p bare-metal.
+        out = os.path.expandvars(cfg['out'])
+        parent_dir = str(pathlib.Path(out).parent)
+        Mkdir(parent_dir,
+              PsshExecInfo(env=self.mod_env, hostfile=hostfile,
+                           **container_kwargs(self))).run()
 
         cmd = [
             'ior',
@@ -188,6 +251,8 @@ class Ior(Application):
             cmd.append(f'-i {cfg["reps"]}')
         if cfg.get('direct'):
             cmd.append('-O useO_DIRECT=1')
+        if cfg.get('stonewall', 0) > 0:
+            cmd.append(f'-D {cfg["stonewall"]}')
 
         ior_cmd = ' '.join(cmd)
         if cfg.get('log'):
@@ -201,14 +266,56 @@ class Ior(Application):
         Exec(cmd_list, MpiExecInfo(
             nprocs=cfg['nprocs'],
             ppn=cfg['ppn'],
-            hostfile=self.hostfile,
+            hostfile=hostfile,
             port=self.ssh_port,
-            container=self._container_engine,
-            container_image=self.deploy_image_name(),
-            shared_dir=self.shared_dir,
-            private_dir=self.private_dir,
             env=self.mod_env,
+            **container_kwargs(self),
         )).run()
+
+        # Fail loudly on a silent MPI/ior failure. A hard mpiexec abort
+        # (e.g. "PRTE has lost communication with a remote daemon" when the
+        # cross-node spawn fails) or an ior that never reached its results
+        # block leaves no summary in the log, yet Exec does not always raise.
+        # Without this gate the pipeline marks the combination success with
+        # blank bandwidths -- a false green that would let a daily regression
+        # report healthy while multi-node is broken.
+        self._assert_ior_completed()
+
+    def _assert_ior_completed(self):
+        """Raise if the just-finished ior run produced no results summary.
+
+        Reads the log (same file _get_stat parses) and requires a Max
+        Write/Read line for each requested operation. A missing summary
+        means ior aborted or never ran the measured I/O -- surface it as a
+        failed combination instead of a success with empty stats.
+        """
+        wrote = self.config.get('write', True)
+        read = self.config.get('read', False)
+        if not wrote and not read:
+            return  # no workload requested; nothing to validate
+
+        log_path = self.config.get('log')
+        text = ''
+        if log_path and os.path.isfile(log_path):
+            try:
+                with open(log_path, 'r') as f:
+                    text = f.read()
+            except OSError:
+                text = ''
+        stats = self.parse_log(text)
+
+        missing = []
+        if wrote and f'{self.pkg_id}.write_max_mibs' not in stats:
+            missing.append('write')
+        if read and f'{self.pkg_id}.read_max_mibs' not in stats:
+            missing.append('read')
+        if missing:
+            raise RuntimeError(
+                f'ior[{self.pkg_id}]: no IOR {"/".join(missing)} summary in '
+                f'{log_path!r} -- the run failed (mpiexec abort or no '
+                f'cross-node spawn) and produced no bandwidth. Failing this '
+                f'combination rather than reporting a false success; inspect '
+                f'the log for the mpiexec/PRTE error.')
 
     def stop(self):
         """Stop IOR (no-op — IOR runs to completion)."""
@@ -218,7 +325,8 @@ class Ior(Application):
         """Remove IOR output files."""
         Rm(self.config['out'] + '*',
            PsshExecInfo(env=self.env,
-                        hostfile=self.hostfile)).run()
+                        hostfile=self._eff_hostfile(),
+                        **container_kwargs(self))).run()
 
     # ------------------------------------------------------------------
     # Output parsing
@@ -280,7 +388,7 @@ class Ior(Application):
         by ``_configure``) and adds Max/Min/Mean/StdDev MiB/sec entries
         per operation. Missing or unparseable log → only runtime is set.
         """
-        stat_dict[f'{self.pkg_id}.runtime'] = getattr(self, 'start_time', None)
+        stat_dict[f'{self.pkg_id}.runtime'] = self.runtime
 
         log_path = self.config.get('log')
         if not log_path or not os.path.isfile(log_path):

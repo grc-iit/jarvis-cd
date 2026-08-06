@@ -102,9 +102,35 @@ output: "${HOME}/experiment_results"
 This section contains the skeleton of a pipeline. It has the same exact parameters as a regular pipeline script, including:
 - `name`: Pipeline name
 - `env`: Environment reference (optional)
+- `host_pkgs`: Host baremetal prerequisites (optional) — see below
 - `pkgs`: List of packages with their configurations
 - `interceptors`: List of interceptors (optional)
 - Container configuration (optional)
+
+#### host_pkgs in a test
+
+`host_pkgs` declares tooling that must exist on the host for Jarvis itself to
+work — most often apptainer or docker for a containerized sweep. See
+[Host Prerequisites](pipelines.md#host-prerequisites-host_pkgs) for the full
+description of the field.
+
+```yaml
+config:
+  name: ior_apptainer_sweep
+  container_engine: apptainer
+  host_pkgs:
+    - install_method: spack
+      install_query: apptainer
+  pkgs:
+    - pkg_type: builtin.ior
+      pkg_name: ior
+```
+
+The block is checked once when the test loads, before any combination runs. A
+sweep of N combinations should not build N-1 results before discovering the
+host cannot run it. Because `host_pkgs` lives inside `config:`, it also rides
+along into each iteration's pipeline and is re-checked there — but probes are
+memoized per process, so those re-checks cost nothing.
 
 ### vars
 
@@ -138,6 +164,28 @@ The directory where results are stored. You can use environment variables:
 - `${PRIVATE_DIR}` - Pipeline's private directory
 - `${CONFIG_DIR}` - Pipeline's config directory
 - `${HOME}` - User's home directory
+
+### run_timeout (optional)
+
+A wall-clock budget, in seconds, for a single combination. Omitted (the
+default), a run is unbounded.
+
+Set it when any package can wedge. The per-run error handling only catches
+exceptions, and a hang is not an exception -- so without a budget one stuck
+package blocks the sweep forever, and under a scheduler it consumes the
+whole allocation and you lose every result, including the combinations that
+would have passed.
+
+On expiry the run is torn down (bounded, best-effort, so a wedged `stop()`
+cannot re-hang the sweep), that row is recorded as `failed` with the reason
+in the `error` column, and the next combination starts.
+
+```yaml
+run_timeout: 1800   # 30 minutes per combination
+```
+
+Pick a value comfortably above the slowest healthy run -- it is a
+deadlock backstop, not a performance bound.
 
 ### scheduler (optional)
 
@@ -379,7 +427,7 @@ test inherits them:
 ```yaml
 config:
   name: ior_sweep
-  ssh_cmd:  "env -u LD_LIBRARY_PATH ssh"   # host openssh, not conda's
+  ssh_cmd:  "env -u LD_LIBRARY_PATH ssh"   # host openssh, not a managed env's
   pssh_cmd: "env -u LD_LIBRARY_PATH ssh"
   mpi_cmd:  "mpiexec"
   pkgs:
@@ -396,7 +444,7 @@ output: "${HOME}/ior_results"
 
 These swap the SSH / parallel-SSH / MPI launchers without modifying
 any package. The canonical use is `env -u LD_LIBRARY_PATH ssh`, which
-keeps a conda environment's `libcrypto` out of the host `ssh` (an ABI
+keeps a managed environment's `libcrypto` out of the host `ssh` (an ABI
 mismatch otherwise makes `ssh` exit 255 before forwarding the remote
 command). See [shell.md → Launcher Overrides](shell.md#launcher-overrides)
 for the full mechanism and the per-MPI-backend bootstrap forwarding.
@@ -544,7 +592,22 @@ This includes:
 
 ## Custom Statistics
 
-Packages can define custom statistics by implementing the `_get_stat()` method:
+Packages can define custom statistics by implementing the `_get_stat()` method.
+
+**`_get_stat` runs on a fresh package instance**, built by
+`Pipeline._load_package_instance` after the run finished — *not* the object that
+executed `start()`. Anything you stashed in memory during the run is gone, so
+read your metrics back off disk (a log under `self.shared_dir`) rather than out
+of `self.exec.stdout`. The one exception is `self.runtime` — seconds `start()`
+took, measured in `Pipeline.start()` and replayed onto the new instance.
+(`self.start_time` is deprecated and always `None`; a package reporting a
+runtime must read `self.runtime`.)
+
+`PipelineTest` calls `_get_stat` inside a `try/except` that logs a warning and
+continues, so raising on the first line silently drops **every** stat that
+package would have contributed. The symptom is a blank CSV column, not an error
+— check the run log for `Could not get stats from <pkg_id>` when a column you
+expected comes back empty.
 
 ```python
 class MyBenchmark(Application):
@@ -555,16 +618,20 @@ class MyBenchmark(Application):
         :param stat_dict: A dictionary to populate with statistics.
         :return: None
         """
-        # Parse output for results
-        output = self.exec.stdout.get('localhost', '')
+        # Framework-supplied; safe on a fresh instance.
+        stat_dict[f'{self.pkg_id}.runtime'] = self.runtime
+
+        # Everything else comes off disk.
+        log_path = self.config.get('log')
+        if not log_path or not os.path.isfile(log_path):
+            return
+        with open(log_path, 'r') as f:
+            output = f.read()
 
         # Extract throughput
         if 'throughput' in output:
             throughput = self._parse_throughput(output)
             stat_dict[f'{self.pkg_id}.throughput'] = throughput
-
-        # Record runtime
-        stat_dict[f'{self.pkg_id}.runtime'] = self.runtime
 ```
 
 ### YCSB Example
@@ -588,7 +655,7 @@ class Ycsb(Application):
                 stat_dict[f'{self.pkg_id}.throughput'] = throughput
 
         # Record runtime
-        stat_dict[f'{self.pkg_id}.runtime'] = self.start_time
+        stat_dict[f'{self.pkg_id}.runtime'] = self.runtime
 ```
 
 ### Best Practices for Statistics

@@ -118,6 +118,13 @@ name: my_pipeline
 # Must be a named environment reference or omitted
 env: my_custom_environment  # References a named environment
 
+# Host baremetal prerequisites (optional)
+# Tools Jarvis itself shells out to, verified before the pipeline runs.
+# See "Host Prerequisites (host_pkgs)" below.
+host_pkgs:
+  - install_method: spack
+    install_query: apptainer
+
 # Main packages (required)
 pkgs:
   - pkg_type: repo.package_name
@@ -226,6 +233,81 @@ name: my_pipeline
 # No env field - automatically captures current environment
 ```
 
+### Host Prerequisites (`host_pkgs`)
+
+`host_pkgs` declares software that must exist on the **host baremetal** for
+Jarvis itself to work. This is different from `pkgs`, which is the workload
+Jarvis deploys: `host_pkgs` is the tooling Jarvis shells out to.
+
+The motivating case is a containerized pipeline. `container_engine: apptainer`
+makes Jarvis run `apptainer build` on the host, so apptainer has to be on the
+host's `PATH` before the pipeline starts. Apptainer is not something the
+pipeline can containerize its way out of needing.
+
+```yaml
+name: ior_apptainer_host_pkgs_test
+base_deploy_mode: container
+container_engine: apptainer
+
+host_pkgs:
+  - install_method: spack
+    install_query: apptainer
+
+pkgs:
+  - pkg_type: builtin.ior
+    pkg_name: ior
+```
+
+| Key | Description |
+|-----|-------------|
+| `install_method` | Backend that verifies/installs the package: `spack`, `pip`, or `conda` |
+| `install_query` | The string that backend installs (e.g. a spack spec, a pip requirement). Also what Jarvis probes for, and what the error message tells you to run |
+
+#### What Jarvis does with it
+
+Two things, both before the pipeline does any other work:
+
+1. **Verify.** Every declared package is probed on the host. Anything missing
+   aborts the run with the exact command that fixes it:
+
+   ```
+   Missing 1 required host package(s) for 'ior_apptainer_host_pkgs_test'.
+   These must be installed on the host baremetal before jarvis can run this
+   pipeline:
+     - apptainer (install_method: spack)
+         install it with: spack install apptainer
+   ```
+
+   This is a check, not an install. `spack install apptainer` can run for
+   hours, which is not something a pipeline launch should do unprompted.
+
+2. **Activate.** Packages that *are* present contribute their environment
+   (what `spack load apptainer` sets) to the process environment, so the
+   subprocesses Jarvis spawns to do the containerizing actually find them.
+   The activation is written into the process environment rather than only
+   the pipeline's `env` dict, because the container-build calls run under a
+   plain `LocalExecInfo()` and therefore inherit an unmodified environment.
+
+#### When the check runs
+
+| Path | Checked |
+|------|---------|
+| `jarvis ppl run yaml <file>` | At load, before any package is processed |
+| `jarvis ppl run` (saved current pipeline) | In `run()` |
+| `jarvis ppl submit [file]` | Before the job is queued, on the submitting host |
+| Pipeline tests (`config.host_pkgs`) | Once at load, then per iteration |
+
+Probes are memoized per process, so a sweep that re-loads the same pipeline
+for each combination pays for the probe once.
+
+`host_pkgs` round-trips through the saved pipeline config, so
+`jarvis ppl submit` against the current pipeline re-checks it without
+re-reading the source YAML.
+
+Submitting is checked on the *submitting* host: the job script re-runs Jarvis
+on the compute node and would hit the same missing package, but only after
+sitting in the queue and burning an allocation to fail.
+
 ### Install Manager
 
 The `base_deploy_mode` field determines how packages are installed and deployed. It is a **pipeline-level** setting that applies to all packages uniformly.
@@ -307,7 +389,7 @@ file the job script populates inside the allocation.
 
 ### Container Configuration
 
-Pipelines can be configured to run packages inside Docker or Podman containers. Set `base_deploy_mode: container` and provide container configuration. Containers act as SSH compute nodes — the host-side jarvis orchestrates everything by exec-ing commands into the running containers via `docker exec` and MPI over SSH. No jarvis installation is needed inside the containers.
+Pipelines can be configured to run packages inside Docker, Podman, or Apptainer containers. Set `base_deploy_mode: container` and provide container configuration. Containers act as SSH compute nodes — the host-side jarvis orchestrates everything by exec-ing commands into the running containers via `docker exec` (or `apptainer exec`) and MPI over SSH. No jarvis installation is needed inside the containers. Apptainer has its own start model and additional keys — see [Apptainer Pipelines](#apptainer-pipelines).
 
 #### Container Pipeline Parameters
 
@@ -346,13 +428,55 @@ pkgs:
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `base_deploy_mode` | string | *(absent)* | Set to `container` to enable containerized deployment |
-| `container_engine` | string | `"podman"` | Container engine: `docker` or `podman` |
+| `container_engine` | string | `"podman"` | Container engine: `docker`, `podman`, or `apptainer` (see [Apptainer Pipelines](#apptainer-pipelines) for the keys it adds) |
 | `container_base` | string | `"iowarp/iowarp-build:latest"` | Base Docker image for package builds |
 | `container_ssh_port` | int | `2222` | SSH port for MPI communication between containers |
 | `container_env` | dict | `{}` | Environment variables injected into containers via compose |
 | `container_host_path` | string | `""` | Docker host path prefix for DinD environments |
 | `container_workspace` | string | `""` | Workspace root path for DinD path remapping |
 | `container_extensions` | dict | `{}` | Custom Docker Compose config merged into service definition |
+
+#### Apptainer Pipelines
+
+Set `container_engine: apptainer` to use Apptainer — the usual choice on HPC clusters. Docker's layered image store is expensive on a quota'd shared filesystem, and its daemon needs root, so it is often unusable even where it is installed; Apptainer runs rootless out of a single SIF file the user owns. The model differs from Docker/Podman: there is no compose file. Jarvis starts a persistent **instance** (with an sshd inside, on `container_ssh_port`) from the pipeline's SIF on **every host in the hostfile**, then runs each package via `apptainer exec instance://<pipeline>`. The SIF defaults to `<pipeline_name>.sif` in the centralized containers directory; `container_image` overrides it with another SIF basename or an absolute path.
+
+Apptainer silently ignores per-exec `--bind` / `--add-caps` / `--fakeroot` flags on a running instance, so everything the workload needs must be declared at the pipeline level — the following keys bake into `apptainer instance start`:
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `container_overlay` | bool | `true` | Mount a writable `--overlay` upper dir. `false` drops the overlay entirely: the container filesystem is read-only outside bind mounts, and the host `/tmp` mounts normally |
+| `container_overlay_root` | string | `null` | Node-local root for the overlay upper dir: each host uses `<root>/<pipeline>/overlay`, created on every host automatically. `$VAR`s are expanded. **Required for multi-node pipelines** (see below) |
+| `container_caps` | list | `[]` | Capabilities added via `--add-caps` (e.g. `SYS_ADMIN` for FUSE mounts) |
+| `container_fakeroot` | bool | `false` | Start the instance under `--fakeroot`. Rootless (non-setuid) apptainer only grants a FUSE-capable user namespace this way |
+| `container_binds` | list | `[]` | Extra `host:container` bind mounts (e.g. `/dev/fuse:/dev/fuse`). The pipeline shared/private dirs are always bound at identical paths |
+| `container_gpu` | bool | `false` | GPU passthrough (`--nv`) |
+| `tmp_bind_root` | string | `null` | Per-host `/tmp` redirect: binds `<root>/<pipeline>/tmp` (created on every host automatically) into the container at `/tmp`, so parallel hosts don't collide on `/tmp` paths that would otherwise land in a shared overlay. `$VAR`s are expanded |
+
+**Important — multi-node pipelines must relocate the overlay.** By default the overlay upper dir lives under the pipeline's shared directory, which on a real cluster is a shared filesystem (NFS). That layout only works single-node: overlayfs cannot use a shared/NFS directory as its upper layer, and concurrent `apptainer instance start`s on N nodes race each other on the same directory. A pipeline whose hostfile spans more than one host must set `container_overlay_root` to a node-local path (e.g. `/mnt/nvme/$USER`) or set `container_overlay: false` — jarvis refuses to start the known-broken combination rather than hang.
+
+Example 4-node apptainer pipeline:
+
+```yaml
+name: distributed_bench
+base_deploy_mode: container
+container_engine: apptainer
+hostfile: /path/to/hostfile.txt           # 4 compute nodes
+
+container_fakeroot: true                  # rootless FUSE-capable userns
+container_binds: []                       # optional; FUSE needs no /dev/fuse bind under --fakeroot
+container_overlay_root: /mnt/nvme/$USER   # per-host overlay upper dir
+tmp_bind_root: /mnt/nvme/$USER            # per-host /tmp
+
+pkgs:
+  - pkg_type: builtin.ior
+    nprocs: 8
+    ppn: 2
+```
+
+Notes:
+- Jarvis never cleans the per-host overlay/tmp directories; their contents persist per node across runs (the default shared-dir overlay has the same persistence, just centralized).
+- A workload that installs software at runtime (apt/conda/pip inside the container) needs a writable overlay — with `container_overlay: false` the container filesystem is read-only outside bind mounts.
+- If `apptainer instance start` fails on any host, the pipeline aborts immediately naming that host instead of continuing with partial instances.
 
 #### How Container Pipelines Work
 
@@ -1608,6 +1732,28 @@ Error: yaml.scanner.ScannerError: while parsing a block mapping
 1. Validate YAML syntax: `python -c "import yaml; yaml.safe_load(open('pipeline.yaml'))"`
 2. Check indentation (use spaces, not tabs)
 3. Quote string values with special characters
+
+**Problem**: A declared host prerequisite is missing
+```
+Error: Missing 1 required host package(s) for 'my_pipeline'. These must be
+installed on the host baremetal before jarvis can run this pipeline:
+  - apptainer (install_method: spack)
+      install it with: spack install apptainer
+```
+
+**Solutions**:
+1. Run the command the error names (`spack install apptainer`). Jarvis
+   reports the missing prerequisite rather than installing it, because an
+   install can run for hours.
+2. If the tool is already installed but Jarvis cannot see it, check that the
+   backend can find it — for spack, that means `spack location -i <spec>`
+   succeeds, and that `SPACK_ROOT` is set if `spack` is not already on `PATH`
+   (the shell-function form from your rc files is invisible to the
+   non-interactive shell Jarvis probes with).
+3. If the pipeline does not actually need it on this host, remove the entry
+   from `host_pkgs`.
+
+See [Host Prerequisites](#host-prerequisites-host_pkgs).
 
 #### Package Configuration Issues
 

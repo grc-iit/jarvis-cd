@@ -8,7 +8,7 @@ Jarvis-CD is a unified platform for deploying scientific applications, storage s
 
 ## Reference
 
-- [Pipeline Configuration](pipelines.md) — Full YAML format, install managers (container/spack), environment management, multi-node, devcontainers
+- [Pipeline Configuration](pipelines.md) — Full YAML format, host prerequisites (`host_pkgs`), install managers (container/spack), environment management, multi-node, devcontainers
 - [Package Development Guide](package_dev_guide.md) — Create new packages, Dockerfile templates, container and spack support
 - [Pipeline Tests](pipeline_tests.md) — Automated testing with grid search and parameter sweeps
 - [Hostfile Configuration](hostfile.md) — Multi-node setup, pattern expansion, IP resolution

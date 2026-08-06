@@ -112,6 +112,24 @@ class Pkg:
         self.global_id = None
         self.pkg_id = None
 
+        # Seconds this package's start() took, measured by Pipeline.start()
+        # and restored by Pipeline._load_package_instance. None outside a
+        # pipeline run (standalone packages, or a package that never started).
+        # MUST be defined here: _get_stat runs on a *fresh* instance -- not
+        # the one that ran -- so a package reading it would otherwise raise
+        # AttributeError and lose every stat it collects.
+        self.runtime = None
+
+        # Deprecated, and deliberately never populated. Nine builtin packages
+        # used to report `<pkg_id>.runtime` out of this attribute, which no
+        # code ever assigned; they now read self.runtime. It survives only so
+        # a package still reading it gets an empty cell rather than an
+        # AttributeError that would discard all of its stats. Do NOT start
+        # populating it: any package not yet updated would then file an epoch
+        # timestamp under a column that means "seconds" -- silently wrong data
+        # in place of a visibly blank one.
+        self.start_time = None
+
         # Note: Directories will be initialized by Pipeline._load_package_instance
         # after pkg_id is set, or by user code for standalone packages
 

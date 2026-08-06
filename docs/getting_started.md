@@ -148,6 +148,21 @@ pkgs:
 
 **Requirements:** Apptainer installed, plus either Docker or Podman (used as an intermediate build step — Apptainer cannot build Dockerfiles directly).
 
+Declare those host-side requirements with `host_pkgs` so Jarvis verifies them
+up front instead of failing partway through the build with
+`apptainer: command not found`:
+
+```yaml
+host_pkgs:
+  - install_method: spack
+    install_query: apptainer
+```
+
+A missing prerequisite stops the run with the command that fixes it. When it
+is present, the same check activates its environment (`spack load apptainer`)
+so the build subprocess finds it on `PATH`. See
+[Host Prerequisites](pipelines.md#host-prerequisites-host_pkgs).
+
 **How it works:**
 1. Jarvis builds the image using Docker or Podman (whichever is available)
 2. Converts the image to a `.sif` file in the pipeline's shared directory
@@ -183,6 +198,12 @@ base_deploy_mode: container
 container_engine: docker          # docker, podman, or apptainer
 container_base: ubuntu:24.04     # base image for the build phase
 
+# Host baremetal prerequisites (optional): tools Jarvis shells out to,
+# verified before the pipeline runs
+host_pkgs:
+  - install_method: spack        # spack, pip, or conda
+    install_query: apptainer     # what that backend installs
+
 # Packages to run (required)
 pkgs:
   - pkg_type: builtin.package_name
@@ -203,6 +224,7 @@ interceptors:
 | `base_deploy_mode` | `container` (Docker/Podman/Apptainer), `spack`, or omit for bare-metal |
 | `container_engine` | `docker`, `podman`, or `apptainer` |
 | `container_base` | Base image for the build phase (e.g., `ubuntu:24.04`, `sci-hpc-base`) |
+| `host_pkgs` | Optional host baremetal prerequisites (e.g. apptainer), verified before the run |
 | `pkgs` | List of packages to run |
 | `interceptors` | Optional list of interceptors (profilers, tracers) |
 | `hostfile` | Path to MPI hostfile for multi-node runs |

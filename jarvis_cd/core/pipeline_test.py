@@ -8,9 +8,11 @@ import csv
 import yaml
 import copy
 import itertools
+from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple
+from jarvis_cd.core.host_pkg import HostPkg
 from jarvis_cd.core.pipeline import Pipeline
 from jarvis_cd.util.logger import logger, Color
 
@@ -44,6 +46,73 @@ def is_pipeline_test(yaml_data: Dict[str, Any]) -> bool:
     return has_config
 
 
+# Wall-clock budget for the teardown that follows a timed-out run. The same
+# hang that tripped the deadline can wedge stop() too, so the cleanup is
+# bounded as well -- otherwise the recovery path reintroduces the hang.
+TEARDOWN_TIMEOUT = 300
+
+
+class Deadline:
+    """
+    Records whether an :func:`alarm_timeout` budget actually expired.
+
+    The TimeoutError raised by the alarm does not necessarily reach the
+    caller: ``Pipeline.start`` catches whatever a package raises and
+    re-raises it as ``RuntimeError("Pipeline startup failed at package
+    ...")``. Keying recovery off the exception *type* therefore misses the
+    timeout and skips teardown, which leaks the run's redis, container
+    instances and mounts into the next combination. This flag is set in the
+    signal handler itself, so it survives any downstream re-wrapping.
+    """
+
+    def __init__(self):
+        self.expired = False
+
+
+@contextmanager
+def alarm_timeout(seconds: Optional[int], message: str,
+                  deadline: Optional['Deadline'] = None):
+    """
+    Bound a blocking call with SIGALRM, raising TimeoutError on expiry.
+
+    A wedged package blocks forever inside ``pipeline.start()``. The sweep
+    runner's per-run ``try/except`` only catches exceptions, and a hang is
+    not an exception -- so one bad combination silently consumes the entire
+    grid and, under a scheduler, the entire allocation. Converting the hang
+    into a TimeoutError lets the runner record that combination as failed
+    and move on to the next one.
+
+    Arms only in the main thread, since Python delivers signals there; in a
+    worker thread this is a no-op so threaded/library callers still work.
+
+    :param seconds: Budget in seconds; falsy or <= 0 disables the alarm
+    :param message: Text carried by the raised TimeoutError
+    :param deadline: Optional Deadline marked ``expired`` when the alarm
+        fires, so callers can detect the timeout even if the TimeoutError
+        is re-wrapped as another exception type further up the stack
+    """
+    import signal
+    import threading
+
+    if not seconds or seconds <= 0 or \
+            threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _on_alarm(signum, frame):
+        if deadline is not None:
+            deadline.expired = True
+        raise TimeoutError(message)
+
+    previous = signal.signal(signal.SIGALRM, _on_alarm)
+    signal.alarm(int(seconds))
+    try:
+        yield
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, previous)
+
+
 class PipelineTest:
     """
     Pipeline test runner for experiment sets using grid search.
@@ -59,10 +128,15 @@ class PipelineTest:
         """Initialize pipeline test instance."""
         self.name = None
         self.config = {}  # The base pipeline configuration
+        # Host baremetal prerequisites declared in ``config.host_pkgs``.
+        self.host_pkgs = []
         self.vars = {}  # Variable definitions
         self.loop = []  # Loop structure
         self.repeat = 1
         self.output = None
+        # Wall-clock budget for a single combination, in seconds. None (the
+        # default) preserves the historical unbounded behaviour.
+        self.run_timeout = None
         self.combinations = []  # Generated test combinations
         self.results = []  # Collected results
         # Top-level scheduler block (one job wraps the whole test run).
@@ -241,10 +315,20 @@ class PipelineTest:
         # Load test components
         self.config = test_def['config']
         self.name = self.config.get('name', pipeline_file.stem)
+
+        # Host prerequisites live in the pipeline definition, so they
+        # ride along in `config:` and are re-checked by every iteration's
+        # Pipeline load. Check once here as well: a sweep of N
+        # combinations should not build N-1 outputs before discovering
+        # the host cannot run it. The probe is memoized, so the
+        # per-iteration checks that follow cost nothing.
+        self.host_pkgs = HostPkg.parse(self.config.get('host_pkgs'))
+        HostPkg.check_all(self.host_pkgs, context=self.name)
         self.vars = test_def.get('vars', {})
         self.loop = test_def.get('loop', [])
         self.repeat = test_def.get('repeat', 1)
         self.output = test_def.get('output', None)
+        self.run_timeout = test_def.get('run_timeout', None)
         self.scheduler = test_def.get('scheduler', None)
         self.source_path = str(pipeline_file.absolute())
 
@@ -261,6 +345,8 @@ class PipelineTest:
         logger.info(f"  Total combinations: {len(self.combinations)}")
         logger.info(f"  Repeat count: {self.repeat}")
         logger.info(f"  Total runs: {len(self.combinations) * self.repeat}")
+        if self.run_timeout:
+            logger.info(f"  Run timeout: {self.run_timeout}s per combination")
 
     def _build_combinations(self):
         """
@@ -351,6 +437,15 @@ class PipelineTest:
             template, then any nested ``config.scheduler`` overrides it,
             then the ``scheduler.X`` variable values override that.
 
+        When NO ``scheduler.X`` variables are swept, the test's top-level
+        ``scheduler:`` block is NOT copied into iteration configs: in that
+        mode the block describes the single job that ``ppl submit`` wraps
+        around the WHOLE test run, and iterations must run in-process
+        inside that allocation (stamping the block onto every iteration
+        made ``_run_single`` re-submit each one as a nested sbatch job
+        from inside the allocation). A ``scheduler:`` nested inside
+        ``config:`` still requests per-iteration submission explicitly.
+
         :param base_config: Base pipeline configuration
         :param variables: Variable values to apply
         :return: Modified configuration
@@ -363,7 +458,7 @@ class PipelineTest:
         pkg_vars = {k: v for k, v in variables.items()
                     if k.split('.', 1)[0] != 'scheduler'}
 
-        if scheduler_vars or self.scheduler:
+        if scheduler_vars:
             merged = copy.deepcopy(self.scheduler) if self.scheduler else {}
             existing = config.get('scheduler') or {}
             merged.update(existing)
@@ -597,14 +692,43 @@ class PipelineTest:
             # template + scheduler.X vars), submit it as its own job and
             # block until it finishes via ``sbatch --wait``. Otherwise
             # run the pipeline in-process.
-            if pipeline.scheduler:
-                logger.pipeline(
-                    f"Submitting iteration as scheduler job "
-                    f"({pipeline.scheduler.get('name')})")
-                pipeline.submit(submit=True, wait=True)
-            else:
-                pipeline.start()
-                pipeline.stop()
+            deadline = Deadline()
+            try:
+                with alarm_timeout(
+                        self.run_timeout,
+                        f"run exceeded run_timeout of {self.run_timeout}s",
+                        deadline):
+                    if pipeline.scheduler:
+                        logger.pipeline(
+                            f"Submitting iteration as scheduler job "
+                            f"({pipeline.scheduler.get('name')})")
+                        pipeline.submit(submit=True, wait=True)
+                    else:
+                        pipeline.start()
+                        pipeline.stop()
+            except Exception:
+                # Keyed off the Deadline, not the exception type:
+                # Pipeline.start re-raises whatever a package raised as
+                # RuntimeError, so the TimeoutError does not survive to
+                # here. Without teardown the run's redis, container
+                # instances and mounts leak into the next combination --
+                # which then silently benchmarks the previous run's
+                # processes.
+                if not deadline.expired:
+                    raise
+                logger.error(
+                    f"Run exceeded run_timeout of {self.run_timeout}s; "
+                    f"tearing down and continuing to the next combination")
+                try:
+                    with alarm_timeout(
+                            TEARDOWN_TIMEOUT,
+                            f"teardown exceeded {TEARDOWN_TIMEOUT}s"):
+                        pipeline.stop()
+                except Exception as stop_error:
+                    logger.warning(
+                        f"Teardown after timeout did not complete cleanly: "
+                        f"{stop_error}")
+                raise
 
             end_time = time.time()
             result['runtime'] = end_time - start_time

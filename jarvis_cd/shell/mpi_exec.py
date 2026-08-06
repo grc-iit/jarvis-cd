@@ -112,10 +112,16 @@ class OpenMpiExec(LocalMpiExec):
         params = self.mpi_cmd.split() if self.mpi_cmd else ['mpiexec']
         params.append('--oversubscribe')
         params.append('--allow-run-as-root')  # For docker
-        # Forward the pipeline-level ssh_cmd to OpenMPI's rsh agent
-        # so prted spawns remote daemons via the wrapped ssh.
+        # Forward the pipeline-level ssh_cmd to OpenMPI's ssh launch agent
+        # so prted spawns remote daemons via the wrapped ssh. OpenMPI <=4
+        # (ORTE) names this plm_rsh_agent; OpenMPI 5 (PRRTE) renamed it to
+        # plm_ssh_agent. The command is assembled on the host but runs inside
+        # the container, so the in-container OMPI version isn't reliably known
+        # here -- emit both names; each runtime honors the one it knows and
+        # ignores the other (an unknown --mca name warns, it is not fatal).
         if self.ssh_cmd:
             params.append(f'--mca plm_rsh_agent "{self.ssh_cmd}"')
+            params.append(f'--mca plm_ssh_agent "{self.ssh_cmd}"')
 
         # Derive --prefix from PATH so remote nodes can find prted
         env_path = self.mpi_env.get('PATH', '')
@@ -127,9 +133,11 @@ class OpenMpiExec(LocalMpiExec):
                     params.append(f'--prefix {prefix}')
                     break
 
-        # Set SSH port if explicitly specified (SSH config will be used otherwise)
+        # Set SSH port if explicitly specified (SSH config used otherwise).
+        # Same rsh(<=4)/ssh(5) launcher rename as the agent above -- emit both.
         if self.ssh_port and self.ssh_port != 22:
             params.append(f'--mca plm_rsh_args "-p {self.ssh_port}"')
+            params.append(f'--mca plm_ssh_args "-p {self.ssh_port}"')
 
 
         if self.ppn is not None:

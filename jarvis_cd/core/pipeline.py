@@ -5,11 +5,13 @@ Provides the consolidated Pipeline class that combines pipeline creation, loadin
 
 import os
 import socket
+import time
 import yaml
 import copy
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from jarvis_cd.core.config import load_class, Jarvis
+from jarvis_cd.core.host_pkg import HostPkg
 from jarvis_cd.util.logger import logger
 from jarvis_cd.util.hostfile import Hostfile
 
@@ -34,6 +36,13 @@ class Pipeline:
         self.created_at = None
         self.last_loaded_file = None
 
+        # Per-package start() timings, keyed by pkg_id ->
+        # {'start_time': epoch, 'runtime': seconds}. Recorded by start() and
+        # replayed onto every later instance by _load_package_instance, since
+        # each phase (start/stop/_get_stat) gets a *fresh* package object and
+        # in-memory state does not survive between them.
+        self.pkg_runtimes = {}
+
         # Container parameters
         self.container_image = ""  # Pre-built image to use
         self.container_uri = ""  # Pre-built deploy image URI (skips build+deploy when set)
@@ -45,14 +54,23 @@ class Pipeline:
         self.container_host_path = ""  # Docker host path prefix for DinD remapping
         self.container_workspace = ""  # Container workspace root for DinD remapping
         self.container_caps = []  # Apptainer --add-caps (e.g. SYS_ADMIN)
+        self.container_fakeroot = False  # Apptainer --fakeroot at instance start
         self.container_binds = []  # Pipeline-level bind mounts (host:container)
         self.container_gpu = False  # --nv / GPU passthrough
         self.tmp_bind_root = None  # Per-host /tmp redirect root (apptainer)
+        self.container_overlay = True  # Apptainer --overlay writable layer
+        self.container_overlay_root = None  # Per-host overlay upper dir root (apptainer)
 
         # Default deploy_mode propagated to packages that don't set
         # their own. None means no default ('default' deploy_mode).
         # Per-package install_method (not this field) selects the Installer.
         self.base_deploy_mode = None
+
+        # Host baremetal prerequisites (top-level YAML key ``host_pkgs``):
+        # [{'install_method': 'spack', 'install_query': 'apptainer'}, ...].
+        # Verified -- and their environments activated -- before the
+        # pipeline does any work. See jarvis_cd/core/host_pkg.py.
+        self.host_pkgs = []
 
         # Launcher overrides (set from YAML top-level keys ``ssh_cmd``,
         # ``pssh_cmd``, ``mpi_cmd``). None = built-in defaults.
@@ -133,6 +151,12 @@ class Pipeline:
                 "pipeline YAML before calling submit().")
         if not self.name:
             raise ValueError("Pipeline name not set; cannot submit job.")
+
+        # Check host prerequisites on the submitting host before the job
+        # is queued. The job script re-runs jarvis on the compute node,
+        # which would hit the same missing package -- but only after
+        # sitting in the queue and burning an allocation to fail.
+        HostPkg.check_all(self.host_pkgs, env=self.env, context=self.name)
 
         from jarvis_cd.core.scheduler import make_scheduler
         shared_dir = self.jarvis.get_pipeline_shared_dir(self.name)
@@ -319,12 +343,30 @@ class Pipeline:
             pipeline_config['container_workspace'] = self.container_workspace
         if self.container_caps:
             pipeline_config['container_caps'] = self.container_caps
+        if self.container_fakeroot:
+            pipeline_config['container_fakeroot'] = self.container_fakeroot
         if self.container_binds:
             pipeline_config['container_binds'] = self.container_binds
+        # container_overlay defaults to True: persist only a non-default
+        # False (the `if truthy` idiom above would drop it silently).
+        if not self.container_overlay:
+            pipeline_config['container_overlay'] = False
+        if self.container_overlay_root:
+            pipeline_config['container_overlay_root'] = self.container_overlay_root
+        if self.container_gpu:
+            pipeline_config['container_gpu'] = self.container_gpu
+        if self.tmp_bind_root:
+            pipeline_config['tmp_bind_root'] = self.tmp_bind_root
 
         # Add base_deploy_mode (default deploy_mode propagated to pkgs).
         if self.base_deploy_mode:
             pipeline_config['base_deploy_mode'] = self.base_deploy_mode
+
+        # Persist host prerequisites so a later `jarvis ppl submit` /
+        # `ppl run` against the saved current pipeline re-checks them
+        # without re-reading the original YAML.
+        if self.host_pkgs:
+            pipeline_config['host_pkgs'] = self.host_pkgs
 
         # Persist launcher overrides so reloads round-trip and
         # downstream `ppl run` invocations see the same launcher even
@@ -480,7 +522,7 @@ class Pipeline:
                     self._apply_interceptors_to_package(pkg_instance, pkg_def)
 
                     if hasattr(pkg_instance, 'start'):
-                        pkg_instance.start()
+                        self._timed_start(pkg_def, pkg_instance)
                     else:
                         logger.warning(f"Package {pkg_def['pkg_id']} has no start method")
 
@@ -494,6 +536,34 @@ class Pipeline:
                     logger.error(f"Error starting package {pkg_def['pkg_id']}: {e}")
                     raise RuntimeError(f"Pipeline startup failed at package '{pkg_def['pkg_id']}': {e}") from e
     
+    def _timed_start(self, pkg_def, pkg_instance):
+        """
+        Run a package's ``start()`` and record how long it took.
+
+        Benchmark packages report ``<pkg_id>.runtime`` out of ``self.runtime``,
+        but ``_get_stat`` runs on a *fresh* instance built long after
+        ``start()`` returned (see ``_load_package_instance``), so the
+        measurement cannot live on the instance that made it. Park it on the
+        pipeline; ``_load_package_instance`` replays it onto every later
+        instance of the same ``pkg_id``.
+
+        Timed in ``finally`` on purpose: a package that raised still ran for
+        some time, and that is exactly the number a failed CSV row wants.
+
+        Records ``runtime`` only -- see ``Pkg.__init__`` for why
+        ``start_time`` must stay unpopulated.
+
+        :param pkg_def: Package definition dictionary
+        :param pkg_instance: The instance whose start() to run
+        """
+        counter = time.perf_counter()
+        try:
+            pkg_instance.start()
+        finally:
+            runtime = time.perf_counter() - counter
+            pkg_instance.runtime = runtime
+            self.pkg_runtimes[pkg_def['pkg_id']] = runtime
+
     def stop(self):
         """Stop all packages in the pipeline"""
         from jarvis_cd.util.logger import logger
@@ -594,11 +664,21 @@ class Pipeline:
         :param load_type: Type of pipeline file to load (e.g., 'yaml')
         :param pipeline_file: Path to pipeline file to load and run
         """
-        try:
-            # Load pipeline file if specified
-            if load_type and pipeline_file:
-                self.load(load_type, pipeline_file)
+        # Load pipeline file if specified. Both of these run outside the
+        # try below: nothing has started yet, so the except's stop()
+        # recovery has nothing to tear down, and routing a missing host
+        # package through it would bury the actionable message under a
+        # "Attempting to stop packages..." trace.
+        if load_type and pipeline_file:
+            self.load(load_type, pipeline_file)
 
+        # Verify host prerequisites before doing anything. Loading a
+        # YAML above already checked (and the probe is memoized, so this
+        # is free); this call is what covers `jarvis ppl run` against a
+        # saved current pipeline, which never re-reads the source YAML.
+        HostPkg.check_all(self.host_pkgs, env=self.env, context=self.name)
+
+        try:
             # Configure all packages before starting.
             # This runs _configure() on each package, which sets up
             # environment variables (e.g., CHI_SERVER_CONF) needed by start().
@@ -972,8 +1052,22 @@ class Pipeline:
         self.container_host_path = pipeline_config.get('container_host_path', '')
         self.container_workspace = pipeline_config.get('container_workspace', '')
         self.container_caps = pipeline_config.get('container_caps', [])
+        self.container_fakeroot = pipeline_config.get(
+            'container_fakeroot', False)
         self.container_binds = Pipeline._expand_env_in_config(
             pipeline_config.get('container_binds', []) or [])
+        self.container_overlay = pipeline_config.get('container_overlay', True)
+        overlay_root_raw = pipeline_config.get('container_overlay_root', None)
+        self.container_overlay_root = (
+            os.path.expandvars(overlay_root_raw)
+            if overlay_root_raw else None
+        )
+        self.container_gpu = pipeline_config.get('container_gpu', False)
+        tmp_bind_root_raw = pipeline_config.get('tmp_bind_root', None)
+        self.tmp_bind_root = (
+            os.path.expandvars(tmp_bind_root_raw)
+            if tmp_bind_root_raw else None
+        )
 
         # Launcher overrides (top-level YAML keys). None = use built-in
         # defaults (ssh / pssh / mpiexec). Typical override pattern:
@@ -984,6 +1078,13 @@ class Pipeline:
         self.pssh_cmd = pipeline_config.get('pssh_cmd', None)
         self.mpi_cmd = pipeline_config.get('mpi_cmd', None)
         self._apply_launcher_overrides()
+
+        # Host prerequisites round-trip through the saved config. Only
+        # parsed here (no check): loading a saved pipeline is also what
+        # `jarvis ppl status`/`ppl print` do, and those should not fail
+        # on a host that merely cannot run the pipeline. The check runs
+        # on the paths that actually execute: run() and submit().
+        self.host_pkgs = HostPkg.parse(pipeline_config.get('host_pkgs'))
 
         # Load base_deploy_mode. The legacy ``install_manager`` key is
         # still read once with a deprecation warning so saved pipelines
@@ -1112,6 +1213,17 @@ class Pipeline:
                 "The 'env' field must be either a string (named environment) or omitted (auto-build)."
             )
         
+        # Host prerequisites are verified before anything else touches
+        # the filesystem or spawns a package. A containerized pipeline
+        # shells out to the host's apptainer/docker to build its image,
+        # so a missing host package has to stop the load here -- not
+        # surface as `apptainer: command not found` after jarvis has
+        # already created directories and started services. Activating
+        # here also means the container build below inherits the
+        # prerequisite's PATH.
+        self.host_pkgs = HostPkg.parse(pipeline_def.get('host_pkgs'))
+        HostPkg.check_all(self.host_pkgs, env=self.env, context=self.name)
+
         # Initialize other attributes
         self.created_at = str(Path().cwd())
         self.last_loaded_file = str(pipeline_file.absolute())
@@ -1135,6 +1247,13 @@ class Pipeline:
         # the workload needs (e.g., SYS_ADMIN + /dev/fuse for FUSE mounts)
         # has to be declared at the pipeline level here.
         self.container_caps = pipeline_def.get('container_caps', [])
+        # Apptainer-only: run the instance under --fakeroot. Rootless
+        # apptainer grants a FUSE-capable user namespace (CAP_SYS_ADMIN
+        # inside the userns) only via --fakeroot; per-exec flags are
+        # ignored on a running instance, so like caps/binds above it must
+        # bake into `apptainer instance start`.
+        self.container_fakeroot = pipeline_def.get('container_fakeroot',
+                                                   False)
         self.container_binds = Pipeline._expand_env_in_config(
             pipeline_def.get('container_binds', []) or [])
 
@@ -1154,6 +1273,24 @@ class Pipeline:
         self.tmp_bind_root = (
             os.path.expandvars(tmp_bind_root_raw)
             if tmp_bind_root_raw else None
+        )
+
+        # Apptainer-only: writable-overlay controls. The default overlay
+        # upper dir lives under the pipeline's shared_dir, which is
+        # single-node only: overlayfs cannot use a shared/NFS directory
+        # as its upper layer, and concurrent `apptainer instance start`s
+        # across nodes race on the same session/overlay setup. Setting
+        # `container_overlay_root: /mnt/nvme/$USER` (or any per-host
+        # path) puts the upper dir at <root>/<pipeline_name>/overlay on
+        # every host instead — required for multi-node pipelines.
+        # `container_overlay: false` drops --overlay entirely: the
+        # container FS is read-only outside bind mounts and the host
+        # /tmp mounts normally.
+        self.container_overlay = pipeline_def.get('container_overlay', True)
+        overlay_root_raw = pipeline_def.get('container_overlay_root', None)
+        self.container_overlay_root = (
+            os.path.expandvars(overlay_root_raw)
+            if overlay_root_raw else None
         )
 
         # Launcher overrides (top-level YAML keys). None = use built-in
@@ -1312,6 +1449,16 @@ class Pipeline:
 
         # Initialize directories now that pkg_id is set
         pkg_instance._ensure_directories()
+
+        # Replay this package's start() runtime onto the fresh instance. Each
+        # phase (start/stop/_get_stat) gets its own object, so without this the
+        # stats instance has no idea the package ever ran and `<pkg_id>.runtime`
+        # lands in the CSV blank. MUST come after _ensure_directories(), which
+        # is what calls the package's own _init() -- an _init that assigns
+        # self.runtime would otherwise clobber the replay.
+        runtime = self.pkg_runtimes.get(pkg_def['pkg_id'])
+        if runtime is not None:
+            pkg_instance.runtime = runtime
 
         # Set configuration
         base_config = pkg_def.get('config', {})
@@ -1781,21 +1928,59 @@ class Pipeline:
             if self.container_caps:
                 cap_flag = f'--add-caps {",".join(self.container_caps)} '
 
-            # Per-pipeline writable layer backed by NFS, not RAM.
+            fakeroot_flag = '--fakeroot ' if self.container_fakeroot else ''
+
+            # The effective hostfile decides both where instances start
+            # (exec_info below) and whether the default shared overlay
+            # is even legal (guard below). Fetch it once, up front.
+            hostfile = self.get_hostfile()
+
+            # Per-pipeline writable layer backed by disk, not RAM.
             # `--writable-tmpfs` is RAM-only (capped at ~50% of system
             # RAM); workloads that apt-/conda-install at runtime
             # (snakemake conda envs, deferred pip installs, …) blow past
-            # that even though the host has terabytes free. An overlay
-            # directory under shared_dir lives on the same NFS mount as
-            # the SIF, so the container has effectively unlimited
-            # writable space and the data persists across runs.
+            # that even though the host has terabytes free.
+            #
+            # The default overlay dir under shared_dir lives on the same
+            # (typically NFS) mount as the SIF — effectively unlimited
+            # writable space, persists across runs — but is single-node
+            # only: overlayfs cannot use a shared/NFS directory as its
+            # upper layer, and N nodes mounting the same upper dir race
+            # each other's session setup (guarded below).
+            # `container_overlay_root` relocates the upper dir to
+            # <root>/<pipeline_name>/overlay on node-local disk instead;
+            # that dir is created on every host via exec_info further
+            # down, since a head-side mkdir only exists on this node.
             #
             # `--no-mount tmp` keeps the host's small /tmp out of the
-            # picture; in-container /tmp lands in the overlay (NFS).
-            overlay_dir = shared_dir / 'overlay'
-            overlay_dir.mkdir(parents=True, exist_ok=True)
-            overlay_flag = f'--overlay {overlay_dir} '
-            no_mount_flag = '--no-mount tmp '
+            # picture; in-container /tmp lands in the overlay. With
+            # `container_overlay: false` there is no overlay for /tmp to
+            # land in, so the host /tmp stays mounted (apptainer
+            # default).
+            overlay_flag = ''
+            no_mount_flag = ''
+            if self.container_overlay:
+                if self.container_overlay_root:
+                    overlay_dir = (
+                        f"{self.container_overlay_root}/{self.name}/overlay")
+                else:
+                    if (len(hostfile) > 1 and
+                            not self._hostfile_is_local_only(hostfile)):
+                        raise RuntimeError(
+                            f"Pipeline '{self.name}' spans multiple hosts "
+                            f"but uses the default shared apptainer overlay "
+                            f"({shared_dir / 'overlay'}). overlayfs cannot "
+                            "use a shared/NFS directory as its upper layer, "
+                            "and concurrent instance starts race on it. Set "
+                            "`container_overlay_root: <node-local path>` "
+                            "(e.g. /mnt/nvme/$USER) or `container_overlay: "
+                            "false` in the pipeline YAML.")
+                    overlay_dir = shared_dir / 'overlay'
+                    # Head-side mkdir suffices only because this path is
+                    # on the shared FS (single-node guaranteed above).
+                    overlay_dir.mkdir(parents=True, exist_ok=True)
+                overlay_flag = f'--overlay {overlay_dir} '
+                no_mount_flag = '--no-mount tmp '
 
             # When tmp_bind_root is set in the pipeline YAML, replace the
             # overlay-backed /tmp with a per-host bind mount so workloads
@@ -1808,7 +1993,7 @@ class Pipeline:
                 no_mount_flag = ''
 
             start_cmd = (
-                f"apptainer instance start {nv_flag}{cap_flag}{bind_flags}"
+                f"apptainer instance start {fakeroot_flag}{nv_flag}{cap_flag}{bind_flags}"
                 f"{tmp_bind_flag}{no_mount_flag}{overlay_flag}{sif_path} {instance_name}"
                 f" && apptainer exec {nv_flag}instance://{instance_name}"
                 f" /usr/sbin/sshd -p {ssh_port}"
@@ -1828,7 +2013,6 @@ class Pipeline:
             # adopted by pam_slurm_adopt automatically; the pipeline's
             # own ssh_cmd override (e.g. env -u LD_LIBRARY_PATH ssh)
             # neutralizes the conda libcrypto/OpenSSL mismatch.
-            hostfile = self.get_hostfile()
             if self._hostfile_is_local_only(hostfile):
                 logger.info("Hostfile is local-only, deploying to localhost directly")
                 exec_info = LocalExecInfo()
@@ -1836,7 +2020,27 @@ class Pipeline:
                 logger.info(
                     f"Hostfile has {len(hostfile)} hosts; starting "
                     "apptainer instance on every host via PsshExecInfo")
-                exec_info = PsshExecInfo(hostfile=hostfile)
+                exec_info = PsshExecInfo(
+                    hostfile=hostfile,
+                    # ssh propagates no env; inline PATH so the remote resolves
+                    # apptainer via the spack view. PATH only -- never
+                    # LD_LIBRARY_PATH (keep managed libs off apptainer's starter).
+                    env={'PATH': os.environ.get('PATH', '')})
+
+            # A per-host overlay upper dir must exist on every node
+            # before `apptainer instance start` tries to mount it,
+            # otherwise apptainer aborts with "mount source X doesn't
+            # exist". (The default shared overlay was mkdir'd head-side
+            # above — being on the shared FS, every node sees it.)
+            if self.container_overlay and self.container_overlay_root:
+                overlay_mkdir = (
+                    f"mkdir -p "
+                    f"{self.container_overlay_root}/{self.name}/overlay")
+                logger.info(
+                    f"container_overlay_root set; ensuring "
+                    f"{self.container_overlay_root}/{self.name}/overlay "
+                    "exists on every host")
+                Exec(overlay_mkdir, exec_info).run()
 
             # Per-host bind source for tmp_bind_root must exist on every
             # node before the apptainer instance start tries to mount it,
@@ -1849,7 +2053,15 @@ class Pipeline:
                     f"{self.name}/tmp exists on every host")
                 Exec(tmp_mkdir, exec_info).run()
 
-            Exec(start_cmd, exec_info).run()
+            start = Exec(start_cmd, exec_info).run()
+            # A partial instance start must not go unnoticed: the
+            # workload's own clustering layer would wait forever on the
+            # node whose instance never came up.
+            for host, code in start.exit_code.items():
+                if code != 0:
+                    raise RuntimeError(
+                        f"apptainer instance start failed on {host} "
+                        f"(exit {code})")
             logger.success("Apptainer instances started (SSH ready)")
         else:
             # Docker/Podman: start containers via compose
@@ -1871,7 +2083,12 @@ class Pipeline:
             else:
                 logger.info("Deploying containers to all nodes in hostfile")
                 self._distribute_image_to_hosts(hostfile)
-                exec_info = PsshExecInfo(hostfile=hostfile)
+                exec_info = PsshExecInfo(
+                    hostfile=hostfile,
+                    # ssh propagates no env; inline PATH so the remote resolves
+                    # apptainer via the spack view. PATH only -- never
+                    # LD_LIBRARY_PATH (keep managed libs off apptainer's starter).
+                    env={'PATH': os.environ.get('PATH', '')})
 
             Exec(up_cmd, exec_info).run()
             logger.success("Containers started (SSH ready)")
@@ -1886,7 +2103,7 @@ class Pipeline:
                 self._apply_interceptors_to_package(pkg_instance, pkg_def)
 
                 if hasattr(pkg_instance, 'start'):
-                    pkg_instance.start()
+                    self._timed_start(pkg_def, pkg_instance)
                 else:
                     logger.warning(f"Package {pkg_def['pkg_id']} has no start method")
 
@@ -1997,7 +2214,12 @@ class Pipeline:
         if self._hostfile_is_local_only(hostfile):
             exec_info = LocalExecInfo()
         else:
-            exec_info = PsshExecInfo(hostfile=hostfile)
+            exec_info = PsshExecInfo(
+                hostfile=hostfile,
+                # ssh propagates no env; inline PATH so the remote resolves
+                # apptainer via the spack view. PATH only -- never
+                # LD_LIBRARY_PATH (keep managed libs off apptainer's starter).
+                env={'PATH': os.environ.get('PATH', '')})
 
         Exec(stop_cmd, exec_info).run()
         logger.success("Containers stopped")
@@ -2039,7 +2261,12 @@ class Pipeline:
         if self._hostfile_is_local_only(hostfile):
             exec_info = LocalExecInfo()
         else:
-            exec_info = PsshExecInfo(hostfile=hostfile)
+            exec_info = PsshExecInfo(
+                hostfile=hostfile,
+                # ssh propagates no env; inline PATH so the remote resolves
+                # apptainer via the spack view. PATH only -- never
+                # LD_LIBRARY_PATH (keep managed libs off apptainer's starter).
+                env={'PATH': os.environ.get('PATH', '')})
 
         Exec(kill_cmd, exec_info).run()
         logger.success("Containers force-killed")
