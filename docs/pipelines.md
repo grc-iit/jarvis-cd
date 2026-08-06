@@ -118,6 +118,13 @@ name: my_pipeline
 # Must be a named environment reference or omitted
 env: my_custom_environment  # References a named environment
 
+# Host baremetal prerequisites (optional)
+# Tools Jarvis itself shells out to, verified before the pipeline runs.
+# See "Host Prerequisites (host_pkgs)" below.
+host_pkgs:
+  - install_method: spack
+    install_query: apptainer
+
 # Main packages (required)
 pkgs:
   - pkg_type: repo.package_name
@@ -1725,6 +1732,28 @@ Error: yaml.scanner.ScannerError: while parsing a block mapping
 1. Validate YAML syntax: `python -c "import yaml; yaml.safe_load(open('pipeline.yaml'))"`
 2. Check indentation (use spaces, not tabs)
 3. Quote string values with special characters
+
+**Problem**: A declared host prerequisite is missing
+```
+Error: Missing 1 required host package(s) for 'my_pipeline'. These must be
+installed on the host baremetal before jarvis can run this pipeline:
+  - apptainer (install_method: spack)
+      install it with: spack install apptainer
+```
+
+**Solutions**:
+1. Run the command the error names (`spack install apptainer`). Jarvis
+   reports the missing prerequisite rather than installing it, because an
+   install can run for hours.
+2. If the tool is already installed but Jarvis cannot see it, check that the
+   backend can find it — for spack, that means `spack location -i <spec>`
+   succeeds, and that `SPACK_ROOT` is set if `spack` is not already on `PATH`
+   (the shell-function form from your rc files is invisible to the
+   non-interactive shell Jarvis probes with).
+3. If the pipeline does not actually need it on this host, remove the entry
+   from `host_pkgs`.
+
+See [Host Prerequisites](#host-prerequisites-host_pkgs).
 
 #### Package Configuration Issues
 
