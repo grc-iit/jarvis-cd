@@ -188,6 +188,34 @@ class TestApptainerStartCmd(ApptainerStartTestBase):
             self.assertNotIn('--overlay', cmd)
             self.assertNotIn('/overlay', cmd)
 
+    def test_container_gpu_bakes_nv_into_instance(self):
+        """--nv is ignored on a running instance, so container_gpu has to be
+        baked into `instance start` (and the sshd exec that follows it).
+        Exec._prepare_container deliberately does not forward it per-exec."""
+        pipeline = self._create_pipeline('apt_gpu', container_gpu=True)
+        MockExec = self._start(pipeline)
+
+        start_cmd = MockExec.call_args.args[0]
+        self.assertIn('apptainer instance start --nv ', start_cmd)
+        self.assertIn('apptainer exec --nv instance://apt_gpu', start_cmd)
+
+    def test_no_container_gpu_omits_nv(self):
+        """Default (container_gpu unset) emits no --nv anywhere."""
+        pipeline = self._create_pipeline('apt_nogpu')
+        MockExec = self._start(pipeline)
+
+        self.assertNotIn('--nv', MockExec.call_args.args[0])
+
+    def test_container_binds_baked_into_instance(self):
+        """container_binds extras join the shared/private binds at instance
+        start; ExecInfo.bind_mounts is not forwarded per-exec."""
+        pipeline = self._create_pipeline('apt_binds',
+                                         container_binds=['/dev/fuse'])
+        MockExec = self._start(pipeline)
+
+        start_cmd = MockExec.call_args.args[0]
+        self.assertIn('--bind /dev/fuse ', start_cmd)
+
     def test_multi_node_default_overlay_raises(self):
         """A multi-host hostfile with the default shared overlay is the
         known-broken configuration: refuse to start, before any command
