@@ -296,7 +296,20 @@ class Ior(Application):
         ).run()
         failures = {host: code for host, code in result.exit_code.items() if code != 0}
         if failures:
-            raise RuntimeError(f"IOR execution failed: {failures}")
+            diagnostics: dict[str, str] = {}
+            for host in failures:
+                output: list[str] = []
+                for stream_name in ("stdout", "stderr"):
+                    streams = getattr(result, stream_name, {})
+                    if not isinstance(streams, dict):
+                        continue
+                    value = streams.get(host)
+                    if value:
+                        output.append(str(value).strip())
+                if output:
+                    diagnostics[host] = "\n".join(output)[-4096:]
+            detail = f"; output={diagnostics!r}" if diagnostics else ""
+            raise RuntimeError(f"IOR execution failed: {failures}{detail}")
 
     def stop(self):
         """Stop IOR (no-op — IOR runs to completion)."""

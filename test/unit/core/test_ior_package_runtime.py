@@ -33,6 +33,8 @@ class _ExecResult:
     """Return configured per-host process results without launching IOR."""
 
     exit_code: dict[str, int] = {"localhost": 0}
+    stderr: dict[str, str] = {}
+    stdout: dict[str, str] = {}
     commands: list[object] = []
 
     def __init__(self, command: object, exec_info: Any) -> None:
@@ -104,10 +106,15 @@ def test_start_propagates_failed_ior_processes(
     package = _ior_instance()
     package.config["log"] = "results/ior output.log"
     _ExecResult.exit_code = {"compute-01": 127, "compute-02": 127}
+    _ExecResult.stdout = {
+        "compute-01": "bash: line 1: ior: command not found\n",
+        "compute-02": "bash: line 1: ior: command not found\n",
+    }
+    _ExecResult.stderr = {}
     _ExecResult.commands = []
     monkeypatch.setattr(ior_package, "Exec", _ExecResult)
 
-    with pytest.raises(RuntimeError, match="IOR execution failed"):
+    with pytest.raises(RuntimeError, match="ior: command not found"):
         package.start()
 
     command_list = _ExecResult.commands[0]
@@ -124,6 +131,8 @@ def test_start_accepts_successful_ior_processes(
     """A successful per-host process map remains a successful package launch."""
     package = _ior_instance()
     _ExecResult.exit_code = {"compute-01": 0, "compute-02": 0}
+    _ExecResult.stdout = {}
+    _ExecResult.stderr = {}
     monkeypatch.setattr(ior_package, "Exec", _ExecResult)
 
     package.start()
