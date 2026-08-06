@@ -339,10 +339,15 @@ class Montage(Application):
 
     def _ensure_output_dir(self) -> None:
         """Create the output on each participating host and propagate failures."""
-        result = Mkdir(
-            self._output_dir(),
-            self._node_exec_info(env=self.env),
-        ).run()
+        output = Path(self._output_dir())
+        if self.hostfile is None or self.hostfile.is_local():
+            output.mkdir(parents=True, exist_ok=True, mode=0o700)
+            if not output.is_dir():
+                raise RuntimeError(
+                    f"Montage output directory creation failed: {output}"
+                )
+            return
+        result = Mkdir(str(output), self._node_exec_info(env=self.env)).run()
         self._require_success(result, "Montage output directory creation")
 
     @staticmethod

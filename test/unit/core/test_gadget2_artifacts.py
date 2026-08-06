@@ -10,6 +10,8 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pytest
+
 from jarvis_cd.artifacts import (
     ArtifactState,
     ArtifactStructure,
@@ -228,12 +230,22 @@ def test_nonzero_exit_marks_observed_products_incomplete(tmp_path: Path) -> None
 
 
 def test_factory_resolves_relative_output_and_ignores_unrelated_packages(
+    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
     """Artifact authority remains exact to one package-owned output root."""
 
     module = _load_artifacts()
     bundle = _write_bundle(tmp_path / "galaxy.tar")
+    materialized = module.extract_input_bundle(
+        bundle,
+        tmp_path / "materialized-input",
+    )
+    monkeypatch.setattr(
+        module,
+        "extract_input_bundle",
+        lambda *_args, **_kwargs: materialized,
+    )
     adapter = module.adapter_from_package(
         {
             "pkg_type": "builtin.gadget2",

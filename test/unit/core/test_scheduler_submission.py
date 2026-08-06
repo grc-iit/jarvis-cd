@@ -1007,7 +1007,10 @@ def test_scheduler_log_artifacts_resolve_same_ids_and_finalize(
     executor = Mock()
     executor.run.return_value = execution
 
-    with patch("jarvis_cd.shell.Exec", return_value=executor) as execute:
+    with (
+        patch("jarvis_cd.shell.Exec", return_value=executor) as execute,
+        patch("jarvis_cd.core.pipeline._prepare_scheduler_log_parents"),
+    ):
         handle = pipeline.submit(
             submit=True,
             wait=False,
@@ -1076,7 +1079,10 @@ def test_unprovable_scheduler_log_path_is_incomplete_without_failing_workload(
         stderr={"localhost": ""},
     )
 
-    with patch("jarvis_cd.shell.Exec", return_value=executor):
+    with (
+        patch("jarvis_cd.shell.Exec", return_value=executor),
+        patch("jarvis_cd.core.pipeline._prepare_scheduler_log_parents"),
+    ):
         handle = pipeline.submit(
             submit=True,
             wait=False,
@@ -1142,7 +1148,10 @@ def test_fast_wait_runtime_resolution_is_idempotent_for_submitter(
         )
 
     executor.run.side_effect = finish_before_sbatch_returns
-    with patch("jarvis_cd.shell.Exec", return_value=executor):
+    with (
+        patch("jarvis_cd.shell.Exec", return_value=executor),
+        patch("jarvis_cd.core.pipeline._prepare_scheduler_log_parents"),
+    ):
         handle = pipeline.submit(
             submit=True,
             wait=True,
@@ -1193,7 +1202,10 @@ def test_runtime_unresolved_log_does_not_fail_fast_wait_workload(
         )
 
     executor.run.side_effect = finish_before_sbatch_returns
-    with patch("jarvis_cd.shell.Exec", return_value=executor):
+    with (
+        patch("jarvis_cd.shell.Exec", return_value=executor),
+        patch("jarvis_cd.core.pipeline._prepare_scheduler_log_parents"),
+    ):
         handle = pipeline.submit(
             submit=True,
             wait=True,
@@ -1224,7 +1236,10 @@ def test_scheduler_artifact_resolution_rejects_mismatched_bound_identity(
     pipeline.save()
     executor = Mock()
     executor.run.side_effect = RuntimeError("submit transport disappeared")
-    with patch("jarvis_cd.shell.Exec", return_value=executor):
+    with (
+        patch("jarvis_cd.shell.Exec", return_value=executor),
+        patch("jarvis_cd.core.pipeline._prepare_scheduler_log_parents"),
+    ):
         with pytest.raises(RuntimeError, match="submit transport disappeared"):
             pipeline.submit(
                 submit=True,
@@ -1289,7 +1304,10 @@ def test_artifact_resolution_failure_preserves_durable_submission_identity(
         )
         raise RuntimeError("artifact store failed")
 
-    with patch("jarvis_cd.shell.Exec", return_value=executor):
+    with (
+        patch("jarvis_cd.shell.Exec", return_value=executor),
+        patch("jarvis_cd.core.pipeline._prepare_scheduler_log_parents"),
+    ):
         with patch.object(
             ExecutionStore,
             "resolve_scheduler_artifact_paths",
