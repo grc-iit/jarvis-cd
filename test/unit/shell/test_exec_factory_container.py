@@ -107,6 +107,9 @@ class TestPrepareContainerApptainer(unittest.TestCase):
         exec_obj = make_exec(info)
         wrapped_cmd, _ = exec_obj._prepare_container('echo hello')
         self.assertNotIn('--nv', wrapped_cmd)
+        # Dropping --nv must not also drop the instance targeting: the
+        # command still has to enter the running instance.
+        self.assertIn('instance://gpuimg', wrapped_cmd)
 
     def test_apptainer_no_gpu_flag_when_false(self):
         """When gpu=False, '--nv' does NOT appear."""
@@ -120,6 +123,7 @@ class TestPrepareContainerApptainer(unittest.TestCase):
         exec_obj = self._make_apptainer_exec(bind_mounts=['/host/path:/container/path'])
         wrapped_cmd, _ = exec_obj._prepare_container('echo hello')
         self.assertNotIn('--bind', wrapped_cmd)
+        self.assertIn('instance://myimg', wrapped_cmd)
 
 
 class TestPrepareContainerDocker(unittest.TestCase):
