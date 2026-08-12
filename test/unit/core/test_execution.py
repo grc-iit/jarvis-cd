@@ -1266,6 +1266,47 @@ def test_nonblocking_direct_run_returns_live_queryable_handle(
     assert handle.progress().execution_id == "background"
 
 
+def test_usable_systemd_user_runtime_dir_prefers_a_real_env_directory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ambient XDG_RUNTIME_DIR wins when it actually exists on disk."""
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setattr(
+        pipeline_module.os.path, "isdir", lambda path: path == "/run/user/1000"
+    )
+    assert pipeline_module._usable_systemd_user_runtime_dir() == "/run/user/1000"
+
+
+def test_usable_systemd_user_runtime_dir_falls_back_to_the_conventional_uid_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stripped env var does not mean the session is gone.
+
+    Regression case for clio-relay#222's local reproduction: the real relay
+    broker -> uv -> clio-kit -> jarvis-mcp launch chain does NOT forward
+    XDG_RUNTIME_DIR down to where a direct-mode pipeline actually launches
+    (confirmed live on a WSL harness reproduction), even though the user's
+    systemd session and its conventional /run/user/<uid> directory are still
+    live underneath, and systemd-run itself falls back to that same path.
+    """
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setattr(pipeline_module.os, "getuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(
+        pipeline_module.os.path, "isdir", lambda path: path == "/run/user/1000"
+    )
+    assert pipeline_module._usable_systemd_user_runtime_dir() == "/run/user/1000"
+
+
+def test_usable_systemd_user_runtime_dir_none_when_nothing_is_live(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No env var, no conventional directory: correctly report unusable."""
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setattr(pipeline_module.os, "getuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(pipeline_module.os.path, "isdir", lambda _path: False)
+    assert pipeline_module._usable_systemd_user_runtime_dir() is None
+
+
 def test_escaped_direct_launch_command_wraps_with_systemd_run_scope_when_available(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1282,7 +1323,12 @@ def test_escaped_direct_launch_command_wraps_with_systemd_run_scope_when_availab
     monkeypatch.setattr(
         pipeline_module.shutil, "which", lambda _name: "/usr/bin/systemd-run"
     )
-    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setattr(
+        pipeline_module, "_usable_systemd_user_runtime_dir", lambda: "/run/user/1000"
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_systemd_user_scope_is_usable", lambda _systemd_run: True
+    )
 
     original = ["python3", "-m", "jarvis_cd.core.execution", "run-snapshot"]
     wrapped = pipeline_module._escaped_direct_launch_command(original)
@@ -1303,7 +1349,12 @@ def test_escaped_direct_launch_command_falls_back_without_systemd_run(
     """Hosts without systemd-run keep today's setsid-only launch, unchanged."""
     monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: False)
     monkeypatch.setattr(pipeline_module.shutil, "which", lambda _name: None)
-    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setattr(
+        pipeline_module, "_usable_systemd_user_runtime_dir", lambda: "/run/user/1000"
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_systemd_user_scope_is_usable", lambda _systemd_run: True
+    )
 
     original = ["python3", "-m", "jarvis_cd.core.execution", "run-snapshot"]
     assert pipeline_module._escaped_direct_launch_command(original) == original
@@ -1312,15 +1363,191 @@ def test_escaped_direct_launch_command_falls_back_without_systemd_run(
 def test_escaped_direct_launch_command_falls_back_without_runtime_dir(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A systemd-run binary with no reachable user bus is not trusted to scope."""
+    """No live systemd user runtime directory at all is not trusted to scope."""
     monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: False)
     monkeypatch.setattr(
         pipeline_module.shutil, "which", lambda _name: "/usr/bin/systemd-run"
     )
-    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    monkeypatch.setattr(
+        pipeline_module, "_usable_systemd_user_runtime_dir", lambda: None
+    )
 
     original = ["python3", "-m", "jarvis_cd.core.execution", "run-snapshot"]
     assert pipeline_module._escaped_direct_launch_command(original) == original
+
+
+def test_escaped_direct_launch_command_falls_back_when_the_probe_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A binary and a runtime dir are not enough; the probe must also succeed.
+
+    Regression case for a real failure observed while validating clio-relay#222:
+    a deeply nested launch chain (relay broker -> uv -> clio-kit -> jarvis-mcp)
+    had a live systemd-run binary and a live /run/user/<uid>, yet
+    ``systemd-run --user --scope`` still failed its D-Bus connection
+    ("Failed to connect to bus: No medium found") — jarvis-cd's own
+    orphan-reconciliation then wrongly failed the execution a few hundred
+    milliseconds after a successful spawn, because the wrap silently swapped
+    a leaked-descendant failure for a broken-launch failure. Falling back to
+    the unwrapped (pre-#222-fix) launch when the probe fails avoids trading
+    one failure mode for a worse one.
+    """
+    monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: False)
+    monkeypatch.setattr(
+        pipeline_module.shutil, "which", lambda _name: "/usr/bin/systemd-run"
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_usable_systemd_user_runtime_dir", lambda: "/run/user/1000"
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_systemd_user_scope_is_usable", lambda _systemd_run: False
+    )
+
+    original = ["python3", "-m", "jarvis_cd.core.execution", "run-snapshot"]
+    assert pipeline_module._escaped_direct_launch_command(original) == original
+
+
+def test_systemd_user_scope_is_usable_true_on_a_successful_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A clean probe scope (exit 0) is trusted."""
+
+    class _Completed:
+        returncode = 0
+
+    monkeypatch.setattr(
+        pipeline_module.subprocess,
+        "run",
+        lambda *_a, **_k: _Completed(),
+    )
+    assert pipeline_module._systemd_user_scope_is_usable("/usr/bin/systemd-run") is True
+
+
+def test_systemd_user_scope_is_usable_false_on_a_nonzero_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe scope that exits nonzero (e.g. a failed D-Bus connection) is not trusted."""
+
+    class _Completed:
+        returncode = 1
+
+    monkeypatch.setattr(
+        pipeline_module.subprocess,
+        "run",
+        lambda *_a, **_k: _Completed(),
+    )
+    assert pipeline_module._systemd_user_scope_is_usable("/usr/bin/systemd-run") is False
+
+
+def test_systemd_user_scope_is_usable_false_when_the_probe_hangs_or_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A probe that times out or cannot even launch is treated as unusable."""
+
+    def _raise_timeout(*_a: Any, **_k: Any) -> Any:
+        raise pipeline_module.subprocess.TimeoutExpired(cmd="systemd-run", timeout=2.0)
+
+    monkeypatch.setattr(pipeline_module.subprocess, "run", _raise_timeout)
+    assert pipeline_module._systemd_user_scope_is_usable("/usr/bin/systemd-run") is False
+
+    def _raise_oserror(*_a: Any, **_k: Any) -> Any:
+        raise OSError("no such executable")
+
+    monkeypatch.setattr(pipeline_module.subprocess, "run", _raise_oserror)
+    assert pipeline_module._systemd_user_scope_is_usable("/usr/bin/systemd-run") is False
+
+
+def test_cgroup_membership_is_none_without_a_readable_proc_entry() -> None:
+    """A PID with no ``/proc/<pid>/cgroup`` (gone, or no /proc at all) is None."""
+    assert pipeline_module._cgroup_membership("999999999") is None
+
+
+def test_cgroup_escape_confirmed_true_once_membership_differs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single differing read is enough — no need to keep polling."""
+    monkeypatch.setattr(
+        pipeline_module,
+        "_cgroup_membership",
+        lambda pid: "caller\n" if pid == "self" else "escaped\n",
+    )
+    assert pipeline_module._cgroup_escape_confirmed(4242) is True
+
+
+def test_cgroup_escape_confirmed_false_when_membership_never_changes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Still in the caller's own cgroup at the deadline: not confirmed."""
+    monkeypatch.setattr(pipeline_module, "_cgroup_membership", lambda _pid: "same\n")
+    monkeypatch.setattr(
+        pipeline_module, "_CGROUP_ESCAPE_CONFIRM_TIMEOUT_SECONDS", 0.05
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_CGROUP_ESCAPE_POLL_INTERVAL_SECONDS", 0.01
+    )
+    assert pipeline_module._cgroup_escape_confirmed(4242) is False
+
+
+def test_cgroup_escape_confirmed_false_when_the_process_is_already_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unreadable target cgroup (process already exited) is not confirmed."""
+
+    def fake_membership(pid: str) -> str | None:
+        return "caller\n" if pid == "self" else None
+
+    monkeypatch.setattr(pipeline_module, "_cgroup_membership", fake_membership)
+    assert pipeline_module._cgroup_escape_confirmed(4242) is False
+
+
+def test_cgroup_escape_confirmed_false_without_a_readable_caller_cgroup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No /proc support at all (e.g. non-Linux) is not confirmed, not raised."""
+    monkeypatch.setattr(pipeline_module, "_cgroup_membership", lambda _pid: None)
+    assert pipeline_module._cgroup_escape_confirmed(4242) is False
+
+
+def test_terminate_launched_process_best_effort_skips_an_already_exited_process() -> None:
+    """No termination is attempted once the process has already exited."""
+
+    class Process:
+        terminate_calls = 0
+
+        def poll(self) -> int:
+            return 0
+
+        def terminate(self) -> None:
+            Process.terminate_calls += 1
+
+    pipeline_module._terminate_launched_process_best_effort(Process())
+    assert Process.terminate_calls == 0
+
+
+def test_terminate_launched_process_best_effort_kills_after_a_stuck_terminate() -> None:
+    """A terminate() that never lands falls back to kill()."""
+
+    class Process:
+        def __init__(self) -> None:
+            self.killed = False
+
+        def poll(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            pass
+
+        def wait(self, timeout: float | None = None) -> int:
+            if not self.killed:
+                raise pipeline_module.subprocess.TimeoutExpired(cmd="x", timeout=timeout)
+            return -9
+
+        def kill(self) -> None:
+            self.killed = True
+
+    process = Process()
+    pipeline_module._terminate_launched_process_best_effort(process)
+    assert process.killed is True
 
 
 def test_escaped_direct_launch_command_falls_back_on_windows(
@@ -1331,7 +1558,12 @@ def test_escaped_direct_launch_command_falls_back_on_windows(
     monkeypatch.setattr(
         pipeline_module.shutil, "which", lambda _name: "/usr/bin/systemd-run"
     )
-    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setattr(
+        pipeline_module, "_usable_systemd_user_runtime_dir", lambda: "/run/user/1000"
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_systemd_user_scope_is_usable", lambda _systemd_run: True
+    )
 
     original = ["python3", "-m", "jarvis_cd.core.execution", "run-snapshot"]
     assert pipeline_module._escaped_direct_launch_command(original) == original
@@ -1378,7 +1610,15 @@ def test_nonblocking_direct_run_escapes_into_its_own_systemd_scope(
     monkeypatch.setattr(
         pipeline_module.shutil, "which", lambda _name: "/usr/bin/systemd-run"
     )
-    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setattr(
+        pipeline_module, "_usable_systemd_user_runtime_dir", lambda: "/run/user/1000"
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_systemd_user_scope_is_usable", lambda _systemd_run: True
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_cgroup_escape_confirmed", lambda _pid: True
+    )
     monkeypatch.setattr("jarvis_cd.core.pipeline.subprocess.Popen", fake_popen)
     monkeypatch.setattr(
         "jarvis_cd.core.execution._process_is_running", lambda _pid: True
@@ -1395,6 +1635,94 @@ def test_nonblocking_direct_run_escapes_into_its_own_systemd_scope(
     assert launched[5] == "--"
     assert "run-snapshot" in launched
     assert launched[6] == pipeline_module.sys.executable
+
+
+def test_nonblocking_direct_run_retries_unwrapped_when_the_cgroup_escape_does_not_land(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A confirmed-failed migration falls back to a second, unwrapped launch.
+
+    Regression test for a second, distinct race found while validating the
+    clio-relay#222 fix on a real deployment: ``systemd-run --user --scope``
+    can spawn successfully (no interpreter error, a live PID) yet still not
+    have migrated its target out of the caller's cgroup by the time this
+    code checks — an asynchronous D-Bus race, not a permanent incapability.
+    Failing the whole launch in that case would regress a working (if
+    race-prone) direct execution into a broken one; retrying unwrapped keeps
+    it working exactly as it did before the escape was ever added.
+    """
+    pipeline = _pipeline_double(tmp_path)
+    pipeline.save = Mock()
+
+    def write_snapshot(
+        execution_root: Path,
+        scheduler_spec: dict[str, object],
+    ) -> tuple[Path, Path, str]:
+        assert scheduler_spec == {}
+        runtime = execution_root / "runtime"
+        inputs = execution_root / "input"
+        runtime.mkdir()
+        inputs.mkdir()
+        return runtime, inputs, "abc123"
+
+    pipeline._write_execution_snapshot = Mock(side_effect=write_snapshot)
+
+    captured_commands: list[list[str]] = []
+    terminated_pids: list[int] = []
+
+    class Process:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+            self._polled = False
+
+        def poll(self) -> int | None:
+            # Alive on the first poll (still needs terminating), gone after.
+            if self._polled:
+                return 0
+            self._polled = True
+            return None
+
+        def terminate(self) -> None:
+            terminated_pids.append(self.pid)
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+    pids = iter([9001, 9002])
+
+    def fake_popen(command: list[str], **_kwargs: Any) -> Process:
+        captured_commands.append(command)
+        return Process(next(pids))
+
+    monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: False)
+    monkeypatch.setattr(
+        pipeline_module.shutil, "which", lambda _name: "/usr/bin/systemd-run"
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_usable_systemd_user_runtime_dir", lambda: "/run/user/1000"
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_systemd_user_scope_is_usable", lambda _systemd_run: True
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_cgroup_escape_confirmed", lambda _pid: False
+    )
+    monkeypatch.setattr("jarvis_cd.core.pipeline.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(
+        "jarvis_cd.core.execution._process_is_running", lambda _pid: True
+    )
+
+    handle = pipeline.run(execution_id="background", wait=False)
+
+    assert handle.execution_id == "background"
+    assert len(captured_commands) == 2
+    first, second = captured_commands
+    assert first[0] == "/usr/bin/systemd-run"
+    assert second == first[6:]  # the same unwrapped run-snapshot argv
+    assert terminated_pids == [9001]
+    record = handle.refresh()
+    assert record.metadata["direct_process_id"] == 9002
 
 
 def test_nonblocking_direct_record_reconciles_a_crashed_child(tmp_path: Path) -> None:

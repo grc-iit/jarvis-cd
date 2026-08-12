@@ -15,6 +15,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import yaml
 from contextlib import ExitStack
 from copy import deepcopy
@@ -127,6 +128,67 @@ def _is_windows_platform() -> bool:
     return os.name == "nt"
 
 
+def _usable_systemd_user_runtime_dir() -> Optional[str]:
+    """Return a live XDG runtime directory for ``systemd-run --user``, or
+    ``None`` if this host has none.
+
+    Prefers the ambient ``XDG_RUNTIME_DIR``, but does not require it: a
+    caller several process generations up the launch chain (for example a
+    relay broker that deliberately sanitizes what it forwards into a
+    launched MCP tool) can strip that variable while the user's systemd
+    session, and the conventional ``/run/user/<uid>`` directory it manages,
+    stay perfectly live underneath. ``systemd-run`` itself falls back to
+    that same UID-derived path when the variable is absent (confirmed:
+    ``systemd-run --user --scope`` succeeds with ``XDG_RUNTIME_DIR``
+    unset, as long as ``/run/user/<uid>`` exists), so trust the directory,
+    not the environment variable that merely usually names it.
+    """
+    from_env = os.environ.get("XDG_RUNTIME_DIR")
+    if from_env and os.path.isdir(from_env):
+        return from_env
+    if hasattr(os, "getuid"):
+        conventional = f"/run/user/{os.getuid()}"
+        if os.path.isdir(conventional):
+            return conventional
+    return None
+
+
+_SYSTEMD_SCOPE_PROBE_TIMEOUT_SECONDS = 2.0
+
+
+def _systemd_user_scope_is_usable(systemd_run: str) -> bool:
+    """Live-probe whether ``systemd-run --user --scope`` can register a
+    transient unit right now, not just whether the binary and a
+    conventional runtime directory exist.
+
+    A present ``systemd-run`` binary and a live ``/run/user/<uid>``
+    directory are necessary but not sufficient: confirmed empirically that
+    a deeply nested launch chain (relay broker -> uv -> clio-kit ->
+    jarvis-mcp -> this function) can fail the D-Bus connection systemd-run
+    needs ("Failed to connect to bus: No medium found") even though the
+    identical command run from a plain SSH session on the same host
+    succeeds immediately. Static signals are not reliable enough here;
+    trust a real, cheap, bounded probe instead — the same "verify before
+    trusting the mechanism" approach clio-relay's own
+    ``_probe_linux_systemd_scope_capability`` uses for the same class of
+    decision.
+
+    :param systemd_run: Resolved path to the ``systemd-run`` executable.
+    :return: Whether a real probe scope was created successfully.
+    """
+    try:
+        completed = subprocess.run(
+            [systemd_run, "--user", "--scope", "--quiet", "--", "true"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=_SYSTEMD_SCOPE_PROBE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
 def _escaped_direct_launch_command(command: List[str]) -> List[str]:
     """Wrap a direct-execution launch command so it escapes into its own
     cgroup instead of merely detaching its POSIX session.
@@ -148,10 +210,10 @@ def _escaped_direct_launch_command(command: List[str]) -> List[str]:
     Wrapping the launch in its own transient ``systemd-run --user
     --scope`` unit gives it an independent, sibling cgroup so a
     caller-scoped containment check no longer observes it. Hosts without
-    a usable systemd user session (no ``systemd-run`` binary, or no
-    ``XDG_RUNTIME_DIR``) fall back to the unwrapped command unchanged;
-    the fork/exec chain then behaves exactly as it did before this
-    escape was added.
+    a usable, *verified-live* systemd user session (no ``systemd-run``
+    binary, no live XDG runtime directory, or a failing probe scope) fall
+    back to the unwrapped command unchanged; the fork/exec chain then
+    behaves exactly as it did before this escape was added.
 
     :param command: The argv to launch (e.g. the ``run-snapshot`` command).
     :return: The same command, optionally prefixed with a systemd-run
@@ -160,7 +222,11 @@ def _escaped_direct_launch_command(command: List[str]) -> List[str]:
     if _is_windows_platform():
         return command
     systemd_run = shutil.which("systemd-run")
-    if systemd_run is None or not os.environ.get("XDG_RUNTIME_DIR"):
+    if (
+        systemd_run is None
+        or _usable_systemd_user_runtime_dir() is None
+        or not _systemd_user_scope_is_usable(systemd_run)
+    ):
         return command
     unit = f"jarvis-cd-direct-{uuid4().hex}"
     return [
@@ -172,6 +238,108 @@ def _escaped_direct_launch_command(command: List[str]) -> List[str]:
         "--",
         *command,
     ]
+
+
+_CGROUP_ESCAPE_CONFIRM_TIMEOUT_SECONDS = 2.0
+_CGROUP_ESCAPE_POLL_INTERVAL_SECONDS = 0.02
+
+
+def _cgroup_membership(pid: str) -> Optional[str]:
+    """Return one process's ``/proc/<pid>/cgroup`` contents, or ``None``.
+
+    :param pid: ``self`` for the current process, or a positive PID string.
+    """
+    try:
+        with open(f"/proc/{pid}/cgroup", "r", encoding="utf-8") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+def _cgroup_escape_confirmed(pid: int) -> bool:
+    """Poll until ``pid`` is confirmed to have left this process's own cgroup.
+
+    ``systemd-run --user --scope`` does not migrate its target into the new
+    cgroup atomically at fork time: migration completes only after an
+    asynchronous D-Bus round trip with the user's systemd manager. Trusting
+    the wrap immediately after ``subprocess.Popen`` returns can observe the
+    target still sitting in the caller's own cgroup during that window —
+    confirmed empirically on a real deployment as a second, distinct race
+    from clio-relay#222's original setsid-only bug: the escape looked
+    successful (no interpreter error) but a caller-scoped containment check
+    still saw the not-yet-migrated process as a leaked descendant. Wait for
+    the migration to actually land before treating the escape as live.
+
+    :param pid: The escaped launch's own process id.
+    :return: Whether the migration was confirmed within a bounded window.
+    """
+    caller_cgroup = _cgroup_membership("self")
+    if caller_cgroup is None:
+        return False
+    deadline = time.monotonic() + _CGROUP_ESCAPE_CONFIRM_TIMEOUT_SECONDS
+    while True:
+        observed = _cgroup_membership(str(pid))
+        if observed is None:
+            return False
+        if observed != caller_cgroup:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_CGROUP_ESCAPE_POLL_INTERVAL_SECONDS)
+
+
+def _terminate_launched_process_best_effort(process: "subprocess.Popen[Any]") -> None:
+    """Terminate a still-running launched process, tolerating any failure."""
+    if process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=5)
+    except BaseException:
+        try:
+            process.kill()
+            process.wait(timeout=5)
+        except BaseException:
+            pass
+
+
+def _spawn_direct_execution_process(
+    command: List[str],
+    options: Dict[str, Any],
+) -> "subprocess.Popen[Any]":
+    """Launch a direct execution, escaping into its own cgroup when possible.
+
+    Applies :func:`_escaped_direct_launch_command`, then — only on POSIX,
+    where a cgroup migration is actually possible — confirms the escape
+    really landed via :func:`_cgroup_escape_confirmed`. If it did not land
+    within a bounded window (an intermittent systemd/D-Bus race, not a
+    permanent host incapability — the earlier live probe already ruled
+    that out), the half-escaped process is terminated and the launch
+    retries once, unwrapped, so a flaky escape degrades to the prior
+    setsid-only behavior instead of leaving an ambiguous, neither-escaped
+    -nor-contained process behind.
+
+    :param command: The unwrapped run-snapshot argv.
+    :param options: ``subprocess.Popen`` keyword arguments. ``stdout`` and
+        ``stderr`` must already be open file objects; on a retry they are
+        reopened in append mode from the same paths.
+    :return: The launched (possibly retried) process.
+    """
+    escaped_command = _escaped_direct_launch_command(command)
+    launched_process = subprocess.Popen(escaped_command, **options)
+    if escaped_command is command or _is_windows_platform():
+        return launched_process
+    if _cgroup_escape_confirmed(launched_process.pid):
+        return launched_process
+    _terminate_launched_process_best_effort(launched_process)
+    for stream_name in ("stdout", "stderr"):
+        stream = options.get(stream_name)
+        if hasattr(stream, "close"):
+            stream.close()
+        stream_path = getattr(stream, "name", None)
+        if stream_path is not None:
+            options[stream_name] = open(stream_path, "ab", buffering=0)
+    return subprocess.Popen(command, **options)
 
 
 def _executor_status_error(
@@ -3286,12 +3454,15 @@ class Pipeline:
                     options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
                 else:
                     options["start_new_session"] = True
-                command = _escaped_direct_launch_command(command)
-                launched_process = subprocess.Popen(command, **options)
+                launched_process = _spawn_direct_execution_process(command, options)
                 process = launched_process
             finally:
-                stdout_stream.close()
-                stderr_stream.close()
+                # A retried (unwrapped) launch reopens fresh stream objects
+                # into `options` when the systemd-scope escape does not land
+                # in time; close whichever objects are current, not the
+                # stale local references from before that retry.
+                options["stdout"].close()
+                options["stderr"].close()
             direct_launch = {
                 **direct_launch,
                 "phase": "spawned",
