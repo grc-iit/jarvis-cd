@@ -1266,6 +1266,137 @@ def test_nonblocking_direct_run_returns_live_queryable_handle(
     assert handle.progress().execution_id == "background"
 
 
+def test_escaped_direct_launch_command_wraps_with_systemd_run_scope_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A usable systemd user session gets its own transient scope, not a plain child.
+
+    ``start_new_session=True`` (setsid) detaches session/process-group but not
+    cgroup membership: a merely-detached child stays inside whatever cgroup the
+    launching process is tracked in. On a host with a working systemd --user
+    session (the same precondition clio-relay's own process containment
+    requires), wrapping the launch in its own ``systemd-run --user --scope``
+    unit gives it an independent, sibling cgroup instead — see clio-relay#222.
+    """
+    monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: False)
+    monkeypatch.setattr(
+        pipeline_module.shutil, "which", lambda _name: "/usr/bin/systemd-run"
+    )
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+
+    original = ["python3", "-m", "jarvis_cd.core.execution", "run-snapshot"]
+    wrapped = pipeline_module._escaped_direct_launch_command(original)
+
+    assert wrapped[0] == "/usr/bin/systemd-run"
+    assert wrapped[1:4] == ["--user", "--scope", "--quiet"]
+    assert wrapped[4].startswith("--unit=jarvis-cd-direct-")
+    assert wrapped[5] == "--"
+    assert wrapped[6:] == original
+    # Two independent calls must not collide on the same transient unit name.
+    other = pipeline_module._escaped_direct_launch_command(original)
+    assert other[4] != wrapped[4]
+
+
+def test_escaped_direct_launch_command_falls_back_without_systemd_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hosts without systemd-run keep today's setsid-only launch, unchanged."""
+    monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: False)
+    monkeypatch.setattr(pipeline_module.shutil, "which", lambda _name: None)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+
+    original = ["python3", "-m", "jarvis_cd.core.execution", "run-snapshot"]
+    assert pipeline_module._escaped_direct_launch_command(original) == original
+
+
+def test_escaped_direct_launch_command_falls_back_without_runtime_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A systemd-run binary with no reachable user bus is not trusted to scope."""
+    monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: False)
+    monkeypatch.setattr(
+        pipeline_module.shutil, "which", lambda _name: "/usr/bin/systemd-run"
+    )
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+
+    original = ["python3", "-m", "jarvis_cd.core.execution", "run-snapshot"]
+    assert pipeline_module._escaped_direct_launch_command(original) == original
+
+
+def test_escaped_direct_launch_command_falls_back_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows has no cgroup/systemd-scope race; leave its launch untouched."""
+    monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: True)
+    monkeypatch.setattr(
+        pipeline_module.shutil, "which", lambda _name: "/usr/bin/systemd-run"
+    )
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+
+    original = ["python3", "-m", "jarvis_cd.core.execution", "run-snapshot"]
+    assert pipeline_module._escaped_direct_launch_command(original) == original
+
+
+def test_nonblocking_direct_run_escapes_into_its_own_systemd_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The real launch path wraps the run-snapshot command through the escape.
+
+    Regression test for clio-relay#222: without this wrap, the run-snapshot
+    child (and the application it launches) stays inside the caller's tracked
+    cgroup, so a caller-scoped containment check sees it as a leaked
+    descendant and kills it mid-run even though ``jarvis_run`` documents
+    direct mode as "start a pipeline without waiting".
+    """
+    pipeline = _pipeline_double(tmp_path)
+    pipeline.save = Mock()
+
+    def write_snapshot(
+        execution_root: Path,
+        scheduler_spec: dict[str, object],
+    ) -> tuple[Path, Path, str]:
+        assert scheduler_spec == {}
+        runtime = execution_root / "runtime"
+        inputs = execution_root / "input"
+        runtime.mkdir()
+        inputs.mkdir()
+        return runtime, inputs, "abc123"
+
+    pipeline._write_execution_snapshot = Mock(side_effect=write_snapshot)
+
+    captured_commands: list[list[str]] = []
+
+    class Process:
+        pid = 4242
+
+    def fake_popen(command: list[str], **_kwargs: Any) -> Process:
+        captured_commands.append(command)
+        return Process()
+
+    monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: False)
+    monkeypatch.setattr(
+        pipeline_module.shutil, "which", lambda _name: "/usr/bin/systemd-run"
+    )
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/run/user/1000")
+    monkeypatch.setattr("jarvis_cd.core.pipeline.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(
+        "jarvis_cd.core.execution._process_is_running", lambda _pid: True
+    )
+
+    handle = pipeline.run(execution_id="background", wait=False)
+
+    assert handle.execution_id == "background"
+    assert len(captured_commands) == 1
+    launched = captured_commands[0]
+    assert launched[0] == "/usr/bin/systemd-run"
+    assert launched[1:4] == ["--user", "--scope", "--quiet"]
+    assert launched[4].startswith("--unit=jarvis-cd-direct-")
+    assert launched[5] == "--"
+    assert "run-snapshot" in launched
+    assert launched[6] == pipeline_module.sys.executable
+
+
 def test_nonblocking_direct_record_reconciles_a_crashed_child(tmp_path: Path) -> None:
     """A lost detached process cannot leave a durable record running forever."""
     store = ExecutionStore(tmp_path / "executions", "example")

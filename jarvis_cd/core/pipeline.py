@@ -116,6 +116,64 @@ def _bounded_scheduler_stderr(result: Any, limit: int = 4096) -> Optional[str]:
     return "[truncated]\n" + diagnostic[-limit:]
 
 
+def _is_windows_platform() -> bool:
+    """Return whether this process is running on Windows.
+
+    Factored out of :func:`_escaped_direct_launch_command` so tests can
+    exercise its POSIX branch without mutating the real ``os.name``, which
+    would also perturb unrelated ``pathlib`` platform dispatch when a test
+    suite runs natively on Windows.
+    """
+    return os.name == "nt"
+
+
+def _escaped_direct_launch_command(command: List[str]) -> List[str]:
+    """Wrap a direct-execution launch command so it escapes into its own
+    cgroup instead of merely detaching its POSIX session.
+
+    ``start_new_session=True`` (setsid) removes the launched process from
+    the caller's controlling terminal, session, and process group, but it
+    does NOT move the process to a new cgroup: fork/exec always inherits
+    the parent's cgroup unless something explicitly migrates the child.
+    On any host where a systemd-managed cgroup v2 hierarchy is tracking
+    the caller (for example, a caller wrapped in its own transient
+    ``systemd-run --user --scope`` unit for process containment — see
+    clio-relay issue #222), a plain setsid child is still a member of the
+    caller's cgroup. A containment check that expects the caller's
+    process tree to be empty once the caller-visible work is done will
+    then see the still-running detached child as a leaked descendant,
+    even though it is an intentionally supervised background execution
+    with its own durable, pollable execution record.
+
+    Wrapping the launch in its own transient ``systemd-run --user
+    --scope`` unit gives it an independent, sibling cgroup so a
+    caller-scoped containment check no longer observes it. Hosts without
+    a usable systemd user session (no ``systemd-run`` binary, or no
+    ``XDG_RUNTIME_DIR``) fall back to the unwrapped command unchanged;
+    the fork/exec chain then behaves exactly as it did before this
+    escape was added.
+
+    :param command: The argv to launch (e.g. the ``run-snapshot`` command).
+    :return: The same command, optionally prefixed with a systemd-run
+        scope wrapper.
+    """
+    if _is_windows_platform():
+        return command
+    systemd_run = shutil.which("systemd-run")
+    if systemd_run is None or not os.environ.get("XDG_RUNTIME_DIR"):
+        return command
+    unit = f"jarvis-cd-direct-{uuid4().hex}"
+    return [
+        systemd_run,
+        "--user",
+        "--scope",
+        "--quiet",
+        f"--unit={unit}",
+        "--",
+        *command,
+    ]
+
+
 def _executor_status_error(
     result: Any,
     *,
@@ -3228,6 +3286,7 @@ class Pipeline:
                     options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
                 else:
                     options["start_new_session"] = True
+                command = _escaped_direct_launch_command(command)
                 launched_process = subprocess.Popen(command, **options)
                 process = launched_process
             finally:
