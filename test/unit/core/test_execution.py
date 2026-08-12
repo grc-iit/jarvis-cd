@@ -1832,12 +1832,14 @@ def test_nonblocking_direct_run_escapes_into_its_own_systemd_scope(
     pipeline._write_execution_snapshot = Mock(side_effect=write_snapshot)
 
     captured_commands: list[list[str]] = []
+    captured_kwargs: list[dict[str, Any]] = []
 
     class Process:
         pid = 4242
 
-    def fake_popen(command: list[str], **_kwargs: Any) -> Process:
+    def fake_popen(command: list[str], **kwargs: Any) -> Process:
         captured_commands.append(command)
+        captured_kwargs.append(kwargs)
         return Process()
 
     monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: False)
@@ -1871,6 +1873,22 @@ def test_nonblocking_direct_run_escapes_into_its_own_systemd_scope(
     assert launched[5] == "--"
     assert "run-snapshot" in launched
     assert launched[6] == pipeline_module.sys.executable
+
+    # L1: the REAL wrapped launch (not just the live probe) must receive the
+    # runtime-bus environment the escape resolved. Dropping `env=environment`
+    # from this specific Popen call (while leaving it on the probe) silently
+    # reinstates the #222 race on the exact deep-relay-chain host class this
+    # fix exists to serve: systemd-run spawns fine (no interpreter error, a
+    # live PID) but its own D-Bus connection fails for lack of
+    # XDG_RUNTIME_DIR/DBUS_SESSION_BUS_ADDRESS, never execs the target, and
+    # the confirm poll times out into a degraded retry -- with every other
+    # test in this file still green, since none of them inspect Popen's
+    # kwargs.
+    assert len(captured_kwargs) == 1
+    launched_env = captured_kwargs[0].get("env")
+    assert launched_env is not None
+    assert launched_env["XDG_RUNTIME_DIR"] == "/run/user/1000"
+    assert launched_env["DBUS_SESSION_BUS_ADDRESS"] == "unix:path=/run/user/1000/bus"
 
     # R1: the successful escape's reason lands on the durable metadata
     # record clio-relay reads, not just the interpreter's local state.
@@ -1919,6 +1937,7 @@ def test_nonblocking_direct_run_retries_unwrapped_when_the_cgroup_escape_does_no
     pipeline._write_execution_snapshot = Mock(side_effect=write_snapshot)
 
     captured_commands: list[list[str]] = []
+    captured_kwargs: list[dict[str, Any]] = []
     terminated_pids: list[int] = []
 
     class Process:
@@ -1941,8 +1960,9 @@ def test_nonblocking_direct_run_retries_unwrapped_when_the_cgroup_escape_does_no
 
     pids = iter([9001, 9002])
 
-    def fake_popen(command: list[str], **_kwargs: Any) -> Process:
+    def fake_popen(command: list[str], **kwargs: Any) -> Process:
         captured_commands.append(command)
+        captured_kwargs.append(kwargs)
         return Process(next(pids))
 
     systemctl_calls: list[list[str]] = []
@@ -1997,6 +2017,14 @@ def test_nonblocking_direct_run_retries_unwrapped_when_the_cgroup_escape_does_no
     assert unit_token.startswith("--unit=")
     expected_unit = unit_token[len("--unit=") :]
     assert stop_call[3] == f"{expected_unit}.scope"
+
+    # L1: the wrapped attempt received the runtime-bus env; the unwrapped
+    # retry must NOT -- it falls back to the plain, ambient-inheriting
+    # options exactly as the pre-escape launch did, not a hybrid of the two.
+    assert len(captured_kwargs) == 2
+    wrapped_kwargs, retry_kwargs = captured_kwargs
+    assert wrapped_kwargs.get("env", {}).get("XDG_RUNTIME_DIR") == "/run/user/1000"
+    assert "env" not in retry_kwargs
 
     record = handle.refresh()
     assert record.metadata["direct_process_id"] == 9002
@@ -2078,6 +2106,150 @@ def test_spawn_direct_execution_process_retries_unwrapped_on_a_spawn_oserror(
         "run-snapshot",
     ]
     assert process.pid == 4321
+
+
+def _configure_skipped_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: True)
+
+
+def _configure_skipped_no_systemd_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: False)
+    monkeypatch.setattr(pipeline_module.shutil, "which", lambda _name: None)
+
+
+def _configure_skipped_no_runtime_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: False)
+    monkeypatch.setattr(
+        pipeline_module.shutil, "which", lambda _name: "/usr/bin/systemd-run"
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_usable_systemd_user_runtime_dir", lambda: None
+    )
+
+
+def _configure_degraded_probe_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: False)
+    monkeypatch.setattr(
+        pipeline_module.shutil, "which", lambda _name: "/usr/bin/systemd-run"
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_usable_systemd_user_runtime_dir", lambda: "/run/user/1000"
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_systemd_user_scope_is_usable",
+        lambda _systemd_run, _environment: (
+            False,
+            "Failed to connect to bus: No medium found",
+        ),
+    )
+
+
+def _configure_degraded_spawn_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(pipeline_module, "_is_windows_platform", lambda: False)
+    monkeypatch.setattr(
+        pipeline_module.shutil, "which", lambda _name: "/usr/bin/systemd-run"
+    )
+    monkeypatch.setattr(
+        pipeline_module, "_usable_systemd_user_runtime_dir", lambda: "/run/user/1000"
+    )
+    monkeypatch.setattr(
+        pipeline_module,
+        "_systemd_user_scope_is_usable",
+        lambda _systemd_run, _environment: (True, None),
+    )
+
+
+@pytest.mark.parametrize(
+    ("escape_reason", "configure", "raises_first_popen", "expect_detail"),
+    [
+        ("skipped_windows", _configure_skipped_windows, False, False),
+        ("skipped_no_systemd_run", _configure_skipped_no_systemd_run, False, False),
+        ("skipped_no_runtime_dir", _configure_skipped_no_runtime_dir, False, False),
+        ("degraded_probe_failed", _configure_degraded_probe_failed, False, True),
+        ("degraded_spawn_error", _configure_degraded_spawn_error, True, True),
+    ],
+    ids=[
+        "skipped_windows",
+        "skipped_no_systemd_run",
+        "skipped_no_runtime_dir",
+        "degraded_probe_failed",
+        "degraded_spawn_error",
+    ],
+)
+def test_nonblocking_direct_run_records_the_exact_escape_reason_for_every_skip_or_degrade_branch(
+    escape_reason: str,
+    configure: Any,
+    raises_first_popen: bool,
+    expect_detail: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """L2: the PERSISTED record must carry the exact escape reason.
+
+    ``systemd_scope`` (the happy path, above) and
+    ``degraded_migration_unconfirmed`` (the retry test, above) are the only
+    two of the seven :data:`DirectLaunchEscapeReason` values pinned at the
+    durable-record level. The other five are only asserted against
+    ``_escaped_direct_launch_command``'s own return value in the standalone
+    unit tests above -- nothing catches a reason that is computed correctly
+    by that helper and then reported wrongly by the time it reaches
+    ``store.update``. A one-line hardcode of the reported reason to
+    ``"systemd_scope"`` on the skip/degrade return in
+    ``_spawn_direct_execution_process`` (e.g. the
+    ``if escaped_command is command: ... return ..., reason, detail`` line)
+    passes the whole suite today precisely because of that gap -- an
+    operator reading the ``direct_launch`` record could no longer tell
+    "escape worked" from "escape skipped", which is exactly the state R1
+    exists to make impossible. Drives the real ``pipeline.run(wait=False)``
+    path (not the helper directly) so the assertion is against what
+    clio-relay actually reads off disk.
+    """
+    pipeline = _pipeline_double(tmp_path)
+    pipeline.save = Mock()
+
+    def write_snapshot(
+        execution_root: Path,
+        scheduler_spec: dict[str, object],
+    ) -> tuple[Path, Path, str]:
+        assert scheduler_spec == {}
+        runtime = execution_root / "runtime"
+        inputs = execution_root / "input"
+        runtime.mkdir()
+        inputs.mkdir()
+        return runtime, inputs, "abc123"
+
+    pipeline._write_execution_snapshot = Mock(side_effect=write_snapshot)
+
+    configure(monkeypatch)
+
+    popen_calls = {"count": 0}
+
+    class Process:
+        def __init__(self, pid: int) -> None:
+            self.pid = pid
+
+    def fake_popen(command: list[str], **_kwargs: Any) -> Process:
+        popen_calls["count"] += 1
+        if raises_first_popen and popen_calls["count"] == 1:
+            raise OSError("systemd-run vanished between probe and spawn")
+        return Process(4200 + popen_calls["count"])
+
+    monkeypatch.setattr("jarvis_cd.core.pipeline.subprocess.Popen", fake_popen)
+    monkeypatch.setattr(
+        "jarvis_cd.core.execution._process_is_running", lambda _pid: True
+    )
+
+    handle = pipeline.run(execution_id="background", wait=False)
+
+    record = handle.refresh()
+    direct_launch = record.metadata["direct_launch"]
+    assert direct_launch["schema_version"] == pipeline_module.DIRECT_LAUNCH_SCHEMA
+    assert direct_launch["escape"] == escape_reason
+    if expect_detail:
+        assert direct_launch["escape_detail"]
+    else:
+        assert direct_launch["escape_detail"] is None
 
 
 def test_nonblocking_direct_record_reconciles_a_crashed_child(tmp_path: Path) -> None:
