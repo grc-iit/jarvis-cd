@@ -7,6 +7,15 @@ import os
 from typing import Any, cast
 
 from jarvis_cd.core.pkg import Interceptor
+from jarvis_cd.deployment import (
+    ConfigurationCondition,
+    ExecutionProfile,
+    PackageDeploymentContract,
+    ProviderResolution,
+    ReadinessContract,
+    RuntimeRequirement,
+    RuntimeStatus,
+)
 from jarvis_cd.shell import PsshExecInfo
 from jarvis_cd.shell.process import Mkdir
 
@@ -51,6 +60,63 @@ class Darshan(Interceptor):
             },
         ]
 
+    def _deployment_contract(self) -> PackageDeploymentContract:
+        """Describe the darshan interceptor's Spack-aware library requirement."""
+        config = cast(dict[str, Any], self.config)
+        if config.get("deploy_mode") == "container":
+            status = RuntimeStatus("unknown", "container_runtime_not_probed")
+            capabilities: tuple[str, ...] = ()
+        else:
+            library = self.find_library("darshan")
+            if library:
+                status = RuntimeStatus("ready", "runtime_probe_succeeded")
+                capabilities = ("io_characterization",)
+            else:
+                status = RuntimeStatus("unavailable", "software_not_found")
+                capabilities = ()
+        runtime = RuntimeRequirement(
+            requirement_id="darshan_runtime",
+            description=(
+                "Darshan I/O characterization runtime providing libdarshan "
+                "for LD_PRELOAD injection into the intercepted package"
+            ),
+            required_capabilities=("io_characterization",),
+            available_capabilities=capabilities,
+            status=status,
+            provider_resolutions=(
+                ProviderResolution(
+                    provider="spack",
+                    query_kind="spec",
+                    query_value="darshan-runtime",
+                ),
+            ),
+        )
+        completed = ReadinessContract(
+            mechanism="process_exit",
+            condition="successful_exit",
+        )
+        return PackageDeploymentContract(
+            package="builtin.darshan",
+            execution_profiles=(
+                ExecutionProfile(
+                    name="library_injection",
+                    execution_kind="batch",
+                    when=(ConfigurationCondition("job_id", "is_not_empty"),),
+                    runtime_requirements=("darshan_runtime",),
+                    readiness=completed,
+                    description=(
+                        "Inject libdarshan via LD_PRELOAD into the intercepted "
+                        "package's launch. The library is resolved from "
+                        "LD_LIBRARY_PATH, a Spack-loaded package prefix "
+                        "(CMAKE_PREFIX_PATH), common system library "
+                        "directories, or (in container mode) the "
+                        "caller-supplied darshan_lib_container path."
+                    ),
+                ),
+            ),
+            runtime_requirements=(runtime,),
+        )
+
     def _configure(self, **kwargs: Any) -> None:
         """
         Converts the Jarvis configuration to application-specific configuration.
@@ -79,7 +145,17 @@ class Darshan(Interceptor):
                 raise RuntimeError("Could not find darshan")
             print(f"Found libdarshan.so at {library}")
         config["DARSHAN_LIB"] = library
+        # Darshan reads its log directory from whichever env var name its
+        # own --with-log-path-by-env build flag names -- a choice made by
+        # whoever built libdarshan.so, not by jarvis. Set both names this
+        # project has direct evidence for: DARSHAN_LOG_DIR matches the
+        # scspkg/container build this package's own README documents
+        # (builtin/darshan/README.md, builtin/ior/build.sh);
+        # DARSHAN_LOG_DIR_PATH matches Spack's darshan-runtime build,
+        # confirmed live via `darshan-config --log-path` (#206). An unused
+        # name is simply ignored, so setting both is harmless.
         self.env["DARSHAN_LOG_DIR"] = log_dir
+        self.env["DARSHAN_LOG_DIR_PATH"] = log_dir
         self.env["PBS_JOBID"] = job_id
         Mkdir(log_dir, PsshExecInfo(hostfile=self.hostfile)).run()
 
@@ -98,5 +174,6 @@ class Darshan(Interceptor):
         if not isinstance(library, str) or not library:
             raise ValueError("Darshan library was not resolved during configuration")
         self.setenv("DARSHAN_LOG_DIR", cast(str, log_dir))
+        self.setenv("DARSHAN_LOG_DIR_PATH", cast(str, log_dir))
         self.setenv("PBS_JOBID", cast(str, job_id))
         self.prepend_env("LD_PRELOAD", library)

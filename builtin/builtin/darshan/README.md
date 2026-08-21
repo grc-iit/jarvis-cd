@@ -52,6 +52,13 @@ Run the pipeline:
 jarvis pipeline run
 ```
 
+Note: jarvis exports the log directory under both `DARSHAN_LOG_DIR` (the
+name this scspkg build above uses) and `DARSHAN_LOG_DIR_PATH` (the name
+Spack's `darshan-runtime` package uses), since a darshan-runtime obtained
+via Spack only recognizes the latter (`darshan-config --log-path` reports
+whichever name a given build was actually compiled with). Setting the
+name a build doesn't use is harmless -- it is simply ignored.
+
 # Analysis
 
 There are several ways to analyze the output of Darshan:

@@ -405,6 +405,95 @@ class TestPkgFindLibrary(unittest.TestCase):
 
         self.assertIsNotNone(result)
 
+    def test_find_library_via_cmake_prefix_path_lib(self):
+        """Test find_library() finds a library under <prefix>/lib via
+        CMAKE_PREFIX_PATH when LD_LIBRARY_PATH is unset. This is the Spack
+        `spack load` case: RPATH-linked packages export CMAKE_PREFIX_PATH
+        but not LD_LIBRARY_PATH, so the library must be resolved from the
+        package prefix instead."""
+        spack_prefix = os.path.join(self.test_dir, "darshan-runtime-3.4.6-abc123")
+        os.makedirs(os.path.join(spack_prefix, "lib"), exist_ok=True)
+        lib_path = os.path.join(spack_prefix, "lib", "libdarshan.so")
+        Path(lib_path).touch()
+
+        pkg = Pkg(pipeline=self.mock_pipeline)
+        pkg.setenv("CMAKE_PREFIX_PATH", spack_prefix)
+        self.assertNotIn("LD_LIBRARY_PATH", pkg.env)
+
+        result = pkg.find_library("darshan")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result, lib_path)
+
+    def test_find_library_via_cmake_prefix_path_lib64(self):
+        """Test find_library() also checks <prefix>/lib64 for each
+        CMAKE_PREFIX_PATH entry."""
+        spack_prefix = os.path.join(self.test_dir, "somepkg-1.0-def456")
+        os.makedirs(os.path.join(spack_prefix, "lib64"), exist_ok=True)
+        lib_path = os.path.join(spack_prefix, "lib64", "libsomepkg.so")
+        Path(lib_path).touch()
+
+        pkg = Pkg(pipeline=self.mock_pipeline)
+        pkg.setenv("CMAKE_PREFIX_PATH", spack_prefix)
+
+        result = pkg.find_library("somepkg")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result, lib_path)
+
+    def test_find_library_cmake_prefix_path_multiple_prefixes(self):
+        """Test find_library() walks every colon-separated CMAKE_PREFIX_PATH
+        entry (as `spack load` exports one prefix per loaded spec) until it
+        finds the target library."""
+        other_prefix = os.path.join(self.test_dir, "fftw-3.3.10-xyz789")
+        target_prefix = os.path.join(self.test_dir, "darshan-runtime-3.4.6-abc123")
+        os.makedirs(os.path.join(other_prefix, "lib"), exist_ok=True)
+        os.makedirs(os.path.join(target_prefix, "lib"), exist_ok=True)
+        lib_path = os.path.join(target_prefix, "lib", "libdarshan.so")
+        Path(lib_path).touch()
+
+        pkg = Pkg(pipeline=self.mock_pipeline)
+        pkg.setenv(
+            "CMAKE_PREFIX_PATH", os.pathsep.join([other_prefix, target_prefix])
+        )
+
+        result = pkg.find_library("darshan")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result, lib_path)
+
+    def test_find_library_ld_library_path_takes_priority_over_cmake_prefix_path(self):
+        """Test find_library() prefers an explicit LD_LIBRARY_PATH hit over a
+        CMAKE_PREFIX_PATH-derived one when both could resolve the library."""
+        ld_lib_path = os.path.join(self.lib_dir, "libdual.so")
+        Path(ld_lib_path).touch()
+
+        spack_prefix = os.path.join(self.test_dir, "dual-1.0-abc123")
+        os.makedirs(os.path.join(spack_prefix, "lib"), exist_ok=True)
+        spack_lib_path = os.path.join(spack_prefix, "lib", "libdual.so")
+        Path(spack_lib_path).touch()
+
+        pkg = Pkg(pipeline=self.mock_pipeline)
+        pkg.setenv("LD_LIBRARY_PATH", self.lib_dir)
+        pkg.setenv("CMAKE_PREFIX_PATH", spack_prefix)
+
+        result = pkg.find_library("dual")
+
+        self.assertEqual(result, ld_lib_path)
+
+    def test_find_library_cmake_prefix_path_not_found(self):
+        """Test find_library() returns None when neither LD_LIBRARY_PATH nor
+        any CMAKE_PREFIX_PATH prefix has the library, without raising."""
+        spack_prefix = os.path.join(self.test_dir, "unrelated-1.0-abc123")
+        os.makedirs(os.path.join(spack_prefix, "lib"), exist_ok=True)
+
+        pkg = Pkg(pipeline=self.mock_pipeline)
+        pkg.setenv("CMAKE_PREFIX_PATH", spack_prefix)
+
+        result = pkg.find_library("nonexistent")
+
+        self.assertIsNone(result)
+
 
 class TestPkgCopyTemplateFile(unittest.TestCase):
     """Test copy_template_file() method"""

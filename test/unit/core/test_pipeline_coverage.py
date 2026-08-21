@@ -441,6 +441,7 @@ class TestPipelineCoverage(unittest.TestCase):
             )
 
         self.assertNotIn("DARSHAN_LOG_DIR", pipeline.env)
+        self.assertNotIn("DARSHAN_LOG_DIR_PATH", pipeline.env)
         self.assertNotIn("PBS_JOBID", pipeline.env)
 
         ior = pipeline._load_package_instance(pipeline.packages[0], pipeline.env)
@@ -450,15 +451,105 @@ class TestPipelineCoverage(unittest.TestCase):
         pipeline._apply_interceptors_to_package(clio, pipeline.packages[1])
         pipeline._apply_interceptors_to_package(plain, pipeline.packages[2])
 
+        # Darshan reads its log directory from whichever env var name its
+        # own --with-log-path-by-env build flag names, a choice made by
+        # whoever built libdarshan.so, not by jarvis. Both names this
+        # project has direct evidence for must be set: DARSHAN_LOG_DIR
+        # matches the scspkg/container build this package's own README
+        # documents (builtin/darshan/README.md, builtin/ior/build.sh);
+        # DARSHAN_LOG_DIR_PATH matches Spack's darshan-runtime build,
+        # confirmed live via `darshan-config --log-path` (#206) after the
+        # original DARSHAN_LOG_DIR-only build let LD_PRELOAD injection
+        # succeed while darshan silently wrote no log ("unable to
+        # determine log file path").
         self.assertEqual(ior.env["DARSHAN_LOG_DIR"], "/tmp/ior_logs")
+        self.assertEqual(ior.env["DARSHAN_LOG_DIR_PATH"], "/tmp/ior_logs")
         self.assertEqual(ior.env["PBS_JOBID"], "ior")
         self.assertEqual(ior.mod_env["LD_PRELOAD"], "/opt/darshan/lib/libdarshan.so")
         self.assertEqual(clio.env["DARSHAN_LOG_DIR"], "/tmp/clio_logs")
+        self.assertEqual(clio.env["DARSHAN_LOG_DIR_PATH"], "/tmp/clio_logs")
         self.assertEqual(clio.env["PBS_JOBID"], "clio")
         self.assertEqual(clio.mod_env["LD_PRELOAD"], "/opt/darshan/lib/libdarshan.so")
         self.assertNotIn("DARSHAN_LOG_DIR", plain.env)
+        self.assertNotIn("DARSHAN_LOG_DIR_PATH", plain.env)
         self.assertNotIn("PBS_JOBID", plain.env)
         self.assertNotIn("LD_PRELOAD", plain.mod_env)
+
+    def test_apply_interceptors_registers_interceptor_execution_provenance(
+        self,
+    ) -> None:
+        """An applied interceptor gets its own execution-record entry, not
+        just the package it intercepts.
+
+        Regression test for #206 (live mission 6): darshan configured,
+        injected LD_PRELOAD, and wrote a real .darshan log, but the
+        execution record's progress_files/artifact_files/
+        service_runtime_files metadata never gained an entry for it -- only
+        for the package it intercepted. Cause:
+        _bind_package_execution_environment() (which registers those
+        entries) was only ever called from start()'s loop over
+        self.packages, never for self.interceptors.
+        """
+        from jarvis_cd.core.execution import ExecutionStore
+
+        pipeline = self._make_pipeline("interceptor_provenance")
+        pipeline.append(
+            "builtin.darshan",
+            package_alias="darshan_step",
+            config_args=["log_dir=/tmp/prov_logs", "job_id=prov"],
+        )
+        pipeline.append(
+            "builtin.echo",
+            package_alias="echo_step",
+            config_args=['interceptors=["darshan_step"]'],
+        )
+        pipeline.interceptors["darshan_step"]["config"]["deploy_mode"] = "container"
+
+        with patch("builtin.darshan.pkg.Mkdir.run"):
+            pipeline._configure_package_instance(
+                pipeline.interceptors["darshan_step"], "interceptor"
+            )
+
+        store = ExecutionStore(
+            pipeline.jarvis.get_pipeline_shared_dir(pipeline.name) / "executions",
+            pipeline.name,
+        )
+        store.create("provtest", mode="direct")
+        pipeline._execution_root = store.executions_dir / "provtest"
+        pipeline._execution_id = "provtest"
+
+        echo_def = pipeline.packages[0]
+        echo_instance = pipeline._load_package_instance(echo_def, pipeline.env)
+        pipeline._bind_package_execution_environment(echo_def)
+        pipeline._apply_interceptors_to_package(echo_instance, echo_def)
+
+        record = store.get("provtest")
+        progress_files = record.metadata["progress_files"]
+        artifact_files = record.metadata["artifact_files"]
+        service_runtime_files = record.metadata["service_runtime_files"]
+
+        # The intercepted package was always tracked.
+        self.assertIn("echo_step", progress_files)
+        # The interceptor must be tracked too, under its own pkg_id, not
+        # merged into or dropped in favor of the package it intercepts.
+        self.assertIn("darshan_step", progress_files)
+        self.assertEqual(
+            progress_files["darshan_step"]["package_name"], "builtin.darshan"
+        )
+        self.assertTrue(
+            any(
+                entry["package_id"] == "darshan_step"
+                for entry in artifact_files.values()
+            ),
+            "interceptor must get its own artifact_files entry",
+        )
+        self.assertTrue(
+            any(
+                entry["package_id"] == "darshan_step"
+                for entry in service_runtime_files.values()
+            ),
+            "interceptor must get its own service_runtime_files entry",
+        )
 
     def test_append_rejects_cross_kind_alias_collision(self):
         """Package and interceptor IDs share one pipeline namespace."""
