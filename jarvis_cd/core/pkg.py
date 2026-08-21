@@ -1236,7 +1236,8 @@ class Pkg:
 
     def find_library(self, library_name: str) -> Optional[str]:
         """
-        Find a shared library by searching LD_LIBRARY_PATH and system paths.
+        Find a shared library by searching LD_LIBRARY_PATH, Spack-loaded
+        package prefixes, and system paths.
 
         :param library_name: Name of the library to find
         :return: Path to library if found, None otherwise
@@ -1268,7 +1269,23 @@ class Pkg:
         if system_ld_path:
             search_paths.extend(system_ld_path.split(os.pathsep))
 
-        # 3. Common system library directories
+        # 3. Spack-loaded package prefixes (CMAKE_PREFIX_PATH). Spack builds
+        # are typically RPATH-linked and do not populate LD_LIBRARY_PATH, so
+        # a `spack load`-ed runtime's shared libraries are only discoverable
+        # through its install prefix. CMAKE_PREFIX_PATH is the one variable
+        # `spack load` reliably exports: one colon-separated prefix per
+        # loaded spec, each package's own libdir under lib/ or lib64/.
+        for env_source in (self.mod_env, self.env, os.environ):
+            cmake_prefix_path = env_source.get("CMAKE_PREFIX_PATH")
+            if not cmake_prefix_path:
+                continue
+            for prefix in cmake_prefix_path.split(os.pathsep):
+                if not prefix:
+                    continue
+                search_paths.append(os.path.join(prefix, "lib"))
+                search_paths.append(os.path.join(prefix, "lib64"))
+
+        # 4. Common system library directories
         search_paths.extend(
             [
                 "/usr/lib",

@@ -7,6 +7,15 @@ import os
 from typing import Any, cast
 
 from jarvis_cd.core.pkg import Interceptor
+from jarvis_cd.deployment import (
+    ConfigurationCondition,
+    ExecutionProfile,
+    PackageDeploymentContract,
+    ProviderResolution,
+    ReadinessContract,
+    RuntimeRequirement,
+    RuntimeStatus,
+)
 from jarvis_cd.shell import PsshExecInfo
 from jarvis_cd.shell.process import Mkdir
 
@@ -50,6 +59,63 @@ class Darshan(Interceptor):
                 "default": "/opt/darshan/lib/libdarshan.so",
             },
         ]
+
+    def _deployment_contract(self) -> PackageDeploymentContract:
+        """Describe the darshan interceptor's Spack-aware library requirement."""
+        config = cast(dict[str, Any], self.config)
+        if config.get("deploy_mode") == "container":
+            status = RuntimeStatus("unknown", "container_runtime_not_probed")
+            capabilities: tuple[str, ...] = ()
+        else:
+            library = self.find_library("darshan")
+            if library:
+                status = RuntimeStatus("ready", "runtime_probe_succeeded")
+                capabilities = ("io_characterization",)
+            else:
+                status = RuntimeStatus("unavailable", "software_not_found")
+                capabilities = ()
+        runtime = RuntimeRequirement(
+            requirement_id="darshan_runtime",
+            description=(
+                "Darshan I/O characterization runtime providing libdarshan "
+                "for LD_PRELOAD injection into the intercepted package"
+            ),
+            required_capabilities=("io_characterization",),
+            available_capabilities=capabilities,
+            status=status,
+            provider_resolutions=(
+                ProviderResolution(
+                    provider="spack",
+                    query_kind="spec",
+                    query_value="darshan-runtime",
+                ),
+            ),
+        )
+        completed = ReadinessContract(
+            mechanism="process_exit",
+            condition="successful_exit",
+        )
+        return PackageDeploymentContract(
+            package="builtin.darshan",
+            execution_profiles=(
+                ExecutionProfile(
+                    name="library_injection",
+                    execution_kind="batch",
+                    when=(ConfigurationCondition("job_id", "is_not_empty"),),
+                    runtime_requirements=("darshan_runtime",),
+                    readiness=completed,
+                    description=(
+                        "Inject libdarshan via LD_PRELOAD into the intercepted "
+                        "package's launch. The library is resolved from "
+                        "LD_LIBRARY_PATH, a Spack-loaded package prefix "
+                        "(CMAKE_PREFIX_PATH), common system library "
+                        "directories, or (in container mode) the "
+                        "caller-supplied darshan_lib_container path."
+                    ),
+                ),
+            ),
+            runtime_requirements=(runtime,),
+        )
 
     def _configure(self, **kwargs: Any) -> None:
         """
