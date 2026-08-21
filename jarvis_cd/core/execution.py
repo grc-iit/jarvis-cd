@@ -13,7 +13,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic, sleep
-from typing import Any, Iterator, List, Literal, Mapping, Optional, cast
+from typing import Any, Iterator, List, Literal, Mapping, Optional, cast, get_args
 from uuid import uuid4
 
 from jarvis_cd.artifacts import (
@@ -48,7 +48,27 @@ PROGRESS_SNAPSHOT_SCHEMA = "jarvis.execution.progress.v1"
 ARTIFACT_SNAPSHOT_SCHEMA = "jarvis.execution.artifacts.v1"
 SERVICE_RUNTIME_SNAPSHOT_SCHEMA = SERVICE_RUNTIME_SNAPSHOT_SCHEMA_VERSION
 SERVICE_RUNTIME_AUTHORITY_SCHEMA = "jarvis.execution.service-runtime-authority.v1"
-DIRECT_LAUNCH_SCHEMA = "jarvis.direct-launch.v1"
+DIRECT_LAUNCH_SCHEMA = "jarvis.direct-launch.v2"
+DirectLaunchEscapeReason = Literal[
+    "systemd_scope",
+    "skipped_windows",
+    "skipped_no_systemd_run",
+    "skipped_no_runtime_dir",
+    "degraded_probe_failed",
+    "degraded_migration_unconfirmed",
+    "degraded_spawn_error",
+]
+"""Typed reason a direct-mode launch did or did not escape into its own
+systemd scope (clio-relay#222). ``"systemd_scope"`` is the only successful
+escape; ``"skipped_*"`` values are static environment facts (no systemd user
+session to use in the first place); ``"degraded_*"`` values are runtime
+degradations -- a live capability was probed or attempted and did not pan
+out, so the launch fell back to pre-#222-fix setsid-only detachment for
+*this* execution. No silent fallback: every value the escape logic can
+produce is recorded on the ``direct_launch`` metadata record clio-relay
+already reads, per the project's own no-silent-fallback rule.
+"""
+DIRECT_LAUNCH_ESCAPE_REASONS = frozenset(get_args(DirectLaunchEscapeReason))
 DIRECT_LEASE_NAME = ".jarvis-direct-execution.lease"
 SCHEDULER_ARTIFACT_PATH_SCHEMA = "jarvis.scheduler.artifact-path.v1"
 SCHEDULER_ARTIFACT_PATH_METADATA_KEY = "jarvis_scheduler_path"
@@ -1306,6 +1326,8 @@ class ExecutionStore:
             "phase",
             "launcher_pid",
             "child_pid",
+            "escape",
+            "escape_detail",
         }
         if not isinstance(launch, dict) or set(launch) != expected_fields:
             raise RuntimeError("direct execution launch metadata is invalid")
@@ -1313,6 +1335,12 @@ class ExecutionStore:
             raise RuntimeError("direct execution launch metadata is invalid")
         phase = launch.get("phase")
         if phase not in {"launching", "prepared", "spawned", "failed", "orphaned"}:
+            raise RuntimeError("direct execution launch metadata is invalid")
+        escape = launch.get("escape")
+        if escape is not None and escape not in DIRECT_LAUNCH_ESCAPE_REASONS:
+            raise RuntimeError("direct execution launch metadata is invalid")
+        escape_detail = launch.get("escape_detail")
+        if escape_detail is not None and not isinstance(escape_detail, str):
             raise RuntimeError("direct execution launch metadata is invalid")
         launcher_pid = launch.get("launcher_pid")
         child_pid = launch.get("child_pid")
