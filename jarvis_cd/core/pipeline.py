@@ -4401,6 +4401,15 @@ class Pipeline:
                 )
 
             interceptor_def = self.interceptors[interceptor_name]
+
+            # Register the interceptor's own provenance/artifact/service-runtime
+            # sidecars, exactly as start() does for self.packages entries.
+            # Without this, an interceptor that ran and injected LD_PRELOAD
+            # correctly is invisible afterward: no entry in the execution
+            # record's progress_files/artifact_files/service_runtime_files,
+            # even though it executed. See #206.
+            self._bind_package_execution_environment(interceptor_def)
+
             logger.success(f"[{interceptor_def['pkg_type']}] [MODIFY_ENV] BEGIN")
 
             interceptor_instance = self._load_package_instance(
