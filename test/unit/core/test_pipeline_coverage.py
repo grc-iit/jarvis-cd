@@ -441,6 +441,7 @@ class TestPipelineCoverage(unittest.TestCase):
             )
 
         self.assertNotIn("DARSHAN_LOG_DIR", pipeline.env)
+        self.assertNotIn("DARSHAN_LOG_DIR_PATH", pipeline.env)
         self.assertNotIn("PBS_JOBID", pipeline.env)
 
         ior = pipeline._load_package_instance(pipeline.packages[0], pipeline.env)
@@ -450,13 +451,27 @@ class TestPipelineCoverage(unittest.TestCase):
         pipeline._apply_interceptors_to_package(clio, pipeline.packages[1])
         pipeline._apply_interceptors_to_package(plain, pipeline.packages[2])
 
+        # Darshan reads its log directory from whichever env var name its
+        # own --with-log-path-by-env build flag names, a choice made by
+        # whoever built libdarshan.so, not by jarvis. Both names this
+        # project has direct evidence for must be set: DARSHAN_LOG_DIR
+        # matches the scspkg/container build this package's own README
+        # documents (builtin/darshan/README.md, builtin/ior/build.sh);
+        # DARSHAN_LOG_DIR_PATH matches Spack's darshan-runtime build,
+        # confirmed live via `darshan-config --log-path` (#206) after the
+        # original DARSHAN_LOG_DIR-only build let LD_PRELOAD injection
+        # succeed while darshan silently wrote no log ("unable to
+        # determine log file path").
         self.assertEqual(ior.env["DARSHAN_LOG_DIR"], "/tmp/ior_logs")
+        self.assertEqual(ior.env["DARSHAN_LOG_DIR_PATH"], "/tmp/ior_logs")
         self.assertEqual(ior.env["PBS_JOBID"], "ior")
         self.assertEqual(ior.mod_env["LD_PRELOAD"], "/opt/darshan/lib/libdarshan.so")
         self.assertEqual(clio.env["DARSHAN_LOG_DIR"], "/tmp/clio_logs")
+        self.assertEqual(clio.env["DARSHAN_LOG_DIR_PATH"], "/tmp/clio_logs")
         self.assertEqual(clio.env["PBS_JOBID"], "clio")
         self.assertEqual(clio.mod_env["LD_PRELOAD"], "/opt/darshan/lib/libdarshan.so")
         self.assertNotIn("DARSHAN_LOG_DIR", plain.env)
+        self.assertNotIn("DARSHAN_LOG_DIR_PATH", plain.env)
         self.assertNotIn("PBS_JOBID", plain.env)
         self.assertNotIn("LD_PRELOAD", plain.mod_env)
 
