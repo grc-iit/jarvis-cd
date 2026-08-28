@@ -127,6 +127,10 @@ class Paraview(Application):
                 "msg": "Generic Python script passed to pvbatch in batch mode",
                 "type": str,
                 "default": "",
+                "input_binding": ConfigurationInputBinding(
+                    kind="local_file",
+                    structure="regular_file",
+                ).to_dict(),
             },
             {
                 "name": "script_args",

@@ -709,6 +709,25 @@ def test_package_advertises_initial_scene_as_optional_declared_file_input() -> N
     }
 
 
+def test_package_advertises_batch_script_as_optional_declared_file_input() -> None:
+    """The pvbatch ``script`` param is a client-local file a launcher must stage.
+
+    Same contract ``initial_scene`` already declares: without the binding, a
+    remote launcher (e.g. clio-relay's input staging) has no way to know the
+    configured path names a file on the SUBMITTING machine, and batch mode
+    only works when the script happens to pre-exist cluster-side.
+    """
+    package = object.__new__(package_module.Paraview)
+    menu = {item["name"]: item for item in package._configure_menu()}
+
+    assert menu["script"]["default"] == ""
+    assert menu["script"]["input_binding"] == {
+        "schema_version": "jarvis.configuration-input-binding.v1",
+        "kind": "local_file",
+        "structure": "regular_file",
+    }
+
+
 def test_empty_scene_default_does_not_require_initial_scene() -> None:
     package = object.__new__(package_module.Paraview)
     package.config = {
