@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 from jarvis_cd.artifacts import (
@@ -17,6 +18,18 @@ from jarvis_cd.artifacts import (
 )
 from jarvis_cd.progress import LineBuffer, ProgressState, event_from_progress_line
 from jarvis_cd.progress.schema import JsonValue, ProgressEvent
+
+_MAX_DIRECTORY_ENTRIES = 4096
+
+
+@dataclass(frozen=True, slots=True)
+class _DiscoveredEntry:
+    """One non-symlink direct child of the configured pvbatch working directory."""
+
+    name: str
+    is_file: bool
+    is_directory: bool
+    size_bytes: int | None
 
 
 @dataclass
@@ -43,13 +56,22 @@ class ParaViewArtifactAdapter:
     _lines: LineBuffer = field(default_factory=LineBuffer)
     _last_sequence: int = 0
     _tracked: dict[str, _TrackedArtifact] = field(default_factory=dict)
+    _directory_scan_done: bool = False
 
     def observe_artifacts(self, text: str) -> list[ArtifactObservation]:
         """Return artifact revisions from completed ParaView progress units."""
         return self._observe(text, finalize=False)
 
     def finalize_artifacts(self) -> list[ArtifactObservation]:
-        """Flush a final line and finalize every still-available output."""
+        """Flush a final line, finalize outputs, and recognize rendered frames.
+
+        Not every ``pvbatch`` script calls back into the progress reporter for
+        each frame it writes. Mirroring the LAMMPS trajectory recognizer, a
+        bounded, non-recursive scan of the configured working directory runs
+        once at finalization so those unreported render outputs (images,
+        movies, and scientific datasets) still register as execution
+        artifacts (#209).
+        """
         observations = self._observe("", finalize=True)
         for tracked in self._tracked.values():
             if tracked.state is ArtifactState.FINALIZED:
@@ -57,6 +79,7 @@ class ParaViewArtifactAdapter:
             tracked.state = ArtifactState.FINALIZED
             tracked.metadata = {**tracked.metadata, "finalized_at_execution_end": True}
             observations.append(self._observation(tracked))
+        observations.extend(self._discover_render_outputs())
         return observations
 
     def reset_artifacts(self) -> None:
@@ -64,6 +87,91 @@ class ParaViewArtifactAdapter:
         self._lines.reset()
         self._last_sequence = 0
         self._tracked.clear()
+        self._directory_scan_done = False
+
+    def _discover_render_outputs(self) -> list[ArtifactObservation]:
+        """Recognize known render outputs the script never reported directly.
+
+        Only known ParaView render/dataset extensions are recognized so an
+        unrelated file dropped in the working directory (the script itself,
+        notes, a saved state file, ...) is never claimed as an artifact,
+        matching the LAMMPS recognizer's discovery philosophy.
+        """
+        if self._directory_scan_done or self.cwd is None:
+            return []
+        self._directory_scan_done = True
+        entries, _truncated = self._discover_entries()
+        observations: list[ArtifactObservation] = []
+        for entry in entries:
+            path = self.cwd / entry.name
+            if path.as_posix() in self._tracked:
+                continue
+            kind, structure, media_type, format_name = _classify_output(path)
+            if format_name == "paraview-output":
+                continue
+            observations.append(
+                ArtifactObservation(
+                    artifact_id=new_artifact_id(),
+                    logical_name=entry.name,
+                    kind=kind,
+                    role=ArtifactRole.OUTPUT,
+                    structure=structure,
+                    ownership=ArtifactOwnership.SHARED,
+                    state=ArtifactState.FINALIZED,
+                    location=ArtifactLocation.cluster_path(path),
+                    media_type=media_type,
+                    format=format_name,
+                    size_bytes=entry.size_bytes,
+                    message="ParaView render output discovered at finalization",
+                    metadata={
+                        "application": "paraview",
+                        "generation_stage": "final",
+                        "discovered_via": "directory_scan",
+                    },
+                )
+            )
+        return observations
+
+    def _discover_entries(self) -> tuple[list[_DiscoveredEntry], bool]:
+        """Inspect direct children without following links or walking subtrees."""
+        assert self.cwd is not None
+        output_path = Path(self.cwd.as_posix())
+        try:
+            if not output_path.exists():
+                return [], False
+            if not output_path.is_dir() or output_path.is_symlink():
+                raise RuntimeError(
+                    f"ParaView working directory is not a real directory: {self.cwd}"
+                )
+            discovered: list[_DiscoveredEntry] = []
+            truncated = False
+            with os.scandir(output_path) as iterator:
+                for index, entry in enumerate(iterator):
+                    if index >= _MAX_DIRECTORY_ENTRIES:
+                        truncated = True
+                        break
+                    if entry.is_symlink():
+                        continue
+                    is_file = entry.is_file(follow_symlinks=False)
+                    is_directory = entry.is_dir(follow_symlinks=False)
+                    if not is_file and not is_directory:
+                        continue
+                    size_bytes = (
+                        entry.stat(follow_symlinks=False).st_size if is_file else None
+                    )
+                    discovered.append(
+                        _DiscoveredEntry(
+                            name=entry.name,
+                            is_file=is_file,
+                            is_directory=is_directory,
+                            size_bytes=size_bytes,
+                        )
+                    )
+        except OSError as exc:
+            raise RuntimeError(
+                f"cannot inspect ParaView working directory {self.cwd}: {exc}"
+            ) from exc
+        return sorted(discovered, key=lambda item: item.name), truncated
 
     def _observe(self, text: str, *, finalize: bool) -> list[ArtifactObservation]:
         observations: list[ArtifactObservation] = []
