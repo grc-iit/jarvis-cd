@@ -15,12 +15,13 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import yaml
 from contextlib import ExitStack
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, List, Mapping, Optional
+from typing import Dict, Any, List, Mapping, Optional, Tuple
 from uuid import uuid4
 from jarvis_cd.artifacts import (
     ArtifactLocation,
@@ -32,6 +33,8 @@ from jarvis_cd.artifacts import (
 )
 from jarvis_cd.core.config import load_class, Jarvis
 from jarvis_cd.core.execution import (
+    DIRECT_LAUNCH_SCHEMA,
+    DirectLaunchEscapeReason,
     LEGACY_RECORD_SCHEMA,
     RECORD_NAME,
     RECORD_SCHEMA,
@@ -114,6 +117,504 @@ def _bounded_scheduler_stderr(result: Any, limit: int = 4096) -> Optional[str]:
     if len(diagnostic) <= limit:
         return diagnostic
     return "[truncated]\n" + diagnostic[-limit:]
+
+
+def _is_windows_platform() -> bool:
+    """Return whether this process is running on Windows.
+
+    Factored out of :func:`_escaped_direct_launch_command` so tests can
+    exercise its POSIX branch without mutating the real ``os.name``, which
+    would also perturb unrelated ``pathlib`` platform dispatch when a test
+    suite runs natively on Windows.
+    """
+    return os.name == "nt"
+
+
+def _usable_systemd_user_runtime_dir() -> Optional[str]:
+    """Return a live XDG runtime directory for ``systemd-run --user``, or
+    ``None`` if this host has none.
+
+    Prefers the ambient ``XDG_RUNTIME_DIR``, but does not require it: a
+    caller several process generations up the launch chain (for example a
+    relay broker that deliberately sanitizes what it forwards into a
+    launched MCP tool) can strip that variable while the user's systemd
+    session, and the conventional ``/run/user/<uid>`` directory it manages,
+    stay perfectly live underneath.
+
+    This directory check alone does not make ``systemd-run`` usable, only
+    *discoverable*: confirmed empirically on a real deep relay launch chain
+    that ``systemd-run --user --scope`` does NOT reliably re-derive
+    ``/run/user/<uid>`` on its own when BOTH ``XDG_RUNTIME_DIR`` and
+    ``DBUS_SESSION_BUS_ADDRESS`` are absent from its own process
+    environment — it fails its D-Bus connection ("Failed to connect to
+    bus: No medium found") even though this exact directory exists and a
+    plain SSH session's ``systemd-run`` call (which still has one of those
+    two vars set via the session's own environment) succeeds immediately.
+    So the directory this function returns is not merely informative: the
+    caller must also EXPORT it into any ``systemd-run`` subprocess's own
+    environment — see :func:`_systemd_user_runtime_environment` — rather
+    than trust ``systemd-run`` to rediscover it independently.
+    """
+    from_env = os.environ.get("XDG_RUNTIME_DIR")
+    if from_env and os.path.isdir(from_env):
+        return from_env
+    if hasattr(os, "getuid"):
+        conventional = f"/run/user/{os.getuid()}"
+        if os.path.isdir(conventional):
+            return conventional
+    return None
+
+
+def _systemd_user_runtime_environment(runtime_dir: str) -> Dict[str, str]:
+    """Build the environment a ``systemd-run --user`` subprocess actually
+    needs, layered on top of the current process's own environment.
+
+    Always exports ``XDG_RUNTIME_DIR=<runtime_dir>`` (idempotent — a
+    harmless no-op when the ambient value already matches, but load-bearing
+    when a caller several process generations up stripped it: see
+    :func:`_usable_systemd_user_runtime_dir`). Derives
+    ``DBUS_SESSION_BUS_ADDRESS`` from the same directory using systemd's
+    own convention (``unix:path=<runtime_dir>/bus``) ONLY when it is not
+    already present in the ambient environment — an existing value is
+    trusted over a guess, since some hosts genuinely use a non-default bus
+    address.
+
+    :param runtime_dir: The live runtime directory from
+        :func:`_usable_systemd_user_runtime_dir`.
+    :return: A full environment mapping (ambient ``os.environ`` plus these
+        overrides) ready to pass as ``subprocess`` ``env=``.
+    """
+    environment = dict(os.environ)
+    environment["XDG_RUNTIME_DIR"] = runtime_dir
+    environment.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={runtime_dir}/bus")
+    return environment
+
+
+_SYSTEMD_SCOPE_PROBE_TIMEOUT_SECONDS = 2.0
+_PROBE_DIAGNOSTIC_LIMIT = 2048
+
+
+def _systemd_user_scope_is_usable(
+    systemd_run: str,
+    environment: Mapping[str, str],
+) -> Tuple[bool, Optional[str]]:
+    """Live-probe whether ``systemd-run --user --scope`` can register a
+    transient unit right now, not just whether the binary and a
+    conventional runtime directory exist.
+
+    A present ``systemd-run`` binary and a live ``/run/user/<uid>``
+    directory are necessary but not sufficient: confirmed empirically that
+    a deeply nested launch chain (relay broker -> uv -> clio-kit ->
+    jarvis-mcp -> this function) can fail the D-Bus connection systemd-run
+    needs ("Failed to connect to bus: No medium found") when its own
+    process environment has neither ``XDG_RUNTIME_DIR`` nor
+    ``DBUS_SESSION_BUS_ADDRESS`` set — even though the identical command
+    run from a plain SSH session on the same host (which still has one of
+    those two set) succeeds immediately. ``environment`` (built by
+    :func:`_systemd_user_runtime_environment`) closes that gap by
+    explicitly exporting both; this probe still runs live rather than
+    trusting that export blindly, since export alone does not guarantee
+    the user systemd/D-Bus session is actually reachable right now.
+
+    :param systemd_run: Resolved path to the ``systemd-run`` executable.
+    :param environment: The environment to run the probe subprocess with
+        (see :func:`_systemd_user_runtime_environment`).
+    :return: ``(True, None)`` on a clean probe. ``(False, diagnostic)`` on
+        any failure, where ``diagnostic`` is the probe's own bounded
+        stderr text when it produced one (e.g. the D-Bus connection
+        error), or a short synthetic description otherwise — never
+        ``None`` on failure, so a caller can always record *why*.
+    """
+    try:
+        completed = subprocess.run(
+            [systemd_run, "--user", "--scope", "--quiet", "--", "true"],
+            env=dict(environment),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=_SYSTEMD_SCOPE_PROBE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return False, (
+            "systemd-run --user --scope probe did not return within "
+            f"{_SYSTEMD_SCOPE_PROBE_TIMEOUT_SECONDS}s"
+        )
+    except OSError as error:
+        return False, str(error)
+    if completed.returncode == 0:
+        return True, None
+    diagnostic = (completed.stderr or b"").decode("utf-8", errors="replace").strip()
+    if not diagnostic:
+        diagnostic = f"systemd-run --user --scope probe exited {completed.returncode}"
+    return False, diagnostic[:_PROBE_DIAGNOSTIC_LIMIT]
+
+
+def _escaped_direct_launch_command(
+    command: List[str],
+) -> Tuple[List[str], DirectLaunchEscapeReason, Optional[str], Optional[Dict[str, str]]]:
+    """Wrap a direct-execution launch command so it escapes into its own
+    cgroup instead of merely detaching its POSIX session.
+
+    ``start_new_session=True`` (setsid) removes the launched process from
+    the caller's controlling terminal, session, and process group, but it
+    does NOT move the process to a new cgroup: fork/exec always inherits
+    the parent's cgroup unless something explicitly migrates the child.
+    On any host where a systemd-managed cgroup v2 hierarchy is tracking
+    the caller (for example, a caller wrapped in its own transient
+    ``systemd-run --user --scope`` unit for process containment — see
+    clio-relay issue #222), a plain setsid child is still a member of the
+    caller's cgroup. A containment check that expects the caller's
+    process tree to be empty once the caller-visible work is done will
+    then see the still-running detached child as a leaked descendant,
+    even though it is an intentionally supervised background execution
+    with its own durable, pollable execution record.
+
+    Wrapping the launch in its own transient ``systemd-run --user
+    --scope`` unit gives it an independent, sibling cgroup so a
+    caller-scoped containment check no longer observes it. Hosts without
+    a usable, *verified-live* systemd user session (no ``systemd-run``
+    binary, no live XDG runtime directory, or a failing probe scope) fall
+    back to the unwrapped command unchanged; the fork/exec chain then
+    behaves exactly as it did before this escape was added.
+
+    No silent fallback: every branch returns a typed reason (and, for the
+    one branch with more to say, a bounded diagnostic) instead of quietly
+    handing back the unwrapped command. A caller on the exact host class
+    #222 exists to serve — a cloud box with a flaky user-session D-Bus —
+    must be able to tell "the fix is not installed" apart from "the fix
+    installed and degraded," which a silent fallback could not do.
+
+    :param command: The argv to launch (e.g. the ``run-snapshot`` command).
+    :return: A 4-tuple of ``(command, reason, detail, environment)``.
+        ``command`` is the original list unchanged for every reason except
+        ``"systemd_scope"``. ``detail`` is ``None`` except for
+        ``"degraded_probe_failed"``, where it carries the probe's own
+        diagnostic text. ``environment`` is ``None`` except for
+        ``"systemd_scope"``, where it carries the environment (see
+        :func:`_systemd_user_runtime_environment`) the caller MUST use for
+        the real wrapped launch too — the same D-Bus reachability the
+        probe just verified.
+    """
+    if _is_windows_platform():
+        return command, "skipped_windows", None, None
+    systemd_run = shutil.which("systemd-run")
+    if systemd_run is None:
+        return command, "skipped_no_systemd_run", None, None
+    runtime_dir = _usable_systemd_user_runtime_dir()
+    if runtime_dir is None:
+        return command, "skipped_no_runtime_dir", None, None
+    environment = _systemd_user_runtime_environment(runtime_dir)
+    usable, diagnostic = _systemd_user_scope_is_usable(systemd_run, environment)
+    if not usable:
+        return command, "degraded_probe_failed", diagnostic, None
+    unit = f"jarvis-cd-direct-{uuid4().hex}"
+    return (
+        [
+            systemd_run,
+            "--user",
+            "--scope",
+            "--quiet",
+            f"--unit={unit}",
+            "--",
+            *command,
+        ],
+        "systemd_scope",
+        None,
+        environment,
+    )
+
+
+_CGROUP_ESCAPE_CONFIRM_TIMEOUT_SECONDS = 2.0
+_CGROUP_ESCAPE_POLL_INTERVAL_SECONDS = 0.02
+
+
+def _cgroup_membership(pid: str) -> Optional[str]:
+    """Return one process's ``/proc/<pid>/cgroup`` contents, or ``None``.
+
+    :param pid: ``self`` for the current process, or a positive PID string.
+    """
+    try:
+        with open(f"/proc/{pid}/cgroup", "r", encoding="utf-8") as handle:
+            return handle.read()
+    except OSError:
+        return None
+
+
+def _cgroup_v2_unified_path(membership: str) -> Optional[str]:
+    """Return the unified cgroup-v2 path from raw ``/proc/<pid>/cgroup``
+    content, or ``None`` when the host is not pure cgroup-v2 unified (no
+    ``0::`` line) — e.g. a legacy/hybrid v1 mount. This function does not
+    attempt to parse those; callers fall back to a looser comparison.
+    """
+    for line in membership.splitlines():
+        if line.startswith("0::"):
+            return line[len("0::") :]
+    return None
+
+
+def _left_ancestor_cgroup(observed: str, caller: str) -> bool:
+    """Return whether ``observed``'s cgroup is strictly outside ``caller``'s.
+
+    :func:`_cgroup_escape_confirmed`'s original check (``observed !=
+    caller``) proves the target *moved*, not that it moved *out* — a child
+    cgroup nested inside the caller's own delegated subtree would satisfy
+    plain inequality while remaining fully visible to a recursive
+    containment scan. Not reachable via ``systemd-run --user --scope``
+    today (the user manager places scopes under ``app.slice``, a sibling,
+    never nested under the caller), so this was latent rather than live —
+    but the fix is cheap: compare cgroup-v2 path *segments*, not raw
+    string prefixes, so a sibling unit whose name happens to start with
+    the same characters (``app.slice/foo`` vs. ``app.slice/foobar.scope``)
+    is correctly not mistaken for a descendant either. Falls back to plain
+    inequality when either side is not parseable unified-hierarchy content
+    (e.g. a legacy/hybrid cgroup v1 mount), preserving the original,
+    looser behavior rather than risk a false negative on a host shape this
+    function does not understand.
+    """
+    observed_path = _cgroup_v2_unified_path(observed)
+    caller_path = _cgroup_v2_unified_path(caller)
+    if observed_path is None or caller_path is None:
+        return observed != caller
+    if observed_path == caller_path:
+        return False
+    prefix = caller_path if caller_path.endswith("/") else caller_path + "/"
+    return not observed_path.startswith(prefix)
+
+
+def _cgroup_escape_confirmed(pid: int) -> bool:
+    """Poll until ``pid`` is confirmed to have left this process's own cgroup.
+
+    ``systemd-run --user --scope`` does not migrate its target into the new
+    cgroup atomically at fork time: migration completes only after an
+    asynchronous D-Bus round trip with the user's systemd manager. Trusting
+    the wrap immediately after ``subprocess.Popen`` returns can observe the
+    target still sitting in the caller's own cgroup during that window —
+    confirmed empirically on a real deployment as a second, distinct race
+    from clio-relay#222's original setsid-only bug: the escape looked
+    successful (no interpreter error) but a caller-scoped containment check
+    still saw the not-yet-migrated process as a leaked descendant. Wait for
+    the migration to actually land before treating the escape as live.
+
+    :param pid: The escaped launch's own process id.
+    :return: Whether the migration was confirmed within a bounded window.
+    """
+    caller_cgroup = _cgroup_membership("self")
+    if caller_cgroup is None:
+        return False
+    deadline = time.monotonic() + _CGROUP_ESCAPE_CONFIRM_TIMEOUT_SECONDS
+    while True:
+        observed = _cgroup_membership(str(pid))
+        if observed is None:
+            return False
+        if _left_ancestor_cgroup(observed, caller_cgroup):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_CGROUP_ESCAPE_POLL_INTERVAL_SECONDS)
+
+
+def _terminate_launched_process_best_effort(process: "subprocess.Popen[Any]") -> None:
+    """Terminate a still-running launched process, tolerating any failure."""
+    if process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=5)
+    except BaseException:
+        try:
+            process.kill()
+            process.wait(timeout=5)
+        except BaseException:
+            pass
+
+
+def _systemd_scope_unit_name(escaped_command: List[str]) -> Optional[str]:
+    """Return the transient scope unit name embedded in an escaped command.
+
+    :param escaped_command: A command previously returned by
+        :func:`_escaped_direct_launch_command`.
+    :return: The unit name (without ``.scope``), or ``None`` if the command
+        was never wrapped.
+    """
+    for token in escaped_command:
+        if token.startswith("--unit="):
+            return token[len("--unit=") :]
+    return None
+
+
+def _stop_systemd_scope_best_effort(unit: str) -> None:
+    """Best-effort teardown of a transient user scope by its own unit name.
+
+    On an unconfirmed-migration retry, terminating only the launch's
+    leader PID (the prior behavior) can leave grandchildren the leader
+    already forked *inside* the escaped cgroup during the confirm window
+    running and un-contained — a silent orphan-resource leak, plus a
+    partial-then-full double execution of the same ``execution_id``.
+    Stopping the scope unit itself uses systemd's own
+    ``KillMode=control-group`` semantics (the same teardown clio-relay's
+    own ``_release_linux_systemd_scope`` uses), tearing down the whole
+    cgroup rather than one PID. Tolerates ``systemctl`` being absent or
+    the stop itself failing — this is cleanup on an already-degraded path,
+    not a new hard dependency.
+
+    :param unit: The scope's transient unit name (without ``.scope``).
+    """
+    systemctl = shutil.which("systemctl")
+    if systemctl is None:
+        return
+    try:
+        subprocess.run(
+            [systemctl, "--user", "stop", f"{unit}.scope"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=_SYSTEMD_SCOPE_PROBE_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def _reopen_direct_execution_streams(
+    options: Dict[str, Any],
+    stdout_path: Path,
+    stderr_path: Path,
+) -> None:
+    """Reopen ``options["stdout"]``/``["stderr"]`` from their real paths.
+
+    Used before a retried (unwrapped) launch. Reopening from the ``Path``
+    the caller already resolved — rather than ``getattr(stream, "name")``
+    — means the reopened handle cannot silently re-resolve against a
+    since-changed current working directory even if the execution root
+    were ever a relative path; it is also simply less indirection than
+    reading a name back off a file object.
+
+    :param options: ``subprocess.Popen`` keyword arguments, mutated in
+        place.
+    :param stdout_path: The execution's stdout log path.
+    :param stderr_path: The execution's stderr log path.
+    """
+    for stream_name, path in (("stdout", stdout_path), ("stderr", stderr_path)):
+        stream = options.get(stream_name)
+        if hasattr(stream, "close"):
+            stream.close()
+        options[stream_name] = path.open("ab", buffering=0)
+
+
+_DEGRADED_ESCAPE_HEADLINES: Dict[str, str] = {
+    "degraded_probe_failed": "the live systemd --user scope probe failed",
+    "degraded_migration_unconfirmed": (
+        "systemd-run registered the scope but did not confirm cgroup "
+        "migration in time"
+    ),
+    "degraded_spawn_error": "the systemd-run wrapper itself failed to spawn",
+}
+
+
+def _warn_degraded_direct_launch_escape(
+    reason: DirectLaunchEscapeReason,
+    detail: Optional[str],
+) -> None:
+    """Emit a stderr warning for a runtime escape degradation.
+
+    Silent only for the three ``"skipped_*"``/``"systemd_scope"`` values,
+    which are not degradations (a static environment fact, or success).
+    Every ``"degraded_*"`` value gets a line naming what degraded and what
+    that means operationally — errors-are-agent-API: clio-relay#222's
+    process-containment race window is present again for this one launch,
+    even though the fix is installed.
+
+    :param reason: The final typed escape reason for one launch.
+    :param detail: An optional bounded diagnostic (e.g. the probe's own
+        D-Bus error text, or the ``OSError`` text from a failed spawn).
+    """
+    headline = _DEGRADED_ESCAPE_HEADLINES.get(reason)
+    if headline is None:
+        return
+    message = (
+        f"direct-mode launch degraded ({reason}): {headline}; falling back "
+        "to setsid-only detachment for this launch. clio-relay#222's "
+        "process-containment race window is present until the next "
+        "successful escape."
+    )
+    if detail:
+        message += f" detail: {detail}"
+    logger.warning(message, file=sys.stderr)
+
+
+def _spawn_direct_execution_process(
+    command: List[str],
+    options: Dict[str, Any],
+    *,
+    stdout_path: Path,
+    stderr_path: Path,
+) -> Tuple["subprocess.Popen[Any]", DirectLaunchEscapeReason, Optional[str]]:
+    """Launch a direct execution, escaping into its own cgroup when possible.
+
+    Applies :func:`_escaped_direct_launch_command`, then — only when it
+    actually wrapped the command — confirms the escape really landed via
+    :func:`_cgroup_escape_confirmed`. If it did not land within a bounded
+    window (an intermittent systemd/D-Bus race, not a permanent host
+    incapability — the earlier live probe already ruled that out), the
+    half-escaped scope is stopped (not just its leader PID — see
+    :func:`_stop_systemd_scope_best_effort`) and the launch retries once,
+    unwrapped, so a flaky escape degrades to the prior setsid-only
+    behavior instead of leaving an ambiguous, neither-escaped-nor-
+    contained process behind. If the wrapped ``Popen`` call itself raises
+    ``OSError`` (e.g. ``systemd-run`` was removed between the probe and
+    this call), the same unwrapped retry runs rather than hard-failing a
+    launch that would have succeeded before this escape was ever added.
+
+    Every outcome returns a typed reason (and, where there is more to
+    say, a bounded diagnostic); the caller records both on the
+    ``direct_launch`` execution metadata and this function itself warns
+    on stderr for the degraded cases — no silent fallback.
+
+    :param command: The unwrapped run-snapshot argv.
+    :param options: ``subprocess.Popen`` keyword arguments. ``stdout`` and
+        ``stderr`` must already be open file objects; on a retry they are
+        reopened in append mode from ``stdout_path``/``stderr_path``.
+    :param stdout_path: The execution's stdout log path (for a retry).
+    :param stderr_path: The execution's stderr log path (for a retry).
+    :return: A 3-tuple of ``(process, reason, detail)`` for the launched
+        (possibly retried) process.
+    """
+    escaped_command, reason, detail, environment = _escaped_direct_launch_command(command)
+    if escaped_command is command:
+        _warn_degraded_direct_launch_escape(reason, detail)
+        return subprocess.Popen(escaped_command, **options), reason, detail
+
+    # The wrapped launch needs the SAME exported XDG_RUNTIME_DIR/
+    # DBUS_SESSION_BUS_ADDRESS the probe just verified with -- a caller
+    # several process generations up (the exact deep relay chain #222
+    # exists to serve) can strip both from ambient os.environ, and
+    # systemd-run does not reliably rediscover them on its own (see
+    # _usable_systemd_user_runtime_dir). A local dict copy, not a mutation
+    # of the caller's `options`, so an unwrapped retry below is unaffected.
+    wrapped_options = (
+        {**options, "env": environment} if environment is not None else options
+    )
+    try:
+        launched_process = subprocess.Popen(escaped_command, **wrapped_options)
+    except OSError as error:
+        reason, detail = "degraded_spawn_error", str(error)
+        _warn_degraded_direct_launch_escape(reason, detail)
+        _reopen_direct_execution_streams(options, stdout_path, stderr_path)
+        return subprocess.Popen(command, **options), reason, detail
+
+    if _cgroup_escape_confirmed(launched_process.pid):
+        return launched_process, reason, detail
+
+    unit = _systemd_scope_unit_name(escaped_command)
+    if unit is not None:
+        _stop_systemd_scope_best_effort(unit)
+    _terminate_launched_process_best_effort(launched_process)
+    _reopen_direct_execution_streams(options, stdout_path, stderr_path)
+    reason, detail = "degraded_migration_unconfirmed", (
+        "cgroup migration not confirmed within "
+        f"{_CGROUP_ESCAPE_CONFIRM_TIMEOUT_SECONDS}s"
+    )
+    _warn_degraded_direct_launch_escape(reason, detail)
+    return subprocess.Popen(command, **options), reason, detail
 
 
 def _executor_status_error(
@@ -3142,11 +3643,13 @@ class Pipeline:
         resolved_execution_id = _validated_execution_id(execution_id)
         self.save()
         store = self._execution_store()
-        direct_launch = {
-            "schema_version": "jarvis.direct-launch.v1",
+        direct_launch: Dict[str, Any] = {
+            "schema_version": DIRECT_LAUNCH_SCHEMA,
             "phase": "launching",
             "launcher_pid": os.getpid(),
             "child_pid": None,
+            "escape": None,
+            "escape_detail": None,
         }
         store.create(
             resolved_execution_id,
@@ -3228,15 +3731,26 @@ class Pipeline:
                     options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
                 else:
                     options["start_new_session"] = True
-                launched_process = subprocess.Popen(command, **options)
+                launched_process, escape, escape_detail = _spawn_direct_execution_process(
+                    command,
+                    options,
+                    stdout_path=stdout_path,
+                    stderr_path=stderr_path,
+                )
                 process = launched_process
             finally:
-                stdout_stream.close()
-                stderr_stream.close()
+                # A retried (unwrapped) launch reopens fresh stream objects
+                # into `options` when the systemd-scope escape does not land
+                # in time; close whichever objects are current, not the
+                # stale local references from before that retry.
+                options["stdout"].close()
+                options["stderr"].close()
             direct_launch = {
                 **direct_launch,
                 "phase": "spawned",
                 "child_pid": launched_process.pid,
+                "escape": escape,
+                "escape_detail": escape_detail,
             }
             try:
                 store.update(
