@@ -392,6 +392,31 @@ resolved. If any package needs a decision, nothing is built until it's
 answered. `JARVIS_SPACK_ENV=off` falls back to one `spack install
 <spec>` per package, with no lock.
 
+#### Shared environments (`JARVIS_SPACK_ENV_DIR`)
+
+Set `JARVIS_SPACK_ENV_DIR=<dir>` to use `<dir>` in place of
+`<pipeline_shared_dir>/spack-env`. The check, the install and a run's load all
+use it, so several pipelines with the same packages can share one environment
+and one lock. For example, a caller can key the directory on the package
+digests (`<site home>/jarvis-cd/spack-envs/<sha256 of the sorted package
+digests>`). Set it on the submitting process, as with `JARVIS_INSTALL_ON_LOAD`.
+The job inherits it.
+
+Every environment operation holds a `flock` on `<dir>/.jarvis-env.lock`:
+
+- An install holds it **exclusively** around the manifest write, `concretize`,
+  `install`, and reading and copying `spack.lock`.
+- A check, or a load that only reads the lock, holds it **shared**.
+
+A second install that finds the lock held logs `waiting for
+<dir>/.jarvis-env.lock` to `install.log` and reports `phase:
+waiting_env_lock`. It blocks until the holder finishes. It then re-runs `spack
+spec -I` for the packages it saw as missing. If the holder built them and the
+lock matches its specs, it reuses the lock (`lock_hash`) and makes no `spack
+-e` call. If the specs differ, it re-concretizes the shared environment in
+turn. Put the directory on a file system that honours `flock` across nodes;
+Linux NFS clients map it to NFS byte-range locks.
+
 ### MPI selection
 
 After loading, the installer exports the MPI that the packages resolved to.

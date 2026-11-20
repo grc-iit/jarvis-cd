@@ -332,7 +332,7 @@ runs `jarvis ppl install yaml <runtime>/pipeline.yaml [+check] [--answers …]
 | Field | Meaning |
 |-------|---------|
 | `mode` | `install` or `check` |
-| `phase` | `queued`, `starting`, `resolving`, `building`, `needs_decision`, `failed`, `done` |
+| `phase` | `queued`, `starting`, `resolving`, `waiting_env_lock` (another operation holds a shared `JARVIS_SPACK_ENV_DIR`), `building`, `needs_decision`, `failed`, `done` |
 | `packages_total` / `packages_done` / `current_package` | position in the package list |
 | `missing` | names Spack is building for the current package |
 | `log` | `<execution>/install/install.log`: append-only, stream it while the job runs |

@@ -16,11 +16,14 @@ execution, else ``<pipeline shared>/install``):
 ``install-record.json``  ``jarvis.install-record.v1`` resolved hashes per package
 ``decisions.yaml``       recorded answers; always ``<pipeline shared>/install``
                          so runs reuse them (``JARVIS_SPACK_DECISIONS`` overrides)
-``spack.lock``           copy of the pipeline env lock (``<pipeline shared>/spack-env``)
+``spack.lock``           copy of the env lock (``<pipeline shared>/spack-env``,
+                         or ``JARVIS_SPACK_ENV_DIR`` when set)
 """
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -28,6 +31,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -843,6 +847,63 @@ class SpackPlanner:
 
 ENV_SCHEMA = "jarvis.spack-env.v1"
 
+#: flock file inside the env dir. Held exclusively around every env write
+#: (manifest, concretize, install, lock copy) and shared while a check or
+#: load reads the lock, so pipelines sharing one ``JARVIS_SPACK_ENV_DIR``
+#: serialize instead of corrupting ``spack.lock``.
+ENV_LOCK_NAME = ".jarvis-env.lock"
+
+
+@contextlib.contextmanager
+def spack_env_lock(
+    directory: Path,
+    *,
+    exclusive: bool,
+    on_wait: Optional[Callable[[], None]] = None,
+):
+    """Hold ``<directory>/.jarvis-env.lock``; ``on_wait`` runs once if blocked."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(directory / ENV_LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o664)
+    try:
+        if os.name == "nt":
+            import msvcrt
+
+            waited = False
+            while True:
+                try:
+                    os.lseek(descriptor, 0, os.SEEK_SET)
+                    msvcrt.locking(descriptor, msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if not waited and on_wait is not None:
+                        on_wait()
+                    waited = True
+                    time.sleep(0.5)
+            try:
+                yield
+            finally:
+                os.lseek(descriptor, 0, os.SEEK_SET)
+                msvcrt.locking(descriptor, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+            try:
+                fcntl.flock(descriptor, operation | fcntl.LOCK_NB)
+            except OSError as exc:
+                if exc.errno not in (errno.EACCES, errno.EAGAIN):
+                    raise
+                if on_wait is not None:
+                    on_wait()
+                fcntl.flock(descriptor, operation)
+            try:
+                yield
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+    finally:
+        os.close(descriptor)
+
 
 def spack_env_enabled() -> bool:
     """``JARVIS_SPACK_ENV=off`` falls back to one ``spack install`` per package."""
@@ -851,7 +912,8 @@ def spack_env_enabled() -> bool:
 
 
 class SpackEnvironment:
-    """An anonymous Spack environment directory owned by one pipeline.
+    """An anonymous Spack environment directory (one per pipeline by
+    default, or shared through ``JARVIS_SPACK_ENV_DIR``).
 
     ``spack.yaml`` lists each resolved package spec as a root (``unify:
     false`` so every root concretizes as the planner resolved it, ``reuse:
@@ -957,15 +1019,68 @@ def _sync_spack_environment(
 
     A lock concretized from the same specs is reused without re-running
     Spack, so a run's find-first load is just ``spack load /<lock hash>``.
+
+    Everything runs under :func:`spack_env_lock` (exclusive when it may
+    build, shared otherwise), so several pipelines may share one env dir:
+    a second install waits, re-verifies what the first one built and
+    reuses its lock instead of building again.
     """
     environment = SpackEnvironment(env_dir, planner.runner)
+    building = context.mode == "install" and not context.issues
+    if not building and not Path(env_dir).is_dir():
+        record["spack_env"] = environment.describe(None)
+        return
+    waited: List[bool] = []
+
+    def on_wait() -> None:
+        waited.append(True)
+        message = (
+            f"waiting for {Path(env_dir) / ENV_LOCK_NAME}: another jarvis "
+            "operation is using this Spack environment"
+        )
+        context.log(f"[{_utc_now()}] {message}\n")
+        print(f"SpackInstaller: {message}", flush=True)
+        context.report_progress(phase="waiting_env_lock", current_package=None)
+
+    with spack_env_lock(env_dir, exclusive=building, on_wait=on_wait):
+        if waited:
+            context.log(f"[{_utc_now()}] acquired {Path(env_dir) / ENV_LOCK_NAME}\n")
+        _sync_spack_environment_locked(
+            planner, context, record, resolved, env_dir, environment,
+            building=building, waited=bool(waited),
+        )
+
+
+def _sync_spack_environment_locked(
+    planner: SpackPlanner,
+    context: InstallContext,
+    record: Dict[str, Any],
+    resolved: Sequence[tuple[str, Dict[str, Any]]],
+    env_dir: Path,
+    environment: "SpackEnvironment",
+    *,
+    building: bool,
+    waited: bool,
+) -> None:
     # Manifest entries are Spack spec syntax, not shell words: unquote them.
     specs = [" ".join(shlex.split(entry["spec"])) for _package, entry in resolved]
     roots = environment.current_roots(specs)
     missing = [
         (package, entry) for package, entry in resolved if entry["status"] == "missing"
     ]
-    if context.mode == "install" and not context.issues and (roots is None or missing):
+    if building and waited and missing:
+        # The holder may have built these nodes while this install waited.
+        still_missing = []
+        for package, entry in missing:
+            verify = planner._spec(shlex.split(entry["spec"]))
+            nodes = parse_spec_tree(verify.stdout) if verify.returncode == 0 else []
+            if nodes:
+                planner._fill_nodes(entry, nodes, shlex.split(entry["spec"]))
+            if entry["status"] == "missing":
+                still_missing.append((package, entry))
+        missing = still_missing
+        planner.refresh_mpi([entry for _package, entry in resolved])
+    if building and (roots is None or missing):
         context.report_progress(
             phase="building",
             current_package=None,

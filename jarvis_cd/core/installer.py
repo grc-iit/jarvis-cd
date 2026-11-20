@@ -349,11 +349,18 @@ class SpackInstaller(Installer):
 
 
 def spack_env_dir_for(ppl) -> Path:
-    """The pipeline's Spack environment: ``<pipeline shared>/spack-env``.
+    """The pipeline's Spack environment directory.
 
-    It lives in the pipeline's persistent shared dir (not the execution's),
-    so an install job's ``spack.lock`` is what later run jobs load.
+    ``JARVIS_SPACK_ENV_DIR`` wins when set (check, install and the run's
+    load all use it), so several pipelines can share one env, e.g. one per
+    set of package digests; writes are serialized by a flock on the dir.
+    Otherwise it is ``<pipeline shared>/spack-env``, in the pipeline's
+    persistent shared dir (not the execution's), so an install job's
+    ``spack.lock`` is what later run jobs load.
     """
+    configured = os.environ.get("JARVIS_SPACK_ENV_DIR", "").strip()
+    if configured:
+        return Path(os.path.expandvars(os.path.expanduser(configured)))
     return Path(ppl.jarvis.get_pipeline_shared_dir(ppl.name)) / "spack-env"
 
 
