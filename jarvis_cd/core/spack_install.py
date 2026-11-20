@@ -14,7 +14,9 @@ execution, else ``<pipeline shared>/install``):
 ``install.log``          append-only log of every Spack command and its output
 ``issues.jsonl``         ``jarvis.install-issue.v1`` lines from the latest run
 ``install-record.json``  ``jarvis.install-record.v1`` resolved hashes per package
-``decisions.yaml``       recorded answers (``JARVIS_SPACK_DECISIONS`` overrides)
+``decisions.yaml``       recorded answers; always ``<pipeline shared>/install``
+                         so runs reuse them (``JARVIS_SPACK_DECISIONS`` overrides)
+``spack.lock``           copy of the pipeline env lock (``<pipeline shared>/spack-env``)
 """
 
 from __future__ import annotations
@@ -668,14 +670,21 @@ class SpackPlanner:
                     entry["issue_id"] = issue["issue_id"]
                     return entry
             mpi_node = next(node for node in nodes if node.name in MPI_PROVIDERS)
-            entry["mpi"] = {"name": mpi_node.name, "hash": mpi_node.hash, "source": source}
+            entry["mpi"] = self._mpi_entry(mpi_node, source)
         elif mpi_nodes:
-            entry["mpi"] = {
-                "name": mpi_nodes[0].name,
-                "hash": mpi_nodes[0].hash,
-                "source": "query",
-            }
+            entry["mpi"] = self._mpi_entry(mpi_nodes[0], "query")
         self._fill_nodes(entry, nodes, tokens)
+        return entry
+
+    def _mpi_entry(self, node: SpecNode, source: str) -> Dict[str, Any]:
+        """The MPI a package resolved to, with its prefix when Spack has it."""
+        entry: Dict[str, Any] = {"name": node.name, "hash": node.hash, "source": source}
+        short = node.hash[:7]
+        for candidate in self.mpi_candidates():
+            if any(h.startswith(short) or short.startswith(h) for h in candidate["hashes"]):
+                entry["version"] = candidate["version"]
+                entry["prefix"] = candidate["prefix"]
+                break
         return entry
 
     def _fill_nodes(
@@ -813,6 +822,248 @@ class SpackPlanner:
             entry["error"] = "spack install succeeded but nodes are still missing"
         return entry
 
+    def refresh_mpi(self, entries: Sequence[Dict[str, Any]]) -> None:
+        """Fill the prefix of MPIs that were only just built."""
+        if not any(
+            isinstance(entry.get("mpi"), dict) and not entry["mpi"].get("prefix")
+            for entry in entries
+        ):
+            return
+        self._mpi_candidates = None
+        for entry in entries:
+            mpi = entry.get("mpi")
+            if isinstance(mpi, dict) and not mpi.get("prefix"):
+                node = SpecNode("installed", mpi["hash"], mpi["name"], mpi["name"], 1)
+                entry["mpi"] = self._mpi_entry(node, mpi.get("source", "query"))
+
+
+# ---------------------------------------------------------------------------
+# Per-pipeline Spack environment (spack.yaml + spack.lock)
+# ---------------------------------------------------------------------------
+
+ENV_SCHEMA = "jarvis.spack-env.v1"
+
+
+def spack_env_enabled() -> bool:
+    """``JARVIS_SPACK_ENV=off`` falls back to one ``spack install`` per package."""
+    value = os.environ.get("JARVIS_SPACK_ENV", "").strip().lower()
+    return value not in ("off", "0", "false", "no", "none")
+
+
+class SpackEnvironment:
+    """An anonymous Spack environment directory owned by one pipeline.
+
+    ``spack.yaml`` lists each resolved package spec as a root (``unify:
+    false`` so every root concretizes as the planner resolved it, ``reuse:
+    true`` so installed/upstream/external nodes are kept, no view).
+    ``spack.lock`` written by ``spack -e DIR concretize`` is the install
+    record: runs load the lock's root hashes, so every execution uses the
+    exact same builds until the pipeline's specs change.
+    """
+
+    def __init__(self, directory: Path, runner: SpackRunner):
+        self.directory = Path(directory)
+        self.runner = runner
+
+    @property
+    def manifest_path(self) -> Path:
+        return self.directory / "spack.yaml"
+
+    @property
+    def lock_path(self) -> Path:
+        return self.directory / "spack.lock"
+
+    @staticmethod
+    def manifest_for(specs: Sequence[str]) -> Dict[str, Any]:
+        return {
+            "spack": {
+                "specs": list(specs),
+                "view": False,
+                "concretizer": {"reuse": True, "unify": False},
+            }
+        }
+
+    def manifest_specs(self) -> Optional[List[str]]:
+        try:
+            document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
+            specs = document["spack"]["specs"]
+        except (OSError, yaml.YAMLError, KeyError, TypeError):
+            return None
+        return [str(spec) for spec in specs] if isinstance(specs, list) else None
+
+    def lock_roots(self) -> Optional[List[Dict[str, str]]]:
+        try:
+            document = json.loads(self.lock_path.read_text(encoding="utf-8"))
+            roots = document["roots"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        if not isinstance(roots, list) or not all(
+            isinstance(root, dict) and isinstance(root.get("hash"), str) for root in roots
+        ):
+            return None
+        return [{"hash": root["hash"], "spec": str(root.get("spec", ""))} for root in roots]
+
+    def current_roots(self, specs: Sequence[str]) -> Optional[List[Dict[str, str]]]:
+        """Lock roots when the lock was concretized from exactly ``specs``."""
+        if self.manifest_specs() != list(specs):
+            return None
+        roots = self.lock_roots()
+        if roots is None or len(roots) != len(specs):
+            return None
+        return roots
+
+    def write_manifest(self, specs: Sequence[str]) -> None:
+        self.directory.mkdir(parents=True, exist_ok=True)
+        if self.manifest_specs() != list(specs):
+            _atomic_write_text(
+                self.manifest_path,
+                "# Generated by jarvis ppl install; edit the pipeline instead.\n"
+                + yaml.safe_dump(self.manifest_for(specs), sort_keys=False),
+            )
+
+    def concretize(self) -> subprocess.CompletedProcess[str]:
+        return self.runner.run(
+            ["-e", str(self.directory), "concretize", "-f"], stream=True
+        )
+
+    def install(self) -> subprocess.CompletedProcess[str]:
+        return self.runner.run(
+            ["-e", str(self.directory), "install", "--fail-fast"], stream=True
+        )
+
+    def describe(self, roots: Optional[Sequence[Mapping[str, str]]]) -> Dict[str, Any]:
+        lock_sha256 = None
+        if roots is not None and self.lock_path.is_file():
+            lock_sha256 = hashlib.sha256(self.lock_path.read_bytes()).hexdigest()
+        return {
+            "schema_version": ENV_SCHEMA,
+            "dir": str(self.directory),
+            "manifest": str(self.manifest_path),
+            "lock": str(self.lock_path) if roots is not None else None,
+            "lock_sha256": lock_sha256,
+            "roots": [dict(root) for root in roots] if roots is not None else [],
+            "status": "locked" if roots is not None else "unlocked",
+        }
+
+
+def _sync_spack_environment(
+    planner: SpackPlanner,
+    context: InstallContext,
+    record: Dict[str, Any],
+    resolved: Sequence[tuple[str, Dict[str, Any]]],
+    env_dir: Path,
+) -> None:
+    """Build the missing nodes through the pipeline env; record its lock.
+
+    A lock concretized from the same specs is reused without re-running
+    Spack, so a run's find-first load is just ``spack load /<lock hash>``.
+    """
+    environment = SpackEnvironment(env_dir, planner.runner)
+    # Manifest entries are Spack spec syntax, not shell words: unquote them.
+    specs = [" ".join(shlex.split(entry["spec"])) for _package, entry in resolved]
+    roots = environment.current_roots(specs)
+    missing = [
+        (package, entry) for package, entry in resolved if entry["status"] == "missing"
+    ]
+    if context.mode == "install" and not context.issues and (roots is None or missing):
+        context.report_progress(
+            phase="building",
+            current_package=None,
+            missing=[item["name"] for _p, e in missing for item in e["missing"]][:32],
+        )
+        environment.write_manifest(specs)
+        completed = environment.concretize()
+        if completed.returncode == 0:
+            completed = environment.install()
+        if completed.returncode != 0:
+            error = _error_excerpt(completed.stdout or "")
+            for _package, entry in missing or resolved:
+                entry["status"] = "failed"
+                entry["error"] = f"spack -e {env_dir}: {error}"
+            record["spack_env"] = environment.describe(None)
+            return
+        roots = environment.current_roots(specs)
+        for package, entry in missing:
+            missing_before = [item["name"] for item in entry["missing"]]
+            verify = planner._spec(shlex.split(entry["spec"]))
+            nodes = parse_spec_tree(verify.stdout) if verify.returncode == 0 else []
+            if not nodes:
+                entry["status"] = "failed"
+                entry["error"] = "could not re-verify the installed spec"
+                continue
+            planner._fill_nodes(entry, nodes, shlex.split(entry["spec"]))
+            entry["built"] = missing_before
+            if entry["status"] == "satisfied":
+                entry["status"] = "installed"
+            else:
+                entry["status"] = "failed"
+                entry["error"] = "spack install succeeded but nodes are still missing"
+        planner.refresh_mpi([entry for _package, entry in resolved])
+    if roots is not None:
+        for (_package, entry), root in zip(resolved, roots):
+            entry["lock_hash"] = root["hash"]
+        try:
+            context.install_dir.mkdir(parents=True, exist_ok=True)
+            _atomic_write_text(
+                context.install_dir / "spack.lock",
+                environment.lock_path.read_text(encoding="utf-8"),
+            )
+        except OSError:
+            pass
+    record["spack_env"] = environment.describe(roots)
+
+
+# ---------------------------------------------------------------------------
+# MPI selection for launchers
+# ---------------------------------------------------------------------------
+
+#: Spack MPI package -> ``jarvis_cd.shell.ExecType`` value used to build
+#: the launcher. MPIs not listed are detected with ``mpiexec --version``.
+MPI_EXEC_TYPES = {
+    "openmpi": "openmpi",
+    "hpcx-mpi": "openmpi",
+    "mpich": "mpich",
+    "mvapich2": "mpich",
+    "mvapich": "mpich",
+    "intel-oneapi-mpi": "intel_mpi",
+    "intel-mpi": "intel_mpi",
+    "cray-mpich": "cray_mpich",
+}
+
+
+def mpi_environment(record: Mapping[str, Any]) -> Dict[str, str]:
+    """``JARVIS_MPI_*`` variables for the MPI the pipeline's packages chose.
+
+    Launchers read them (see ``jarvis_cd.shell.exec_factory``): the type
+    skips ``mpiexec --version`` probing, and the prefix selects
+    ``<prefix>/bin/mpiexec`` and OpenMPI's ``--prefix`` so remote daemons
+    started over ssh find the same installation. Returns ``{}`` when no
+    package uses MPI or packages disagree.
+    """
+    chosen = [
+        entry["mpi"]
+        for entry in record.get("packages", {}).values()
+        if isinstance(entry, Mapping)
+        and entry.get("status") in ("satisfied", "installed")
+        and isinstance(entry.get("mpi"), Mapping)
+    ]
+    if not chosen:
+        return {}
+    first = chosen[0]
+    if any(str(mpi.get("hash", ""))[:7] != str(first.get("hash", ""))[:7] for mpi in chosen):
+        return {}
+    name = str(first.get("name"))
+    version = first.get("version")
+    environment = {
+        "JARVIS_MPI_NAME": name,
+        "JARVIS_MPI_SPEC": f"{name}{'@' + str(version) if version else ''}/{first.get('hash')}",
+    }
+    if name in MPI_EXEC_TYPES:
+        environment["JARVIS_MPI_TYPE"] = MPI_EXEC_TYPES[name]
+    if first.get("prefix"):
+        environment["JARVIS_MPI_PREFIX"] = str(first["prefix"])
+    return environment
+
 
 def _package_query(pkg_def: Mapping[str, Any]) -> str:
     config = pkg_def.get("config", {}) or {}
@@ -831,8 +1082,14 @@ def run_spack_install(
     pkg_list: Sequence[Mapping[str, Any]],
     context: InstallContext,
     runner: Optional[SpackRunner] = None,
+    env_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Plan and, in install mode, build every Spack package in ``pkg_list``.
+
+    With ``env_dir`` the missing nodes are built through that per-pipeline
+    Spack environment and its ``spack.lock`` becomes the install record
+    (see :class:`SpackEnvironment`); without it each package gets its own
+    ``spack install``.
 
     Returns the ``jarvis.install-record.v1`` document (also written to
     ``install-record.json``). Issues are appended to ``context.issues``; the
@@ -853,6 +1110,7 @@ def run_spack_install(
         for pkg_def in pkg_list
     ]
     total = len(packages)
+    resolved: List[tuple[str, Dict[str, Any]]] = []
     for index, (package, pkg_def) in enumerate(packages):
         query = _package_query(pkg_def)
         context.report_progress(
@@ -883,7 +1141,7 @@ def run_spack_install(
                         hint="run `jarvis ppl install` (e.g. as a 1-node +submit job)",
                     )
                 )
-            else:
+            elif env_dir is None:
                 context.report_progress(
                     phase="building",
                     current_package=package,
@@ -891,6 +1149,8 @@ def run_spack_install(
                     missing=[item["name"] for item in entry["missing"]][:32],
                 )
                 entry = planner.install_package(package, entry)
+        if entry["status"] in ("satisfied", "missing"):
+            resolved.append((package, entry))
         record["packages"][package] = entry
         context.report_progress(
             phase="resolving",
@@ -898,6 +1158,8 @@ def run_spack_install(
             packages_done=index + 1,
             missing=[item["name"] for item in entry.get("missing", [])][:32],
         )
+    if env_dir is not None and resolved:
+        _sync_spack_environment(planner, context, record, resolved, Path(env_dir))
     record["finished_at"] = _utc_now()
     record["packages_total"] = total
     record["issues"] = [issue["issue_id"] for issue in context.issues]

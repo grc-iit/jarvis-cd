@@ -1004,6 +1004,11 @@ class Paraview(Application):
                 f"{operation} failed with exit status: {details}{diagnostic}"
             )
 
+    def _default_background_start(self) -> bool:
+        # Service mode blocks in its supervisor until stopped; start it in the
+        # background so later packages (e.g. the simulation) can start.
+        return self.config.get("mode", "server") == "service"
+
     def stop(self):
         """
         Stop a running application. E.g., OrangeFS will terminate the servers,

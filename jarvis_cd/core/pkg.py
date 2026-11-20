@@ -907,6 +907,23 @@ class Pkg:
                 "type": str,
                 "default": "",
             },
+            {
+                "name": "start_mode",
+                "msg": (
+                    "auto, foreground or background. Background starts run "
+                    "start() in a thread and continue once ready() is true "
+                    "(auto: background for services)"
+                ),
+                "type": str,
+                "choices": ["auto", "foreground", "background"],
+                "default": "auto",
+            },
+            {
+                "name": "start_timeout",
+                "msg": "Seconds a background start may take to become ready (0: no limit)",
+                "type": int,
+                "default": 600,
+            },
         ]
 
         # These controls remain part of the CLI and persisted package config,
@@ -1177,6 +1194,53 @@ class Pkg:
         Override this method in package implementations.
         """
         pass
+
+    def starts_in_background(self) -> bool:
+        """Whether ``Pipeline.start`` runs this package's start() in a thread.
+
+        ``start_mode: background`` lets later packages start once
+        :meth:`ready` reports true (e.g. a viewer service beside a solver).
+        ``auto`` uses :meth:`_default_background_start`.
+        """
+        mode = str(self.config.get("start_mode") or "auto").strip().lower()
+        if mode == "background":
+            return True
+        if mode == "foreground":
+            return False
+        if mode != "auto":
+            raise ValueError(
+                f"{self.pkg_id}: start_mode must be auto, foreground or background"
+            )
+        return self._default_background_start()
+
+    def _default_background_start(self) -> bool:
+        return isinstance(self, Service)
+
+    def ready(self) -> Optional[bool]:
+        """Readiness of a background-started package.
+
+        Returns True once the package's service runtime sidecar reports a
+        ``ready`` (or ``degraded``) service, False if it reports ``failed`` or
+        ``stopped``, and None while nothing is known yet. Packages without a
+        service runtime can override this (e.g. probe a port).
+        """
+        path = self.mod_env.get("JARVIS_SERVICE_RUNTIME_PATH") or self.env.get(
+            "JARVIS_SERVICE_RUNTIME_PATH"
+        )
+        if not path or not os.path.exists(path):
+            return None
+        from jarvis_cd.service_runtime import ServiceRuntimeStore
+
+        try:
+            reports = ServiceRuntimeStore(path).current().values()
+        except Exception:  # mid-write or not yet valid: unknown
+            return None
+        lifecycles = {str(report.lifecycle.value) for report in reports}
+        if lifecycles & {"ready", "degraded"}:
+            return True
+        if lifecycles and lifecycles <= {"failed", "stopped"}:
+            return False
+        return None
 
     def stop(self):
         """

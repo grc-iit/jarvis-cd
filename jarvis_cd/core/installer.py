@@ -254,15 +254,20 @@ class SpackInstaller(Installer):
 
     def _run(self, ppl, pkg_list, mode: str) -> Dict[str, Any]:
         from jarvis_cd.core.environment import EnvironmentManager
-        from jarvis_cd.core.spack_install import run_spack_install
+        from jarvis_cd.core.spack_install import (
+            mpi_environment,
+            run_spack_install,
+            spack_env_enabled,
+        )
 
         context = self.context
         owns_context = context is None
         if owns_context:
             context = install_context_for(ppl, mode)
             context.open()
+        env_dir = spack_env_dir_for(ppl) if spack_env_enabled() else None
         try:
-            record = run_spack_install(pkg_list, context)
+            record = run_spack_install(pkg_list, context, env_dir=env_dir)
         finally:
             if owns_context:
                 context.close()
@@ -287,15 +292,31 @@ class SpackInstaller(Installer):
                 f"(log: {context.log_path})"
             )
         hashes = [
-            "/" + entry["root"]["hash"]
+            "/" + (entry.get("lock_hash") or entry["root"]["hash"])
             for entry in record["packages"].values()
             if entry.get("status") in ("satisfied", "installed") and entry.get("root")
         ]
+        mpi_env: Dict[str, str] = {}
         if hashes and not context.issues:
             env_manager = EnvironmentManager(ppl.jarvis)
             spack_env = env_manager.capture_spack_environment(hashes)
             ppl.env.update(spack_env)
             print(f"SpackInstaller: merged {len(spack_env)} env vars from spack load")
+            mpi_env = mpi_environment(record)
+            for name in ("JARVIS_MPI_NAME", "JARVIS_MPI_SPEC", "JARVIS_MPI_TYPE",
+                         "JARVIS_MPI_PREFIX"):
+                ppl.env.pop(name, None)
+            ppl.env.update(mpi_env)
+            prefix = mpi_env.get("JARVIS_MPI_PREFIX")
+            if prefix:
+                # Externals (site MPIs) are not put on PATH by spack load.
+                mpi_bin = os.path.join(prefix, "bin")
+                path = [p for p in ppl.env.get("PATH", "").split(os.pathsep) if p]
+                if mpi_bin not in path:
+                    ppl.env["PATH"] = os.pathsep.join([mpi_bin, *path])
+            if mpi_env:
+                print(f"SpackInstaller: MPI {mpi_env.get('JARVIS_MPI_SPEC')}"
+                      f" ({mpi_env.get('JARVIS_MPI_TYPE', 'probe')})")
         if context.issues:
             overall = "needs_decision"
         elif any(status == "missing" for status in statuses.values()):
@@ -307,10 +328,13 @@ class SpackInstaller(Installer):
         return {
             "status": overall,
             "record": str(context.record_path),
+            "spack_env": record.get("spack_env"),
+            "mpi_env": mpi_env or None,
             "packages": {
                 name: {
                     key: entry.get(key)
-                    for key in ("status", "spec", "root", "missing", "built", "mpi")
+                    for key in ("status", "spec", "root", "lock_hash", "missing",
+                                "built", "mpi")
                     if entry.get(key) is not None
                 }
                 for name, entry in record["packages"].items()
@@ -324,25 +348,43 @@ class SpackInstaller(Installer):
         return self._run(ppl, pkg_list, "check")
 
 
+def spack_env_dir_for(ppl) -> Path:
+    """The pipeline's Spack environment: ``<pipeline shared>/spack-env``.
+
+    It lives in the pipeline's persistent shared dir (not the execution's),
+    so an install job's ``spack.lock`` is what later run jobs load.
+    """
+    return Path(ppl.jarvis.get_pipeline_shared_dir(ppl.name)) / "spack-env"
+
+
 def install_context_for(ppl, mode: str = "install"):
     """Build the install context (log, issues, record) for ``ppl``.
 
     Inside a scheduler execution the files live under
     ``<execution>/install``; otherwise under ``<pipeline shared>/install``.
+    ``decisions.yaml`` always lives in ``<pipeline shared>/install`` (unless
+    ``JARVIS_SPACK_DECISIONS`` is set) so an answer given to an install job
+    (e.g. the MPI) is reused by every later run job of the pipeline.
     ``JARVIS_INSTALL_ANSWERS`` names an ``answers.json`` to apply.
     """
     from jarvis_cd.core.spack_install import InstallContext, load_answers
 
+    shared_install_dir = Path(ppl.jarvis.get_pipeline_shared_dir(ppl.name)) / "install"
     execution_root = getattr(ppl, '_execution_root', None)
     if execution_root is not None:
         install_dir = Path(execution_root) / "install"
     else:
-        install_dir = Path(ppl.jarvis.get_pipeline_shared_dir(ppl.name)) / "install"
+        install_dir = shared_install_dir
+    configured = os.environ.get("JARVIS_SPACK_DECISIONS", "").strip()
+    decisions_path = (
+        Path(configured) if configured else shared_install_dir / "decisions.yaml"
+    )
     answers_path = os.environ.get("JARVIS_INSTALL_ANSWERS", "").strip()
     return InstallContext(
         install_dir=install_dir,
         mode=mode,
         answers=load_answers(Path(answers_path)) if answers_path else {},
+        decisions_path=decisions_path,
         progress=getattr(ppl, '_install_progress', None),
     )
 

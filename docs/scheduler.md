@@ -362,20 +362,40 @@ scheduler:
   name: slurm
   nodes: 16
 pkgs:
+  - pkg_type: builtin.paraview
+    mode: service             # start_mode auto -> background
+    host_slice: "12:16"       # last 4 nodes
   - pkg_type: builtin.xcompact3d
     host_slice: "0:12"        # first 12 nodes
-  - pkg_type: builtin.paraview
-    host_slice: "12:16"       # last 4 nodes
 ```
 
-Packages still start in pipeline order, and a package's `start()` blocks until
-it returns. Both packages get disjoint nodes, but they run at the same time
-only if the earlier package's `start()` returns while it keeps running (a
-service that daemonizes, or an application launched in the background). If
-the solver's `start()` runs the job to completion, the second package starts
-after it ends. Concurrent co-scheduling of two blocking packages needs
-asynchronous package start in the pipeline runner, which is not part of this
-release.
+Packages start in pipeline order. A foreground package's `start()` blocks
+until it returns. A package with `start_mode: background` runs `start()` in
+a thread instead, and the next package starts once it is ready, so two
+packages on disjoint slices run at the same time. `start_mode` is a common
+option for every package:
+
+| `start_mode` | Behaviour |
+|--------------|-----------|
+| `auto` (default) | background for `Service` packages, and for `builtin.paraview` with `mode: service`; foreground otherwise |
+| `background` | always run `start()` in a thread and wait for readiness |
+| `foreground` | always block on `start()` |
+
+Ready means the package's `ready()` returns true. By default that's when its
+service runtime (`JARVIS_SERVICE_RUNTIME_PATH`) reports `ready` or `degraded`.
+A `start()` that returns also counts as ready. A `failed` or `stopped` report
+before ready, a `start()` that raises, or `start_timeout` seconds (default
+600, `0` for no limit) without readiness fails the pipeline start. After the
+last package, `start()` waits until every background `start()` has returned.
+A service therefore keeps the job alive until `jarvis execution stop` or the
+time limit, even after the solver finishes.
+
+For the viz-plus-solver demo above, the service comes first. pvserver starts and its supervisor reports `ready`. xcompact3d then runs on
+its 12 nodes while pvserver serves on the other 4. `jarvis execution stop`
+TERMs the batch shell. The trap runs `ppl stop`, then TERMs the pipeline child
+and its whole process tree. That stops both the paraview supervisor (which
+finalizes its service runtime as `stopped`) and the solver's `mpirun`, before
+the record is finalized.
 
 ## Execution cleanup and pipeline destruction
 

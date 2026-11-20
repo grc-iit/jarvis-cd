@@ -115,10 +115,21 @@ class Exec(CoreExec):
 
     def _detect_mpi(self, exec_info: ExecInfo):
         """
-        Detect the MPI implementation.  MpiVersion runs 'mpiexec --version'
-        and may need to reach a container on a remote host — it handles
-        that internally via SshExec so there is no circular dependency.
+        Detect the MPI implementation.  ``JARVIS_MPI_TYPE`` in the env
+        (exported by the Spack installer for the MPI the pipeline chose)
+        wins; otherwise MpiVersion runs 'mpiexec --version' and may need
+        to reach a container on a remote host — it handles that internally
+        via SshExec so there is no circular dependency.
         """
+        chosen = (exec_info.env or {}).get('JARVIS_MPI_TYPE', '').strip().lower()
+        if chosen:
+            try:
+                mpi_type = ExecType(chosen)
+            except ValueError:
+                mpi_type = None
+            if mpi_type in (ExecType.OPENMPI, ExecType.MPICH,
+                            ExecType.INTEL_MPI, ExecType.CRAY_MPICH):
+                return mpi_type
         detector = MpiVersion(exec_info)
         return detector.version
 

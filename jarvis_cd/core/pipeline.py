@@ -15,6 +15,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import yaml
 from contextlib import ExitStack
 from copy import deepcopy
@@ -2975,7 +2976,11 @@ class Pipeline:
             # Container deployment mode - deploy to all nodes in hostfile
             self._start_containerized_pipeline()
         else:
-            # Standard deployment mode - start each package individually
+            # Standard deployment mode - start each package individually.
+            # Background packages (services) run start() in a thread; the next
+            # package starts once they report ready, and start() returns only
+            # after every background start() has returned (e.g. on ppl stop).
+            background: List[Dict[str, Any]] = []
             for pkg_def in self.packages:
                 try:
                     # Print BEGIN message
@@ -2987,12 +2992,16 @@ class Pipeline:
                     # Apply interceptors to this package before starting
                     self._apply_interceptors_to_package(pkg_instance, pkg_def)
 
-                    if hasattr(pkg_instance, "start"):
-                        pkg_instance.start()
-                    else:
+                    if not hasattr(pkg_instance, "start"):
                         logger.warning(
                             f"Package {pkg_def['pkg_id']} has no start method"
                         )
+                    elif self._package_starts_in_background(pkg_instance):
+                        background.append(
+                            self._start_package_in_background(pkg_instance, pkg_def)
+                        )
+                    else:
+                        pkg_instance.start()
 
                     # Propagate environment changes to next packages
                     self.env.update(pkg_instance.env)
@@ -3008,6 +3017,83 @@ class Pipeline:
                     raise RuntimeError(
                         f"Pipeline startup failed at package '{pkg_def['pkg_id']}': {e}"
                     ) from e
+            self._wait_background_packages(background)
+
+    @staticmethod
+    def _package_starts_in_background(pkg_instance: Any) -> bool:
+        probe = getattr(pkg_instance, "starts_in_background", None)
+        return bool(probe()) if callable(probe) else False
+
+    def _start_package_in_background(
+        self, pkg_instance: Any, pkg_def: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Run ``pkg_instance.start()`` in a thread and wait until it is ready.
+
+        Ready means ``pkg_instance.ready()`` is true (by default: its service
+        runtime reports ``ready``) or start() already returned. Raises if
+        start() fails, the service reports failure, or ``start_timeout``
+        seconds pass first.
+        """
+        import threading
+        from jarvis_cd.util.logger import logger
+
+        pkg_id = pkg_def["pkg_id"]
+        handle: Dict[str, Any] = {"pkg_id": pkg_id, "error": None}
+
+        def _run() -> None:
+            try:
+                pkg_instance.start()
+            except BaseException as error:  # reported by the waiter
+                handle["error"] = error
+
+        thread = threading.Thread(
+            target=_run, name=f"jarvis-start-{pkg_id}", daemon=True
+        )
+        handle["thread"] = thread
+        config = getattr(pkg_instance, "config", {}) or {}
+        raw_timeout = config.get("start_timeout")
+        timeout = float(600 if raw_timeout is None else raw_timeout)
+        logger.info(f"[{pkg_def['pkg_type']}] [START] background, waiting for ready")
+        thread.start()
+        deadline = time.monotonic() + timeout if timeout > 0 else None
+        while True:
+            if not thread.is_alive():
+                if handle["error"] is not None:
+                    raise RuntimeError(
+                        f"background start failed: {handle['error']}"
+                    ) from handle["error"]
+                logger.info(f"[{pkg_def['pkg_type']}] [START] start() returned")
+                return handle
+            state = pkg_instance.ready() if hasattr(pkg_instance, "ready") else None
+            if state is True:
+                logger.success(f"[{pkg_def['pkg_type']}] [START] ready")
+                return handle
+            if state is False:
+                raise RuntimeError("service reported failed/stopped before ready")
+            if deadline is not None and time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"not ready after start_timeout={timeout:g}s"
+                )
+            thread.join(0.5)
+
+    def _wait_background_packages(self, background: List[Dict[str, Any]]) -> None:
+        """Block until every background start() returns; re-raise the first error."""
+        from jarvis_cd.util.logger import logger
+
+        if not background:
+            return
+        logger.info(
+            "Pipeline started; waiting on background package(s): "
+            + ", ".join(handle["pkg_id"] for handle in background)
+        )
+        for handle in background:
+            while handle["thread"].is_alive():
+                handle["thread"].join(1.0)
+        for handle in background:
+            if handle["error"] is not None:
+                raise RuntimeError(
+                    f"Background package '{handle['pkg_id']}' failed: {handle['error']}"
+                ) from handle["error"]
 
     def _bind_package_execution_environment(self, pkg_def: Dict[str, Any]) -> None:
         """Bind authoritative package runtime sidecars to the active execution."""

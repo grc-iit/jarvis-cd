@@ -32,6 +32,15 @@ class LocalMpiExec(LocalExec):
         # Pipeline-YAML-level override for the MPI launcher. Defaults
         # to None -> subclass picks "mpiexec".
         self.mpi_cmd = getattr(exec_info, 'mpi_cmd', None)
+        # The MPI the Spack installer chose (JARVIS_MPI_PREFIX) supplies
+        # the launcher when the pipeline YAML sets no mpi_cmd, so a run
+        # never picks up a different mpiexec from PATH.
+        self.mpi_prefix = (self.mpi_env or {}).get('JARVIS_MPI_PREFIX') or None
+        if not self.mpi_cmd and self.mpi_prefix:
+            import os
+            launcher = os.path.join(self.mpi_prefix, 'bin', 'mpiexec')
+            if os.path.isfile(launcher):
+                self.mpi_cmd = launcher
         # Pipeline-YAML-level override for the rsh agent that OpenMPI's
         # prted / MPICH's hydra_pmi_proxy use to spawn remote ranks.
         # Same use case as ssh_cmd (wrap ssh in env -u LD_LIBRARY_PATH
@@ -117,9 +126,13 @@ class OpenMpiExec(LocalMpiExec):
         if self.ssh_cmd:
             params.append(f'--mca plm_rsh_agent "{self.ssh_cmd}"')
 
-        # Derive --prefix from PATH so remote nodes can find prted
+        # --prefix lets remote nodes (daemons started over ssh, as with an
+        # Open MPI built without Slurm) find prted/orted: the chosen MPI's
+        # prefix, else derived from PATH.
         env_path = self.mpi_env.get('PATH', '')
-        if env_path:
+        if self.mpi_prefix:
+            params.append(f'--prefix {self.mpi_prefix}')
+        elif env_path:
             import os
             for path_dir in env_path.split(os.pathsep):
                 if os.path.isfile(os.path.join(path_dir, 'prted')):

@@ -486,14 +486,16 @@ a real file. An empty selection is an error.
 
 ```yaml
 pkgs:
+  - pkg_type: builtin.paraview
+    mode: service
+    host_slice: "12:16"
   - pkg_type: builtin.xcompact3d
     host_slice: "0:12"
-  - pkg_type: builtin.paraview
-    host_slice: "12:16"
 ```
 
 See [scheduler.md](scheduler.md#giving-a-package-a-subset-of-the-allocation)
-for how this interacts with a scheduler allocation.
+for how this interacts with a scheduler allocation, and for `start_mode`,
+which lets the service run beside the solver.
 
 ## Best Practices
 

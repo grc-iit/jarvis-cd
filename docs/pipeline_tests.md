@@ -312,12 +312,16 @@ For each Spack package, JARVIS:
    decision wins. With exactly one installed MPI (`spack find` over openmpi,
    mpich, mvapich2, intel-oneapi-mpi, cray-mpich, …, merged by prefix),
    JARVIS pins it as `^<name>/<hash7>`. With several, it asks.
-4. Reuses everything already present, and only in install mode runs
-   `spack install --fail-fast <spec>` for what is missing. It then
-   re-resolves to verify the nodes are installed.
+4. Reuses everything already present. Only in install mode, and only for
+   what is missing, it builds through the pipeline's Spack environment (see
+   [Per-pipeline Spack environment](#per-pipeline-spack-environment)). It
+   then re-resolves to verify the nodes are installed.
 5. Writes `install-record.json` (`jarvis.install-record.v1`): the resolved
-   spec, root hash, node counts by status, what was built, and the MPI
-   with its source.
+   spec, root hash and `lock_hash`, node counts by status, what was built,
+   the MPI with its source, version and prefix, and the `spack_env` block.
+6. Loads the result with `spack load /<lock hash>` (the root hash when no
+   lock exists yet) and exports the chosen MPI to the run (see
+   [MPI selection](#mpi-selection)).
 
 Spack output goes to an append-only `install.log`. Outside a scheduler job,
 the files live in `<pipeline_shared_dir>/install/`. In a `ppl install +submit`
@@ -347,13 +351,76 @@ A plain string value (`{"sha256:3f…": "^mpich/fffffff"}`) also works. Then
 re-run with `--answers answers.json`, or export
 `JARVIS_INSTALL_ANSWERS=answers.json` for an install-on-load. An answer must
 be one of the issue's candidate constraints when it has any. Applied answers
-are recorded in `decisions.yaml` (`jarvis.install-decisions.v1`: `site:`
-entries such as `mpi`, and per-package constraint lists), so later installs
-don't ask again. Set `JARVIS_SPACK_DECISIONS` to share one decisions file
-across pipelines on a site.
+are recorded in `<pipeline shared>/install/decisions.yaml`
+(`jarvis.install-decisions.v1`: `site:` entries such as `mpi`, and
+per-package constraint lists). The file is per pipeline, not per execution,
+so an answer given to an install job is reused by every later run job of
+that pipeline. That is how the chosen MPI reaches a run (see
+[MPI selection](#mpi-selection)). Set `JARVIS_SPACK_DECISIONS` to share one
+decisions file across pipelines on a site.
 
 Use `JARVIS_SPACK_CONFIG=<dir>` to isolate Spack's configuration: it sets
 `SPACK_USER_CONFIG_PATH=<dir>` and `SPACK_DISABLE_LOCAL_CONFIG=1`.
+
+### Per-pipeline Spack environment
+
+Each pipeline owns an anonymous Spack environment at
+`<pipeline_shared_dir>/spack-env/`. It lives in the pipeline's persistent
+shared directory, not an execution's, so the lock an install job writes is the
+one later run jobs load:
+
+```yaml
+# <pipeline_shared_dir>/spack-env/spack.yaml (generated)
+spack:
+  specs:
+  - xcompact3d ^openmpi/abc1234     # each package's resolved spec, in order
+  view: false
+  concretizer:
+    reuse: true                     # keep installed, upstream and external nodes
+    unify: false                    # each root concretizes as the planner resolved it
+```
+
+When something is missing, or the lock was concretized from different specs,
+an install runs `spack -e <dir> concretize -f` and then `spack -e <dir>
+install --fail-fast`. `spack.lock` is the install record. Its root hashes are
+stored as each package's `lock_hash`, its path and `sha256` go into
+`install-record.json → spack_env`, and a copy is saved as
+`<install dir>/spack.lock` for that execution. If nothing is missing and the
+lock matches the specs, Spack is not run again, and a run only does
+`spack load /<lock hash>`. The environment is built only when every package
+resolved. If any package needs a decision, nothing is built until it's
+answered. `JARVIS_SPACK_ENV=off` falls back to one `spack install
+<spec>` per package, with no lock.
+
+### MPI selection
+
+After loading, the installer exports the MPI that the packages resolved to.
+That is the answered `ambiguous_provider` decision, the single installed
+candidate, or the query's own `^mpi`:
+
+| Variable | Example (a site Open MPI 5.0.5) |
+|----------|---------------------------------|
+| `JARVIS_MPI_NAME` | `openmpi` |
+| `JARVIS_MPI_SPEC` | `openmpi@5.0.5/abc1234` |
+| `JARVIS_MPI_TYPE` | `openmpi` (also `mpich`, `intel_mpi`, `cray_mpich`) |
+| `JARVIS_MPI_PREFIX` | `/opt/site/openmpi-5.0.5` |
+
+`<prefix>/bin` is also put first on `PATH`, because `spack load` does not
+add externals such as a site MPI. Every `MpiExecInfo` launch then uses that
+MPI:
+
+- `JARVIS_MPI_TYPE` picks the launcher class without probing `mpiexec
+  --version`.
+- When the pipeline sets no `mpi_cmd`, the launcher is
+  `<prefix>/bin/mpiexec`.
+- For Open MPI, `--prefix <prefix>` is passed with the package's
+  `--hostfile`, so daemons that `mpirun` starts over ssh find the same
+  install on the other nodes. This is what an Open MPI built without Slurm
+  (such as Ares's 5.0.5) needs.
+
+Nothing is exported when no package uses MPI or packages resolved to
+different MPIs. In that case the launcher falls back to detecting the
+`mpiexec` on `PATH`. An explicit `mpi_cmd` still wins.
 
 ### `jarvis ppl install`
 
@@ -600,6 +667,9 @@ keeps a conda environment's `libcrypto` out of the host `ssh` (an ABI
 mismatch otherwise makes `ssh` exit 255 before forwarding the remote
 command). See [shell.md → Launcher Overrides](shell.md#launcher-overrides)
 for the full mechanism and the per-MPI-backend bootstrap forwarding.
+
+When a Spack install chose the MPI, `JARVIS_MPI_*` select the launcher
+without an `mpi_cmd`; see [MPI selection](#mpi-selection).
 
 ## Output and Statistics
 
