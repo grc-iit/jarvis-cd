@@ -344,7 +344,13 @@ For each Spack package, JARVIS:
    such as `mpich: externals: [{spec: mpich@4.1.1, modules: [mpich/4.1.1]}]`
    is found here. An external with the same prefix as an install (or, for a
    module-only external, the same name and version) is merged into that
-   install. With exactly one candidate, JARVIS pins it: `^<name>/<hash7>`
+   install. When a site registers its MPI install again as a `packages.yaml`
+   external at the same prefix, `spack find` shows two hashes for one
+   prefix. The candidate then pins the real install's hash, the one whose
+   `{external_path}` is empty, because upstream dependents such as adios2
+   link that one. Pinning the external hash would make Spack rebuild them.
+   The external hash is pinned only when no real install shares the prefix.
+   With exactly one candidate, JARVIS pins it: `^<name>/<hash7>`
    for an install, or `^<external spec>` for an unused external. With
    several, it asks with `ambiguous_provider` and never takes `spack spec`'s
    silent default. This applies to `ppl install +check`, to install mode,
@@ -372,7 +378,7 @@ JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
 
 | `kind` | When | Answerable |
 |--------|------|------------|
-| `ambiguous_provider` | several MPI candidates (installed, upstream or `packages.yaml` externals) and neither the query nor a recorded answer pins one (`subject: mpi`, `scope: site`); `candidates[]` lists `{id, constraint, source, prefix, hashes, implies}`, plus `modules` for module externals | yes, with one candidate's `constraint` |
+| `ambiguous_provider` | several MPI candidates (installed, upstream or `packages.yaml` externals) and neither the query nor a recorded answer pins one (`subject: mpi`, `scope: site`); `candidates[]` lists `{id, constraint, source, prefix, hashes, implies}` (`hashes` puts the pinned real install first), plus `modules` for module externals | yes, with one candidate's `constraint` |
 | `variant_conflict` | the concretizer reports a conflict | yes, with a spec constraint (e.g. `~cuda`) |
 | `concretize_failed` | any other concretizer error (`detail` holds the excerpt) | yes, with a spec constraint |
 | `no_recipe` | Spack has no recipe for the package | no: add `install_repos` or change `install_query` |

@@ -75,8 +75,13 @@ _SPEC_LINE = re.compile(
 _NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
 _FIND_LINE = re.compile(
     r"^(?P<name>[a-z0-9][a-z0-9_-]*)@(?P<version>\S+)\s+"
-    r"(?P<hash>[a-z0-9]{32})\s+(?P<prefix>/\S.*)$"
+    r"(?P<hash>[a-z0-9]{32})\s+(?P<prefix>/\S.*?)"
+    r"(?:\s+external=(?P<external>\S*))?\s*$"
 )
+#: ``spack find`` format for MPI discovery; ``{external_path}`` is empty for
+#: a real install and set for an external, even one at an install's prefix.
+_MPI_FIND_FORMAT = "{name}@{version} {hash} {prefix} external={external_path}"
+_MPI_FIND_FORMAT_LEGACY = "{name}@{version} {hash} {prefix}"
 _MAX_ISSUE_TEXT = 4096
 
 
@@ -808,14 +813,28 @@ class SpackPlanner:
     # -- discovery ---------------------------------------------------------
 
     def mpi_candidates(self) -> List[Dict[str, Any]]:
-        """Installed, upstream and used-external MPIs, merged by prefix."""
+        """Installed, upstream and used-external MPIs, merged by prefix.
+
+        A site often registers its MPI install a second time as a
+        ``packages.yaml`` external at the same prefix. Both records are kept
+        as ``hashes`` of one candidate, but the constraint pins the real
+        install's hash: that is the one upstream dependents (adios2, hdf5,
+        ...) link, so pinning the external would force them to rebuild. The
+        external hash is pinned only when no real install shares the prefix.
+        """
         if self._mpi_candidates is not None:
             return self._mpi_candidates
         by_prefix: Dict[str, Dict[str, Any]] = {}
         for provider in MPI_PROVIDERS:
             completed = self.runner.run(
-                ["find", "--format", "{name}@{version} {hash} {prefix}", provider]
+                ["find", "--format", _MPI_FIND_FORMAT, provider]
             )
+            if completed.returncode != 0 and "No package matches" not in (
+                (completed.stdout or "") + (completed.stderr or "")
+            ):
+                completed = self.runner.run(
+                    ["find", "--format", _MPI_FIND_FORMAT_LEGACY, provider]
+                )
             if completed.returncode != 0:
                 continue
             for line in completed.stdout.splitlines():
@@ -824,25 +843,59 @@ class SpackPlanner:
                     continue
                 prefix = match.group("prefix").strip()
                 short = match.group("hash")[:7]
-                existing = by_prefix.get(prefix)
-                if existing is not None:
-                    existing["hashes"].append(short)
-                    continue
-                by_prefix[prefix] = {
-                    "id": f"{match.group('name')}-{match.group('version')}-{short}",
-                    "constraint": f"^{match.group('name')}/{short}",
-                    "name": match.group("name"),
-                    "version": match.group("version"),
-                    "prefix": prefix,
-                    "hashes": [short],
-                }
+                external = match.group("external")
+                if external is None:
+                    # Legacy format: the default install layout ends the
+                    # prefix with the full hash; anything else stays unknown.
+                    is_external = (
+                        False
+                        if prefix.rstrip("/").endswith(match.group("hash"))
+                        else None
+                    )
+                else:
+                    is_external = external not in ("", "None")
+                record = {"hash": short, "external": is_external}
+                existing = by_prefix.setdefault(
+                    prefix,
+                    {
+                        "name": match.group("name"),
+                        "version": match.group("version"),
+                        "prefix": prefix,
+                        "records": [],
+                    },
+                )
+                existing["records"].append(record)
         candidates = []
         for candidate in by_prefix.values():
-            others = candidate["hashes"][1:]
-            candidate["source"] = f"spack find: {candidate['prefix']}" + (
-                f" (also registered as {', '.join('/' + h for h in others)}, same prefix)"
-                if others
-                else ""
+            records = candidate.pop("records")
+            # Stable sort: real installs first, then unknown, then externals.
+            records.sort(key=lambda item: {False: 0, None: 1, True: 2}[item["external"]])
+            pinned = records[0]
+            short = pinned["hash"]
+            candidate.update(
+                {
+                    "id": f"{candidate['name']}-{candidate['version']}-{short}",
+                    "constraint": f"^{candidate['name']}/{short}",
+                    "hashes": [item["hash"] for item in records],
+                    "external_hashes": [
+                        item["hash"] for item in records if item["external"]
+                    ],
+                }
+            )
+            others = records[1:]
+            candidate["source"] = (
+                f"spack find: {candidate['prefix']}"
+                + (" (external only)" if pinned["external"] else "")
+                + (
+                    " (also registered as "
+                    + ", ".join(
+                        "/" + item["hash"] + (" external" if item["external"] else "")
+                        for item in others
+                    )
+                    + ", same prefix)"
+                    if others
+                    else ""
+                )
             )
             candidates.append(candidate)
         candidates.extend(self._configured_mpi_externals(candidates))
@@ -1039,7 +1092,7 @@ class SpackPlanner:
         options = []
         for candidate in candidates:
             current = (
-                candidate["hashes"][0] == concretized.hash[:7]
+                concretized.hash[:7] in candidate["hashes"]
                 if candidate["hashes"]
                 else _node_is_version(concretized, candidate["name"], candidate["version"])
             )
