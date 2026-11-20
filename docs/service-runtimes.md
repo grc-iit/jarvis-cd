@@ -53,6 +53,18 @@ starting -> ready <-> degraded -> stopping -> stopped
 delivery mode, and dataset descriptor cannot change within one service
 instance.
 
+`protocol` is one of `http`, `https`, or `tcp` (`ServiceProtocol.HTTP`,
+`.HTTPS`, `.TCP`). Use `tcp` for a raw TCP service that does not speak HTTP,
+such as ParaView `pvserver`, which clients reach as `cs://host:port`. Then
+`base_url` is `tcp://host:port`, and clients pick their own scheme (for
+example `cs://`). The endpoint path fields are still required and validated,
+but for a `tcp` service jarvis does not treat them as HTTP routes. The
+package defines what they mean. The reporter default stays `http`, and both
+schema versions accept `tcp`, so existing `http`/`https` reports and sidecars
+parse unchanged. Older jarvis releases (1.8.1 and earlier) reject a `tcp`
+report as an invalid protocol, so consumers must be on a jarvis that has
+`ServiceProtocol.TCP`.
+
 Every public v2 report contains only
 `authorization:{"scheme":"bearer","token_sha256":"<64 lowercase hex>"}`.
 `ServiceRuntimeReport`, execution snapshots, `service-runtimes +json`, and

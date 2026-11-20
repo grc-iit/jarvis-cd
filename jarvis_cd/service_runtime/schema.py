@@ -80,10 +80,15 @@ class ServiceLifecycle(StrEnum):
 
 
 class ServiceProtocol(StrEnum):
-    """Application protocols supported by the runtime contract."""
+    """Application protocols supported by the runtime contract.
+
+    ``tcp`` marks a raw TCP service (for example ParaView ``pvserver``, which
+    clients reach as ``cs://host:port``) that does not speak HTTP.
+    """
 
     HTTP = "http"
     HTTPS = "https"
+    TCP = "tcp"
 
 
 @dataclass(frozen=True, slots=True)
