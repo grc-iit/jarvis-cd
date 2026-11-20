@@ -455,18 +455,30 @@ jarvis ppl install +json                        # build what is missing
 jarvis ppl install --answers answers.json +json # apply answers, then build
 jarvis ppl install yaml pipeline.yaml +check    # a YAML instead of the current pipeline
 jarvis ppl install +submit +json                # the same, as a 1-node scheduler job
+jarvis ppl install +allow_local +json           # build on this host outside an allocation
 ```
 
 The final stdout line with `+json` is a `jarvis.install-report.v1` document:
 `mode`, `satisfied`, per-installer `status`/`packages`, `issues`,
 `issues_path`, `log`, `record_path` and `exit_code`. The exit code is `0`
 when everything is satisfied, `3` when a decision is needed or `+check`
-found missing packages, and `1` on errors such as a failed build.
+found missing packages, `4` when a build was refused because it would run
+outside a scheduler allocation, and `1` on errors such as a failed build.
 Installers other than Spack report `unchecked` under `+check`.
+
+Without `+submit` or `+allow_local`, `ppl install` refuses to build, run
+`spack install` or concretize the Spack environment unless it already runs
+inside an allocation (`SLURM_JOB_ID`, `PBS_JOBID`, `LSB_JOBID` or
+`FLUX_JOB_ID`). This keeps builds off site login nodes. Nothing is refused
+when everything is already installed. See
+[scheduler.md → Login nodes](scheduler.md#login-nodes-no-builds-outside-an-allocation).
 
 `ppl load` and `ppl run yaml` still run the install phase on load. Set
 `JARVIS_INSTALL_ON_LOAD` to `install` (default), `check` (verify, exit 3 when
-something is missing) or `skip`.
+something is missing) or `skip`. With `install`, the same refusal (exit 4)
+applies when the pipeline has a `scheduler:` block or a scheduler client
+(`sbatch`, `qsub`, `bsub`, `flux`) is on `PATH`. Set
+`JARVIS_ALLOW_LOCAL_BUILD=1` to opt in.
 
 ## Example Files
 

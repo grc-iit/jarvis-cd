@@ -29,6 +29,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import tempfile
 import time
@@ -103,6 +104,79 @@ class InstallDecisionNeeded(RuntimeError):
         self.issues = [dict(issue) for issue in issues]
         self.issues_path = Path(issues_path)
         self.report = dict(report) if report is not None else None
+
+
+#: exit status of ``jarvis`` when a build was refused because it would run on
+#: the submitting host (e.g. a login node) instead of inside an allocation.
+BUILD_REFUSED_EXIT_CODE = 4
+
+#: set to 1/true/yes to allow builds outside an allocation (a workstation)
+ALLOW_LOCAL_BUILD_ENV = "JARVIS_ALLOW_LOCAL_BUILD"
+
+#: batch-job identity variables, in the order they are reported
+_ALLOCATION_VARIABLES = (
+    ("slurm", "SLURM_JOB_ID"),
+    ("pbs", "PBS_JOBID"),
+    ("lsf", "LSB_JOBID"),
+    ("flux", "FLUX_JOB_ID"),
+)
+
+#: scheduler clients whose presence marks a host as a cluster login node
+SCHEDULER_CLIENTS = ("sbatch", "qsub", "bsub", "flux")
+
+
+def current_allocation() -> Optional[str]:
+    """``<scheduler>:<job id>`` when this process runs inside a batch job."""
+    for scheduler, variable in _ALLOCATION_VARIABLES:
+        value = os.environ.get(variable, "").strip()
+        if value:
+            return f"{scheduler}:{value}"
+    return None
+
+
+def local_build_allowed() -> bool:
+    """Whether the caller opted in to builds outside an allocation."""
+    return os.environ.get(ALLOW_LOCAL_BUILD_ENV, "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
+def host_is_cluster_login() -> bool:
+    """True when a scheduler client is on PATH, i.e. this host submits jobs."""
+    return any(shutil.which(client) for client in SCHEDULER_CLIENTS)
+
+
+class BuildOutsideAllocation(RuntimeError):
+    """A build, ``spack install`` or env concretize was refused on this host.
+
+    Site login nodes may only do light work (submit, read records,
+    ``spack find``, ``spack spec``). Run the install as a job with
+    ``jarvis ppl install ... +submit``, or opt in with
+    ``jarvis ppl install +allow_local`` / ``JARVIS_ALLOW_LOCAL_BUILD=1``.
+    The CLI exits with :data:`BUILD_REFUSED_EXIT_CODE`.
+    """
+
+    exit_code = BUILD_REFUSED_EXIT_CODE
+
+    def __init__(self, what: str, packages: Sequence[str] = ()):
+        self.what = what
+        self.packages = [str(package) for package in packages]
+        super().__init__(
+            f"refusing to {what} outside a scheduler allocation on this host; "
+            "run it as a job with `jarvis ppl install [yaml FILE] +submit`, or "
+            f"allow it explicitly with `+allow_local` / {ALLOW_LOCAL_BUILD_ENV}=1"
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "kind": "build_outside_allocation",
+            "what": self.what,
+            "packages": list(self.packages),
+            "exit_code": self.exit_code,
+            "message": str(self),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -466,6 +540,8 @@ class InstallContext:
     answers: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     decisions_path: Optional[Path] = None
     progress: Optional[Callable[..., None]] = None
+    #: refuse builds unless inside an allocation (or explicitly allowed)
+    require_allocation: bool = False
 
     def __post_init__(self) -> None:
         if self.mode not in {"install", "check"}:
@@ -518,6 +594,26 @@ class InstallContext:
     def report_progress(self, **fields: Any) -> None:
         if self.progress is not None:
             self.progress(**fields)
+
+    def ensure_may_build(self, what: str, packages: Sequence[str] = ()) -> None:
+        """Raise :class:`BuildOutsideAllocation` for heavy work off-allocation.
+
+        Called right before anything heavy (``spack install``, an env
+        concretize, a container or pip/conda build), so find-first runs that
+        have nothing to build never trip it.
+        """
+        if not self.require_allocation:
+            return
+        allocation = current_allocation()
+        if allocation is not None:
+            return
+        if local_build_allowed():
+            self.log(f"[{_utc_now()}] {ALLOW_LOCAL_BUILD_ENV} set: {what} locally\n")
+            return
+        refused = BuildOutsideAllocation(what, packages)
+        self.log(f"[{_utc_now()}] REFUSED: {refused}\n")
+        self.report_progress(phase="refused", current_package=None)
+        raise refused
 
     def raise_issue(self, issue: Dict[str, Any]) -> None:
         if any(existing["issue_id"] == issue["issue_id"] for existing in self.issues):
@@ -1081,6 +1177,10 @@ def _sync_spack_environment_locked(
         missing = still_missing
         planner.refresh_mpi([entry for _package, entry in resolved])
     if building and (roots is None or missing):
+        context.ensure_may_build(
+            f"concretize and install the Spack environment {env_dir}",
+            [item["name"] for _p, e in missing for item in e["missing"]],
+        )
         context.report_progress(
             phase="building",
             current_package=None,
@@ -1226,6 +1326,7 @@ def run_spack_install(
     ]
     total = len(packages)
     resolved: List[tuple[str, Dict[str, Any]]] = []
+    to_build: List[tuple[int, str, Dict[str, Any]]] = []
     for index, (package, pkg_def) in enumerate(packages):
         query = _package_query(pkg_def)
         context.report_progress(
@@ -1257,13 +1358,7 @@ def run_spack_install(
                     )
                 )
             elif env_dir is None:
-                context.report_progress(
-                    phase="building",
-                    current_package=package,
-                    packages_done=index,
-                    missing=[item["name"] for item in entry["missing"]][:32],
-                )
-                entry = planner.install_package(package, entry)
+                to_build.append((index, package, entry))
         if entry["status"] in ("satisfied", "missing"):
             resolved.append((package, entry))
         record["packages"][package] = entry
@@ -1273,8 +1368,31 @@ def run_spack_install(
             packages_done=index + 1,
             missing=[item["name"] for item in entry.get("missing", [])][:32],
         )
-    if env_dir is not None and resolved:
-        _sync_spack_environment(planner, context, record, resolved, Path(env_dir))
+    try:
+        if to_build and not context.issues:
+            context.ensure_may_build(
+                "spack install",
+                [item["name"] for _i, _p, e in to_build for item in e["missing"]],
+            )
+            for index, package, entry in to_build:
+                context.report_progress(
+                    phase="building",
+                    current_package=package,
+                    packages_done=index,
+                    missing=[item["name"] for item in entry["missing"]][:32],
+                )
+                record["packages"][package] = planner.install_package(package, entry)
+        if env_dir is not None and resolved:
+            _sync_spack_environment(planner, context, record, resolved, Path(env_dir))
+    except BuildOutsideAllocation as refused:
+        record["refused"] = refused.to_dict()
+        record["finished_at"] = _utc_now()
+        record["packages_total"] = total
+        record["issues"] = [issue["issue_id"] for issue in context.issues]
+        _atomic_write_text(
+            context.record_path, json.dumps(record, indent=2, sort_keys=True) + "\n"
+        )
+        raise
     record["finished_at"] = _utc_now()
     record["packages_total"] = total
     record["issues"] = [issue["issue_id"] for issue in context.issues]

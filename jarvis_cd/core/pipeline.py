@@ -1926,6 +1926,7 @@ class Pipeline:
         self,
         check: bool = False,
         answers_path: Optional[str] = None,
+        allow_local: bool = False,
     ) -> Dict[str, Any]:
         """Run (or check) the install phase with a streamable log.
 
@@ -1935,16 +1936,24 @@ class Pipeline:
         job, progress is mirrored into the execution record's ``install``
         metadata. Raises ``InstallDecisionNeeded`` (CLI exit 3) for questions
         or, with ``check``, for packages that still need building.
+
+        Building (``spack install``, env concretize, container/pip/conda
+        builds) is refused outside a scheduler allocation with
+        ``BuildOutsideAllocation`` (CLI exit 4) unless ``allow_local`` or
+        ``JARVIS_ALLOW_LOCAL_BUILD=1``; a check never builds.
         """
         from jarvis_cd.core.installer import Installer, install_context_for
         from jarvis_cd.core.spack_install import (
             PROGRESS_SCHEMA,
+            BuildOutsideAllocation,
             InstallDecisionNeeded,
             load_answers,
         )
 
         mode = "check" if check else "install"
-        context = install_context_for(self, mode)
+        context = install_context_for(
+            self, mode, require_allocation=not allow_local
+        )
         if answers_path:
             context.answers = load_answers(Path(answers_path))
         execution_id = getattr(self, "_execution_id", None)
@@ -1989,6 +1998,9 @@ class Pipeline:
                 current_package=None,
                 issue_count=len(needed.issues),
             )
+            raise
+        except BuildOutsideAllocation as refused:
+            publish(phase="refused", current_package=None, refused=refused.to_dict())
             raise
         except BaseException as exc:
             context.log(f"ERROR: {exc}\n")
@@ -4439,7 +4451,10 @@ class Pipeline:
         # ``install`` (default), ``check`` (verify, never build) or ``skip``
         # (``ppl install`` and ``ppl stop yaml`` run their own phase).
         from jarvis_cd.core.installer import Installer
-        from jarvis_cd.core.spack_install import InstallDecisionNeeded
+        from jarvis_cd.core.spack_install import (
+            BuildOutsideAllocation,
+            InstallDecisionNeeded,
+        )
 
         install_policy = (
             getattr(self, "_install_on_load", None)
@@ -4450,13 +4465,13 @@ class Pipeline:
             raise ValueError(
                 "JARVIS_INSTALL_ON_LOAD must be 'install', 'check' or 'skip'"
             )
-        pending_decision: Optional[InstallDecisionNeeded] = None
+        pending_decision: Optional[RuntimeError] = None
         if install_policy != "skip":
             try:
                 Installer.install_all(self, mode=install_policy)
-            except InstallDecisionNeeded as needed:
-                # Keep the loaded pipeline so the caller can answer and run
-                # ``jarvis ppl install`` on it, then report the questions.
+            except (InstallDecisionNeeded, BuildOutsideAllocation) as needed:
+                # Keep the loaded pipeline so the caller can answer, or submit
+                # ``jarvis ppl install +submit``, then report why it stopped.
                 pending_decision = needed
 
         # Save pipeline configuration and environment

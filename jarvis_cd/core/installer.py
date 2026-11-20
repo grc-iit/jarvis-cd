@@ -152,6 +152,11 @@ class Installer(ABC):
     #: set by ``install_all`` before ``install``/``check`` run
     context = None
 
+    def _ensure_may_build(self, ppl, what: str, packages=()) -> None:
+        """Refuse heavy work on the submitting host (see ``ensure_may_build``)."""
+        context = self.context or install_context_for(ppl, "install")
+        context.ensure_may_build(what, packages)
+
     def check(self, ppl, pkg_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Verify without building. Backends without a check report 'unchecked'."""
         return {"status": "unchecked", "packages": [p.get('pkg_id') for p in pkg_list]}
@@ -201,6 +206,7 @@ class PipInstaller(Installer):
             print("PipInstaller: no install_query entries; nothing to do")
             return
         spec_str = ' '.join(queries)
+        self._ensure_may_build(ppl, "pip install", queries)
         cmd = f"python3 -m pip install {spec_str}"
         print(f"PipInstaller: {cmd}")
         rc = _run_local(cmd)
@@ -229,6 +235,7 @@ class CondaInstaller(Installer):
             print("CondaInstaller: no install_query entries; nothing to do")
             return
         spec_str = ' '.join(queries)
+        self._ensure_may_build(ppl, "conda install", queries)
         cmd = f"conda install -y {spec_str}"
         print(f"CondaInstaller: {cmd}")
         rc = _run_local(cmd)
@@ -364,7 +371,20 @@ def spack_env_dir_for(ppl) -> Path:
     return Path(ppl.jarvis.get_pipeline_shared_dir(ppl.name)) / "spack-env"
 
 
-def install_context_for(ppl, mode: str = "install"):
+def default_require_allocation(ppl) -> bool:
+    """Whether builds for ``ppl`` must happen inside an allocation.
+
+    True for scheduled pipelines (a ``scheduler:`` block) and on hosts that
+    have a scheduler client on PATH (a site login node), so install-on-load
+    never builds on the submitting host. A workstation without either is
+    unaffected.
+    """
+    from jarvis_cd.core.spack_install import host_is_cluster_login
+
+    return bool(getattr(ppl, 'scheduler', None)) or host_is_cluster_login()
+
+
+def install_context_for(ppl, mode: str = "install", require_allocation=None):
     """Build the install context (log, issues, record) for ``ppl``.
 
     Inside a scheduler execution the files live under
@@ -373,6 +393,8 @@ def install_context_for(ppl, mode: str = "install"):
     ``JARVIS_SPACK_DECISIONS`` is set) so an answer given to an install job
     (e.g. the MPI) is reused by every later run job of the pipeline.
     ``JARVIS_INSTALL_ANSWERS`` names an ``answers.json`` to apply.
+    ``require_allocation`` (default :func:`default_require_allocation`)
+    refuses builds outside a batch job.
     """
     from jarvis_cd.core.spack_install import InstallContext, load_answers
 
@@ -393,6 +415,11 @@ def install_context_for(ppl, mode: str = "install"):
         answers=load_answers(Path(answers_path)) if answers_path else {},
         decisions_path=decisions_path,
         progress=getattr(ppl, '_install_progress', None),
+        require_allocation=(
+            default_require_allocation(ppl)
+            if require_allocation is None
+            else bool(require_allocation)
+        ),
     )
 
 
@@ -503,6 +530,9 @@ class ContainerInstaller(Installer):
                   "already exists, skipping build")
             return
 
+        self._ensure_may_build(
+            ppl, f"build the deploy container '{deploy_image_name}'",
+            [pkg_def.get('pkg_id') for pkg_def in ppl.packages])
         if ppl.container_engine == 'apptainer':
             self._build_apptainer_native(
                 ppl, deploy_image_name, pipeline_shared_dir, containers_dir)

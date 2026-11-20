@@ -332,7 +332,7 @@ runs `jarvis ppl install yaml <runtime>/pipeline.yaml [+check] [--answers …]
 | Field | Meaning |
 |-------|---------|
 | `mode` | `install` or `check` |
-| `phase` | `queued`, `starting`, `resolving`, `waiting_env_lock` (another operation holds a shared `JARVIS_SPACK_ENV_DIR`), `building`, `needs_decision`, `failed`, `done` |
+| `phase` | `queued`, `starting`, `resolving`, `waiting_env_lock` (another operation holds a shared `JARVIS_SPACK_ENV_DIR`), `building`, `needs_decision`, `refused` (a build outside an allocation, see below), `failed`, `done` |
 | `packages_total` / `packages_done` / `current_package` | position in the package list |
 | `missing` | names Spack is building for the current package |
 | `log` | `<execution>/install/install.log`: append-only, stream it while the job runs |
@@ -348,6 +348,33 @@ resubmit with `--answers`.
 `JARVIS_INSTALL_ON_LOAD=check` on the submitting process, or in the
 scheduler's `pre_cmds`, to make a run job verify instead of building. It then
 fails fast with exit 3 when something is missing. `skip` disables the phase.
+
+### Login nodes: no builds outside an allocation
+
+A site login node may only do light, short work: submit, read records,
+`spack find` and `spack spec`. Every `spack install`, environment concretize
+and build has to run inside a JARVIS-submitted job. JARVIS enforces this at
+the point where it would start heavy work, so a find-first run with nothing
+to build is never refused:
+
+| Command on the submitting host | What runs there |
+|---|---|
+| `ppl install +check` | `spack spec -I` / `spack find` only: allowed |
+| `ppl install +submit` (with or without `+check`) | writes the snapshot and calls `sbatch`: allowed; the build runs in the job |
+| `ppl submit yaml` with `JARVIS_INSTALL_ON_LOAD=check` | `spack spec -I` / `spack find`, then `sbatch`: allowed; exits 3 without submitting when something is missing |
+| `ppl install` (no `+submit`) | refused with exit **4** if anything must be built or the env must be concretized |
+| `ppl load` / `ppl run yaml` / `ppl submit yaml` with the default `install` policy | refused with exit **4** under the same condition, when the pipeline has a `scheduler:` block or `sbatch`/`qsub`/`bsub`/`flux` is on `PATH` |
+
+A host is inside an allocation when `SLURM_JOB_ID`, `PBS_JOBID`, `LSB_JOBID`
+or `FLUX_JOB_ID` is set. `jarvis ppl install +allow_local`, or
+`JARVIS_ALLOW_LOCAL_BUILD=1` for install-on-load, opts in to building on the
+current host (a workstation, or an interactive allocation the caller trusts).
+The refusal happens before any `spack install`, `spack -e DIR concretize`,
+container build, or pip/conda install. It is logged to `install.log`,
+written to `install-record.json` as `refused`, and published as
+`metadata.install.phase: refused` inside an execution. With `+json`, the
+report has `refused: {kind: build_outside_allocation, what, packages,
+exit_code: 4, message}`.
 
 ## Giving a package a subset of the allocation
 

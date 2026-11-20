@@ -364,6 +364,15 @@ class JarvisCLI(ArgParse):
                     "prefix": "+",
                 },
                 {
+                    "name": "allow_local",
+                    "aliases": ["allow-local"],
+                    "msg": "Allow building on this host outside a scheduler "
+                    "allocation (never on a site login node)",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+                {
                     "name": "execution_id",
                     "aliases": ["execution-id"],
                     "msg": "Execution identity for the +submit job",
@@ -1789,7 +1798,12 @@ class JarvisCLI(ArgParse):
 
     def ppl_install(self) -> None:
         """Check or install packages; ``+submit`` runs it as a 1-node job."""
-        from jarvis_cd.core.spack_install import InstallDecisionNeeded
+        from jarvis_cd.core.installer import install_context_for
+        from jarvis_cd.core.spack_install import (
+            REPORT_SCHEMA,
+            BuildOutsideAllocation,
+            InstallDecisionNeeded,
+        )
 
         self._ensure_initialized()
         if self.kwargs.get("load_type", "current") == "yaml":
@@ -1812,8 +1826,26 @@ class JarvisCLI(ArgParse):
             self._emit_execution_handle(handle, json_output=json_output)
             return
         try:
-            report = pipeline.install(check=check, answers_path=answers)
+            report = pipeline.install(
+                check=check,
+                answers_path=answers,
+                allow_local=bool(self.kwargs.get("allow_local")),
+            )
             exit_code = 0
+        except BuildOutsideAllocation as refused:
+            context = install_context_for(pipeline, "install")
+            report = {
+                "schema_version": REPORT_SCHEMA,
+                "pipeline_id": pipeline.name,
+                "mode": "install",
+                "satisfied": False,
+                "refused": refused.to_dict(),
+                "log": str(context.log_path),
+                "record_path": str(context.record_path),
+                "exit_code": refused.exit_code,
+            }
+            self._emit_install_report(report, json_output=json_output)
+            raise
         except InstallDecisionNeeded as needed:
             report = dict(needed.report or {})
             report.setdefault("issues_path", str(needed.issues_path))
@@ -1840,6 +1872,8 @@ class JarvisCLI(ArgParse):
         for issue in report.get("issues") or []:
             print(f"  ISSUE {issue.get('kind')} {issue.get('issue_id')}: "
                   f"{issue.get('question')}")
+        if report.get("refused"):
+            print(f"  REFUSED: {report['refused'].get('message')}")
         if report.get("log"):
             print(f"  log: {report['log']}")
 
@@ -3146,10 +3180,16 @@ def main():
         print("\nOperation cancelled by user")
         sys.exit(1)
     except Exception as e:
-        from jarvis_cd.core.spack_install import InstallDecisionNeeded
+        from jarvis_cd.core.spack_install import (
+            BuildOutsideAllocation,
+            InstallDecisionNeeded,
+        )
 
         if isinstance(e, InstallDecisionNeeded):
             print(f"Decision needed: {e}", file=sys.stderr)
+            sys.exit(e.exit_code)
+        if isinstance(e, BuildOutsideAllocation):
+            print(f"Build refused: {e}", file=sys.stderr)
             sys.exit(e.exit_code)
         print(f"Error: {e}")
         sys.exit(1)
