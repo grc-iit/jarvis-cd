@@ -102,7 +102,10 @@ These commands record their work in the execution's `metadata`:
 
 - `cancel_request` / `stop_request` (`jarvis.execution.control.v1`): `action`,
   `status` (`requested`, `accepted`, `job_ended`, `fallback_cancel`,
-  `failed`), `provider`, `native_id`, `cluster`, the exact `command` and the
+  `failed`), `provider`, `native_id`, `cluster` (the `--clusters` value
+  passed, which is set only when `sbatch --parsable` reported one),
+  `recorded_cluster` (the record's cluster, which may come from
+  `SLURM_CLUSTER_NAME`), the exact `command` and the
   scheduler's `result`. A `failed` request does not affect finalization.
 - `termination`: written by the batch shell's TERM trap. It holds `reason`
   (`stop_request`, `cancel_request` or `scheduler` for a time limit or an

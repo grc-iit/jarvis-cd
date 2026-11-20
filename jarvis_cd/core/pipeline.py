@@ -1773,6 +1773,27 @@ class Pipeline:
             )
         return record.scheduler_provider, record.scheduler_native_id
 
+    @staticmethod
+    def _scheduler_control_cluster(record: ExecutionRecord) -> Optional[str]:
+        """Return the cluster ``sbatch --parsable`` reported, else ``None``.
+
+        ``record.cluster`` may come from ``SLURM_CLUSTER_NAME`` inside the
+        job, which every Slurm job has. Passing that to ``scancel --clusters``
+        needs slurmdbd and fails on sites without it, so control commands
+        only name a cluster that the submit itself reported (``jobid;cluster``).
+        """
+        from collections.abc import Mapping
+
+        submission = record.metadata.get("submission")
+        if not isinstance(submission, Mapping):
+            return None
+        if submission.get("identity_source") != "scheduler_submit_api":
+            return None
+        if submission.get("cluster_identity_source") is not None:
+            return None
+        cluster = submission.get("scheduler_cluster")
+        return cluster if isinstance(cluster, str) and cluster else None
+
     def cancel_execution(self, execution_id: str) -> ExecutionRecord:
         """Cancel one scheduler execution and commit ``canceled``.
 
@@ -1790,8 +1811,9 @@ class Pipeline:
         if record.terminal:
             return record
         provider, native_id = self._scheduler_control_target(record, "cancel")
+        control_cluster = self._scheduler_control_cluster(record)
         argv = scheduler_control_argv(
-            provider, "cancel", native_id, cluster=record.cluster
+            provider, "cancel", native_id, cluster=control_cluster
         )
         request: Dict[str, Any] = {
             "schema_version": "jarvis.execution.control.v1",
@@ -1802,14 +1824,15 @@ class Pipeline:
             .replace("+00:00", "Z"),
             "provider": provider,
             "native_id": native_id,
-            "cluster": record.cluster,
+            "cluster": control_cluster,
+            "recorded_cluster": record.cluster,
             "command": argv,
         }
         # The request is durable before the scheduler acts, so the job's own
         # TERM/EXIT handling finalizes it as canceled even if it wins the race.
         store.update(execution_id, metadata={"cancel_request": request})
         result = control_scheduler_execution(
-            provider, "cancel", native_id, cluster=record.cluster
+            provider, "cancel", native_id, cluster=control_cluster
         )
         request["result"] = result.to_dict()
         if not (result.accepted or result.job_ended):
@@ -1868,8 +1891,9 @@ class Pipeline:
         if record.terminal:
             return record
         provider, native_id = self._scheduler_control_target(record, "stop")
+        control_cluster = self._scheduler_control_cluster(record)
         argv = scheduler_control_argv(
-            provider, "stop", native_id, cluster=record.cluster
+            provider, "stop", native_id, cluster=control_cluster
         )
         request: Dict[str, Any] = {
             "schema_version": "jarvis.execution.control.v1",
@@ -1880,7 +1904,8 @@ class Pipeline:
             .replace("+00:00", "Z"),
             "provider": provider,
             "native_id": native_id,
-            "cluster": record.cluster,
+            "cluster": control_cluster,
+            "recorded_cluster": record.cluster,
             "command": argv,
         }
         if record.state == "submitted":
@@ -1891,7 +1916,7 @@ class Pipeline:
             return self.cancel_execution(execution_id)
         store.update(execution_id, metadata={"stop_request": request})
         result = control_scheduler_execution(
-            provider, "stop", native_id, cluster=record.cluster
+            provider, "stop", native_id, cluster=control_cluster
         )
         request["result"] = result.to_dict()
         if result.job_pending:

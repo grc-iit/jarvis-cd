@@ -256,7 +256,12 @@ Both print the resulting `jarvis.execution.record.v1` document (the shape of
 `jarvis execution get +json`). Both refuse direct (non-scheduler) executions,
 and both return a terminal record unchanged, so they are idempotent.
 
-**cancel** runs `scancel [--clusters=C] <job>`. Before signalling it writes
+**cancel** runs `scancel [--clusters=C] <job>`. `--clusters` is passed only
+when `sbatch --parsable` itself reported a cluster (`jobid;cluster`, as on a
+federated or multi-cluster site). The cluster that the job records from
+`SLURM_CLUSTER_NAME` is never passed, because every Slurm job has one, and
+`scancel --clusters` needs slurmdbd. Without slurmdbd it fails with "Problem
+talking to database". The same rule applies to stop. Before signalling, cancel writes
 `metadata.cancel_request` (`jarvis.execution.control.v1`: action, status,
 provider, native id, the exact command, then the scheduler's `result`). An
 accepted cancel commits state `canceled`. If Slurm reports that the job is
