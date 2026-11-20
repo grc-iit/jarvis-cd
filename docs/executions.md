@@ -123,7 +123,7 @@ provenance`, `role: provenance`), so `execution artifacts +json` lists it:
 
 | Field | Content |
 |-------|---------|
-| `spack` | From `install-record.json`: `spack_root`, `spack_executable`, `spack_user_config_path`, `spack_repos`, `env_dir`, `lock` with its recomputed `lock_sha256` (and `lock_sha256_recorded`), `roots`, and per package `spec`, `root_hash`, `lock_hash` and `mpi` |
+| `spack` | From `install-record.json`: `spack_root`, `spack_executable`, `spack_repos`, `env_dir`, `lock` with its recomputed `lock_sha256` (and `lock_sha256_recorded`), `roots`, and per package `spec`, `root_hash`, `lock_hash` and `mpi`. `config_scopes` lists the Spack configuration scopes the run's `spack load` read, lowest precedence first, as `{name, path, exists}`: `defaults` and `site` (`<root>/etc/spack`, each with its platform subdirectory), plus `system` and `user` only when local config is not disabled, then the `command_line` (`-C`) scope. `local_config_disabled` says whether `SPACK_DISABLE_LOCAL_CONFIG` was set. `install_config_scopes` is the list the install recorded, which adds the env manifest as the `environment` scope. Python entry-point scopes are not listed. |
 | `mpiexec_realpaths` | `readlink -f` of each MPI launcher used |
 | `binaries` | `readlink -f` of each rank program |
 | `nodes` | `[{hostname, ranks}]` across all launches, from the ranks that actually started |

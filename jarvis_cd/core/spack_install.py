@@ -31,6 +31,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -240,37 +241,110 @@ def spack_command(arguments: Sequence[str]) -> str:
 
 
 def spack_user_config_path() -> Optional[str]:
-    """``SPACK_USER_CONFIG_PATH`` jarvis exports, or ``None``.
+    """``JARVIS_SPACK_CONFIG``, exported as ``SPACK_USER_CONFIG_PATH``.
 
-    ``JARVIS_SPACK_CONFIG`` overrides; with ``JARVIS_SPACK_ROOT`` the
-    default is ``<root>/../spack-user-config``.
+    Kept for compatibility only. Jarvis always sets
+    ``SPACK_DISABLE_LOCAL_CONFIG=1`` alongside it, and Spack then drops the
+    user scope (and the system scope) entirely, so this directory is never
+    read as configuration. Site config belongs in ``<root>/etc/spack``.
     """
     config = os.environ.get("JARVIS_SPACK_CONFIG", "").strip()
-    if config:
-        return config
-    root = explicit_spack_root()
-    if root is None:
-        return None
-    return str(Path(root).expanduser().resolve().parent / "spack-user-config")
+    return config or None
+
+
+def spack_local_config_disabled() -> bool:
+    """Whether jarvis isolates Spack (``JARVIS_SPACK_ROOT`` or ``_CONFIG``)."""
+    return explicit_spack_root() is not None or spack_user_config_path() is not None
 
 
 def spack_subprocess_environment() -> Dict[str, str]:
     """Process environment for Spack.
 
     With ``JARVIS_SPACK_ROOT`` (or ``JARVIS_SPACK_CONFIG``) the user's
-    ``~/.spack`` and site/system scopes of the *caller's* Spack never leak
-    in: ``SPACK_DISABLE_LOCAL_CONFIG=1``, ``SPACK_USER_CONFIG_PATH`` set as
-    :func:`spack_user_config_path` and any active environment
-    (``SPACK_ENV``) dropped.
+    ``~/.spack`` and the machine's ``/etc/spack`` never leak in:
+    ``SPACK_DISABLE_LOCAL_CONFIG=1`` removes Spack's user and system scopes,
+    and any active environment (``SPACK_ENV``) is dropped. What remains is
+    the root's ``etc/spack/defaults`` and its site scope ``etc/spack``, plus
+    the ``-C`` and ``-e`` scopes jarvis passes (see
+    :func:`spack_config_scopes`).
     """
     environment = dict(os.environ)
-    config = spack_user_config_path()
-    if config:
-        environment["SPACK_USER_CONFIG_PATH"] = config
+    if spack_local_config_disabled():
         environment["SPACK_DISABLE_LOCAL_CONFIG"] = "1"
+        config = spack_user_config_path()
+        if config:
+            # Harmless: ignored by Spack while local config is disabled.
+            environment["SPACK_USER_CONFIG_PATH"] = config
         for name in ("SPACK_ENV", "SPACK_ENV_VIEW", "SPACK_OLD_PS1"):
             environment.pop(name, None)
     return environment
+
+
+def _resolved_spack_root() -> Optional[Path]:
+    """The Spack prefix jarvis runs: the explicit root, ``SPACK_ROOT``, or PATH."""
+    root = explicit_spack_root() or spack_root()
+    if root:
+        return Path(root).expanduser().resolve()
+    found = shutil.which("spack")
+    if found is None:
+        return None
+    return Path(os.path.realpath(found)).parent.parent
+
+
+def _spack_platform() -> str:
+    if sys.platform.startswith("darwin"):
+        return "darwin"
+    if sys.platform.startswith("win"):
+        return "windows"
+    return "linux"
+
+
+def spack_config_scopes(
+    command_line: Sequence[str] = (),
+    env_dir: Optional[str | Path] = None,
+) -> List[Dict[str, Any]]:
+    """Configuration scopes the Spack jarvis runs reads, lowest precedence first.
+
+    Mirrors ``spack.config.create`` (Spack 0.23): ``defaults``, ``system``
+    (skipped with ``SPACK_DISABLE_LOCAL_CONFIG``), ``site`` =
+    ``<root>/etc/spack``, ``user`` (skipped likewise), each with its
+    ``<platform>`` subdirectory; then jarvis's ``-C`` scopes and the
+    ``-e`` environment manifest. Python entry-point scopes are not listed.
+    """
+    disabled = spack_local_config_disabled() or "SPACK_DISABLE_LOCAL_CONFIG" in os.environ
+    root = _resolved_spack_root()
+    etc = root / "etc" / "spack" if root is not None else None
+    directories: List[tuple[str, Optional[Path]]] = [
+        ("defaults", etc / "defaults" if etc is not None else None)
+    ]
+    if not disabled:
+        system = os.environ.get("SPACK_SYSTEM_CONFIG_PATH", "").strip() or "/etc/spack"
+        directories.append(("system", Path(system)))
+    directories.append(("site", etc))
+    if not disabled:
+        user = os.environ.get("SPACK_USER_CONFIG_PATH", "").strip() or "~/.spack"
+        directories.append(("user", Path(user).expanduser()))
+    platform = _spack_platform()
+    scopes: List[Dict[str, Any]] = []
+    for name, path in directories:
+        scopes.append(
+            {"name": name, "path": str(path) if path else None,
+             "exists": bool(path and path.is_dir())}
+        )
+        if path is not None and (path / platform).is_dir():
+            scopes.append(
+                {"name": f"{name}/{platform}", "path": str(path / platform), "exists": True}
+            )
+    for scope in command_line:
+        scopes.append(
+            {"name": "command_line", "path": str(scope), "exists": Path(scope).is_dir()}
+        )
+    if env_dir:
+        manifest = Path(env_dir) / "spack.yaml"
+        scopes.append(
+            {"name": "environment", "path": str(manifest), "exists": manifest.is_file()}
+        )
+    return scopes
 
 
 class SpackRunner:
@@ -706,6 +780,14 @@ class InstallContext:
         return answer
 
 
+def _node_is_version(node: "SpecNode", name: str, version: str) -> bool:
+    """Whether a concretized node is ``name@version`` (for hashless externals)."""
+    if node.name != name:
+        return False
+    match = re.search(r"@=?([^\s%+~^/]+)", node.spec)
+    return match is not None and match.group(1) == version
+
+
 def _query_pins_mpi(tokens: Sequence[str]) -> bool:
     text = " ".join(tokens)
     return any(
@@ -763,9 +845,80 @@ class SpackPlanner:
                 else ""
             )
             candidates.append(candidate)
+        candidates.extend(self._configured_mpi_externals(candidates))
         candidates.sort(key=lambda item: item["id"])
         self._mpi_candidates = candidates
         return candidates
+
+    def _configured_mpi_externals(
+        self, found: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """MPI externals from ``packages.yaml`` that ``spack find`` can't show.
+
+        Spack lists an external only once something has been installed
+        against it, so a site's module MPI (``externals: [{spec:
+        mpich@4.1.1, modules: [mpich/4.1.1]}]``) is otherwise invisible. An
+        external matching a found install (same prefix, or same name and
+        version for a module-only one) is merged into it instead.
+        """
+        completed = self.runner.run(["config", "get", "packages"])
+        if completed.returncode != 0:
+            return []
+        try:
+            document = yaml.safe_load(completed.stdout) or {}
+        except yaml.YAMLError:
+            return []
+        packages = document.get("packages", document) if isinstance(document, dict) else {}
+        if not isinstance(packages, dict):
+            return []
+        extra: List[Dict[str, Any]] = []
+        for provider in MPI_PROVIDERS:
+            settings = packages.get(provider)
+            if not isinstance(settings, dict):
+                continue
+            for external in settings.get("externals") or []:
+                if not isinstance(external, dict) or not external.get("spec"):
+                    continue
+                spec = " ".join(str(external["spec"]).split())
+                match = re.match(r"([a-z0-9][a-z0-9_-]*)@=?([^\s%+~^]+)", spec)
+                if match is None or match.group(1) != provider:
+                    continue
+                version = match.group(2)
+                prefix = external.get("prefix")
+                modules = [str(m) for m in external.get("modules") or []]
+                origin = "packages.yaml external " + (
+                    f"prefix {prefix}" if prefix else f"modules {', '.join(modules)}"
+                )
+                twin = next(
+                    (
+                        item for item in found
+                        if (prefix and item.get("prefix") == str(prefix))
+                        or (
+                            not prefix
+                            and item["name"] == provider
+                            and item["version"] == version
+                        )
+                    ),
+                    None,
+                )
+                if twin is not None:
+                    twin["source"] += f"; {origin}"
+                    if modules:
+                        twin["modules"] = modules
+                    continue
+                extra.append(
+                    {
+                        "id": f"{provider}-{version}-external",
+                        "constraint": f"^{spec}",
+                        "name": provider,
+                        "version": version,
+                        "prefix": str(prefix) if prefix else None,
+                        "modules": modules,
+                        "hashes": [],
+                        "source": f"{origin} (not yet in spack find)",
+                    }
+                )
+        return extra
 
     def _spec(self, tokens: Sequence[str]) -> subprocess.CompletedProcess[str]:
         return self.runner.run(["spec", "-I", "-l", *tokens])
@@ -841,9 +994,14 @@ class SpackPlanner:
         entry: Dict[str, Any] = {"name": node.name, "hash": node.hash, "source": source}
         short = node.hash[:7]
         for candidate in self.mpi_candidates():
-            if any(h.startswith(short) or short.startswith(h) for h in candidate["hashes"]):
+            if any(h.startswith(short) or short.startswith(h) for h in candidate["hashes"]) or (
+                not candidate["hashes"]
+                and _node_is_version(node, candidate["name"], candidate["version"])
+            ):
                 entry["version"] = candidate["version"]
                 entry["prefix"] = candidate["prefix"]
+                if candidate.get("modules"):
+                    entry["modules"] = candidate["modules"]
                 break
         return entry
 
@@ -880,15 +1038,21 @@ class SpackPlanner:
             return None, "concretizer"
         options = []
         for candidate in candidates:
+            current = (
+                candidate["hashes"][0] == concretized.hash[:7]
+                if candidate["hashes"]
+                else _node_is_version(concretized, candidate["name"], candidate["version"])
+            )
             options.append(
                 {
                     key: candidate[key]
                     for key in ("id", "constraint", "source", "prefix", "hashes")
                 }
+                | ({"modules": candidate["modules"]} if candidate.get("modules") else {})
                 | {
                     "implies": (
                         "the concretizer's current choice"
-                        if candidate["hashes"][0] == concretized.hash[:7]
+                        if current
                         else "re-resolves dependents against this MPI"
                     )
                 }
@@ -903,6 +1067,7 @@ class SpackPlanner:
             evidence=[
                 "spack find --format '{name}@{version} {hash} {prefix}' "
                 + " ".join(MPI_PROVIDERS),
+                "spack config get packages (MPI externals)",
                 f"spack spec -I -l (concretizer picked {concretized.name}/{concretized.hash})",
             ],
             answerable=True,
@@ -1444,6 +1609,8 @@ def run_spack_install(
         "mode": context.mode,
         "spack_root": explicit_spack_root() or spack_root(),
         "spack_config": spack_user_config_path(),
+        "spack_local_config_disabled": spack_local_config_disabled(),
+        "spack_config_scopes": [],
         "spack_executable": spack_executable(),
         "spack_repos": repos,
         "spack_scope": None,
@@ -1455,6 +1622,9 @@ def run_spack_install(
         scope = write_repo_scope(context.install_dir / REPO_SCOPE_NAME, repos)
         record["spack_scope"] = str(scope)
         planner.runner.config_scopes = [str(scope)]
+    record["spack_config_scopes"] = spack_config_scopes(
+        planner.runner.config_scopes, env_dir
+    )
     packages = [
         (str(pkg_def.get("pkg_id") or pkg_def.get("pkg_name") or "pkg"), pkg_def)
         for pkg_def in pkg_list

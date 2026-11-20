@@ -299,15 +299,28 @@ Which Spack runs:
 - With `JARVIS_SPACK_ROOT=<root>`, JARVIS calls `<root>/bin/spack` by path
   for every command (`find`, `spec`, `concretize`, `install`, `load`). The
   `spack` on `PATH` is never used, and it is an error when `<root>/bin/spack`
-  is missing. The Spack is also isolated from the user's `~/.spack`: JARVIS
-  exports `SPACK_DISABLE_LOCAL_CONFIG=1` and
-  `SPACK_USER_CONFIG_PATH=<root>/../spack-user-config`, and drops any
-  inherited `SPACK_ENV`. Set `JARVIS_SPACK_CONFIG=<dir>` to use another user
-  config directory. This is the layout CLIO's `spack_prepare_site` creates: a
-  private Spack whose upstream is the site Spack, with `mpi: buildable:
-  false`.
+  is missing. The Spack is also isolated from the user's `~/.spack` and the
+  machine's `/etc/spack`: JARVIS exports `SPACK_DISABLE_LOCAL_CONFIG=1` and
+  drops any inherited `SPACK_ENV`. That variable removes Spack's `system`
+  and `user` scopes (Spack 0.23 `spack.config.create`), so the Spack reads
+  only `<root>/etc/spack/defaults`, the site scope `<root>/etc/spack` (each
+  with its `linux/` subdirectory), and the `-C`/`-e` scopes JARVIS passes.
+  Put the site's `upstreams.yaml`, `packages.yaml`, `compilers.yaml` and
+  `config.yaml` in `<root>/etc/spack`. This is the layout CLIO's
+  `spack_prepare_site` creates: a private Spack whose upstream is the site
+  Spack, with `mpi: buildable: false`. `install-record.json`
+  (`spack_config_scopes`) and the run's
+  [provenance record](executions.md#provenance-record) (`config_scopes`)
+  list the scopes that were in effect.
 - Without it, `$SPACK_ROOT/share/spack/setup-env.sh` is sourced when
   `SPACK_ROOT` is set, and `spack` comes from `PATH`.
+
+`JARVIS_SPACK_CONFIG=<dir>` is still accepted. It is exported as
+`SPACK_USER_CONFIG_PATH` and turns on the same isolation, but Spack ignores
+that directory while local config is disabled, so it never adds
+configuration. Older releases of this branch defaulted it to
+`<root>/../spack-user-config`, which was never read either. Nothing is set by
+default now.
 
 After installation, the environment that `spack load --sh /<hash>` prints is
 merged into the run, so the resolved binaries are on
@@ -323,9 +336,20 @@ For each Spack package, JARVIS:
    constraints>`. Every node is marked installed (`[+]`), upstream/site
    (`[^]`), external (`[e]`) or missing (` - `).
 3. Picks the MPI when the query doesn't pin one with `^<mpi>`. A recorded site
-   decision wins. With exactly one installed MPI (`spack find` over openmpi,
-   mpich, mvapich2, intel-oneapi-mpi, cray-mpich, …, merged by prefix),
-   JARVIS pins it as `^<name>/<hash7>`. With several, it asks.
+   decision wins. The candidates are every installed or upstream MPI
+   (`spack find` over openmpi, mpich, mvapich2, intel-oneapi-mpi,
+   cray-mpich, …, merged by prefix) plus every MPI external configured in
+   `packages.yaml` (`spack config get packages`). Spack only lists an
+   external in `spack find` once something has used it, so a site module MPI
+   such as `mpich: externals: [{spec: mpich@4.1.1, modules: [mpich/4.1.1]}]`
+   is found here. An external with the same prefix as an install (or, for a
+   module-only external, the same name and version) is merged into that
+   install. With exactly one candidate, JARVIS pins it: `^<name>/<hash7>`
+   for an install, or `^<external spec>` for an unused external. With
+   several, it asks with `ambiguous_provider` and never takes `spack spec`'s
+   silent default. This applies to `ppl install +check`, to install mode,
+   and to an install-on-load (`JARVIS_INSTALL_ON_LOAD=check` or `install`)
+   in a `ppl submit` job. All of them exit `3`.
 4. Reuses everything already present. Only in install mode, and only for
    what is missing, it builds through the pipeline's Spack environment (see
    [Per-pipeline Spack environment](#per-pipeline-spack-environment)). It
@@ -348,7 +372,7 @@ JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
 
 | `kind` | When | Answerable |
 |--------|------|------------|
-| `ambiguous_provider` | several installed MPIs (`subject: mpi`, `scope: site`); `candidates[]` lists `{id, constraint, source, prefix, hashes, implies}` | yes, with one candidate's `constraint` |
+| `ambiguous_provider` | several MPI candidates (installed, upstream or `packages.yaml` externals) and neither the query nor a recorded answer pins one (`subject: mpi`, `scope: site`); `candidates[]` lists `{id, constraint, source, prefix, hashes, implies}`, plus `modules` for module externals | yes, with one candidate's `constraint` |
 | `variant_conflict` | the concretizer reports a conflict | yes, with a spec constraint (e.g. `~cuda`) |
 | `concretize_failed` | any other concretizer error (`detail` holds the excerpt) | yes, with a spec constraint |
 | `no_recipe` | Spack has no recipe for the package | no: add `install_repos` or change `install_query` |
@@ -373,9 +397,9 @@ that pipeline. That is how the chosen MPI reaches a run (see
 [MPI selection](#mpi-selection)). Set `JARVIS_SPACK_DECISIONS` to share one
 decisions file across pipelines on a site.
 
-Use `JARVIS_SPACK_CONFIG=<dir>` to isolate Spack's configuration: it sets
-`SPACK_USER_CONFIG_PATH=<dir>` and `SPACK_DISABLE_LOCAL_CONFIG=1`. With
-`JARVIS_SPACK_ROOT` set this happens by default (see above).
+`JARVIS_SPACK_CONFIG=<dir>` (or `JARVIS_SPACK_ROOT`) turns on
+`SPACK_DISABLE_LOCAL_CONFIG=1`, so Spack reads no user or system
+configuration. Put site configuration in `<root>/etc/spack` (see above).
 
 ### Package Spack repos (`install_repos`)
 

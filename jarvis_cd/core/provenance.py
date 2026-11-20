@@ -314,11 +314,21 @@ def _spack_section(record_path: Optional[Path]) -> Dict[str, Any]:
             "lock_hash": entry.get("lock_hash"),
             "mpi": entry.get("mpi"),
         }
+    from jarvis_cd.core.spack_install import (
+        spack_config_scopes,
+        spack_local_config_disabled,
+    )
+
+    load_scopes = [record["spack_scope"]] if record.get("spack_scope") else []
     return {
         "install_record": str(record_path),
         "spack_root": record.get("spack_root"),
         "spack_executable": record.get("spack_executable"),
-        "spack_user_config_path": record.get("spack_config"),
+        # What the run's `spack load` read, resolved now in the run's env.
+        "local_config_disabled": spack_local_config_disabled(),
+        "config_scopes": spack_config_scopes(load_scopes),
+        # What the install's spec/find/concretize read, as it recorded them.
+        "install_config_scopes": record.get("spack_config_scopes") or [],
         "spack_repos": record.get("spack_repos") or [],
         "env_dir": env.get("dir"),
         "lock": lock_path,
