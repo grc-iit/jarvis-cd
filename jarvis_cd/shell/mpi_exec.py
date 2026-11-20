@@ -57,6 +57,11 @@ class LocalMpiExec(LocalExec):
             self.cmd_list = self._process_cmd_list(cmd)
             self.original_cmd = None
 
+        # Inside a JARVIS execution, record the launch (launcher and binary
+        # realpaths, ldd) and wrap ranks for hostname and /proc maps capture.
+        from ..core.provenance import capture_launch
+        capture_launch(self, cwd=getattr(exec_info, 'cwd', None))
+
         # Build MPI command
         mpi_cmd = self.mpicmd()
 

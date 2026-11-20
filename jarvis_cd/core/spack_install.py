@@ -43,6 +43,8 @@ import yaml
 
 ISSUE_SCHEMA = "jarvis.install-issue.v1"
 RECORD_SCHEMA = "jarvis.install-record.v1"
+#: ``spack -C`` scope (under ``<shared>/install``) listing ``install_repos``.
+REPO_SCOPE_NAME = "spack-scope"
 REPORT_SCHEMA = "jarvis.install-report.v1"
 DECISIONS_SCHEMA = "jarvis.install-decisions.v1"
 PROGRESS_SCHEMA = "jarvis.install.progress.v1"
@@ -193,24 +195,81 @@ def spack_root() -> Optional[str]:
     return None
 
 
+def explicit_spack_root() -> Optional[str]:
+    """``JARVIS_SPACK_ROOT``: the one Spack jarvis calls, by path."""
+    value = os.environ.get("JARVIS_SPACK_ROOT", "").strip()
+    return value or None
+
+
+def spack_executable() -> str:
+    """Shell word for the Spack command.
+
+    With ``JARVIS_SPACK_ROOT`` this is ``<root>/bin/spack`` by absolute
+    path, so the ``spack`` on PATH (or a shell function) is never used.
+    Otherwise it is ``spack`` (the ``SPACK_ROOT`` shell function when
+    :func:`spack_shell_prefix` sources it, else the one on PATH).
+    """
+    root = explicit_spack_root()
+    if root is None:
+        return "spack"
+    executable = Path(root).expanduser().resolve() / "bin" / "spack"
+    if not executable.is_file():
+        raise RuntimeError(f"JARVIS_SPACK_ROOT has no {executable}")
+    return shlex.quote(str(executable))
+
+
 def spack_shell_prefix() -> str:
-    """Shell prefix that sources the selected Spack's ``setup-env.sh``."""
+    """Shell prefix that sources ``$SPACK_ROOT/share/spack/setup-env.sh``.
+
+    Empty with ``JARVIS_SPACK_ROOT``: that Spack is called by path.
+    """
+    if explicit_spack_root() is not None:
+        return ""
     root = spack_root()
     if root is None:
         return ""
     setup = Path(root) / "share" / "spack" / "setup-env.sh"
-    if os.environ.get("JARVIS_SPACK_ROOT") and not setup.is_file():
-        raise RuntimeError(f"JARVIS_SPACK_ROOT has no {setup}")
     return f". {shlex.quote(str(setup))} && "
 
 
-def spack_subprocess_environment() -> Dict[str, str]:
-    """Process environment for Spack, isolated by ``JARVIS_SPACK_CONFIG``."""
-    environment = dict(os.environ)
+def spack_command(arguments: Sequence[str]) -> str:
+    """Bash command line that runs Spack with ``arguments``."""
+    return spack_shell_prefix() + spack_executable() + (
+        " " + shlex.join(arguments) if arguments else ""
+    )
+
+
+def spack_user_config_path() -> Optional[str]:
+    """``SPACK_USER_CONFIG_PATH`` jarvis exports, or ``None``.
+
+    ``JARVIS_SPACK_CONFIG`` overrides; with ``JARVIS_SPACK_ROOT`` the
+    default is ``<root>/../spack-user-config``.
+    """
     config = os.environ.get("JARVIS_SPACK_CONFIG", "").strip()
+    if config:
+        return config
+    root = explicit_spack_root()
+    if root is None:
+        return None
+    return str(Path(root).expanduser().resolve().parent / "spack-user-config")
+
+
+def spack_subprocess_environment() -> Dict[str, str]:
+    """Process environment for Spack.
+
+    With ``JARVIS_SPACK_ROOT`` (or ``JARVIS_SPACK_CONFIG``) the user's
+    ``~/.spack`` and site/system scopes of the *caller's* Spack never leak
+    in: ``SPACK_DISABLE_LOCAL_CONFIG=1``, ``SPACK_USER_CONFIG_PATH`` set as
+    :func:`spack_user_config_path` and any active environment
+    (``SPACK_ENV``) dropped.
+    """
+    environment = dict(os.environ)
+    config = spack_user_config_path()
     if config:
         environment["SPACK_USER_CONFIG_PATH"] = config
         environment["SPACK_DISABLE_LOCAL_CONFIG"] = "1"
+        for name in ("SPACK_ENV", "SPACK_ENV_VIEW", "SPACK_OLD_PS1"):
+            environment.pop(name, None)
     return environment
 
 
@@ -220,6 +279,9 @@ class SpackRunner:
     def __init__(self, log: Optional[IO[str]] = None):
         self.log = log
         self.commands: List[str] = []
+        #: ``-C`` scopes (e.g. the pipeline's ``repos.yaml``) put on every
+        #: command except ``-e DIR`` ones, whose manifest lists the repos.
+        self.config_scopes: List[str] = []
 
     def _log(self, text: str) -> None:
         if self.log is not None:
@@ -230,9 +292,14 @@ class SpackRunner:
         self, arguments: Sequence[str], *, stream: bool = False
     ) -> subprocess.CompletedProcess[str]:
         """Run one Spack command; ``stream`` copies output line by line."""
-        command = "spack " + shlex.join(arguments)
+        if self.config_scopes and list(arguments[:1]) != ["-e"]:
+            arguments = [
+                *(token for scope in self.config_scopes for token in ("-C", scope)),
+                *arguments,
+            ]
+        command = spack_executable() + " " + shlex.join(arguments)
         self.commands.append(command)
-        script = spack_shell_prefix() + command
+        script = spack_command(arguments)
         self._log(f"[{_utc_now()}] $ {command}\n")
         environment = spack_subprocess_environment()
         if stream:
@@ -703,13 +770,6 @@ class SpackPlanner:
     def _spec(self, tokens: Sequence[str]) -> subprocess.CompletedProcess[str]:
         return self.runner.run(["spec", "-I", "-l", *tokens])
 
-    def ensure_repos(self, repos: Sequence[str]) -> None:
-        for repo in repos:
-            completed = self.runner.run(["repo", "add", str(repo)])
-            output = (completed.stdout or "") + (completed.stderr or "")
-            if completed.returncode != 0 and "already" not in output.lower():
-                raise RuntimeError(f"spack repo add {repo} failed: {_error_excerpt(output)}")
-
     # -- per package -------------------------------------------------------
 
     def plan_package(self, package: str, query: str) -> Dict[str, Any]:
@@ -1019,9 +1079,11 @@ class SpackEnvironment:
     exact same builds until the pipeline's specs change.
     """
 
-    def __init__(self, directory: Path, runner: SpackRunner):
+    def __init__(self, directory: Path, runner: SpackRunner,
+                 repos: Sequence[str] = ()):
         self.directory = Path(directory)
         self.runner = runner
+        self.repos = [str(repo) for repo in repos]
 
     @property
     def manifest_path(self) -> Path:
@@ -1032,22 +1094,35 @@ class SpackEnvironment:
         return self.directory / "spack.lock"
 
     @staticmethod
-    def manifest_for(specs: Sequence[str]) -> Dict[str, Any]:
-        return {
+    def manifest_for(specs: Sequence[str], repos: Sequence[str] = ()) -> Dict[str, Any]:
+        document: Dict[str, Any] = {
             "spack": {
                 "specs": list(specs),
                 "view": False,
                 "concretizer": {"reuse": True, "unify": False},
             }
         }
+        if repos:
+            document["spack"]["repos"] = list(repos)
+        return document
 
-    def manifest_specs(self) -> Optional[List[str]]:
+    def _manifest(self) -> Optional[Mapping[str, Any]]:
         try:
             document = yaml.safe_load(self.manifest_path.read_text(encoding="utf-8"))
-            specs = document["spack"]["specs"]
+            section = document["spack"]
         except (OSError, yaml.YAMLError, KeyError, TypeError):
             return None
+        return section if isinstance(section, Mapping) else None
+
+    def manifest_specs(self) -> Optional[List[str]]:
+        section = self._manifest()
+        specs = section.get("specs") if section is not None else None
         return [str(spec) for spec in specs] if isinstance(specs, list) else None
+
+    def manifest_repos(self) -> List[str]:
+        section = self._manifest()
+        repos = section.get("repos") if section is not None else None
+        return [str(repo) for repo in repos] if isinstance(repos, list) else []
 
     def lock_roots(self) -> Optional[List[Dict[str, str]]]:
         try:
@@ -1062,8 +1137,9 @@ class SpackEnvironment:
         return [{"hash": root["hash"], "spec": str(root.get("spec", ""))} for root in roots]
 
     def current_roots(self, specs: Sequence[str]) -> Optional[List[Dict[str, str]]]:
-        """Lock roots when the lock was concretized from exactly ``specs``."""
-        if self.manifest_specs() != list(specs):
+        """Lock roots when the lock was concretized from exactly ``specs``
+        (and this environment's recipe repos)."""
+        if self.manifest_specs() != list(specs) or self.manifest_repos() != self.repos:
             return None
         roots = self.lock_roots()
         if roots is None or len(roots) != len(specs):
@@ -1072,11 +1148,11 @@ class SpackEnvironment:
 
     def write_manifest(self, specs: Sequence[str]) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
-        if self.manifest_specs() != list(specs):
+        if self.manifest_specs() != list(specs) or self.manifest_repos() != self.repos:
             _atomic_write_text(
                 self.manifest_path,
                 "# Generated by jarvis ppl install; edit the pipeline instead.\n"
-                + yaml.safe_dump(self.manifest_for(specs), sort_keys=False),
+                + yaml.safe_dump(self.manifest_for(specs, self.repos), sort_keys=False),
             )
 
     def concretize(self) -> subprocess.CompletedProcess[str]:
@@ -1100,6 +1176,7 @@ class SpackEnvironment:
             "lock": str(self.lock_path) if roots is not None else None,
             "lock_sha256": lock_sha256,
             "roots": [dict(root) for root in roots] if roots is not None else [],
+            "repos": list(self.repos),
             "status": "locked" if roots is not None else "unlocked",
         }
 
@@ -1121,7 +1198,7 @@ def _sync_spack_environment(
     a second install waits, re-verifies what the first one built and
     reuses its lock instead of building again.
     """
-    environment = SpackEnvironment(env_dir, planner.runner)
+    environment = SpackEnvironment(env_dir, planner.runner, record.get("spack_repos") or ())
     building = context.mode == "install" and not context.issues
     if not building and not Path(env_dir).is_dir():
         record["spack_env"] = environment.describe(None)
@@ -1286,11 +1363,61 @@ def _package_query(pkg_def: Mapping[str, Any]) -> str:
 
 
 def _package_repos(pkg_def: Mapping[str, Any]) -> List[str]:
+    """``install_repos`` of one package, as given (see :func:`resolve_package_repos`)."""
     config = pkg_def.get("config", {}) or {}
     repos = config.get("install_repos") or []
     if isinstance(repos, str):
         repos = [repos]
-    return [str(repo) for repo in repos]
+    return [str(repo) for repo in repos if str(repo).strip()]
+
+
+def resolve_package_repos(
+    repos: Sequence[str], package_dir: Optional[Path]
+) -> List[str]:
+    """Absolute Spack repo dirs: relative entries are under ``package_dir``."""
+    resolved = []
+    for repo in repos:
+        path = Path(os.path.expandvars(str(repo))).expanduser()
+        if not path.is_absolute():
+            if package_dir is None:
+                raise RuntimeError(
+                    f"install_repos entry {repo!r} is relative but the package "
+                    "directory is unknown"
+                )
+            path = Path(package_dir) / path
+        path = path.resolve()
+        if not (path / "repo.yaml").is_file():
+            raise RuntimeError(f"install_repos entry {repo!r}: {path} has no repo.yaml")
+        resolved.append(str(path))
+    return resolved
+
+
+def pipeline_repos(pkg_list: Sequence[Mapping[str, Any]]) -> List[str]:
+    """Every package's (already absolute) ``install_repos``, deduplicated."""
+    repos: List[str] = []
+    for pkg_def in pkg_list:
+        for repo in _package_repos(pkg_def):
+            if repo not in repos:
+                repos.append(repo)
+    return repos
+
+
+def write_repo_scope(scope_dir: Path, repos: Sequence[str]) -> Path:
+    """A ``spack -C`` scope directory whose ``repos.yaml`` lists ``repos``.
+
+    Commands outside the pipeline env (``spec``, ``find``, ``load``) see the
+    recipes through it, so nothing is added to any global Spack config.
+    """
+    scope_dir.mkdir(parents=True, exist_ok=True)
+    text = yaml.safe_dump({"repos": list(repos)}, sort_keys=False)
+    path = scope_dir / "repos.yaml"
+    try:
+        current = path.read_text(encoding="utf-8")
+    except OSError:
+        current = None
+    if current != text:
+        _atomic_write_text(path, text)
+    return scope_dir
 
 
 def run_spack_install(
@@ -1311,15 +1438,23 @@ def run_spack_install(
     caller decides whether to raise :class:`InstallDecisionNeeded`.
     """
     planner = SpackPlanner(context, runner)
+    repos = pipeline_repos(pkg_list)
     record: Dict[str, Any] = {
         "schema_version": RECORD_SCHEMA,
         "mode": context.mode,
-        "spack_root": spack_root(),
-        "spack_config": os.environ.get("JARVIS_SPACK_CONFIG") or None,
+        "spack_root": explicit_spack_root() or spack_root(),
+        "spack_config": spack_user_config_path(),
+        "spack_executable": spack_executable(),
+        "spack_repos": repos,
+        "spack_scope": None,
         "decisions": str(context.decisions_path),
         "started_at": _utc_now(),
         "packages": {},
     }
+    if repos:
+        scope = write_repo_scope(context.install_dir / REPO_SCOPE_NAME, repos)
+        record["spack_scope"] = str(scope)
+        planner.runner.config_scopes = [str(scope)]
     packages = [
         (str(pkg_def.get("pkg_id") or pkg_def.get("pkg_name") or "pkg"), pkg_def)
         for pkg_def in pkg_list
@@ -1335,7 +1470,6 @@ def run_spack_install(
         if not query:
             record["packages"][package] = {"status": "no_query"}
             continue
-        planner.ensure_repos(_package_repos(pkg_def))
         entry = planner.plan_package(package, query)
         if entry["status"] == "missing":
             if context.mode == "check":

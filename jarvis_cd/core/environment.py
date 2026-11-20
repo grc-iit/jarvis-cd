@@ -309,35 +309,40 @@ class EnvironmentManager:
 
         return captured
         
-    def capture_spack_environment(self, spack_specs: List[str]) -> Dict[str, str]:
+    def capture_spack_environment(self, spack_specs: List[str],
+                                  config_scopes=()) -> Dict[str, str]:
         """
         Run 'spack load' for the given specs in a subprocess and capture
         the resulting environment variables.
 
-        Sources the ``setup-env.sh`` of ``JARVIS_SPACK_ROOT`` (falling back
-        to ``SPACK_ROOT``), isolates configuration with
-        ``JARVIS_SPACK_CONFIG`` when set, loads each spec (installers pass
-        exact ``/<hash>`` specs) and captures the environment via 'env'.
+        Runs ``JARVIS_SPACK_ROOT``'s ``bin/spack`` by path (else sources
+        ``$SPACK_ROOT``'s ``setup-env.sh``, else the ``spack`` on PATH) with
+        the isolation of ``spack_subprocess_environment``, applies each
+        ``spack load --sh`` (installers pass exact ``/<hash>`` specs) and
+        captures the environment via 'env'.
 
         :param spack_specs: List of spack spec strings to load
+        :param config_scopes: ``spack -C`` scopes (the pipeline's recipe repos)
         :return: Dictionary of captured environment variables
         """
         import shlex
         import subprocess
         from jarvis_cd.core.spack_install import (
-            spack_shell_prefix,
+            spack_command,
             spack_subprocess_environment,
         )
 
-        setup = spack_shell_prefix()
-
-        # Build the spack load commands
+        scope_args = [token for scope in config_scopes for token in ('-C', str(scope))]
+        # `load --sh` prints the shell code, so no shell integration is needed;
+        # the assignment keeps a failed load from being eval'ed as success
         load_cmds = ' && '.join(
-            'spack load ' + ' '.join(shlex.quote(token) for token in shlex.split(spec))
+            '_jarvis_load="$(' + spack_command(
+                [*scope_args, 'load', '--sh', *shlex.split(spec)]
+            ) + ')" && eval "$_jarvis_load"'
             for spec in spack_specs
         )
 
-        script = f'{setup}{load_cmds} && env'
+        script = f'{load_cmds} && unset _jarvis_load && env'
 
         try:
             result = subprocess.run(

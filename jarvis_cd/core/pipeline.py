@@ -3134,6 +3134,8 @@ class Pipeline:
         if os.name != "nt":
             runtime_dir.chmod(0o700)
         runtime_path = runtime_dir / f"{prefix}-{digest}.jsonl"
+        provenance_dir = Path(execution_root) / "provenance"
+        provenance_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         package_config = pkg_def.get("config", {})
         package_containerized = isinstance(package_config, dict) and (
             package_config.get("deploy_mode") == "container"
@@ -3151,6 +3153,7 @@ class Pipeline:
                 "JARVIS_ARTIFACT_PATH": str(artifact_path),
                 "JARVIS_ARTIFACT_TRANSPORT": progress_transport,
                 "JARVIS_SERVICE_RUNTIME_PATH": str(runtime_path),
+                "JARVIS_PROVENANCE_DIR": str(provenance_dir),
             }
         )
         record = self._execution_store().get(execution_id)
@@ -3312,6 +3315,52 @@ class Pipeline:
                 format_name="yaml",
             )
 
+    def _write_execution_provenance(
+        self,
+        store: ExecutionStore,
+        execution_id: str,
+    ) -> None:
+        """Write and register ``provenance.json`` (``jarvis.provenance.v1``).
+
+        Best effort: a failure is logged and never fails the run.
+        """
+        from jarvis_cd.core.provenance import provenance_enabled, write_provenance
+        from jarvis_cd.util.logger import logger
+
+        if not provenance_enabled(self.env):
+            return
+        try:
+            execution_root = store.executions_dir / execution_id
+            install_records = [execution_root / "install" / "install-record.json"]
+            if self.name:
+                install_records.append(
+                    Path(self.jarvis.get_pipeline_shared_dir(self.name))
+                    / "install"
+                    / "install-record.json"
+                )
+            path = write_provenance(
+                execution_root,
+                execution_id=execution_id,
+                pipeline_id=self.name,
+                install_records=install_records,
+            )
+            self._register_execution_file(
+                store,
+                execution_id,
+                logical_name="provenance",
+                relative_path=path.relative_to(execution_root).as_posix(),
+                kind="provenance",
+                role=ArtifactRole.PROVENANCE,
+                media_type="application/json",
+                format_name="json",
+                message="jarvis.provenance.v1: Spack hashes and lock digest, "
+                "launcher/binary realpaths, ldd, nodes and ranks, one rank's "
+                "/proc maps, job environment",
+            )
+            store.update(execution_id, metadata={"provenance_file": path.name})
+        except Exception as error:
+            logger.warning(f"provenance not written: {error}")
+
     def _started_package_instance(self, package_id: str) -> Optional[Any]:
         """Return the exact instance started for a package alias, if retained."""
         for instance in reversed(getattr(self, "_started_instances", [])):
@@ -3463,6 +3512,7 @@ class Pipeline:
                 "JARVIS_ARTIFACT_PATH",
                 "JARVIS_ARTIFACT_TRANSPORT",
                 "JARVIS_SERVICE_RUNTIME_PATH",
+                "JARVIS_PROVENANCE_DIR",
             )
         }
         snapshot_execution_id = getattr(self, "_execution_id", None)
@@ -3514,6 +3564,7 @@ class Pipeline:
             self.start()
             logger.pipeline("Pipeline started successfully. Stopping packages...")
             self.stop()
+            self._write_execution_provenance(store, resolved_execution_id)
             if record.mode == "scheduler":
                 # The generated scheduler script owns the final transition so
                 # failures in post-run hooks are included in the execution.
@@ -3533,6 +3584,7 @@ class Pipeline:
             except BaseException as stop_error:
                 logger.error(f"Error during cleanup: {stop_error}")
                 error.add_note(f"pipeline cleanup also failed: {stop_error}")
+            self._write_execution_provenance(store, resolved_execution_id)
             try:
                 store.update(
                     resolved_execution_id,

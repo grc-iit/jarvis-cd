@@ -294,17 +294,31 @@ loop:
 output: ${HOME}/ior_spack_results
 ```
 
-Spack is discovered through `JARVIS_SPACK_ROOT`, falling back to
-`SPACK_ROOT`. Its `setup-env.sh` is sourced before every Spack command, and
-it is an error when `JARVIS_SPACK_ROOT` is set but the file is missing. After
-installation, the environment produced by `spack load /<root hash>` is merged
-into the run so the resolved binaries are on `PATH`/`LD_LIBRARY_PATH`.
+Which Spack runs:
+
+- With `JARVIS_SPACK_ROOT=<root>`, JARVIS calls `<root>/bin/spack` by path
+  for every command (`find`, `spec`, `concretize`, `install`, `load`). The
+  `spack` on `PATH` is never used, and it is an error when `<root>/bin/spack`
+  is missing. The Spack is also isolated from the user's `~/.spack`: JARVIS
+  exports `SPACK_DISABLE_LOCAL_CONFIG=1` and
+  `SPACK_USER_CONFIG_PATH=<root>/../spack-user-config`, and drops any
+  inherited `SPACK_ENV`. Set `JARVIS_SPACK_CONFIG=<dir>` to use another user
+  config directory. This is the layout CLIO's `spack_prepare_site` creates: a
+  private Spack whose upstream is the site Spack, with `mpi: buildable:
+  false`.
+- Without it, `$SPACK_ROOT/share/spack/setup-env.sh` is sourced when
+  `SPACK_ROOT` is set, and `spack` comes from `PATH`.
+
+After installation, the environment that `spack load --sh /<hash>` prints is
+merged into the run, so the resolved binaries are on
+`PATH`/`LD_LIBRARY_PATH`.
 
 ### Find-first Spack installs
 
 For each Spack package, JARVIS:
 
-1. Adds any `install_repos` (a list of Spack repo paths) with `spack repo add`.
+1. Collects every package's `install_repos` (see
+   [Package Spack repos](#package-spack-repos-install_repos)).
 2. Resolves the spec with `spack spec -I -l <install_query> <recorded
    constraints>`. Every node is marked installed (`[+]`), upstream/site
    (`[^]`), external (`[e]`) or missing (` - `).
@@ -360,7 +374,37 @@ that pipeline. That is how the chosen MPI reaches a run (see
 decisions file across pipelines on a site.
 
 Use `JARVIS_SPACK_CONFIG=<dir>` to isolate Spack's configuration: it sets
-`SPACK_USER_CONFIG_PATH=<dir>` and `SPACK_DISABLE_LOCAL_CONFIG=1`.
+`SPACK_USER_CONFIG_PATH=<dir>` and `SPACK_DISABLE_LOCAL_CONFIG=1`. With
+`JARVIS_SPACK_ROOT` set this happens by default (see above).
+
+### Package Spack repos (`install_repos`)
+
+A package can ship its own Spack recipes. `install_repos` is a list of Spack
+repo directories (each holding a `repo.yaml`). Relative entries are relative to
+the package's directory, and `~` and `${VAR}` are expanded:
+
+```yaml
+pkgs:
+  - pkg_type: clio.xcompact3d
+    install_method: spack
+    install_query: xcompact3d@5.0
+    install_repos: [spack]        # <clio repo>/xcompact3d/spack/repo.yaml
+```
+
+The repos never touch the user's or the site's Spack configuration. There is
+no `spack repo add`. Instead:
+
+- The pipeline environment's `spack.yaml` lists them under `spack: repos:`,
+  so `concretize` and `install` see them. A change in the repos counts as a
+  change in the environment and triggers a re-concretize.
+- For commands outside the environment (`spec`, `find`, `load`), JARVIS
+  writes a config scope `<install dir>/spack-scope/repos.yaml` and passes it
+  as `spack -C <scope>`.
+- `install-record.json` records the absolute paths (`spack_repos`) and the
+  scope (`spack_scope`).
+
+A missing directory, or one without `repo.yaml`, is an error before Spack
+runs.
 
 ### Per-pipeline Spack environment
 

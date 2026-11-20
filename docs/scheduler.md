@@ -349,6 +349,16 @@ resubmit with `--answers`.
 scheduler's `pre_cmds`, to make a run job verify instead of building. It then
 fails fast with exit 3 when something is missing. `skip` disables the phase.
 
+Install and run jobs see `JARVIS_SPACK_ROOT`, `JARVIS_SPACK_CONFIG` and
+`JARVIS_SPACK_ENV_DIR` through Slurm's default environment export
+(`--export=ALL`). If the site exports nothing, set them in `pre_cmds`. The job
+then calls the same
+`<root>/bin/spack` with the same isolated configuration, and uses the
+package-local `install_repos` (see
+[pipeline_tests.md → Package Spack repos](pipeline_tests.md#package-spack-repos-install_repos)).
+Each run job writes `<execution>/provenance.json` before it finalizes (see
+[executions.md → Provenance record](executions.md#provenance-record)).
+
 ### Login nodes: no builds outside an allocation
 
 A site login node may only do light, short work: submit, read records,

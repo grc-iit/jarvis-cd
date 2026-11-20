@@ -113,6 +113,44 @@ Install jobs (`jarvis ppl install +submit`) add `action: install` and a live
 `install` progress document. See
 [scheduler.md → Install jobs](scheduler.md#install-jobs).
 
+## Provenance record
+
+Every owned run (`ppl run`, and each `ppl submit` job) writes
+`<execution>/provenance.json` with schema `jarvis.provenance.v1`. The run
+writes it after `ppl stop` and before the terminal state is committed, not
+the caller. It is registered as the core artifact `provenance` (`kind:
+provenance`, `role: provenance`), so `execution artifacts +json` lists it:
+
+| Field | Content |
+|-------|---------|
+| `spack` | From `install-record.json`: `spack_root`, `spack_executable`, `spack_user_config_path`, `spack_repos`, `env_dir`, `lock` with its recomputed `lock_sha256` (and `lock_sha256_recorded`), `roots`, and per package `spec`, `root_hash`, `lock_hash` and `mpi` |
+| `mpiexec_realpaths` | `readlink -f` of each MPI launcher used |
+| `binaries` | `readlink -f` of each rank program |
+| `nodes` | `[{hostname, ranks}]` across all launches, from the ranks that actually started |
+| `launches[]` | One per MPI launch: `launcher_realpath`, `mpi_prefix`, `nprocs`, `ppn`, `hosts`, `binaries[]` with `realpath` and `ldd` (`returncode`, `lines`), `ranks[]` (`hostname`, `rank`, `pid`), `nodes`, `rank_env`, and `maps` (`hostname`, `rank`, `pid`, `exe`, `text` = one rank's `/proc/<pid>/maps`, `files` = the mapped paths) |
+| `job_env` | The run's environment |
+| `scheduler_job` | `SLURM_JOB_ID`/`SLURM_JOB_NODELIST`, `PBS_JOBID`, `LSB_JOBID` or `FLUX_JOB_ID` |
+| `jarvis` | version, package path, Python, and `jarvis` command realpath |
+
+Each launch is captured in `<execution>/provenance/launch-NNN/`. JARVIS runs
+every rank through a small `/bin/sh` wrapper (`provenance/rank-wrapper.sh`).
+The wrapper writes `ranks/<host>-<rank>-<pid>.txt` and then `exec`s the
+program, so the PID it records is the program's own. The first rank to claim
+the launch starts a detached sampler. Within the program's first ~10 s, the
+sampler copies `/proc/<pid>/maps` once the program has replaced the wrapper.
+
+Limits:
+
+- Only MPI launches (`MpiExecInfo`) are captured.
+- Environment variables whose names contain `TOKEN`, `SECRET`, `PASSWORD`,
+  `PASSWD`, `CREDENTIAL`, `PRIVATE_KEY`, `API_KEY`, `ACCESS_KEY`,
+  `SESSION_KEY` or `COOKIE` are stored as `<redacted>` and listed under
+  `redacted`.
+- The maps sample needs the program to be a different executable from
+  `/bin/sh`, which holds for compiled binaries.
+- A failure to capture never fails the run.
+- `JARVIS_PROVENANCE=off` disables the record and the wrapper.
+
 During a run, JARVIS binds package shared/private paths to the owned execution
 root. It also exports authoritative `JARVIS_EXECUTION_ID`, `JARVIS_PACKAGE_ID`,
 `JARVIS_PACKAGE_NAME`, `JARVIS_PROGRESS_PATH`, and

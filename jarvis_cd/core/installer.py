@@ -274,6 +274,7 @@ class SpackInstaller(Installer):
             context.open()
         env_dir = spack_env_dir_for(ppl) if spack_env_enabled() else None
         try:
+            pkg_list = _with_absolute_repos(ppl, pkg_list)
             record = run_spack_install(pkg_list, context, env_dir=env_dir)
         finally:
             if owns_context:
@@ -306,7 +307,10 @@ class SpackInstaller(Installer):
         mpi_env: Dict[str, str] = {}
         if hashes and not context.issues:
             env_manager = EnvironmentManager(ppl.jarvis)
-            spack_env = env_manager.capture_spack_environment(hashes)
+            spack_env = env_manager.capture_spack_environment(
+                hashes,
+                config_scopes=[record["spack_scope"]] if record.get("spack_scope") else (),
+            )
             ppl.env.update(spack_env)
             print(f"SpackInstaller: merged {len(spack_env)} env vars from spack load")
             mpi_env = mpi_environment(record)
@@ -353,6 +357,31 @@ class SpackInstaller(Installer):
 
     def check(self, ppl, pkg_list):
         return self._run(ppl, pkg_list, "check")
+
+
+def _with_absolute_repos(ppl, pkg_list):
+    """Copies of ``pkg_list`` whose ``install_repos`` are absolute paths.
+
+    Relative entries are under the package's own directory (the one holding
+    its ``pkg.py``), so a package can ship its Spack recipes.
+    """
+    from jarvis_cd.core.spack_install import _package_repos, resolve_package_repos
+
+    result = []
+    for pkg_def in pkg_list:
+        repos = _package_repos(pkg_def)
+        if not repos:
+            result.append(pkg_def)
+            continue
+        package_dir = None
+        if any(not os.path.isabs(os.path.expanduser(os.path.expandvars(r))) for r in repos):
+            instance = ppl._load_package_instance(pkg_def, ppl.env)
+            package_dir = Path(instance.pkg_dir) if instance.pkg_dir else None
+        copy = dict(pkg_def)
+        copy["config"] = dict(pkg_def.get("config") or {})
+        copy["config"]["install_repos"] = resolve_package_repos(repos, package_dir)
+        result.append(copy)
+    return result
 
 
 def spack_env_dir_for(ppl) -> Path:

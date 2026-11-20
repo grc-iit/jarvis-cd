@@ -841,6 +841,21 @@ class Pkg:
                 "default": "",
             },
             {
+                "name": "install_repos",
+                "msg": "Spack recipe repo directories (relative to the "
+                "package directory, or absolute) the spack installer adds "
+                "to the pipeline's Spack environment before concretizing.",
+                "type": list,
+                "default": [],
+                "args": [
+                    {
+                        "name": "repo_dir",
+                        "msg": "A Spack repo directory (contains repo.yaml)",
+                        "type": str,
+                    }
+                ],
+            },
+            {
                 "name": "container_cache",
                 "msg": "Use Docker layer cache when building containers (set false to force rebuild)",
                 "type": bool,
