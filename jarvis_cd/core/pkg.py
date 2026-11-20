@@ -4,6 +4,7 @@ Provides the consolidated Pkg class and its subclasses for Services, Application
 """
 
 import os
+import re
 import sys
 import time
 import inspect
@@ -445,20 +446,49 @@ class Pkg:
         """
         Get the effective hostfile for this package.
         Falls back to pipeline hostfile if package hostfile is not set.
+        ``host_slice: "start:end"`` (Python slice of the host list) narrows
+        it, e.g. ``"0:12"`` and ``"12:16"`` split a 16-node allocation.
 
         :return: Hostfile object
         """
         # Check if package has a hostfile configured
         hostfile_path = self.config.get("hostfile", "")
         if hostfile_path:
-            return Hostfile(path=hostfile_path)
+            base = Hostfile(path=hostfile_path)
+        elif hasattr(self.pipeline, "get_hostfile"):
+            # Fall back to pipeline's hostfile
+            base = self.pipeline.get_hostfile()
+        else:
+            # Fall back to global jarvis hostfile
+            base = self.jarvis.hostfile
+        host_slice = str(self.config.get("host_slice", "") or "").strip()
+        if not host_slice:
+            return base
+        return self._sliced_hostfile(base, host_slice)
 
-        # Fall back to pipeline's hostfile
-        if hasattr(self.pipeline, "get_hostfile"):
-            return self.pipeline.get_hostfile()
-
-        # Fall back to global jarvis hostfile
-        return self.jarvis.hostfile
+    def _sliced_hostfile(self, base: Hostfile, host_slice: str) -> Hostfile:
+        match = re.fullmatch(r"(-?\d*):(-?\d*)", host_slice)
+        if match is None:
+            raise ValueError(
+                f"{self.pkg_id}: host_slice must look like 'start:end' "
+                f"(got {host_slice!r})"
+            )
+        start = int(match.group(1)) if match.group(1) else None
+        end = int(match.group(2)) if match.group(2) else None
+        hosts = list(base.hosts)[start:end]
+        if not hosts:
+            raise ValueError(
+                f"{self.pkg_id}: host_slice {host_slice!r} selects no hosts from "
+                f"a {len(base)}-host hostfile"
+            )
+        ips = list(base.hosts_ip)[start:end] if base.hosts_ip else None
+        sliced = Hostfile(hosts=hosts, hosts_ip=ips, find_ips=False, load_path=False)
+        shared_dir = getattr(self, "shared_dir", None)
+        if shared_dir and Path(shared_dir).is_dir():
+            # A real file lets launchers use --hostfile / SLURM_HOSTFILE.
+            safe = host_slice.replace(":", "_").replace("-", "m")
+            sliced.save(str(Path(shared_dir) / f"hostfile.slice_{safe}"))
+        return sliced
 
     def resolve_shared_path(
         self,
@@ -868,6 +898,12 @@ class Pkg:
             {
                 "name": "hostfile",
                 "msg": "Path to hostfile (empty string means use pipeline hostfile)",
+                "type": str,
+                "default": "",
+            },
+            {
+                "name": "host_slice",
+                "msg": "Use only hosts start:end of the hostfile (e.g. 0:12)",
                 "type": str,
                 "default": "",
             },

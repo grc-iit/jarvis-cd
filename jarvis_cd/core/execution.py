@@ -2300,6 +2300,11 @@ class ExecutionStore:
         )
 
 
+def _control_requested(value: Any) -> bool:
+    """Whether a cancel/stop request is live (written and not known to fail)."""
+    return isinstance(value, Mapping) and value.get("status") != "failed"
+
+
 def finalize_execution(
     execution_root: Path,
     execution_id: str,
@@ -2316,6 +2321,15 @@ def finalize_execution(
     if current.terminal:
         return current
     store = ExecutionStore(root.parent, current.pipeline_id)
+    if _control_requested(current.metadata.get("cancel_request")):
+        return store.update(
+            validated_id,
+            state="canceled",
+            terminal=True,
+            return_code=return_code,
+            error="canceled by jarvis execution cancel",
+        )
+    stop_requested = _control_requested(current.metadata.get("stop_request"))
     if return_code == 0:
         return store.update(
             validated_id,
@@ -2324,6 +2338,17 @@ def finalize_execution(
             return_code=0,
             error=None,
         )
+    if stop_requested:
+        return store.update(
+            validated_id,
+            state="failed",
+            terminal=True,
+            return_code=return_code,
+            error=(
+                "jarvis execution stop could not stop the pipeline cleanly; "
+                f"scheduler script exited with status {return_code}"
+            ),
+        )
     return store.update(
         validated_id,
         state="failed",
@@ -2331,6 +2356,59 @@ def finalize_execution(
         return_code=return_code,
         error=f"scheduler script exited with status {return_code}",
     )
+
+
+def record_scheduler_termination(
+    execution_root: Path,
+    execution_id: str,
+    *,
+    phase: str,
+    signal_name: Optional[str] = None,
+    stop_return_code: Optional[int] = None,
+    child_reaped: Optional[bool] = None,
+) -> str:
+    """Record a batch-shell TERM in the execution record and return its reason.
+
+    The reason is ``cancel_request`` or ``stop_request`` when ``jarvis
+    execution cancel`` or ``jarvis execution stop`` wrote its request before
+    signalling, and ``scheduler`` otherwise (time limit, preemption, a manual
+    ``scancel``). The generated script only runs ``jarvis ppl stop`` for a stop
+    request.
+    """
+    if phase not in {"received", "stopped"}:
+        raise ValueError("termination phase must be 'received' or 'stopped'")
+    validated_id = validate_execution_id(execution_id)
+    root = Path(execution_root)
+    if root.name != validated_id:
+        raise RuntimeError("scheduler execution root does not match execution_id")
+    current = read_execution_record(root, expected_execution_id=validated_id)
+    if current.mode != "scheduler":
+        raise RuntimeError("scheduler termination cannot update a direct execution")
+    if _control_requested(current.metadata.get("cancel_request")):
+        reason = "cancel_request"
+    elif _control_requested(current.metadata.get("stop_request")):
+        reason = "stop_request"
+    else:
+        reason = "scheduler"
+    previous = current.metadata.get("termination")
+    termination: dict[str, Any] = (
+        dict(previous) if isinstance(previous, Mapping) else {}
+    )
+    termination["reason"] = reason
+    if phase == "received":
+        termination["signal"] = signal_name or "TERM"
+        termination["received_at"] = _utc_now()
+    else:
+        termination["stopped_at"] = _utc_now()
+        if stop_return_code is not None:
+            termination["stop_return_code"] = stop_return_code
+        if child_reaped is not None:
+            termination["child_reaped"] = child_reaped
+    ExecutionStore(root.parent, current.pipeline_id).update(
+        validated_id,
+        metadata={"termination": termination},
+    )
+    return reason
 
 
 def run_execution_snapshot(
@@ -2434,7 +2512,31 @@ def _main(argv: Optional[list[str]] = None) -> int:
     activate.add_argument("--provider", required=True)
     activate.add_argument("--native-id", required=True)
     activate.add_argument("--cluster")
+    termination = subparsers.add_parser("termination")
+    termination.add_argument("--execution-root", required=True)
+    termination.add_argument("--execution-id", required=True)
+    termination.add_argument(
+        "--phase", required=True, choices=("received", "stopped")
+    )
+    termination.add_argument("--signal")
+    termination.add_argument("--stop-return-code", type=int)
+    termination.add_argument("--child-reaped", choices=("true", "false"))
     arguments = parser.parse_args(argv)
+    if arguments.command == "termination":
+        reason = record_scheduler_termination(
+            Path(arguments.execution_root),
+            arguments.execution_id,
+            phase=arguments.phase,
+            signal_name=arguments.signal,
+            stop_return_code=arguments.stop_return_code,
+            child_reaped=(
+                None
+                if arguments.child_reaped is None
+                else arguments.child_reaped == "true"
+            ),
+        )
+        print(reason)
+        return 0
     if arguments.command == "finalize":
         finalize_execution(
             Path(arguments.execution_root),

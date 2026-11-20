@@ -476,6 +476,25 @@ def deploy_to_cluster(app_path, hostfile_path):
             deploy_to_host(app_path, hostname)
 ```
 
+### Per-package host slices
+
+Every package accepts a `host_slice` parameter, `start:end` with Python
+slice semantics over its base hostfile (the package `hostfile`, else the
+pipeline's, else JARVIS's). `self.hostfile` then returns only those hosts,
+saved as `<shared_dir>/hostfile.slice_<start>_<end>` so MPI launchers receive
+a real file. An empty selection is an error.
+
+```yaml
+pkgs:
+  - pkg_type: builtin.xcompact3d
+    host_slice: "0:12"
+  - pkg_type: builtin.paraview
+    host_slice: "12:16"
+```
+
+See [scheduler.md](scheduler.md#giving-a-package-a-subset-of-the-allocation)
+for how this interacts with a scheduler allocation.
+
 ## Best Practices
 
 1. **Use `find_ips=False`** for large host lists when IPs aren't needed

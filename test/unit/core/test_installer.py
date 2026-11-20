@@ -200,27 +200,133 @@ class TestCondaInstaller(_BaseRunMock):
         self.assertIn('scipy', cmd)
 
 
-class TestSpackInstaller(_BaseRunMock):
+_SPEC_ALL_PRESENT = (
+    "[+]  aaaaaaa  lammps@2023%gcc@11 arch=linux\n"
+    "[^]  bbbbbbb      ^fftw@3.3%gcc@11 arch=linux\n"
+)
+_SPEC_ONE_MISSING = (
+    "[+]  bbbbbbb  fftw@3.3%gcc@11 arch=linux\n"
+    " -   ccccccc  ior@3.3%gcc@11 arch=linux\n"
+)
+_SPEC_WITH_MPI = (
+    " -   ddddddd  xcompact3d@4%gcc@11 arch=linux\n"
+    "[^]  eeeeeee      ^openmpi@5.0.5%gcc@11 arch=linux\n"
+)
 
-    def test_runs_spack_install_and_merges_env(self):
-        ppl = FakePipeline()
-        ppl.jarvis = object()  # EnvironmentManager only needs the handle
-        captured_env = {'NEW_VAR': 'value'}
 
-        with mock.patch(
-            'jarvis_cd.core.environment.EnvironmentManager'
-        ) as MockEM:
-            MockEM.return_value.capture_spack_environment.return_value = captured_env
-            SpackInstaller().install(
-                ppl, [pkg('spack', 'lammps'), pkg('spack', 'ior')]
-            )
+class _FakeSpack:
+    """Answers spack commands from a script and records every call."""
 
-        self.mock_run.assert_called_once()
-        cmd = self.mock_run.call_args[0][0]
-        self.assertIn('spack install', cmd)
-        self.assertIn('lammps', cmd)
-        self.assertIn('ior', cmd)
-        self.assertEqual(ppl.env['NEW_VAR'], 'value')
+    def __init__(self, specs, find=None, install_rc=0):
+        self.specs = specs
+        self.find = find or {}
+        self.install_rc = install_rc
+        self.calls = []
+        self.installed = False
+
+    def __call__(self, runner, arguments, stream=False):
+        import subprocess
+        arguments = list(arguments)
+        self.calls.append(arguments)
+        out = ''
+        rc = 0
+        if arguments[:1] == ['spec']:
+            key = ' '.join(arguments[3:])
+            out = self.specs.get(key, '')
+            if self.installed:
+                out = out.replace(' -  ', '[+] ')
+        elif arguments[:1] == ['find']:
+            out = self.find.get(arguments[-1], '')
+            rc = 0 if out else 1
+        elif arguments[:1] == ['install']:
+            rc = self.install_rc
+            self.installed = rc == 0
+        return subprocess.CompletedProcess(arguments, rc, out, '')
+
+
+class TestSpackInstaller(unittest.TestCase):
+
+    def setUp(self):
+        import tempfile
+        from jarvis_cd.core.spack_install import InstallContext
+        self.tmp = tempfile.TemporaryDirectory()
+        self.context = InstallContext(
+            install_dir=self.tmp.name,
+            decisions_path=os.path.join(self.tmp.name, 'd.yaml'))
+        self.context.open()
+
+    def tearDown(self):
+        self.context.close()
+        self.tmp.cleanup()
+
+    def _run(self, fake, packages, mode='install'):
+        from jarvis_cd.core.spack_install import InstallDecisionNeeded
+        self.context.mode = mode
+        ppl = FakePipeline(packages=packages)
+        ppl.jarvis = object()
+        with mock.patch('jarvis_cd.core.spack_install.SpackRunner.run',
+                        autospec=True, side_effect=fake), \
+                mock.patch('jarvis_cd.core.environment.EnvironmentManager') as em:
+            em.return_value.capture_spack_environment.return_value = {'V': '1'}
+            try:
+                return Installer.install_all(ppl, mode=mode,
+                                             context=self.context), ppl, em
+            except InstallDecisionNeeded as needed:
+                return needed, ppl, em
+
+    def test_skips_install_when_everything_is_present(self):
+        fake = _FakeSpack({'lammps': _SPEC_ALL_PRESENT})
+        report, ppl, em = self._run(fake, [pkg('spack', 'lammps')])
+        self.assertTrue(report['satisfied'])
+        self.assertFalse(any(c[0] == 'install' for c in fake.calls))
+        em.return_value.capture_spack_environment.assert_called_once_with(
+            ['/aaaaaaa'])
+        self.assertEqual(ppl.env['V'], '1')
+
+    def test_installs_only_missing_spec(self):
+        fake = _FakeSpack({'ior': _SPEC_ONE_MISSING})
+        report, _, _ = self._run(fake, [pkg('spack', 'ior')])
+        installs = [c for c in fake.calls if c[0] == 'install']
+        self.assertEqual(installs, [['install', '--fail-fast', 'ior']])
+        entry = report['installers']['spack']['packages']['p']
+        self.assertEqual(entry['status'], 'installed')
+        self.assertEqual(entry['built'], ['ior'])
+
+    def test_check_mode_raises_not_installed_without_building(self):
+        from jarvis_cd.core.spack_install import InstallDecisionNeeded
+        fake = _FakeSpack({'ior': _SPEC_ONE_MISSING})
+        needed, _, _ = self._run(fake, [pkg('spack', 'ior')], mode='check')
+        self.assertIsInstance(needed, InstallDecisionNeeded)
+        self.assertEqual(needed.issues[0]['kind'], 'not_installed')
+        self.assertFalse(any(c[0] == 'install' for c in fake.calls))
+
+    def test_ambiguous_mpi_asks_then_applies_answer(self):
+        from jarvis_cd.core.spack_install import InstallDecisionNeeded
+        find = {
+            'openmpi': 'openmpi@5.0.5 ' + 'e' * 32 + ' /site/openmpi\n',
+            'mpich': 'mpich@4.1.1 ' + 'f' * 32 + ' /site/mpich\n',
+        }
+        specs = {
+            'xcompact3d': _SPEC_WITH_MPI,
+            'xcompact3d ^mpich/fffffff': _SPEC_WITH_MPI.replace(
+                'openmpi@5.0.5', 'mpich@4.1.1'),
+        }
+        needed, _, _ = self._run(_FakeSpack(specs, find),
+                                 [pkg('spack', 'xcompact3d')])
+        self.assertIsInstance(needed, InstallDecisionNeeded)
+        issue = needed.issues[0]
+        self.assertEqual(issue['kind'], 'ambiguous_provider')
+        self.assertEqual(len(issue['candidates']), 2)
+
+        self.context.issues = []
+        self.context.answers = {issue['issue_id']: {'constraint': '^mpich/fffffff'}}
+        fake = _FakeSpack(specs, find)
+        report, _, _ = self._run(fake, [pkg('spack', 'xcompact3d')])
+        self.assertIn(['install', '--fail-fast', 'xcompact3d', '^mpich/fffffff'],
+                      fake.calls)
+        self.assertTrue(report['satisfied'])
+        with open(self.context.decisions_path) as stream:
+            self.assertIn('^mpich/fffffff', stream.read())
 
 
 class TestContainerInstaller(unittest.TestCase):
@@ -283,21 +389,40 @@ class TestInstallAll(_BaseRunMock):
     installer and updates env."""
 
     def test_dispatch_runs_pip_and_spack(self):
+        import subprocess
+        import tempfile
+        from jarvis_cd.core.spack_install import InstallContext
         ppl = FakePipeline(
             packages=[pkg('pip', 'numpy'), pkg('spack', 'ior')]
         )
         ppl.jarvis = object()
-        with mock.patch(
-            'jarvis_cd.core.environment.EnvironmentManager'
-        ) as MockEM:
-            MockEM.return_value.capture_spack_environment.return_value = {}
-            Installer.install_all(ppl)
+        spack_calls = []
 
-        # Two install invocations total: pip + spack
-        self.assertEqual(self.mock_run.call_count, 2)
-        cmds = [c[0][0] for c in self.mock_run.call_args_list]
-        self.assertTrue(any('pip install' in c for c in cmds))
-        self.assertTrue(any('spack install' in c for c in cmds))
+        def fake_spack(runner, arguments, stream=False):
+            spack_calls.append(list(arguments))
+            out = _SPEC_ALL_PRESENT if arguments[0] == 'spec' else ''
+            return subprocess.CompletedProcess(arguments, 0, out, '')
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch(
+            'jarvis_cd.core.environment.EnvironmentManager'
+        ) as MockEM, mock.patch(
+            'jarvis_cd.core.spack_install.SpackRunner.run',
+            autospec=True, side_effect=fake_spack,
+        ):
+            MockEM.return_value.capture_spack_environment.return_value = {}
+            context = InstallContext(
+                install_dir=tmp, decisions_path=os.path.join(tmp, 'd.yaml'))
+            context.open()
+            try:
+                report = Installer.install_all(ppl, context=context)
+            finally:
+                context.close()
+
+        # pip runs its install; spack only resolves (everything is present)
+        self.assertEqual(self.mock_run.call_count, 1)
+        self.assertIn('pip install', self.mock_run.call_args[0][0])
+        self.assertEqual(spack_calls, [['spec', '-I', '-l', 'ior']])
+        self.assertEqual(report['installers']['spack']['status'], 'satisfied')
 
 
 if __name__ == '__main__':

@@ -252,6 +252,10 @@ def _posix_fchmod(descriptor: int, mode: int) -> None:
     changer(descriptor, mode)
 
 
+def _utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _validated_execution_id(value: Optional[str]) -> str:
     """Return a bounded path-safe execution identifier."""
     return validate_execution_id(value)
@@ -1198,6 +1202,9 @@ class Pipeline:
         submit: bool = True,
         wait: bool = False,
         execution_id: Optional[str] = None,
+        action: str = "run",
+        install_check: bool = False,
+        install_answers: Optional[str] = None,
     ) -> ExecutionHandle:
         """Write the scheduler job script and (optionally) submit it.
 
@@ -1209,9 +1216,18 @@ class Pipeline:
             ``sbatch --wait``; backends without an equivalent ignore it.
         :param execution_id: bounded caller-owned identity used to isolate the
             submitted pipeline, environment, script, and hostfile.
+        :param action: ``run`` (default) runs the pipeline; ``install`` runs
+            ``jarvis ppl install`` on one node of the allocation instead.
+        :param install_check: with ``action='install'``, only check.
+        :param install_answers: with ``action='install'``, an answers.json
+            sealed into the execution input and applied by the job.
         :return: Queryable JARVIS execution handle. The generated script remains
             available as ``handle.script_path`` and in ``last_submission``.
         """
+        if action not in ("run", "install"):
+            raise ValueError("submit action must be 'run' or 'install'")
+        if action != "install" and (install_check or install_answers):
+            raise ValueError("install options require action='install'")
         if not self.scheduler:
             raise ValueError(
                 "Pipeline has no scheduler block. Add `scheduler:` to the "
@@ -1221,6 +1237,14 @@ class Pipeline:
             raise ValueError("Pipeline name not set; cannot submit job.")
 
         from jarvis_cd.core.scheduler import make_scheduler
+
+        answers_bytes: Optional[bytes] = None
+        if install_answers:
+            from jarvis_cd.core.spack_install import load_answers
+
+            answers_file = Path(install_answers).expanduser()
+            load_answers(answers_file)  # reject malformed answers before submitting
+            answers_bytes = answers_file.read_bytes()
 
         shared_dir = self.get_pipeline_shared_dir()
         shared_dir.mkdir(parents=True, exist_ok=True)
@@ -1294,6 +1318,19 @@ class Pipeline:
             # overwrite a cooperating writer with stale state.
             self.save()
             scheduler_spec = dict(self.scheduler)
+            if action == "install":
+                # An install job builds on one node: keep the site's account,
+                # partition and time, drop the workload's task/GPU shape.
+                for workload_key in (
+                    "ntasks",
+                    "ntasks_per_node",
+                    "gpus",
+                    "gpus_per_node",
+                    "gres",
+                    "array",
+                ):
+                    scheduler_spec.pop(workload_key, None)
+                scheduler_spec["nodes"] = 1
             scheduler_spec["hostfile"] = str(execution_root / "hostfile.txt")
             scheduler_spec.setdefault("output", str(execution_root / "stdout.log"))
             scheduler_spec.setdefault("error", str(execution_root / "stderr.log"))
@@ -1305,17 +1342,45 @@ class Pipeline:
             snapshot_dir, input_dir, snapshot_sha256 = self._write_execution_snapshot(
                 execution_root,
                 scheduler_spec,
+                extra_inputs=(
+                    {"answers.json": answers_bytes} if answers_bytes is not None else None
+                ),
             )
             self._register_execution_snapshot_artifacts(
                 store,
                 resolved_execution_id,
             )
+            action_args: List[str] = []
+            if action == "install":
+                if install_check:
+                    action_args.append("+check")
+                if answers_bytes is not None:
+                    action_args += ["--answers", str(input_dir / "answers.json")]
+                action_args.append("+json")
+                install_dir = execution_root / "install"
+                store.update(
+                    resolved_execution_id,
+                    metadata={
+                        "action": "install",
+                        "install": {
+                            "schema_version": "jarvis.install.progress.v1",
+                            "mode": "check" if install_check else "install",
+                            "phase": "queued",
+                            "log": str(install_dir / "install.log"),
+                            "issues": str(install_dir / "issues.jsonl"),
+                            "record": str(install_dir / "install-record.json"),
+                            "updated_at": _utc_timestamp(),
+                        },
+                    },
+                )
             sched = make_scheduler(
                 scheduler_spec,
                 execution_root,
                 pipeline_name=self.name,
                 pipeline_snapshot_dir=snapshot_dir,
                 jarvis_root=getattr(self.jarvis, "jarvis_root", None),
+                pipeline_action=action,
+                pipeline_action_args=action_args,
             )
             script_path = sched.write_script()
             try:
@@ -1685,6 +1750,260 @@ class Pipeline:
             if latest.terminal:
                 return latest
             raise
+
+    def _scheduler_control_target(
+        self,
+        record: ExecutionRecord,
+        action: str,
+    ) -> tuple[str, str]:
+        """Return (provider, native id) or refuse a record that has no job."""
+        if record.mode != "scheduler":
+            alternative = "jarvis ppl kill" if action == "cancel" else "jarvis ppl stop"
+            raise ValueError(
+                f"execution {record.execution_id} is a direct execution; "
+                f"jarvis execution {action} only controls scheduler jobs "
+                f"(use {alternative})"
+            )
+        if record.scheduler_provider is None or record.scheduler_native_id is None:
+            raise RuntimeError(
+                f"execution {record.execution_id} has no scheduler job yet "
+                f"(state {record.state}); retry jarvis execution {action} after "
+                "the submission is recorded"
+            )
+        return record.scheduler_provider, record.scheduler_native_id
+
+    def cancel_execution(self, execution_id: str) -> ExecutionRecord:
+        """Cancel one scheduler execution and commit ``canceled``.
+
+        Idempotent: a terminal record is returned unchanged without touching
+        the scheduler, and a job the scheduler already removed is reconciled
+        instead of failing.
+        """
+        from jarvis_cd.core.scheduler import (
+            control_scheduler_execution,
+            scheduler_control_argv,
+        )
+
+        store = self._execution_store()
+        record = self.get_execution(execution_id)
+        if record.terminal:
+            return record
+        provider, native_id = self._scheduler_control_target(record, "cancel")
+        argv = scheduler_control_argv(
+            provider, "cancel", native_id, cluster=record.cluster
+        )
+        request: Dict[str, Any] = {
+            "schema_version": "jarvis.execution.control.v1",
+            "action": "cancel",
+            "status": "requested",
+            "requested_at": datetime.now(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "provider": provider,
+            "native_id": native_id,
+            "cluster": record.cluster,
+            "command": argv,
+        }
+        # The request is durable before the scheduler acts, so the job's own
+        # TERM/EXIT handling finalizes it as canceled even if it wins the race.
+        store.update(execution_id, metadata={"cancel_request": request})
+        result = control_scheduler_execution(
+            provider, "cancel", native_id, cluster=record.cluster
+        )
+        request["result"] = result.to_dict()
+        if not (result.accepted or result.job_ended):
+            request["status"] = "failed"
+            store.update(execution_id, metadata={"cancel_request": request})
+            raise RuntimeError(
+                f"{argv[0]} could not cancel {provider} job {native_id}: "
+                f"{result.diagnostic or 'exit ' + str(result.return_code)}"
+            )
+        request["status"] = "accepted" if result.accepted else "job_ended"
+        if result.job_ended:
+            reconciled = self.get_execution(execution_id)
+            if reconciled.terminal:
+                return store.update(execution_id, metadata={"cancel_request": request})
+        error = "canceled by jarvis execution cancel"
+        if result.job_ended:
+            error += "; the scheduler no longer had the job"
+        try:
+            return store.update(
+                execution_id,
+                state="canceled",
+                terminal=True,
+                error=error,
+                metadata={"cancel_request": request},
+            )
+        except ValueError:
+            latest = store.get(execution_id)
+            if latest.terminal:
+                return store.update(execution_id, metadata={"cancel_request": request})
+            raise
+
+    def stop_execution(
+        self,
+        execution_id: str,
+        *,
+        wait_seconds: Optional[float] = None,
+    ) -> ExecutionRecord:
+        """Ask a running scheduler job to stop its pipeline gracefully.
+
+        Sends TERM to the batch shell only. The generated script traps it,
+        runs ``jarvis ppl stop``, reaps the pipeline's process tree, and
+        finalizes the record. A job that has not started is canceled instead.
+        With ``wait_seconds`` the call polls until the record is terminal or
+        the time runs out; otherwise it returns at once with ``stop_request``
+        metadata and the caller polls ``jarvis execution get``.
+        """
+        import time
+
+        from jarvis_cd.core.scheduler import (
+            control_scheduler_execution,
+            scheduler_control_argv,
+        )
+
+        store = self._execution_store()
+        record = self.get_execution(execution_id)
+        if record.terminal:
+            return record
+        provider, native_id = self._scheduler_control_target(record, "stop")
+        argv = scheduler_control_argv(
+            provider, "stop", native_id, cluster=record.cluster
+        )
+        request: Dict[str, Any] = {
+            "schema_version": "jarvis.execution.control.v1",
+            "action": "stop",
+            "status": "requested",
+            "requested_at": datetime.now(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "provider": provider,
+            "native_id": native_id,
+            "cluster": record.cluster,
+            "command": argv,
+        }
+        if record.state == "submitted":
+            request["status"] = "fallback_cancel"
+            request["fallback"] = "cancel"
+            request["command"] = None
+            store.update(execution_id, metadata={"stop_request": request})
+            return self.cancel_execution(execution_id)
+        store.update(execution_id, metadata={"stop_request": request})
+        result = control_scheduler_execution(
+            provider, "stop", native_id, cluster=record.cluster
+        )
+        request["result"] = result.to_dict()
+        if result.job_pending:
+            request["status"] = "fallback_cancel"
+            request["fallback"] = "cancel"
+            store.update(execution_id, metadata={"stop_request": request})
+            return self.cancel_execution(execution_id)
+        if result.job_ended:
+            request["status"] = "job_ended"
+            store.update(execution_id, metadata={"stop_request": request})
+            return self.get_execution(execution_id)
+        if not result.accepted:
+            request["status"] = "failed"
+            store.update(execution_id, metadata={"stop_request": request})
+            raise RuntimeError(
+                f"{argv[0]} could not signal {provider} job {native_id}: "
+                f"{result.diagnostic or 'exit ' + str(result.return_code)}"
+            )
+        request["status"] = "accepted"
+        latest = store.update(execution_id, metadata={"stop_request": request})
+        if wait_seconds is None or wait_seconds <= 0:
+            return latest
+        deadline = time.monotonic() + wait_seconds
+        while time.monotonic() < deadline:
+            latest = self.get_execution(execution_id)
+            if latest.terminal:
+                return latest
+            time.sleep(1.0)
+        return self.get_execution(execution_id)
+
+    def install(
+        self,
+        check: bool = False,
+        answers_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Run (or check) the install phase with a streamable log.
+
+        Writes ``install.log`` (append-only), ``issues.jsonl`` and
+        ``install-record.json`` under ``<execution>/install`` inside a
+        scheduler job, otherwise under ``<pipeline shared>/install``. Inside a
+        job, progress is mirrored into the execution record's ``install``
+        metadata. Raises ``InstallDecisionNeeded`` (CLI exit 3) for questions
+        or, with ``check``, for packages that still need building.
+        """
+        from jarvis_cd.core.installer import Installer, install_context_for
+        from jarvis_cd.core.spack_install import (
+            PROGRESS_SCHEMA,
+            InstallDecisionNeeded,
+            load_answers,
+        )
+
+        mode = "check" if check else "install"
+        context = install_context_for(self, mode)
+        if answers_path:
+            context.answers = load_answers(Path(answers_path))
+        execution_id = getattr(self, "_execution_id", None)
+        store = (
+            self._execution_store()
+            if getattr(self, "_execution_root", None) is not None and execution_id
+            else None
+        )
+        progress: Dict[str, Any] = {
+            "schema_version": PROGRESS_SCHEMA,
+            "mode": mode,
+            "phase": "starting",
+            "packages_total": sum(
+                len(pkgs) for pkgs in Installer.get_installers(self).values()
+            ),
+            "packages_done": 0,
+            "current_package": None,
+            "missing": [],
+            "log": str(context.log_path),
+            "issues": str(context.issues_path),
+            "record": str(context.record_path),
+        }
+
+        def publish(**fields: Any) -> None:
+            progress.update(fields)
+            progress["updated_at"] = _utc_timestamp()
+            if store is None:
+                return
+            try:
+                store.update(execution_id, metadata={"install": dict(progress)})
+            except Exception as exc:  # progress must never break the build
+                context.log(f"WARNING: could not update execution progress: {exc}\n")
+
+        context.progress = publish
+        context.open()
+        publish()
+        try:
+            report = Installer.install_all(self, mode=mode, context=context)
+        except InstallDecisionNeeded as needed:
+            publish(
+                phase="needs_decision",
+                current_package=None,
+                issue_count=len(needed.issues),
+            )
+            raise
+        except BaseException as exc:
+            context.log(f"ERROR: {exc}\n")
+            publish(phase="failed", current_package=None, error=str(exc)[:2000])
+            raise
+        finally:
+            context.close()
+        self.save()
+        publish(
+            phase="done",
+            current_package=None,
+            packages_done=progress["packages_total"],
+            satisfied=bool(report.get("satisfied")),
+        )
+        report["record_path"] = str(context.record_path)
+        return report
 
     def list_executions(self) -> List[ExecutionRecord]:
         """Return all durable executions owned by this pipeline."""
@@ -2256,8 +2575,13 @@ class Pipeline:
         self,
         execution_root: Path,
         scheduler_spec: Dict[str, Any],
+        extra_inputs: Optional[Dict[str, bytes]] = None,
     ) -> tuple[Path, Path, str]:
-        """Seal immutable input and create an isolated scheduler working copy."""
+        """Seal immutable input and create an isolated scheduler working copy.
+
+        ``extra_inputs`` are additional sealed files (e.g. install answers)
+        written into ``input/`` and covered by the snapshot digest.
+        """
         source_dir = self._pipeline_storage_dir()
         if getattr(self, "_execution_snapshot_dir", None) is not None:
             raise RuntimeError(
@@ -2289,9 +2613,15 @@ class Pipeline:
         for directory in (input_dir, runtime_dir):
             _atomic_yaml_dump(directory / "pipeline.yaml", pipeline_config)
             _atomic_yaml_dump(directory / "environment.yaml", dict(self.env))
+        sealed = [input_dir / "pipeline.yaml", input_dir / "environment.yaml"]
+        for name, data in sorted((extra_inputs or {}).items()):
+            if "/" in name or "\\" in name or name.startswith("."):
+                raise ValueError(f"invalid sealed input name {name!r}")
+            (input_dir / name).write_bytes(data)
+            sealed.append(input_dir / name)
 
         digest = hashlib.sha256()
-        for path in (input_dir / "pipeline.yaml", input_dir / "environment.yaml"):
+        for path in sealed:
             data = path.read_bytes()
             digest.update(len(data).to_bytes(8, "big"))
             digest.update(data)
@@ -4019,10 +4349,29 @@ class Pipeline:
 
         # Install phase: dispatch to per-installer plans based on each
         # package's install_method (falling back to base_deploy_mode for
-        # YAMLs that don't set install_method explicitly).
+        # YAMLs that don't set install_method explicitly). The policy is
+        # ``install`` (default), ``check`` (verify, never build) or ``skip``
+        # (``ppl install`` and ``ppl stop yaml`` run their own phase).
         from jarvis_cd.core.installer import Installer
+        from jarvis_cd.core.spack_install import InstallDecisionNeeded
 
-        Installer.install_all(self)
+        install_policy = (
+            getattr(self, "_install_on_load", None)
+            or os.environ.get("JARVIS_INSTALL_ON_LOAD", "").strip().lower()
+            or "install"
+        )
+        if install_policy not in ("install", "check", "skip"):
+            raise ValueError(
+                "JARVIS_INSTALL_ON_LOAD must be 'install', 'check' or 'skip'"
+            )
+        pending_decision: Optional[InstallDecisionNeeded] = None
+        if install_policy != "skip":
+            try:
+                Installer.install_all(self, mode=install_policy)
+            except InstallDecisionNeeded as needed:
+                # Keep the loaded pipeline so the caller can answer and run
+                # ``jarvis ppl install`` on it, then report the questions.
+                pending_decision = needed
 
         # Save pipeline configuration and environment
         self.save()
@@ -4035,6 +4384,8 @@ class Pipeline:
 
         print(f"Loaded pipeline: {self.name}")
         print(f"Packages: {[pkg['pkg_id'] for pkg in self.packages]}")
+        if pending_decision is not None:
+            raise pending_decision
 
     def _load_package_instance(
         self, pkg_def: Dict[str, Any], pipeline_env: Optional[Dict[str, str]] = None

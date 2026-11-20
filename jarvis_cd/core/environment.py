@@ -314,23 +314,28 @@ class EnvironmentManager:
         Run 'spack load' for the given specs in a subprocess and capture
         the resulting environment variables.
 
-        Sources spack's setup-env.sh if SPACK_ROOT is set, then loads
-        each spec and captures the environment via 'env'.
+        Sources the ``setup-env.sh`` of ``JARVIS_SPACK_ROOT`` (falling back
+        to ``SPACK_ROOT``), isolates configuration with
+        ``JARVIS_SPACK_CONFIG`` when set, loads each spec (installers pass
+        exact ``/<hash>`` specs) and captures the environment via 'env'.
 
         :param spack_specs: List of spack spec strings to load
         :return: Dictionary of captured environment variables
         """
+        import shlex
         import subprocess
+        from jarvis_cd.core.spack_install import (
+            spack_shell_prefix,
+            spack_subprocess_environment,
+        )
 
-        # Build spack setup prefix
-        spack_root = os.environ.get('SPACK_ROOT', '')
-        if spack_root:
-            setup = f'. {spack_root}/share/spack/setup-env.sh && '
-        else:
-            setup = ''
+        setup = spack_shell_prefix()
 
         # Build the spack load commands
-        load_cmds = ' && '.join(f'spack load {spec}' for spec in spack_specs)
+        load_cmds = ' && '.join(
+            'spack load ' + ' '.join(shlex.quote(token) for token in shlex.split(spec))
+            for spec in spack_specs
+        )
 
         script = f'{setup}{load_cmds} && env'
 
@@ -338,7 +343,7 @@ class EnvironmentManager:
             result = subprocess.run(
                 ['bash', '-c', script],
                 capture_output=True, text=True, timeout=120,
-                env=os.environ.copy()
+                env=spack_subprocess_environment()
             )
             if result.returncode != 0:
                 raise RuntimeError(

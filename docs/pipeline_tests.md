@@ -264,14 +264,13 @@ The thing to install is named by **`install_query`** (the legacy alias
 
 | `install_method` | `install_query` is …                    | Action |
 |------------------|------------------------------------------|--------|
-| `spack`          | a Spack spec, e.g. `ior@3.3.0 +hdf5`     | `spack install <spec>`, then load its env into the run |
+| `spack`          | a Spack spec, e.g. `ior@3.3.0 +hdf5`     | find-first: reuse what Spack already has, build only missing nodes, then `spack load /<hash>` its env into the run |
 | `pip`            | one or more pip requirement specs        | `python3 -m pip install <specs>` |
 | `conda`          | conda package specs                      | `conda install <specs>` |
 | `container`      | (n/a — built from the package Dockerfiles) | builds/pulls the deploy image |
 
-Packages sharing an installer are batched into a single command, so a
-suite that spack-installs `ior` in several experiments builds it once
-(Spack is idempotent on subsequent specs).
+Pip, conda and container packages sharing an installer are batched into a
+single command. Spack packages are resolved one by one (below).
 
 ### Spack example
 
@@ -295,10 +294,87 @@ loop:
 output: ${HOME}/ior_spack_results
 ```
 
-Spack is discovered via `SPACK_ROOT` (its `setup-env.sh` is sourced
-before `spack install`). After installation, the environment produced by
-`spack load` is merged into the run so the freshly built binaries are on
-`PATH`/`LD_LIBRARY_PATH`.
+Spack is discovered through `JARVIS_SPACK_ROOT`, falling back to
+`SPACK_ROOT`. Its `setup-env.sh` is sourced before every Spack command, and
+it is an error when `JARVIS_SPACK_ROOT` is set but the file is missing. After
+installation, the environment produced by `spack load /<root hash>` is merged
+into the run so the resolved binaries are on `PATH`/`LD_LIBRARY_PATH`.
+
+### Find-first Spack installs
+
+For each Spack package, JARVIS:
+
+1. Adds any `install_repos` (a list of Spack repo paths) with `spack repo add`.
+2. Resolves the spec with `spack spec -I -l <install_query> <recorded
+   constraints>`. Every node is marked installed (`[+]`), upstream/site
+   (`[^]`), external (`[e]`) or missing (` - `).
+3. Picks the MPI when the query doesn't pin one with `^<mpi>`. A recorded site
+   decision wins. With exactly one installed MPI (`spack find` over openmpi,
+   mpich, mvapich2, intel-oneapi-mpi, cray-mpich, …, merged by prefix),
+   JARVIS pins it as `^<name>/<hash7>`. With several, it asks.
+4. Reuses everything already present, and only in install mode runs
+   `spack install --fail-fast <spec>` for what is missing. It then
+   re-resolves to verify the nodes are installed.
+5. Writes `install-record.json` (`jarvis.install-record.v1`): the resolved
+   spec, root hash, node counts by status, what was built, and the MPI
+   with its source.
+
+Spack output goes to an append-only `install.log`. Outside a scheduler job,
+the files live in `<pipeline_shared_dir>/install/`. In a `ppl install +submit`
+job they live in `<execution>/install/` (see
+[scheduler.md → Install jobs](scheduler.md#install-jobs)).
+
+JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
+`issues.jsonl` (`jarvis.install-issue.v1`), and the command exits with code
+`3`:
+
+| `kind` | When | Answerable |
+|--------|------|------------|
+| `ambiguous_provider` | several installed MPIs (`subject: mpi`, `scope: site`); `candidates[]` lists `{id, constraint, source, prefix, hashes, implies}` | yes, with one candidate's `constraint` |
+| `variant_conflict` | the concretizer reports a conflict | yes, with a spec constraint (e.g. `~cuda`) |
+| `concretize_failed` | any other concretizer error (`detail` holds the excerpt) | yes, with a spec constraint |
+| `no_recipe` | Spack has no recipe for the package | no: add `install_repos` or change `install_query` |
+| `not_installed` | `+check` found nodes that still need building | no: run `jarvis ppl install` |
+
+The `issue_id` is a stable `sha256:` digest of the question's content, so it
+stays the same across re-runs. Answer by writing `answers.json`:
+
+```json
+{"sha256:3f…": {"constraint": "^mpich/fffffff", "answered_by": "jaime", "ask_id": "a-17"}}
+```
+
+A plain string value (`{"sha256:3f…": "^mpich/fffffff"}`) also works. Then
+re-run with `--answers answers.json`, or export
+`JARVIS_INSTALL_ANSWERS=answers.json` for an install-on-load. An answer must
+be one of the issue's candidate constraints when it has any. Applied answers
+are recorded in `decisions.yaml` (`jarvis.install-decisions.v1`: `site:`
+entries such as `mpi`, and per-package constraint lists), so later installs
+don't ask again. Set `JARVIS_SPACK_DECISIONS` to share one decisions file
+across pipelines on a site.
+
+Use `JARVIS_SPACK_CONFIG=<dir>` to isolate Spack's configuration: it sets
+`SPACK_USER_CONFIG_PATH=<dir>` and `SPACK_DISABLE_LOCAL_CONFIG=1`.
+
+### `jarvis ppl install`
+
+```bash
+jarvis ppl install +check +json                 # installed vs missing, no builds
+jarvis ppl install +json                        # build what is missing
+jarvis ppl install --answers answers.json +json # apply answers, then build
+jarvis ppl install yaml pipeline.yaml +check    # a YAML instead of the current pipeline
+jarvis ppl install +submit +json                # the same, as a 1-node scheduler job
+```
+
+The final stdout line with `+json` is a `jarvis.install-report.v1` document:
+`mode`, `satisfied`, per-installer `status`/`packages`, `issues`,
+`issues_path`, `log`, `record_path` and `exit_code`. The exit code is `0`
+when everything is satisfied, `3` when a decision is needed or `+check`
+found missing packages, and `1` on errors such as a failed build.
+Installers other than Spack report `unchecked` under `+check`.
+
+`ppl load` and `ppl run yaml` still run the install phase on load. Set
+`JARVIS_INSTALL_ON_LOAD` to `install` (default), `check` (verify, exit 3 when
+something is missing) or `skip`.
 
 ## Example Files
 

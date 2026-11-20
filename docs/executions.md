@@ -33,9 +33,9 @@ not overwrite earlier execution records.
 Direct `run()` remains blocking by default. Its record transitions through
 `preparing`, `running`, and `completed` or `failed`. A scheduler record moves
 through submission and then the isolated runtime snapshot advances that same
-record to `running`. The generated scheduler script finalizes it as `completed`
-or `failed`, including failures in pre-run hooks, hostfile construction, and
-post-run hooks.
+record to `running`. The generated scheduler script finalizes it as `completed`,
+`failed` or `canceled`, including failures in pre-run hooks, hostfile
+construction, and post-run hooks.
 
 `Pipeline.get_execution()` reconciles a submitted scheduler record with its
 configured provider. This closes the case where the scheduler accepts an ID
@@ -69,6 +69,8 @@ jarvis execution list --pipeline-id visualization +json
 jarvis execution progress render-2018-asteroid --pipeline-id visualization +json
 jarvis execution artifacts render-2018-asteroid --pipeline-id visualization +json
 jarvis execution service-runtimes render-2018-asteroid --pipeline-id visualization +json
+jarvis execution cancel render-2018-asteroid --pipeline-id visualization +json
+jarvis execution stop render-2018-asteroid --pipeline-id visualization +wait +json
 ```
 
 `execution get +json` and `execution list +json` emit clean machine-readable
@@ -82,6 +84,34 @@ their final line because package and scheduler logs remain visible before it.
 revision for every package-owned instance. See [Execution-owned service
 runtimes](service-runtimes.md) for the package SPI and generic ParaView
 HTTP/SSE command contract.
+
+## Cancelling and stopping
+
+`execution cancel` and `execution stop` control scheduler executions only, and
+print the resulting record like `execution get`. They are idempotent: a
+terminal record is returned unchanged. In Python they are
+`pipeline.cancel_execution(id)` and
+`pipeline.stop_execution(id, wait_seconds=None)`.
+
+| Command | Scheduler action | Final state |
+|---------|------------------|-------------|
+| `execution cancel` | `scancel <job>` | `canceled`, unless the job had already reached another terminal state |
+| `execution stop` | `scancel --signal=TERM --batch <job>`; the batch shell runs `jarvis ppl stop`, then reaps the pipeline | `completed` after a clean stop, `failed` if `ppl stop` failed; a pending job is canceled instead |
+
+These commands record their work in the execution's `metadata`:
+
+- `cancel_request` / `stop_request` (`jarvis.execution.control.v1`): `action`,
+  `status` (`requested`, `accepted`, `job_ended`, `fallback_cancel`,
+  `failed`), `provider`, `native_id`, `cluster`, the exact `command` and the
+  scheduler's `result`. A `failed` request does not affect finalization.
+- `termination`: written by the batch shell's TERM trap. It holds `reason`
+  (`stop_request`, `cancel_request` or `scheduler` for a time limit or an
+  external `scancel`), `signal`, `received_at`, `stopped_at`,
+  `stop_return_code` and `child_reaped`.
+
+Install jobs (`jarvis ppl install +submit`) add `action: install` and a live
+`install` progress document. See
+[scheduler.md → Install jobs](scheduler.md#install-jobs).
 
 During a run, JARVIS binds package shared/private paths to the owned execution
 root. It also exports authoritative `JARVIS_EXECUTION_ID`, `JARVIS_PACKAGE_ID`,

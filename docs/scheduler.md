@@ -14,7 +14,10 @@ job script, and (by default) hands it off to the scheduler's submit command
 1. Builds a hostfile from the scheduler's nodelist
    (`scontrol show hostnames "$SLURM_JOB_NODELIST"` for SLURM)
 2. Writes it to that execution's private `hostfile.txt`
-3. Runs the execution's isolated `runtime/pipeline.yaml` working copy
+3. Runs the execution's isolated `runtime/pipeline.yaml` working copy as a
+   background child that the batch shell `wait`s on, with a `TERM` trap, so
+   `jarvis execution stop` can run `jarvis ppl stop` before the job exits
+   (see [Cancelling and stopping executions](#cancelling-and-stopping-executions))
 
 The generated script invokes JARVIS through the same Python interpreter that
 created the submission and binds the submitting `JARVIS_ROOT`. This preserves
@@ -109,6 +112,8 @@ pkgs:
 | `sbatch_args`      | (raw)                   | List of literal SBATCH lines        |
 | `pre_cmds`         | (shell)                 | Lines run before hostfile build     |
 | `post_cmds`        | (shell)                 | Lines run after the pipeline        |
+| `stop_timeout`     | (used by Jarvis)        | Seconds `jarvis ppl stop` may take after `jarvis execution stop` (default 60; needs `timeout(1)`) |
+| `stop_grace`       | (used by Jarvis)        | Seconds the pipeline child gets after TERM before KILL (default 20, below Slurm's usual 30 s KillWait) |
 
 Unknown keys are passed straight through as `--<key with underscores
 replaced by dashes>=<value>`, so most SBATCH flags can be expressed
@@ -235,6 +240,142 @@ state is committed into the same durable execution record. If SLURM no longer
 recognizes an accepted job and no historical record is available, JARVIS waits
 through a bounded startup grace period before recording failure; generic query
 errors do not silently terminalize the execution.
+
+## Cancelling and stopping executions
+
+Callers never run `scancel` themselves; they ask JARVIS, which signals the job
+recorded in `.jarvis-execution.json` and commits the outcome to the same
+record:
+
+```bash
+jarvis execution cancel <execution-id> [--pipeline-id P] +json
+jarvis execution stop   <execution-id> [--pipeline-id P] [+wait] [--timeout 120] +json
+```
+
+Both print the resulting `jarvis.execution.record.v1` document (the shape of
+`jarvis execution get +json`). Both refuse direct (non-scheduler) executions,
+and both return a terminal record unchanged, so they are idempotent.
+
+**cancel** runs `scancel [--clusters=C] <job>`. Before signalling it writes
+`metadata.cancel_request` (`jarvis.execution.control.v1`: action, status,
+provider, native id, the exact command, then the scheduler's `result`). An
+accepted cancel commits state `canceled`. If Slurm reports that the job is
+already gone (`Invalid job id`, `already completing or completed`), JARVIS
+first reconciles with `squeue`/`sacct`. A real terminal state, such as
+`completed`, is kept. Otherwise the record is committed `canceled` with a note
+that the scheduler no longer had the job. A failed `scancel` marks the request
+`failed`, leaves the record unchanged, and exits non-zero. If the job was
+running, the batch shell still finalizes: its TERM trap reaps the pipeline
+child and records the cancel (without running `ppl stop`).
+
+**stop** is the graceful path for services such as pvserver. It writes
+`metadata.stop_request` and sends `scancel --signal=TERM --batch <job>`, which
+signals only the batch shell. A job that is still pending has no shell to stop,
+so stop falls back to cancel (`stop_request.status: fallback_cancel`). With
+`+wait`, the command polls the record until it is terminal or `--timeout`
+expires.
+
+The generated script runs the pipeline as a background child and blocks in
+`wait`, because bash runs a trap only between commands, and a foreground child
+would delay it until the child exits. On TERM, the trap does this, in order:
+
+1. Ignores further TERM/INT and records `metadata.termination.reason`
+   (`stop_request`, `cancel_request` or `scheduler`) with `received_at`.
+2. Only for `stop_request`: runs `jarvis ppl stop yaml <runtime>/pipeline.yaml`
+   (bounded by `stop_timeout`). This stops services in reverse order and
+   finalizes their service runtimes.
+3. TERMs the pipeline child and its descendants, waits up to `stop_grace`,
+   KILLs whatever is left, then `wait`s on the child to reap it.
+4. Records `stopped_at`, `stop_return_code` and `child_reaped`, then exits:
+   `0` after a clean stop, `1` if `ppl stop` failed, `143` otherwise.
+5. The `EXIT` trap finalizes the record. A live `cancel_request` commits
+   `canceled`, a clean stop commits `completed`, and a failed stop commits
+   `failed` with a "could not stop the pipeline cleanly" error.
+
+The job log shows the order explicitly:
+
+```
+JARVIS: TERM received by the batch shell
+JARVIS: termination reason=stop_request
+JARVIS: ppl stop BEGIN
+JARVIS: ppl stop END rc=0
+JARVIS: pipeline child reaped
+JARVIS: finalizing execution record (exit 0)
+```
+
+PBS and LSF have no backend in this release. `cancel`/`stop` against them
+fail with a typed "not supported" error instead of guessing a command.
+
+## Install jobs
+
+`jarvis ppl install` checks or installs a pipeline's packages. Spack packages
+are resolved find-first (see
+[pipeline_tests.md → Installers](pipeline_tests.md#installers)). Run it as a
+JARVIS-submitted one-node job so the build happens on a compute node under the
+same sealed-execution safeguards as a run:
+
+```bash
+jarvis ppl install +submit [--execution-id ID] +json              # build missing
+jarvis ppl install +check +submit +json                           # report only
+jarvis ppl install +submit --answers answers.json +json           # re-run with answers
+```
+
+The job uses the pipeline's `scheduler:` block with `nodes: 1`. It keeps
+`account`, `partition`, `time` and the other site keys, and drops `ntasks`,
+`ntasks_per_node`, `gpus`, `gpus_per_node`, `gres` and `array`. The answers
+file is sealed into `input/answers.json`. Inside the allocation the script
+runs `jarvis ppl install yaml <runtime>/pipeline.yaml [+check] [--answers …]
++json` in place of `ppl run`. The execution record carries
+`metadata.action: install` and a live `metadata.install` progress document
+(`jarvis.install.progress.v1`), which `jarvis execution get +json` returns:
+
+| Field | Meaning |
+|-------|---------|
+| `mode` | `install` or `check` |
+| `phase` | `queued`, `starting`, `resolving`, `building`, `needs_decision`, `failed`, `done` |
+| `packages_total` / `packages_done` / `current_package` | position in the package list |
+| `missing` | names Spack is building for the current package |
+| `log` | `<execution>/install/install.log`: append-only, stream it while the job runs |
+| `issues` | `<execution>/install/issues.jsonl`: questions, when `phase` is `needs_decision` |
+| `record` | `<execution>/install/install-record.json`: final per-package result |
+
+The job exits `3` when it needs a decision, or when `+check` finds packages
+that still need building. The record is then `failed` with `return_code: 3`
+and `metadata.install.phase: needs_decision`. Answer the questions, then
+resubmit with `--answers`.
+
+`ppl run` loads still run the install phase on load, as before. Set
+`JARVIS_INSTALL_ON_LOAD=check` on the submitting process, or in the
+scheduler's `pre_cmds`, to make a run job verify instead of building. It then
+fails fast with exit 3 when something is missing. `skip` disables the phase.
+
+## Giving a package a subset of the allocation
+
+Every package reads its hosts from `self.hostfile`. A package `host_slice:
+"start:end"` narrows that list with Python slice semantics. The slice is
+applied to the allocation hostfile when the package asks for it inside the job,
+and it is also written to `<package shared_dir>/hostfile.slice_<start>_<end>`
+so launchers can use `--hostfile`:
+
+```yaml
+scheduler:
+  name: slurm
+  nodes: 16
+pkgs:
+  - pkg_type: builtin.xcompact3d
+    host_slice: "0:12"        # first 12 nodes
+  - pkg_type: builtin.paraview
+    host_slice: "12:16"       # last 4 nodes
+```
+
+Packages still start in pipeline order, and a package's `start()` blocks until
+it returns. Both packages get disjoint nodes, but they run at the same time
+only if the earlier package's `start()` returns while it keeps running (a
+service that daemonizes, or an application launched in the background). If
+the solver's `start()` runs the job to completion, the second package starts
+after it ends. Concurrent co-scheduling of two blocking packages needs
+asynchronous package start in the pipeline runner, which is not part of this
+release.
 
 ## Execution cleanup and pipeline destruction
 

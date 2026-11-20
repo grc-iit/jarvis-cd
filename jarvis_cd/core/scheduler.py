@@ -82,6 +82,48 @@ class SchedulerExecutionStatus:
             raise ValueError("scheduler observation return_code is invalid")
 
 
+SchedulerControlAction = Literal["cancel", "stop"]
+
+
+class SchedulerControlUnsupported(ValueError):
+    """The scheduler provider has no JARVIS cancel or stop command."""
+
+
+@dataclass(frozen=True, slots=True)
+class SchedulerControlResult:
+    """The outcome of one provider control command (cancel or stop).
+
+    ``accepted`` means the provider took the request. ``job_ended`` means the
+    provider no longer has the job (it finished or was already removed), which
+    makes the request a no-op rather than an error. ``job_pending`` means a
+    signal could not reach a job that has not started yet.
+    """
+
+    action: SchedulerControlAction
+    argv: tuple[str, ...]
+    return_code: Optional[int]
+    diagnostic: Optional[str]
+    accepted: bool
+    job_ended: bool = False
+    job_pending: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize the bounded result for execution record metadata."""
+        return {
+            "action": self.action,
+            "command": list(self.argv),
+            "return_code": self.return_code,
+            "diagnostic": self.diagnostic,
+            "accepted": self.accepted,
+            "job_ended": self.job_ended,
+            "job_pending": self.job_pending,
+        }
+
+
+_DEFAULT_STOP_TIMEOUT_SECONDS = 60
+_DEFAULT_STOP_GRACE_SECONDS = 20
+
+
 def _validated_single_line(value: Any, *, field: str, limit: int = 4096) -> str:
     """Return one bounded printable scheduler value."""
     if not isinstance(value, str) or not value or len(value.encode("utf-8")) > limit:
@@ -98,6 +140,8 @@ def make_scheduler(
     pipeline_name: Optional[str] = None,
     pipeline_snapshot_dir: Optional[Path] = None,
     jarvis_root: Optional[Path] = None,
+    pipeline_action: str = "run",
+    pipeline_action_args: Optional[List[str]] = None,
 ) -> "Scheduler":
     """Factory: build a Scheduler from a parsed YAML dict.
 
@@ -113,6 +157,9 @@ def make_scheduler(
         reloading mutable named-pipeline state.
     :param jarvis_root: configuration root whose repository selection must be
         retained by a scheduled snapshot.
+    :param pipeline_action: the ``jarvis ppl`` command the allocation runs on
+        the snapshot: ``run`` (default) or ``install``.
+    :param pipeline_action_args: extra trusted arguments for that command.
     """
     name = (spec or {}).get("name")
     if not name:
@@ -130,6 +177,8 @@ def make_scheduler(
         pipeline_name=pipeline_name,
         pipeline_snapshot_dir=pipeline_snapshot_dir,
         jarvis_root=jarvis_root,
+        pipeline_action=pipeline_action,
+        pipeline_action_args=pipeline_action_args,
     )
 
 
@@ -151,6 +200,8 @@ class Scheduler:
         pipeline_name: Optional[str] = None,
         pipeline_snapshot_dir: Optional[Path] = None,
         jarvis_root: Optional[Path] = None,
+        pipeline_action: str = "run",
+        pipeline_action_args: Optional[List[str]] = None,
     ):
         self.spec = dict(spec or {})
         self.shared_dir = Path(pipeline_shared_dir)
@@ -160,6 +211,31 @@ class Scheduler:
             Path(pipeline_snapshot_dir) if pipeline_snapshot_dir is not None else None
         )
         self.jarvis_root = Path(jarvis_root) if jarvis_root is not None else None
+        if pipeline_action not in {"run", "install"}:
+            raise ValueError("scheduler pipeline action must be 'run' or 'install'")
+        if pipeline_action != "run" and self.pipeline_snapshot_dir is None:
+            raise ValueError("a scheduler install job requires an execution snapshot")
+        self.pipeline_action = pipeline_action
+        self.pipeline_action_args = [
+            _validated_single_line(argument, field="pipeline_action_args")
+            for argument in (pipeline_action_args or [])
+        ]
+        stop_timeout = self.spec.get("stop_timeout", _DEFAULT_STOP_TIMEOUT_SECONDS)
+        if (
+            isinstance(stop_timeout, bool)
+            or not isinstance(stop_timeout, int)
+            or not 1 <= stop_timeout <= 86_400
+        ):
+            raise ValueError("scheduler.stop_timeout must be 1..86400 seconds")
+        stop_grace = self.spec.get("stop_grace", _DEFAULT_STOP_GRACE_SECONDS)
+        if (
+            isinstance(stop_grace, bool)
+            or not isinstance(stop_grace, int)
+            or not 0 <= stop_grace <= 3_600
+        ):
+            raise ValueError("scheduler.stop_grace must be 0..3600 seconds")
+        self.stop_timeout = stop_timeout
+        self.stop_grace = stop_grace
 
         default_hostfile = str(self.shared_dir / "hostfile.txt")
         hostfile = self.spec.get("hostfile") or default_hostfile
@@ -254,6 +330,37 @@ class Scheduler:
             diagnostic=f"JARVIS cannot query scheduler provider {cls.NAME!r}",
         )
 
+    @classmethod
+    def control_argv(
+        cls,
+        action: SchedulerControlAction,
+        native_id: str,
+        *,
+        cluster: Optional[str] = None,
+    ) -> List[str]:
+        """Argv that cancels the job or delivers TERM to its batch shell."""
+        del native_id, cluster
+        raise SchedulerControlUnsupported(
+            f"JARVIS has no {action} command for scheduler provider {cls.NAME!r}"
+        )
+
+    @classmethod
+    def interpret_control(
+        cls,
+        action: SchedulerControlAction,
+        argv: List[str],
+        completed: Optional[subprocess.CompletedProcess[str]],
+        diagnostic: Optional[str],
+    ) -> SchedulerControlResult:
+        """Map a provider control command's exit into a typed result."""
+        return SchedulerControlResult(
+            action=action,
+            argv=tuple(argv),
+            return_code=None if completed is None else completed.returncode,
+            diagnostic=diagnostic,
+            accepted=completed is not None and completed.returncode == 0,
+        )
+
     @property
     def array_requested(self) -> bool:
         """Return whether this submission can create an array of jobs."""
@@ -273,6 +380,18 @@ class Scheduler:
             path=_validated_single_line(path_pattern, field="artifact_path")
         )
 
+    def _snapshot_environment(self) -> str:
+        """``env`` prefix that pins a jarvis CLI call to the execution snapshot."""
+        assert self.pipeline_snapshot_dir is not None
+        environment = [
+            "env",
+            "JARVIS_PIPELINE_SNAPSHOT_DIR="
+            + shlex.quote(str(self.pipeline_snapshot_dir)),
+        ]
+        if self.jarvis_root is not None:
+            environment.append("JARVIS_ROOT=" + shlex.quote(str(self.jarvis_root)))
+        return " ".join(environment)
+
     def _pipeline_invocation(self) -> str:
         """Shell snippet that runs the pipeline once the hostfile is in
         place. Always points jarvis at the persisted YAML when one was
@@ -281,17 +400,14 @@ class Scheduler:
         """
         jarvis_cli = f"{shlex.quote(sys.executable)} -m jarvis_cd.core.cli"
         if self.pipeline_snapshot_dir is not None:
-            snapshot = self.pipeline_snapshot_dir
-            snapshot_yaml = snapshot / "pipeline.yaml"
-            environment = [
-                "env",
-                "JARVIS_PIPELINE_SNAPSHOT_DIR=" + shlex.quote(str(snapshot)),
-            ]
-            if self.jarvis_root is not None:
-                environment.append("JARVIS_ROOT=" + shlex.quote(str(self.jarvis_root)))
+            snapshot_yaml = self.pipeline_snapshot_dir / "pipeline.yaml"
+            arguments = "".join(
+                f" {shlex.quote(argument)}" for argument in self.pipeline_action_args
+            )
             return (
-                " ".join(environment)
-                + f" {jarvis_cli} ppl run yaml {shlex.quote(str(snapshot_yaml))}"
+                self._snapshot_environment()
+                + f" {jarvis_cli} ppl {self.pipeline_action} yaml "
+                + f"{shlex.quote(str(snapshot_yaml))}{arguments}"
             )
         if self.pipeline_yaml:
             return f"{jarvis_cli} ppl run yaml {shlex.quote(self.pipeline_yaml)}"
@@ -302,6 +418,145 @@ class Scheduler:
             )
         return f"{jarvis_cli} ppl run"
 
+    def _pipeline_stop_invocation(self) -> Optional[str]:
+        """Shell snippet that runs ``jarvis ppl stop`` for the same pipeline.
+
+        Install jobs have no package services to stop, so they return None and
+        the TERM handler only signals the running child.
+        """
+        if self.pipeline_action != "run":
+            return None
+        jarvis_cli = f"{shlex.quote(sys.executable)} -m jarvis_cd.core.cli"
+        if self.pipeline_snapshot_dir is not None:
+            snapshot_yaml = self.pipeline_snapshot_dir / "pipeline.yaml"
+            return (
+                self._snapshot_environment()
+                + f" {jarvis_cli} ppl stop yaml {shlex.quote(str(snapshot_yaml))}"
+            )
+        if self.pipeline_yaml:
+            return f"{jarvis_cli} ppl stop yaml {shlex.quote(self.pipeline_yaml)}"
+        if self.pipeline_name:
+            return (
+                f"{jarvis_cli} cd {shlex.quote(self.pipeline_name)} && "
+                f"{jarvis_cli} ppl stop"
+            )
+        return f"{jarvis_cli} ppl stop"
+
+    def _termination_helper(self, arguments: str) -> str:
+        """One best-effort call that records TERM handling in the record."""
+        if self.pipeline_snapshot_dir is None:
+            return ":"
+        execution_root = self.pipeline_snapshot_dir.parent
+        return (
+            f"{shlex.quote(sys.executable)} -m jarvis_cd.core.execution termination "
+            f"--execution-root {shlex.quote(str(execution_root))} "
+            f"--execution-id {shlex.quote(execution_root.name)} {arguments}"
+        )
+
+    def _termination_block(self) -> str:
+        """Render the TERM trap that stops the pipeline before the job exits.
+
+        The pipeline runs as a background child that the batch shell waits on,
+        so a TERM delivered to the batch shell (``scancel --signal=TERM
+        --batch``) interrupts ``wait`` and runs this handler at once. The
+        handler records the signal, runs ``jarvis ppl stop``, signals the
+        child's whole process tree, waits for it, and exits. The EXIT trap then
+        finalizes the service runtimes and the execution record.
+        """
+        stop_invocation = self._pipeline_stop_invocation()
+        if stop_invocation is None:
+            stop_block = (
+                '        echo "JARVIS: no ppl stop for this job action"\n'
+            )
+        else:
+            stop_block = (
+                '        echo "JARVIS: ppl stop BEGIN"\n'
+                "        jarvis_stop_rc=0\n"
+                "        jarvis_stop_timeout=()\n"
+                "        if command -v timeout >/dev/null 2>&1; then\n"
+                "            jarvis_stop_timeout=(timeout --kill-after=5 "
+                f"{self.stop_timeout})\n"
+                "        fi\n"
+                '        ${jarvis_stop_timeout[@]+"${jarvis_stop_timeout[@]}"} '
+                f"{stop_invocation} || jarvis_stop_rc=$?\n"
+                '        echo "JARVIS: ppl stop END rc=$jarvis_stop_rc"\n'
+            )
+        received = self._termination_helper("--phase received --signal TERM")
+        stopped = self._termination_helper(
+            '--phase stopped ${jarvis_stop_rc:+--stop-return-code "$jarvis_stop_rc"} '
+            '--child-reaped "$jarvis_child_reaped"'
+        )
+        return (
+            "jarvis_child_pid=\n"
+            "jarvis_descendants() {\n"
+            "    local jarvis_parent=$1 jarvis_pid\n"
+            '    for jarvis_pid in $(pgrep -P "$jarvis_parent" 2>/dev/null || true); do\n'
+            '        jarvis_descendants "$jarvis_pid"\n'
+            '        echo "$jarvis_pid"\n'
+            "    done\n"
+            "}\n"
+            "jarvis_signal_child_tree() {\n"
+            "    local jarvis_signal=$1 jarvis_pid\n"
+            '    [ -n "${jarvis_child_pid:-}" ] || return 0\n'
+            '    for jarvis_pid in $(jarvis_descendants "$jarvis_child_pid") '
+            '"$jarvis_child_pid"; do\n'
+            '        kill -s "$jarvis_signal" "$jarvis_pid" 2>/dev/null || true\n'
+            "    done\n"
+            "}\n"
+            "jarvis_on_term() {\n"
+            "    trap '' TERM INT\n"
+            "    jarvis_stop_rc=\n"
+            "    jarvis_child_reaped=false\n"
+            '    echo "JARVIS: TERM received by the batch shell"\n'
+            f"    jarvis_term_reason=$({received} || echo scheduler)\n"
+            '    echo "JARVIS: termination reason=$jarvis_term_reason"\n'
+            '    if [ -n "${jarvis_child_pid:-}" ]; then\n'
+            '        if [ "$jarvis_term_reason" = stop_request ]; then\n'
+            f"{stop_block}"
+            "        fi\n"
+            "        jarvis_signal_child_tree TERM\n"
+            f"        jarvis_stop_deadline=$((SECONDS + {self.stop_grace}))\n"
+            '        while kill -0 "$jarvis_child_pid" 2>/dev/null '
+            '&& [ "$SECONDS" -lt "$jarvis_stop_deadline" ]; do\n'
+            "            sleep 1\n"
+            "        done\n"
+            '        if kill -0 "$jarvis_child_pid" 2>/dev/null; then\n'
+            '            echo "JARVIS: pipeline child ignored TERM; sending KILL"\n'
+            "            jarvis_signal_child_tree KILL\n"
+            "        fi\n"
+            '        wait "$jarvis_child_pid" 2>/dev/null || true\n'
+            "        jarvis_child_reaped=true\n"
+            '        echo "JARVIS: pipeline child reaped"\n'
+            "    fi\n"
+            f"    {stopped} >/dev/null || true\n"
+            '    if [ "$jarvis_term_reason" = stop_request ]; then\n'
+            '        if [ "${jarvis_stop_rc:-0}" -eq 0 ]; then\n'
+            "            exit 0\n"
+            "        fi\n"
+            "        exit 1\n"
+            "    fi\n"
+            "    exit 143\n"
+            "}\n"
+            "trap jarvis_on_term TERM\n"
+        )
+
+    def _pipeline_launch_block(self) -> str:
+        """Run the pipeline as a waited child so TERM reaches the batch shell.
+
+        A foreground child would defer the shell's TERM trap until the child
+        exited, and a SLURM ``--batch`` signal never reaches the child itself.
+        """
+        return (
+            f"{self._pipeline_invocation()} &\n"
+            "jarvis_child_pid=$!\n"
+            "jarvis_child_rc=0\n"
+            'wait "$jarvis_child_pid" || jarvis_child_rc=$?\n'
+            "jarvis_child_pid=\n"
+            'if [ "$jarvis_child_rc" -ne 0 ]; then\n'
+            '    exit "$jarvis_child_rc"\n'
+            "fi\n"
+        )
+
     def _execution_lifecycle_block(self) -> str:
         """Render an EXIT trap that durably finalizes scheduler script state."""
         finalizer = ""
@@ -310,6 +565,7 @@ class Scheduler:
             execution_id = execution_root.name
             python_executable = shlex.quote(sys.executable)
             finalizer = (
+                '    echo "JARVIS: finalizing execution record (exit $jarvis_exit_code)"\n'
                 f"    if ! {python_executable} -m jarvis_cd.core.execution finalize "
                 f"--execution-root {shlex.quote(str(execution_root))} "
                 f"--execution-id {shlex.quote(execution_id)} "
@@ -361,6 +617,8 @@ class SlurmScheduler(Scheduler):
         "sbatch_args",
         "pre_cmds",
         "post_cmds",
+        "stop_timeout",
+        "stop_grace",
     }
 
     #: explicit short-key -> SBATCH long-flag map. Anything not in here
@@ -464,8 +722,9 @@ class SlurmScheduler(Scheduler):
         post = "\n".join(self.spec.get("post_cmds", []) or [])
         hostfile = shlex.quote(self.hostfile)
         python_executable = shlex.quote(sys.executable)
-        invocation = self._pipeline_invocation()
+        invocation = self._pipeline_launch_block()
         lifecycle = self._execution_lifecycle_block()
+        termination = self._termination_block()
         activation = self._execution_activation_block()
 
         # Build hostfile from the allocation. scontrol expands the
@@ -542,6 +801,7 @@ class SlurmScheduler(Scheduler):
             "set -euo pipefail\n"
             "\n"
             f"{lifecycle}"
+            f"{termination}"
             f"{activation}"
             "\n"
             "# --- Pre-run hooks ---\n"
@@ -550,8 +810,8 @@ class SlurmScheduler(Scheduler):
             "# --- Build hostfile from SLURM allocation ---\n"
             f"{hostfile_block}"
             "\n"
-            "# --- Run the Jarvis pipeline ---\n"
-            f"{invocation}\n"
+            "# --- Run the Jarvis pipeline as a waited child (TERM-safe) ---\n"
+            f"{invocation}"
             "\n"
             "# --- Post-run hooks ---\n"
             f"{post}\n"
@@ -690,6 +950,75 @@ class SlurmScheduler(Scheduler):
             diagnostic="; ".join(diagnostics) or "SLURM state query was unavailable",
         )
 
+    @classmethod
+    def control_argv(
+        cls,
+        action: SchedulerControlAction,
+        native_id: str,
+        *,
+        cluster: Optional[str] = None,
+    ) -> List[str]:
+        """``scancel`` argv for cancel, or a TERM to the batch shell for stop."""
+        if _SLURM_NATIVE_ID.fullmatch(native_id) is None:
+            raise ValueError("SLURM control requires a numeric job ID")
+        argv = ["scancel"]
+        if action == "stop":
+            # --batch signals only the batch shell, whose TERM trap runs
+            # `jarvis ppl stop` and then signals the pipeline's process tree.
+            argv.extend(["--signal=TERM", "--batch"])
+        elif action != "cancel":
+            raise ValueError(f"unknown scheduler control action {action!r}")
+        if cluster is not None:
+            if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", cluster) is None:
+                raise ValueError("SLURM cluster name is invalid")
+            argv.append(f"--clusters={cluster}")
+        argv.append(native_id)
+        return argv
+
+    _ENDED_JOB_DIAGNOSTICS = (
+        "invalid job id",
+        "already completing or completed",
+        "job/step already completing",
+        "job has already finished",
+    )
+    _PENDING_JOB_DIAGNOSTICS = ("pending",)
+
+    @classmethod
+    def interpret_control(
+        cls,
+        action: SchedulerControlAction,
+        argv: List[str],
+        completed: Optional[subprocess.CompletedProcess[str]],
+        diagnostic: Optional[str],
+    ) -> SchedulerControlResult:
+        """Treat 'job already gone' as an ended job rather than a failure."""
+        if completed is None:
+            return SchedulerControlResult(
+                action=action,
+                argv=tuple(argv),
+                return_code=None,
+                diagnostic=diagnostic,
+                accepted=False,
+            )
+        text = " ".join(
+            part.strip() for part in (completed.stderr, completed.stdout) if part
+        )
+        bounded = text[:2048] or diagnostic
+        lowered = text.lower()
+        ended = any(marker in lowered for marker in cls._ENDED_JOB_DIAGNOSTICS)
+        pending = action == "stop" and any(
+            marker in lowered for marker in cls._PENDING_JOB_DIAGNOSTICS
+        )
+        return SchedulerControlResult(
+            action=action,
+            argv=tuple(argv),
+            return_code=completed.returncode,
+            diagnostic=bounded,
+            accepted=completed.returncode == 0 and not ended and not pending,
+            job_ended=ended,
+            job_pending=pending,
+        )
+
     @property
     def array_requested(self) -> bool:
         """Return whether spec or raw arguments request a SLURM job array."""
@@ -764,6 +1093,53 @@ class SlurmScheduler(Scheduler):
 _SCHEDULERS: Dict[str, type[Scheduler]] = {
     SlurmScheduler.NAME: SlurmScheduler,
 }
+
+
+def scheduler_control_argv(
+    provider: str,
+    action: SchedulerControlAction,
+    native_id: str,
+    *,
+    cluster: Optional[str] = None,
+) -> List[str]:
+    """Validated provider argv for cancel or stop, without running it.
+
+    Raises ``SchedulerControlUnsupported`` when JARVIS has no command for the
+    provider, so callers can refuse before recording any request.
+    """
+    scheduler_type = _SCHEDULERS.get(provider.strip().lower())
+    if scheduler_type is None:
+        raise SchedulerControlUnsupported(
+            f"JARVIS has no {action} command for scheduler provider {provider!r}"
+        )
+    return scheduler_type.control_argv(action, native_id, cluster=cluster)
+
+
+def control_scheduler_execution(
+    provider: str,
+    action: SchedulerControlAction,
+    native_id: str,
+    *,
+    cluster: Optional[str] = None,
+) -> SchedulerControlResult:
+    """Run one bounded provider cancel or stop command without a shell."""
+    argv = scheduler_control_argv(provider, action, native_id, cluster=cluster)
+    scheduler_type = _SCHEDULERS[provider.strip().lower()]
+    try:
+        completed = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return scheduler_type.interpret_control(
+            action, argv, None, f"{argv[0]} failed: {str(exc)[:1024]}"
+        )
+    return scheduler_type.interpret_control(action, argv, completed, None)
 
 
 def _run_scheduler_query(

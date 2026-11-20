@@ -187,8 +187,27 @@ class JarvisCLI(ArgParse):
         self.add_cmd("ppl start", msg="Start current pipeline")
         self.add_args([])
 
-        self.add_cmd("ppl stop", msg="Stop current pipeline")
-        self.add_args([])
+        self.add_cmd(
+            "ppl stop",
+            msg="Stop current pipeline (or a pipeline YAML, e.g. an execution snapshot)",
+        )
+        self.add_args(
+            [
+                {
+                    "name": "load_type",
+                    "msg": "Type of pipeline to stop (yaml) or current",
+                    "type": str,
+                    "pos": True,
+                    "default": "current",
+                },
+                {
+                    "name": "pipeline_file",
+                    "msg": "Pipeline YAML to stop (required if load_type is yaml)",
+                    "type": str,
+                    "pos": True,
+                },
+            ]
+        )
 
         self.add_cmd("ppl kill", msg="Force kill current pipeline")
         self.add_args([])
@@ -304,6 +323,63 @@ class JarvisCLI(ArgParse):
             ]
         )
 
+        self.add_cmd(
+            "ppl install",
+            msg="Check or install the pipeline's packages (find-first for "
+            "Spack); exits 3 when a decision is needed",
+        )
+        self.add_args(
+            [
+                {
+                    "name": "load_type",
+                    "msg": "Type of pipeline to install (yaml) or current",
+                    "type": str,
+                    "pos": True,
+                    "default": "current",
+                },
+                {
+                    "name": "pipeline_file",
+                    "msg": "Pipeline YAML (required if load_type is yaml)",
+                    "type": str,
+                    "pos": True,
+                },
+                {
+                    "name": "check",
+                    "msg": "Report installed vs missing without building",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+                {
+                    "name": "answers",
+                    "msg": "answers.json mapping issue ids to chosen constraints",
+                    "type": str,
+                    "required": False,
+                },
+                {
+                    "name": "submit",
+                    "msg": "Run the install as a 1-node scheduler job instead",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+                {
+                    "name": "execution_id",
+                    "aliases": ["execution-id"],
+                    "msg": "Execution identity for the +submit job",
+                    "type": str,
+                    "required": False,
+                },
+                {
+                    "name": "json",
+                    "msg": "Print the install report (or +submit handle) as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
         self.add_menu("execution", msg="Durable pipeline execution records")
         self.add_cmd(
             "execution get",
@@ -329,6 +405,80 @@ class JarvisCLI(ArgParse):
                 {
                     "name": "json",
                     "msg": "Print the complete record as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
+        self.add_cmd(
+            "execution cancel",
+            msg="Cancel a scheduler execution (scancel) and record it canceled",
+        )
+        self.add_args(
+            [
+                {
+                    "name": "execution_id",
+                    "msg": "JARVIS execution identity",
+                    "type": str,
+                    "required": True,
+                    "pos": True,
+                },
+                {
+                    "name": "pipeline_id",
+                    "aliases": ["pipeline-id"],
+                    "msg": "Pipeline identity (defaults to current pipeline)",
+                    "type": str,
+                    "required": False,
+                },
+                {
+                    "name": "json",
+                    "msg": "Print the resulting record as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
+        self.add_cmd(
+            "execution stop",
+            msg="Gracefully stop a scheduler execution: TERM the batch shell, "
+            "which runs ppl stop and finalizes the record",
+        )
+        self.add_args(
+            [
+                {
+                    "name": "execution_id",
+                    "msg": "JARVIS execution identity",
+                    "type": str,
+                    "required": True,
+                    "pos": True,
+                },
+                {
+                    "name": "pipeline_id",
+                    "aliases": ["pipeline-id"],
+                    "msg": "Pipeline identity (defaults to current pipeline)",
+                    "type": str,
+                    "required": False,
+                },
+                {
+                    "name": "wait",
+                    "msg": "Wait until the execution reaches a terminal state",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+                {
+                    "name": "timeout",
+                    "msg": "Seconds to wait with +wait",
+                    "type": int,
+                    "default": 120,
+                },
+                {
+                    "name": "json",
+                    "msg": "Print the resulting record as JSON",
                     "type": bool,
                     "default": False,
                     "prefix": "+",
@@ -1594,6 +1744,105 @@ class JarvisCLI(ArgParse):
             f"{record.execution_id}: {record.state} ({record.mode}{scheduler_identity})"
         )
 
+    def _emit_execution_record(self, record, *, json_output: bool) -> None:
+        if json_output:
+            print(json.dumps(record.to_dict(), separators=(",", ":"), sort_keys=True))
+            return
+        scheduler_identity = ""
+        if record.scheduler_provider is not None:
+            scheduler_identity = f" {record.scheduler_provider}"
+            if record.scheduler_native_id is not None:
+                scheduler_identity += f":{record.scheduler_native_id}"
+        print(
+            f"{record.execution_id}: {record.state} ({record.mode}{scheduler_identity})"
+        )
+
+    def _execution_pipeline(self) -> Pipeline:
+        pipeline_id = self.kwargs.get("pipeline_id")
+        return Pipeline(pipeline_id) if pipeline_id else self._require_current_pipeline()
+
+    def execution_cancel(self) -> None:
+        """Cancel one scheduler execution; idempotent once terminal."""
+        self._ensure_initialized()
+        record = self._execution_pipeline().cancel_execution(self.kwargs["execution_id"])
+        self._emit_execution_record(record, json_output=bool(self.kwargs.get("json")))
+
+    def execution_stop(self) -> None:
+        """Ask a scheduler execution's batch shell to stop the pipeline."""
+        self._ensure_initialized()
+        wait_seconds = (
+            int(self.kwargs.get("timeout") or 120) if self.kwargs.get("wait") else None
+        )
+        record = self._execution_pipeline().stop_execution(
+            self.kwargs["execution_id"], wait_seconds=wait_seconds
+        )
+        self._emit_execution_record(record, json_output=bool(self.kwargs.get("json")))
+
+    def _load_pipeline_yaml(self, pipeline_file: str, install_on_load: str) -> Pipeline:
+        """Load a pipeline YAML with an explicit install-phase policy."""
+        if not pipeline_file:
+            raise ValueError("Pipeline file is required when load_type is 'yaml'")
+        pipeline = Pipeline()
+        pipeline._install_on_load = install_on_load
+        pipeline.load("yaml", pipeline_file)
+        return pipeline
+
+    def ppl_install(self) -> None:
+        """Check or install packages; ``+submit`` runs it as a 1-node job."""
+        from jarvis_cd.core.spack_install import InstallDecisionNeeded
+
+        self._ensure_initialized()
+        if self.kwargs.get("load_type", "current") == "yaml":
+            pipeline = self._load_pipeline_yaml(
+                self.kwargs.get("pipeline_file"), install_on_load="skip"
+            )
+        else:
+            pipeline = self._require_current_pipeline()
+        check = bool(self.kwargs.get("check"))
+        answers = self.kwargs.get("answers")
+        json_output = bool(self.kwargs.get("json"))
+        if self.kwargs.get("submit"):
+            handle = pipeline.submit(
+                submit=True,
+                execution_id=self.kwargs.get("execution_id"),
+                action="install",
+                install_check=check,
+                install_answers=answers,
+            )
+            self._emit_execution_handle(handle, json_output=json_output)
+            return
+        try:
+            report = pipeline.install(check=check, answers_path=answers)
+            exit_code = 0
+        except InstallDecisionNeeded as needed:
+            report = dict(needed.report or {})
+            report.setdefault("issues_path", str(needed.issues_path))
+            report.setdefault("issues", needed.issues)
+            exit_code = needed.exit_code
+            report["exit_code"] = exit_code
+            self._emit_install_report(report, json_output=json_output)
+            raise
+        report["exit_code"] = exit_code
+        self._emit_install_report(report, json_output=json_output)
+
+    @staticmethod
+    def _emit_install_report(report: dict, *, json_output: bool) -> None:
+        if json_output:
+            print(json.dumps(report, separators=(",", ":"), sort_keys=True, default=str))
+            return
+        state = "satisfied" if report.get("satisfied") else "not satisfied"
+        print(f"Install ({report.get('mode')}): {state}")
+        for method, result in (report.get("installers") or {}).items():
+            print(f"  {method}: {result.get('status')}")
+            for name, entry in (result.get("packages") or {}).items():
+                if isinstance(entry, dict):
+                    print(f"    {name}: {entry.get('status')}")
+        for issue in report.get("issues") or []:
+            print(f"  ISSUE {issue.get('kind')} {issue.get('issue_id')}: "
+                  f"{issue.get('question')}")
+        if report.get("log"):
+            print(f"  log: {report['log']}")
+
     def execution_list(self) -> None:
         """Print all durable records for a named or current pipeline."""
         self._ensure_initialized()
@@ -1722,8 +1971,13 @@ class JarvisCLI(ArgParse):
         self.current_pipeline.start()
 
     def ppl_stop(self):
-        """Stop current pipeline"""
+        """Stop current pipeline, or a pipeline YAML without reinstalling"""
         self._ensure_initialized()
+        if self.kwargs.get("load_type", "current") == "yaml":
+            self._load_pipeline_yaml(
+                self.kwargs.get("pipeline_file"), install_on_load="skip"
+            ).stop()
+            return
         if not self.current_pipeline:
             current_name = self.jarvis_config.get_current_pipeline()
             if current_name:
@@ -2892,6 +3146,11 @@ def main():
         print("\nOperation cancelled by user")
         sys.exit(1)
     except Exception as e:
+        from jarvis_cd.core.spack_install import InstallDecisionNeeded
+
+        if isinstance(e, InstallDecisionNeeded):
+            print(f"Decision needed: {e}", file=sys.stderr)
+            sys.exit(e.exit_code)
         print(f"Error: {e}")
         sys.exit(1)
 

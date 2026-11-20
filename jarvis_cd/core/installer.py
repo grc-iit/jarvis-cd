@@ -96,13 +96,65 @@ class Installer(ABC):
         return reg[method]()
 
     @staticmethod
-    def install_all(ppl) -> None:
-        """Run every installer that applies to ``ppl``."""
+    def install_all(ppl, mode: str = "install", context=None) -> Dict[str, Any]:
+        """Run (or, with ``mode='check'``, only verify) every installer.
+
+        Returns a ``jarvis.install-report.v1`` document. Raises
+        ``InstallDecisionNeeded`` (CLI exit 3) when any installer wrote an
+        issue: a choice to make, or in check mode a package still missing.
+        """
+        from jarvis_cd.core.spack_install import (
+            REPORT_SCHEMA,
+            InstallDecisionNeeded,
+        )
+
+        if mode not in ("install", "check"):
+            raise ValueError("install mode must be 'install' or 'check'")
         grouped = Installer.get_installers(ppl)
-        for method, pkg_list in grouped.items():
-            installer = Installer.for_method(method)
-            print(f"Installer '{method}': installing {len(pkg_list)} pkg(s)")
-            installer.install(ppl, pkg_list)
+        report: Dict[str, Any] = {
+            "schema_version": REPORT_SCHEMA,
+            "pipeline_id": getattr(ppl, 'name', None),
+            "mode": mode,
+            "installers": {},
+        }
+        owns_context = False
+        if context is None and grouped:
+            context = install_context_for(ppl, mode)
+            context.open()
+            owns_context = True
+        try:
+            for method, pkg_list in grouped.items():
+                installer = Installer.for_method(method)
+                installer.context = context
+                if mode == "check":
+                    print(f"Installer '{method}': checking {len(pkg_list)} pkg(s)")
+                    result = installer.check(ppl, pkg_list)
+                else:
+                    print(f"Installer '{method}': installing {len(pkg_list)} pkg(s)")
+                    result = installer.install(ppl, pkg_list)
+                report["installers"][method] = result or {"status": "done"}
+        finally:
+            if owns_context:
+                context.close()
+        if context is not None:
+            report["install_dir"] = str(context.install_dir)
+            report["log"] = str(context.log_path)
+            report["issues_path"] = str(context.issues_path)
+            report["issues"] = list(context.issues)
+        report["satisfied"] = not (context is not None and context.issues) and all(
+            result.get("status") in ("done", "satisfied", "installed", "unchecked")
+            for result in report["installers"].values()
+        )
+        if context is not None and context.issues:
+            raise InstallDecisionNeeded(context.issues, context.issues_path, report)
+        return report
+
+    #: set by ``install_all`` before ``install``/``check`` run
+    context = None
+
+    def check(self, ppl, pkg_list: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Verify without building. Backends without a check report 'unchecked'."""
+        return {"status": "unchecked", "packages": [p.get('pkg_id') for p in pkg_list]}
 
     # ------------------------------------------------------------------
     # helpers shared by concrete installers
@@ -188,39 +240,111 @@ class CondaInstaller(Installer):
 
 
 class SpackInstaller(Installer):
-    """Install packages via ``spack install <spec ...>`` then capture the
-    spack-load environment back into ``ppl.env``.
+    """Find-first Spack installer.
+
+    Each package's ``install_query`` is resolved with ``spack spec -I``;
+    nodes Spack already has (local, upstream or external) are reused and only
+    missing ones are built. Choices JARVIS must not make (several installed
+    MPIs, variant conflicts) become ``issues.jsonl`` questions. The resolved
+    root hashes are recorded and loaded with ``spack load /<hash>``. See
+    ``jarvis_cd.core.spack_install``.
     """
 
     install_method = "spack"
 
-    def install(self, ppl, pkg_list):
+    def _run(self, ppl, pkg_list, mode: str) -> Dict[str, Any]:
         from jarvis_cd.core.environment import EnvironmentManager
+        from jarvis_cd.core.spack_install import run_spack_install
 
-        specs = self._aggregate_queries(pkg_list)
-        if not specs:
-            print("SpackInstaller: no install_query entries; nothing to do")
-            return
-        specs_str = ' '.join(specs)
-
-        spack_root = os.environ.get('SPACK_ROOT', '')
-        spack_prefix = (
-            f'. {spack_root}/share/spack/setup-env.sh && '
-            if spack_root else ''
-        )
-
-        cmd = f'bash -c "{spack_prefix}spack install {specs_str}"'
-        print(f"SpackInstaller: {cmd}")
-        rc = _run_local(cmd)
-        if rc != 0:
-            raise RuntimeError(
-                f"spack install failed (exit {rc}). Specs: {specs_str}"
+        context = self.context
+        owns_context = context is None
+        if owns_context:
+            context = install_context_for(ppl, mode)
+            context.open()
+        try:
+            record = run_spack_install(pkg_list, context)
+        finally:
+            if owns_context:
+                context.close()
+        statuses = {
+            name: entry.get("status") for name, entry in record["packages"].items()
+        }
+        for name, entry in record["packages"].items():
+            status = entry.get("status")
+            line = f"SpackInstaller: {name}: {status}"
+            if entry.get("root"):
+                line += f" /{entry['root']['hash']}"
+            if entry.get("missing"):
+                line += f" (missing {len(entry['missing'])})"
+            print(line)
+        failed = [name for name, status in statuses.items() if status == "failed"]
+        if failed:
+            details = "; ".join(
+                f"{name}: {record['packages'][name].get('error', '')}" for name in failed
             )
+            raise RuntimeError(
+                f"spack install failed for {', '.join(failed)}. {details} "
+                f"(log: {context.log_path})"
+            )
+        hashes = [
+            "/" + entry["root"]["hash"]
+            for entry in record["packages"].values()
+            if entry.get("status") in ("satisfied", "installed") and entry.get("root")
+        ]
+        if hashes and not context.issues:
+            env_manager = EnvironmentManager(ppl.jarvis)
+            spack_env = env_manager.capture_spack_environment(hashes)
+            ppl.env.update(spack_env)
+            print(f"SpackInstaller: merged {len(spack_env)} env vars from spack load")
+        if context.issues:
+            overall = "needs_decision"
+        elif any(status == "missing" for status in statuses.values()):
+            overall = "missing"
+        elif any(status == "installed" for status in statuses.values()):
+            overall = "installed"
+        else:
+            overall = "satisfied"
+        return {
+            "status": overall,
+            "record": str(context.record_path),
+            "packages": {
+                name: {
+                    key: entry.get(key)
+                    for key in ("status", "spec", "root", "missing", "built", "mpi")
+                    if entry.get(key) is not None
+                }
+                for name, entry in record["packages"].items()
+            },
+        }
 
-        env_manager = EnvironmentManager(ppl.jarvis)
-        spack_env = env_manager.capture_spack_environment(specs)
-        ppl.env.update(spack_env)
-        print(f"SpackInstaller: merged {len(spack_env)} env vars from spack load")
+    def install(self, ppl, pkg_list):
+        return self._run(ppl, pkg_list, "install")
+
+    def check(self, ppl, pkg_list):
+        return self._run(ppl, pkg_list, "check")
+
+
+def install_context_for(ppl, mode: str = "install"):
+    """Build the install context (log, issues, record) for ``ppl``.
+
+    Inside a scheduler execution the files live under
+    ``<execution>/install``; otherwise under ``<pipeline shared>/install``.
+    ``JARVIS_INSTALL_ANSWERS`` names an ``answers.json`` to apply.
+    """
+    from jarvis_cd.core.spack_install import InstallContext, load_answers
+
+    execution_root = getattr(ppl, '_execution_root', None)
+    if execution_root is not None:
+        install_dir = Path(execution_root) / "install"
+    else:
+        install_dir = Path(ppl.jarvis.get_pipeline_shared_dir(ppl.name)) / "install"
+    answers_path = os.environ.get("JARVIS_INSTALL_ANSWERS", "").strip()
+    return InstallContext(
+        install_dir=install_dir,
+        mode=mode,
+        answers=load_answers(Path(answers_path)) if answers_path else {},
+        progress=getattr(ppl, '_install_progress', None),
+    )
 
 
 class ContainerInstaller(Installer):
