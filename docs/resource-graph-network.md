@@ -188,6 +188,43 @@ The applied choice is written to the launch's provenance (`launch.json` →
 launches get the same settings through the container command's
 environment.
 
+### Hosts the graph has not seen
+
+A launch can span nodes the net collect never ran on, for example a 4-node
+run after a 2-node collect. They are listed in `hosts_not_in_graph`, and
+`hosts_not_in_graph_check` says whether that matters:
+
+| Field | Meaning |
+|-------|---------|
+| `severity` | `info`: safe, nothing to do. `warning`: the settings may not fit these hosts |
+| `reason` | why, in one sentence |
+| `hosts[]` | `host`, its hostname `address`, and `in_chosen_cidrs` (`control`, `data`, both or none) |
+| `remedy` | with `warning` only: collect the net section on these hosts |
+
+It is `info` when the flavour takes networks by CIDR (Open MPI and PRRTE)
+and every unseen host's hostname address lies in a chosen CIDR. Each node
+then binds its own interface in that subnet, just as the graph's nodes do,
+so names and speeds that were never collected do not matter. Cray MPICH sets
+nothing, so it is `info` too. It is a `warning` when an address is outside
+the chosen CIDRs or does not resolve, and for MPICH and Intel MPI, which
+set interface names the graph has not seen on those hosts. The launch is
+never blocked: a wrong network still shows up as an
+[`mpi_network` issue](#network-launch-failures). A `warning` also raises an
+advisory `hosts_not_in_graph` [site-fact question](site-facts.md) in
+`network.site_facts`. Before submit, a job wider than the graph is a
+blocking question for MPICH and Intel MPI.
+
+## Uncertain picks
+
+When the pick rests on an uncertain fact (near-equal data networks,
+interface names that differ, an RDMA port that isn't ACTIVE, a control
+fallback, a net collected outside an allocation, unseen hosts, or no
+reachable network), JARVIS raises a typed `site_fact_uncertain` question
+instead of guessing silently. `rg net show` reports it under `site_facts`.
+An agent investigates and proposes, a person confirms with `jarvis rg facts
+answer`, and the answer holds until the evidence changes. See
+[Site facts](site-facts.md).
+
 ## Network launch failures
 
 When a run fails and its output matches an MPI network signature, the

@@ -111,6 +111,18 @@ class LocalMpiExec(LocalExec):
         except Exception as error:  # never block a launch on graph errors
             return {'error': str(error)}
         self.network_args = dict((record or {}).get('applied', {}).get('args', {}))
+        if record:
+            try:
+                from ..core.site_facts import launch_site_facts
+
+                # Advisory only: the launch already passed the pre-launch gate.
+                report = launch_site_facts(
+                    self.network_flavour, net_util.load_net_section(), record
+                )
+                if report and (report.get('issues') or report.get('confirmed')):
+                    record['site_facts'] = report
+            except Exception as error:
+                record['site_facts'] = {'error': str(error)[:500]}
         return record
 
     def _process_cmd_list(self, cmd_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

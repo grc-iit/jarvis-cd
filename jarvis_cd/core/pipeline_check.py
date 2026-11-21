@@ -220,6 +220,16 @@ def check_pipeline(ppl: Any) -> Dict[str, Any]:
         steps.append(step)
 
     _coupling(steps, errors, warnings)
+    site_facts = None
+    questions: List[Dict[str, Any]] = []
+    try:
+        from jarvis_cd.core.site_facts import pipeline_site_facts
+
+        site_facts = pipeline_site_facts(ppl, launch_nodes=size)
+    except Exception as exc:  # a site-fact evaluation must never break a check
+        site_facts = {"error": str(exc)[:500]}
+    for issue in (site_facts or {}).get("issues") or []:
+        (questions if issue.get("blocking") else warnings).append(issue)
     services = [
         {
             key: step.get(key)
@@ -232,12 +242,14 @@ def check_pipeline(ppl: Any) -> Dict[str, Any]:
     return {
         "schema_version": CHECK_SCHEMA,
         "pipeline_id": subject,
-        "ok": not errors,
+        "ok": not errors and not questions,
         "allocation": {"nodes": size, "source": size_source},
         "steps": steps,
         "services": services,
         "errors": errors,
+        "questions": questions,
         "warnings": warnings,
+        "site_facts": site_facts,
     }
 
 
@@ -332,11 +344,23 @@ def _coupling(
 
 
 def enforce_pipeline_check(ppl: Any) -> Dict[str, Any]:
-    """Run :func:`check_pipeline`; raise :class:`JarvisIssueError` on errors."""
+    """Run :func:`check_pipeline`; raise :class:`JarvisIssueError` on errors.
+
+    Errors refuse with exit 5. Blocking site-fact questions
+    (``site_fact_uncertain``) refuse with exit 3, like an install decision.
+    """
+    from jarvis_cd.core.site_facts import EXIT_SITE_FACT
+
     document = check_pipeline(ppl)
     if document["errors"]:
         raise JarvisIssueError(
             document["errors"],
             document={"check": {k: v for k, v in document.items() if k != "errors"}},
+        )
+    if document["questions"]:
+        raise JarvisIssueError(
+            document["questions"],
+            exit_code=EXIT_SITE_FACT,
+            document={"check": {k: v for k, v in document.items() if k != "questions"}},
         )
     return document

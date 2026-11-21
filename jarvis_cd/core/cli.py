@@ -358,6 +358,15 @@ class JarvisCLI(ArgParse):
                     "required": False,
                 },
                 {
+                    "name": "forget",
+                    "msg": "Forget recorded decisions: an issue_id (or 8+ digit "
+                    "prefix), a site subject (mpi, compiler, spack), a package, "
+                    "a recorded constraint/candidate, or all. Alone it only "
+                    "forgets; with +check or +submit it then continues",
+                    "type": str,
+                    "required": False,
+                },
+                {
                     "name": "submit",
                     "msg": "Run the install as a 1-node scheduler job instead",
                     "type": bool,
@@ -1328,6 +1337,103 @@ class JarvisCLI(ArgParse):
         self.add_cmd("rg show", msg="Show resource graph summary")
         self.add_args([])
 
+        self.add_menu("rg facts", msg="Uncertain site facts: questions, answers, provenance")
+
+        self.add_cmd("rg facts show", msg="Evaluate site facts; list questions and answers")
+        self.add_args(
+            [
+                {
+                    "name": "nodes",
+                    "msg": "Launch size to evaluate (default: the nodes the net was collected on)",
+                    "type": int,
+                    "default": None,
+                },
+                {
+                    "name": "flavour",
+                    "msg": "MPI flavour: openmpi, mpich, intel or cray (default: unknown)",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "json",
+                    "msg": "Emit the site-facts report as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
+        self.add_cmd("rg facts answer", msg="Record a person's answer to a site-fact question")
+        self.add_args(
+            [
+                {
+                    "name": "issue_id",
+                    "msg": "issue_id of the site_fact_uncertain question",
+                    "type": str,
+                    "pos": True,
+                    "default": None,
+                },
+                {
+                    "name": "value",
+                    "msg": "accept, or JSON {\"data\": ..., \"control\": ...}",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "reason",
+                    "msg": "Why (kept as provenance; required)",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "set_by",
+                    "msg": "The person confirming (default: $USER)",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "proposed_by",
+                    "msg": "Who proposed the value (e.g. an agent)",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "answers",
+                    "msg": "JSON file mapping issue_id to {value, reason}",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "json",
+                    "msg": "Emit the recorded answer as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
+        self.add_cmd("rg facts forget", msg="Forget a recorded site-fact answer")
+        self.add_args(
+            [
+                {
+                    "name": "fact",
+                    "msg": "Fact to forget, e.g. net.launch",
+                    "type": str,
+                    "pos": True,
+                    "default": None,
+                },
+                {
+                    "name": "json",
+                    "msg": "Emit the result as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
         self.add_cmd("rg nodes", msg="List nodes in resource graph")
         self.add_args([])
 
@@ -2225,12 +2331,19 @@ class JarvisCLI(ArgParse):
                 print(f"  [{step['index']}] {step['pkg_id']} {step.get('role')} "
                       f"{step.get('starts')} {where}" + (f" ports {ports}" if ports else ""))
             for level, issues in (("ERROR", document["errors"]),
+                                  ("ASK", document.get("questions") or []),
                                   ("WARN", document["warnings"])):
                 for issue in issues:
                     print(f"  {level} {issue['kind']} {issue.get('field', '')}: "
                           f"{issue['message']}")
         if document["errors"]:
             error = JarvisIssueError(document["errors"])
+            error.already_reported = True
+            raise error
+        if document.get("questions"):
+            from jarvis_cd.core.site_facts import EXIT_SITE_FACT
+
+            error = JarvisIssueError(document["questions"], exit_code=EXIT_SITE_FACT)
             error.already_reported = True
             raise error
 
@@ -2256,6 +2369,34 @@ class JarvisCLI(ArgParse):
                 pipeline = self._require_current_pipeline()
         check = bool(self.kwargs.get("check"))
         answers = self.kwargs.get("answers")
+        forgotten = None
+        forget = self.kwargs.get("forget")
+        if forget:
+            from jarvis_cd.core.spack_install import forget_decisions
+
+            decisions_path = install_context_for(pipeline, "check").decisions_path
+            forgotten = forget_decisions(decisions_path, [forget])
+            if not (check or self.kwargs.get("submit")):
+                forgotten["pipeline_id"] = pipeline.name
+                forgotten["exit_code"] = 0
+                if json_output:
+                    print(json.dumps(forgotten, separators=(",", ":"), sort_keys=True,
+                                     default=str))
+                else:
+                    for entry in forgotten["forgotten"]:
+                        print(f"Forgot {entry.get('scope')} "
+                              f"{entry.get('subject') or entry.get('package')}: "
+                              f"{entry.get('constraint')} ({entry.get('issue_id')})")
+                    print(f"  decisions: {forgotten['decisions_path']}")
+                return
+            print(f"Forgot {len(forgotten['forgotten'])} decision(s) in "
+                  f"{forgotten['decisions_path']}", file=sys.stderr)
+
+        def emit(report: dict) -> None:
+            if forgotten is not None:
+                report["forgotten"] = forgotten["forgotten"]
+            emit(report)
+
         if self.kwargs.get("submit"):
             handle = pipeline.submit(
                 submit=True,
@@ -2286,7 +2427,7 @@ class JarvisCLI(ArgParse):
                 "record_path": str(context.record_path),
                 "exit_code": refused.exit_code,
             }
-            self._emit_install_report(report, json_output=json_output)
+            emit(report)
             raise
         except InstallDecisionNeeded as needed:
             report = dict(needed.report or {})
@@ -2294,17 +2435,17 @@ class JarvisCLI(ArgParse):
             report.setdefault("issues", needed.issues)
             exit_code = needed.exit_code
             report["exit_code"] = exit_code
-            self._emit_install_report(report, json_output=json_output)
+            emit(report)
             raise
         except InstallFailed as failed:
             report = failed.to_dict()
             report.setdefault("record_path", str(install_context_for(
                 pipeline, "install").record_path))
-            self._emit_install_report(report, json_output=json_output)
+            emit(report)
             failed.already_reported = True
             raise
         report["exit_code"] = exit_code
-        self._emit_install_report(report, json_output=json_output)
+        emit(report)
 
     @staticmethod
     def _emit_install_report(report: dict, *, json_output: bool) -> None:
@@ -3366,6 +3507,12 @@ class JarvisCLI(ArgParse):
             )
         for warning in report.get("warnings") or []:
             print(f"warning: {warning}")
+        facts = report.get("site_facts") or {}
+        for issue in facts.get("issues") or []:
+            print(f"site fact {issue.get('severity')}: {issue['issue_id']} {issue['message']}")
+        for item in facts.get("confirmed") or []:
+            print(f"site fact confirmed: {item.get('fact')} = {item.get('value')} "
+                  f"by {item.get('set_by')} ({item.get('reason')})")
 
     def _net_call(self, action):
         """Run an rg net action; with +json keep stdout for the document."""
@@ -3381,7 +3528,15 @@ class JarvisCLI(ArgParse):
 
     def rg_net_show(self):
         """Show the resource graph's network selection."""
-        self._net_call(lambda: self.rg_manager.net_report())
+        def action():
+            from jarvis_cd.core.site_facts import show_site_facts
+
+            report = self.rg_manager.net_report()
+            if report.get("present"):
+                report["site_facts"] = show_site_facts(self.rg_manager)
+            return report
+
+        self._net_call(action)
 
     def rg_net_set(self):
         """Record a person's override of the data/control network."""
@@ -3397,6 +3552,76 @@ class JarvisCLI(ArgParse):
     def rg_net_clear(self):
         """Drop the network override."""
         self._net_call(lambda: self.rg_manager.net_clear())
+
+    def _site_facts_text(self, document: Dict[str, Any]) -> None:
+        if "forgotten" in document:
+            print(f"forgot {document['forgotten'].get('fact')} "
+                  f"({document['forgotten'].get('issue_id')}); {document['note']}")
+            return
+        if "recorded" in document:
+            recorded = document["recorded"]
+            for entry in recorded if isinstance(recorded, list) else [recorded]:
+                print(f"recorded {entry['fact']} = {entry['value']} by {entry['set_by']} "
+                      f"(source {entry['source']}): {entry['reason']}")
+            print(f"answers: {document['answers_path']}")
+            return
+        if document.get("net_present") is False:
+            print("no net section: " + document["net_issue"]["message"])
+            return
+        if not document["issues"] and not document["confirmed"]:
+            print("site facts: confident; nothing to ask")
+        for issue in document["issues"]:
+            details = issue["details"]
+            print(f"{issue['severity'].upper()} {issue['issue_id']}")
+            print(f"  {issue['message']}")
+            for reason in details["reasons"]:
+                print(f"  - {reason['code']} ({reason['severity']}): {reason['message']}")
+            print(f"  pick: {details['pick']}")
+            print(f"  answer: {details['answer']['command']}")
+        for item in document["confirmed"]:
+            print(f"confirmed {item['fact']} = {item['value']} by {item.get('set_by')} "
+                  f"at {item.get('set_at')}: {item.get('reason')}")
+        for item in document.get("resolved_by_override") or []:
+            print(f"resolved by override: {', '.join(item['reasons'])}")
+
+    def _site_facts_call(self, action) -> None:
+        self._json_call(action, self._site_facts_text,
+                        ensure=lambda: self._ensure_site_context(needs_graph=True))
+
+    def rg_facts_show(self):
+        """Evaluate the active graph's site facts."""
+        from jarvis_cd.core.site_facts import show_site_facts
+
+        self._site_facts_call(lambda: show_site_facts(
+            self.rg_manager, nodes=self.kwargs.get("nodes"),
+            flavour=self.kwargs.get("flavour")))
+
+    def rg_facts_answer(self):
+        """Validate and record a person's answer to a site-fact question."""
+        from jarvis_cd.core.site_facts import answer_site_fact, answer_site_facts_file
+
+        def action():
+            if self.kwargs.get("answers"):
+                return answer_site_facts_file(
+                    self.rg_manager, Path(self.kwargs["answers"]),
+                    set_by=self.kwargs.get("set_by"),
+                    proposed_by=self.kwargs.get("proposed_by"))
+            if not self.kwargs.get("issue_id"):
+                raise ValueError("rg facts answer needs an issue_id or --answers")
+            return answer_site_fact(
+                self.rg_manager, self.kwargs["issue_id"], self.kwargs.get("value"),
+                reason=self.kwargs.get("reason"), set_by=self.kwargs.get("set_by"),
+                proposed_by=self.kwargs.get("proposed_by"))
+
+        self._site_facts_call(action)
+
+    def rg_facts_forget(self):
+        """Drop a recorded site-fact answer."""
+        from jarvis_cd.core.site_facts import forget_site_fact
+
+        if not self.kwargs.get("fact"):
+            raise ValueError("rg facts forget needs a fact, e.g. net.launch")
+        self._site_facts_call(lambda: forget_site_fact(self.rg_manager, self.kwargs["fact"]))
 
     def _json_call(self, action, text, ensure=None):
         """Run ``action``; print its document as JSON (+json) or via ``text``."""
@@ -3481,7 +3706,9 @@ class JarvisCLI(ArgParse):
                 limits = part.get("limits") or {}
                 print(f"  {part['partition']:<14} default={part.get('default')} "
                       f"idle={part.get('idle_nodes')}/{part.get('total_nodes')} "
-                      f"cpus/node={part.get('cpus_per_node')} max_time={part.get('max_time')} "
+                      f"cpus/node={part.get('cpus_per_node')} "
+                      f"cores/node={part.get('physical_cores_per_node')} "
+                      f"max_time={part.get('max_time')} "
                       f"max_nodes={limits.get('max_nodes')}")
             mpi = document.get("mpi") or {}
             for candidate in mpi.get("spack_candidates") or []:

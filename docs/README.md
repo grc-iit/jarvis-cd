@@ -24,6 +24,7 @@ Jarvis-CD is a unified platform for deploying scientific applications, storage s
 - [Spack Site Preparation](spack.md) — `jarvis spack prepare`: upstreams, compiler preference and externals for the JARVIS Spack
 - [Resource Graph](resource_graph.md) — Storage and network topology discovery
 - [Resource Graph Network](resource-graph-network.md) — `jarvis rg net`: per-flavour MPI launch network from the graph, person overrides, typed `mpi_network` failures
+- [Site Facts](site-facts.md) — `jarvis rg facts`: typed `site_fact_uncertain` questions when a pick rests on an uncertain cluster fact, and the person's recorded answers
 - [Site Skills](site-skills.md) — `jarvis rg skill`: site notes stored next to the site resource graph
 - [Modules](modules.md) — Manual package installation with environment tracking
 - [Shell Execution](shell.md) — Exec, MPI, SSH, and SCP execution infrastructure

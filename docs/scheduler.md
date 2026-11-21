@@ -272,7 +272,7 @@ While a job is pending, `execution get|status +json` carries
 | `reason` | Slurm's pending reason (e.g. `Resources`, `Priority`, `QOSMaxJobsPerUserLimit`) |
 | `reason_kind` | `resources`, `limit`, `job_hold` or `other` |
 | `estimated_start`, `starts_in_s` | the scheduler's start estimate, when it has one |
-| `partitions[]` | every other partition that is `up`: `partition`, `default`, `available`, `idle_nodes`, `allocated_nodes`, `other_nodes`, `total_nodes`, `max_time`, `max_time_s`, `cpus_per_node`, `memory_mb_per_node`, `gres`, and `fits` (enough idle nodes now and a long enough time limit), sorted with fitting partitions first |
+| `partitions[]` | every other partition that is `up`: `partition`, `default`, `available`, `idle_nodes`, `allocated_nodes`, `other_nodes`, `total_nodes`, `max_time`, `max_time_s`, `cpus_per_node`, `physical_cores_per_node`, `threads_per_core`, `memory_mb_per_node`, `gres`, and `fits` (enough idle nodes now and a long enough time limit), sorted with fitting partitions first |
 | `move_supported` | whether `execution move` works for this provider |
 
 When the job leaves the queue, the block stays with `state: left_queue`.
@@ -313,7 +313,10 @@ so it is safe on a login node. See [sched.md](sched.md).
 
 `ppl submit` and `ppl run` first run the same static check as
 `jarvis ppl check`. On errors they refuse with exit 5 before writing a script
-or calling `sbatch`. See
+or calling `sbatch`. A blocking site-fact question (for example MPICH with
+interface names that differ between nodes) refuses with exit 3, also before
+any scheduler call. Advisory questions are submitted with the job and kept
+in the record's `metadata.site_facts` (see [Site facts](site-facts.md)). See
 [pipelines.md → Coupling and configuration checks](pipelines.md#coupling-and-configuration-checks-ppl-check).
 
 ## Cancelling and stopping executions

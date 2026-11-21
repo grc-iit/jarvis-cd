@@ -1236,15 +1236,20 @@ class Pipeline:
             )
         if not self.name:
             raise ValueError("Pipeline name not set; cannot submit job.")
+        site_facts_report = None
         if action == "run":
             from jarvis_cd.core.pipeline_check import enforce_pipeline_check
 
             # Refuse a pipeline whose coupling or configuration rules are
-            # broken before anything reaches the scheduler.
-            enforce_pipeline_check(self)
+            # broken before anything reaches the scheduler. A blocking
+            # site-fact question refuses with exit 3; advisories are recorded.
+            site_facts_report = enforce_pipeline_check(self).get("site_facts")
 
-        from jarvis_cd.core.scheduler import make_scheduler
+        from jarvis_cd.core.scheduler import make_scheduler, resolve_scheduler_name
 
+        # ``name: auto`` resolves to the host's scheduler before anything is
+        # recorded, so the record names the scheduler actually used.
+        scheduler_provider = resolve_scheduler_name(self.scheduler)
         answers_bytes: Optional[bytes] = None
         if install_answers:
             from jarvis_cd.core.spack_install import load_answers
@@ -1256,14 +1261,13 @@ class Pipeline:
         shared_dir = self.get_pipeline_shared_dir()
         shared_dir.mkdir(parents=True, exist_ok=True)
         resolved_execution_id = _validated_execution_id(execution_id)
-        scheduler_provider = self.scheduler.get("name")
-        if not isinstance(scheduler_provider, str) or not scheduler_provider.strip():
-            raise ValueError("scheduler.name is required (e.g. 'slurm')")
         store = self._execution_store()
         store.create(
             resolved_execution_id,
             mode="scheduler",
-            scheduler_provider=scheduler_provider.strip().lower(),
+            scheduler_provider=scheduler_provider,
+            **({"metadata": {"site_facts": site_facts_report}}
+               if site_facts_report and "issues" in site_facts_report else {}),
         )
         execution_root = store.executions_dir / resolved_execution_id
 
@@ -3603,6 +3607,18 @@ class Pipeline:
         except Exception as error:
             logger.warning(f"provenance not written: {error}")
 
+    def _record_site_facts(self, store: Any, execution_id: str) -> None:
+        """Merge each launch's site facts into the record's ``site_facts``."""
+        try:
+            from jarvis_cd.core.site_facts import execution_site_facts
+
+            prior = store.get(execution_id).metadata.get("site_facts")
+            merged = execution_site_facts(store.executions_dir / execution_id, prior)
+            if merged is not None:
+                store.update(execution_id, metadata={"site_facts": merged})
+        except Exception as error:  # advisory evidence must never fail a run
+            logger.warning(f"could not record site facts: {error}")
+
     @staticmethod
     def _launch_failure_issues(
         execution_root: Path, error: BaseException
@@ -3790,7 +3806,7 @@ class Pipeline:
         if getattr(self, "_execution_root", None) is None:
             from jarvis_cd.core.pipeline_check import enforce_pipeline_check
 
-            enforce_pipeline_check(self)
+            self._pending_site_facts = enforce_pipeline_check(self).get("site_facts")
         if not wait:
             return self._launch_direct_execution(execution_id)
         store = self._execution_store()
@@ -3836,7 +3852,12 @@ class Pipeline:
                 raise RuntimeError("execution snapshot record has the wrong mode")
         else:
             resolved_execution_id = _validated_execution_id(execution_id)
-            record = store.create(resolved_execution_id, mode="direct")
+            pending = getattr(self, "_pending_site_facts", None)
+            self._pending_site_facts = None
+            record = store.create(
+                resolved_execution_id, mode="direct",
+                **({"metadata": {"site_facts": pending}} if pending else {}),
+            )
             self._execution_root = store.executions_dir / resolved_execution_id
             self._execution_id = resolved_execution_id
             try:
@@ -3860,6 +3881,7 @@ class Pipeline:
             logger.pipeline("Pipeline started successfully. Stopping packages...")
             self.stop()
             self._write_execution_provenance(store, resolved_execution_id)
+            self._record_site_facts(store, resolved_execution_id)
             if record.mode == "scheduler":
                 # The generated scheduler script owns the final transition so
                 # failures in post-run hooks are included in the execution.
@@ -3880,6 +3902,7 @@ class Pipeline:
                 logger.error(f"Error during cleanup: {stop_error}")
                 error.add_note(f"pipeline cleanup also failed: {stop_error}")
             self._write_execution_provenance(store, resolved_execution_id)
+            self._record_site_facts(store, resolved_execution_id)
             failure_metadata = self._launch_failure_issues(
                 store.executions_dir / resolved_execution_id, error
             )
@@ -3927,10 +3950,13 @@ class Pipeline:
             "launcher_pid": os.getpid(),
             "child_pid": None,
         }
+        pending = getattr(self, "_pending_site_facts", None)
+        self._pending_site_facts = None
         store.create(
             resolved_execution_id,
             mode="direct",
-            metadata={"direct_launch": direct_launch},
+            metadata={"direct_launch": direct_launch,
+                      **({"site_facts": pending} if pending else {})},
         )
         execution_root = store.executions_dir / resolved_execution_id
         process: Optional[subprocess.Popen[Any]] = None

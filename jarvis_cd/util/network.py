@@ -534,7 +534,79 @@ def apply_launch_network(
         applied["args"][key] = value
     record = dict(choice)
     record.update({"flavour": flavour, "applied": applied, "kept_from_caller": kept})
+    if record.get("hosts_not_in_graph"):
+        record["hosts_not_in_graph_check"] = classify_hosts_not_in_graph(
+            flavour, choice, record["hosts_not_in_graph"]
+        )
     return record
+
+
+def _resolve_host(host: str) -> Optional[str]:
+    try:
+        return socket.gethostbyname(host)
+    except (OSError, UnicodeError):
+        return None
+
+
+def classify_hosts_not_in_graph(
+    flavour: str,
+    choice: Dict[str, Any],
+    hosts: Iterable[str],
+    resolve: Any = None,
+) -> Dict[str, Any]:
+    """Say whether launching on hosts the graph never saw is safe.
+
+    ``info`` when the settings name networks by CIDR (Open MPI and PRRTE)
+    and every such host's hostname address lies in a chosen CIDR: each node
+    then picks its own interface in that subnet, as the graph's nodes do.
+    ``warning`` otherwise, with the remedy of collecting the graph on them.
+    """
+    resolve = resolve or _resolve_host
+    cidrs = []
+    for role in ("control", "data"):
+        cidr = (choice.get(role) or {}).get("cidr")
+        if cidr:
+            try:
+                cidrs.append((role, ipaddress.IPv4Network(cidr, strict=False)))
+            except ValueError:
+                pass
+    checked = []
+    for host in hosts:
+        address = resolve(host)
+        roles = []
+        if address:
+            try:
+                parsed = ipaddress.IPv4Address(address)
+                roles = [role for role, network in cidrs if parsed in network]
+            except ValueError:
+                pass
+        checked.append({"host": host, "address": address, "in_chosen_cidrs": roles})
+    outside = [entry["host"] for entry in checked if not entry["in_chosen_cidrs"]]
+    remedy = ("collect the resource graph's net section on these hosts: "
+              "builtin.resource_graph (or jarvis rg build +net_only) in a job "
+              "that spans them")
+    if flavour == "cray":
+        severity, reason = "info", "Cray MPICH sets no network: the graph is not used"
+    elif flavour == "openmpi" and cidrs and not outside:
+        severity = "info"
+        reason = (
+            "networks are chosen by CIDR, and each of these hosts' hostname "
+            "address is in a chosen CIDR, so every node binds its own interface "
+            "in that subnet just as the graph's nodes do; interface names and "
+            "speeds on them were not checked"
+        )
+    elif flavour == "openmpi":
+        severity = "warning"
+        reason = ("these hosts' hostname addresses are not in the chosen CIDRs "
+                  "(or did not resolve): " + ", ".join(outside))
+    else:
+        severity = "warning"
+        reason = (f"{flavour} takes the networks by interface name, and the graph "
+                  "has not seen these hosts' interface names")
+    result: Dict[str, Any] = {"severity": severity, "reason": reason, "hosts": checked}
+    if severity == "warning":
+        result["remedy"] = remedy
+    return result
 
 
 def network_disabled(*envs: Optional[Dict[str, Any]]) -> bool:
@@ -545,28 +617,30 @@ def network_disabled(*envs: Optional[Dict[str, Any]]) -> bool:
     return False
 
 
+def active_graph_file() -> Path:
+    """The active resource graph file, without initializing JARVIS."""
+    site = os.environ.get("JARVIS_RESOURCE_GRAPH", "").strip()
+    if site:
+        return Path(site).expanduser()
+    try:
+        from jarvis_cd.core.config import Jarvis
+
+        instance = Jarvis._instance
+        if instance is not None and getattr(instance, "_initialized", False):
+            return Path(instance.resource_graph_file)
+    except Exception:
+        pass
+    root = os.environ.get("JARVIS_ROOT")
+    return (
+        Path(root).expanduser() if root else Path.home() / ".ppi-jarvis"
+    ) / "resource_graph.yaml"
+
+
 def load_net_section() -> Optional[Dict[str, Any]]:
     """Load the active graph's ``net`` section without initializing JARVIS."""
     import yaml
 
-    path: Optional[Path] = None
-    site = os.environ.get("JARVIS_RESOURCE_GRAPH", "").strip()
-    if site:
-        path = Path(site).expanduser()
-    else:
-        try:
-            from jarvis_cd.core.config import Jarvis
-
-            instance = Jarvis._instance
-            if instance is not None and getattr(instance, "_initialized", False):
-                path = Path(instance.resource_graph_file)
-        except Exception:
-            path = None
-        if path is None:
-            root = os.environ.get("JARVIS_ROOT")
-            path = (
-                Path(root).expanduser() if root else Path.home() / ".ppi-jarvis"
-            ) / "resource_graph.yaml"
+    path = active_graph_file()
     try:
         with open(path, "r", encoding="utf-8") as stream:
             graph = yaml.safe_load(stream) or {}

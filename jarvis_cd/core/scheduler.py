@@ -138,6 +138,65 @@ def _validated_single_line(value: Any, *, field: str, limit: int = 4096) -> str:
     return value
 
 
+#: ``scheduler.name`` values that ask JARVIS to use the host's scheduler
+AUTO_SCHEDULER_NAMES = ("auto", "detect")
+
+
+def resolve_scheduler_name(spec: Optional[Dict[str, Any]]) -> str:
+    """The scheduler a ``scheduler:`` block means, in lower case.
+
+    ``name: auto`` (or ``detect``) picks the scheduler whose client is on
+    ``PATH`` (``sbatch``, ``qsub``, ``bsub``, ``flux``), so a caller can
+    write one block for every site. Raises :class:`JarvisIssueError`
+    (``scheduler_missing`` or ``scheduler_unsupported``, exit 5).
+    """
+    from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
+
+    raw = (spec or {}).get("name")
+    name = str(raw).strip().lower() if isinstance(raw, str) and raw.strip() else ""
+    requested = name or None
+    if name in AUTO_SCHEDULER_NAMES:
+        from jarvis_cd.core.sched_info import _CLIENTS, detect_provider
+
+        name = detect_provider() or ""
+        if not name:
+            raise JarvisIssueError([make_jarvis_issue(
+                kind="scheduler_missing",
+                subject="scheduler",
+                message=(
+                    "scheduler.name is 'auto' but no scheduler client ("
+                    + ", ".join(client for client, _provider in _CLIENTS)
+                    + ") is on PATH"
+                ),
+                field="scheduler.name",
+                details={"requested": requested,
+                         "clients": [client for client, _provider in _CLIENTS]},
+                remedy="submit from a host with the site's scheduler client, or "
+                "name the scheduler in scheduler.name",
+            )])
+    if not name:
+        raise JarvisIssueError([make_jarvis_issue(
+            kind="scheduler_missing",
+            subject="scheduler",
+            message="scheduler.name is required: a scheduler ("
+            + ", ".join(sorted(_SCHEDULERS)) + ") or 'auto'",
+            field="scheduler.name",
+            details={"supported": sorted(_SCHEDULERS)},
+            remedy="set scheduler.name, or 'auto' to use the host's scheduler",
+        )])
+    if name not in _SCHEDULERS:
+        raise JarvisIssueError([make_jarvis_issue(
+            kind="scheduler_unsupported",
+            subject="scheduler",
+            message=f"JARVIS has no {name} scheduler provider yet",
+            identity={"provider": name},
+            field="scheduler.name",
+            details={"requested": requested, "supported": sorted(_SCHEDULERS)},
+            remedy="use a supported scheduler",
+        )])
+    return name
+
+
 def make_scheduler(
     spec: Dict[str, Any],
     pipeline_shared_dir: Path,
@@ -166,15 +225,10 @@ def make_scheduler(
         the snapshot: ``run`` (default) or ``install``.
     :param pipeline_action_args: extra trusted arguments for that command.
     """
-    name = (spec or {}).get("name")
-    if not name:
-        raise ValueError("scheduler.name is required (e.g. 'slurm')")
-
-    name = str(name).strip().lower()
-    cls = _SCHEDULERS.get(name)
-    if cls is None:
-        supported = ", ".join(sorted(_SCHEDULERS))
-        raise ValueError(f"Unsupported scheduler '{name}'. Supported: {supported}")
+    name = resolve_scheduler_name(spec)
+    cls = _SCHEDULERS[name]
+    if str((spec or {}).get("name") or "").strip().lower() != name:
+        spec = {**spec, "name": name}
     return cls(
         spec,
         pipeline_shared_dir,
@@ -1115,8 +1169,17 @@ class SlurmScheduler(Scheduler):
     def partition_facts(cls) -> List[Dict[str, Any]]:
         """Every partition with availability, node counts and time limit."""
         listing, _diagnostic = _run_scheduler_query(
-            ["sinfo", "--noheader", "--format=%P|%a|%F|%l|%c|%m|%G"]
+            ["sinfo", "--noheader", "--format=%P|%a|%F|%l|%c|%m|%G|%X|%Y|%Z"]
         )
+
+        def count(text: str) -> Optional[int]:
+            text = text.rstrip("+")
+            return int(text) if text.isdigit() else None
+
+        def smallest(current: Optional[int], new: Optional[int]) -> Optional[int]:
+            if current is None or new is None:
+                return new if current is None else current
+            return min(current, new)
         if listing is None or listing.returncode != 0:
             return []
         merged: Dict[str, Dict[str, Any]] = {}
@@ -1143,21 +1206,43 @@ class SlurmScheduler(Scheduler):
                     "max_time": fields[3],
                     "max_time_s": _parse_slurm_duration(fields[3]),
                     "cpus_per_node": None,
+                    "sockets_per_node": None,
+                    "cores_per_socket": None,
+                    "threads_per_core": None,
+                    "physical_cores_per_node": None,
                     "memory_mb_per_node": None,
                     "gres": None,
+                    "heterogeneous": False,
                 },
             )
+            seen = "_seen" in entry
+            entry["_seen"] = True
             for key, value in zip(
                 ("allocated_nodes", "idle_nodes", "other_nodes", "total_nodes"),
                 counts,
             ):
                 entry[key] += int(value)
+            # One sinfo line per node configuration. A partition with several
+            # reports the smallest node, so sizing from it fits every node.
             if len(fields) >= 7:
-                cpus = fields[4].rstrip("+")
-                memory = fields[5].rstrip("+")
-                entry["cpus_per_node"] = int(cpus) if cpus.isdigit() else None
-                entry["memory_mb_per_node"] = int(memory) if memory.isdigit() else None
-                entry["gres"] = None if fields[6] in {"", "(null)"} else fields[6]
+                line = {"cpus_per_node": count(fields[4]),
+                        "memory_mb_per_node": count(fields[5])}
+                if len(fields) >= 10:
+                    line["sockets_per_node"] = count(fields[7])
+                    line["cores_per_socket"] = count(fields[8])
+                    line["threads_per_core"] = count(fields[9])
+                    if line["sockets_per_node"] and line["cores_per_socket"]:
+                        line["physical_cores_per_node"] = (
+                            line["sockets_per_node"] * line["cores_per_socket"]
+                        )
+                for key, value in line.items():
+                    if seen and entry[key] is not None and value != entry[key]:
+                        entry["heterogeneous"] = True
+                    entry[key] = smallest(entry[key], value) if seen else value
+                if entry["gres"] is None:
+                    entry["gres"] = None if fields[6] in {"", "(null)"} else fields[6]
+        for entry in merged.values():
+            entry.pop("_seen", None)
         return list(merged.values())
 
     @classmethod

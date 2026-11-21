@@ -53,7 +53,10 @@ of one partition merged:
 | `partition`, `default`, `available` | the name, whether it is the default (`*`), and its state (`up`) |
 | `allocated_nodes`, `idle_nodes`, `other_nodes`, `total_nodes` | node counts |
 | `max_time`, `max_time_s` | the time limit as Slurm prints it, and in seconds |
-| `cpus_per_node`, `memory_mb_per_node`, `gres` | per-node resources |
+| `cpus_per_node`, `memory_mb_per_node`, `gres` | per-node resources. `cpus_per_node` counts hardware threads (Slurm CPUs) |
+| `sockets_per_node`, `cores_per_socket`, `threads_per_core` | the node layout (`sinfo` `%X`, `%Y`, `%Z`) |
+| `physical_cores_per_node` | `sockets_per_node` × `cores_per_socket`: physical cores, without hyperthreads. Size one MPI rank per core from this, not from `cpus_per_node` |
+| `heterogeneous` | `true` when the partition's nodes differ. The per-node fields then give the smallest node, so a job sized from them fits on any node of the partition |
 | `limits` | from `scontrol show partition -o`: `max_time`, `default_time` (with `_s` seconds), `min_nodes`, `max_nodes`, `max_cpus_per_node`, `default_mem_per_cpu_mb`, `max_mem_per_node_mb`, `qos`, `allow_accounts`, `allow_qos`, `allow_groups` (lists), `state`, `total_nodes`, `total_cpus`, `priority_tier`, `oversubscribe`, `exclusive_user`. `UNLIMITED` is kept as that string |
 
 The `mpi` block:

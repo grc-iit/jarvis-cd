@@ -920,7 +920,12 @@ The document holds:
   `execution_profile`, `readiness`, `start_mode`, `starts` (`background` or
   `foreground`), `host_slice`, `nodes` (`{first, end}`), `node_count`, and
   `ports` (`[{parameter, port}]`);
-- `services[]`, the service steps.
+- `services[]`, the service steps;
+- `site_facts` and `questions[]`: a launch over more than one node also
+  evaluates the uncertain cluster facts it rests on (see
+  [Site facts](site-facts.md)). Blocking `site_fact_uncertain` questions go
+  to `questions[]`, which makes `ok` false and the check exit **3**. Advisory
+  ones are added to `warnings[]`.
 
 | Kind | Level | When |
 |------|-------|------|

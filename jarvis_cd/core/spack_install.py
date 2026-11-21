@@ -43,7 +43,7 @@ from typing import IO, Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 import yaml
 
-from jarvis_cd.core.issues import JarvisIssueError
+from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
 
 
 ISSUE_SCHEMA = "jarvis.install-issue.v1"
@@ -1603,6 +1603,118 @@ class Decisions:
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(self.path, yaml.safe_dump(self.data, sort_keys=True))
+
+    def entries(self) -> List[Dict[str, Any]]:
+        """Every recorded answer, with its ``scope`` and ``package``."""
+        found: List[Dict[str, Any]] = []
+        for subject, entry in sorted(self.data["site"].items()):
+            if isinstance(entry, Mapping):
+                found.append({**dict(entry), "scope": "site", "subject": entry.get("subject", subject)})
+        for package, items in sorted(self.data["packages"].items()):
+            for entry in items or []:
+                if isinstance(entry, Mapping):
+                    found.append({**dict(entry), "scope": "package", "package": package})
+        return found
+
+    @staticmethod
+    def _matches(entry: Mapping[str, Any], selector: str) -> bool:
+        if selector == "all":
+            return True
+        if selector.startswith("sha256:") and len(selector) >= len("sha256:") + 8:
+            ids = [entry.get("issue_id"), entry.get("rekeyed_from")]
+            return any(isinstance(item, str) and item.startswith(selector) for item in ids)
+        values = [entry.get("constraint"), entry.get("candidate_id"),
+                  entry.get("candidate_key"), entry.get("answered_constraint")]
+        if entry.get("scope") == "site":
+            values.append(entry.get("subject"))
+        else:
+            values.append(entry.get("package"))
+        return selector in [str(value) for value in values if value is not None]
+
+    def forget(self, selector: str) -> List[Dict[str, Any]]:
+        """Remove the recorded answers ``selector`` names and save.
+
+        ``selector`` is ``all``, an ``issue_id`` (or a prefix of at least 8
+        hex digits, also matching ``rekeyed_from``), a site subject
+        (``mpi``, ``compiler``, ``spack``), a package name, or a chosen
+        ``constraint``, ``candidate_id`` or ``candidate_key``.
+        """
+        selector = str(selector).strip()
+        removed: List[Dict[str, Any]] = []
+        for subject in list(self.data["site"]):
+            entry = self.data["site"][subject]
+            view = {**dict(entry or {}), "scope": "site",
+                    "subject": (entry or {}).get("subject", subject)}
+            if self._matches(view, selector):
+                removed.append(view)
+                del self.data["site"][subject]
+        for package in list(self.data["packages"]):
+            kept = []
+            for entry in self.data["packages"][package] or []:
+                view = {**dict(entry or {}), "scope": "package", "package": package}
+                if self._matches(view, selector):
+                    removed.append(view)
+                else:
+                    kept.append(entry)
+            if kept:
+                self.data["packages"][package] = kept
+            else:
+                del self.data["packages"][package]
+        if removed:
+            self.save()
+        return removed
+
+
+FORGET_SCHEMA = "jarvis.install-forget.v1"
+
+
+def forget_decisions(decisions_path: Path, selectors: Sequence[str]) -> Dict[str, Any]:
+    """Forget recorded answers; the ``jarvis.install-forget.v1`` report.
+
+    Raises :class:`JarvisIssueError` (``decision_not_found``, exit 5) when a
+    selector matches nothing, before anything is removed.
+    """
+    decisions = Decisions(Path(decisions_path))
+    before = decisions.entries()
+    unmatched = [
+        selector for selector in selectors
+        if not any(Decisions._matches(entry, str(selector).strip()) for entry in before)
+    ]
+    if unmatched:
+        raise JarvisIssueError([make_jarvis_issue(
+            kind="decision_not_found",
+            subject="install_decisions",
+            message=(
+                f"No recorded decision matches {', '.join(map(repr, unmatched))} "
+                f"in {decisions_path}."
+            ),
+            field="forget",
+            remedy="name an issue_id, a site subject (mpi, compiler, spack), a "
+            "package, or a recorded constraint/candidate; or use `all`",
+            details={
+                "unmatched": list(unmatched),
+                "decisions_path": str(decisions_path),
+                "recorded": [_decision_summary(entry) for entry in before],
+            },
+        )])
+    forgotten: List[Dict[str, Any]] = []
+    for selector in selectors:
+        for entry in decisions.forget(str(selector)):
+            forgotten.append({**_decision_summary(entry), "selector": selector,
+                              "forgotten_at": _utc_now()})
+    return {
+        "schema_version": FORGET_SCHEMA,
+        "decisions_path": str(decisions_path),
+        "forgotten": forgotten,
+        "remaining": [_decision_summary(entry) for entry in decisions.entries()],
+    }
+
+
+def _decision_summary(entry: Mapping[str, Any]) -> Dict[str, Any]:
+    keys = ("scope", "subject", "package", "kind", "issue_id", "constraint",
+            "candidate_id", "candidate_key", "answered_by", "answered_at",
+            "rekeyed_from")
+    return {key: entry.get(key) for key in keys if entry.get(key) is not None}
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
