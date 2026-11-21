@@ -448,11 +448,20 @@ entry in `applied_decisions` then has `resolved_by: issue_id` and
 `recorded_constraint` (what was stored), and `decisions.yaml` is re-keyed
 in place (`rekeyed_at`), keeping `answered_by`, `ask_id` and `answered_at`.
 An entry written by an older JARVIS has a constraint-based `issue_id` and no
-`candidate_keys`. JARVIS recomputes that older id for the current candidates
-under every listing of their aliases. If one matches, the question is the
-same: the answer is applied with `resolved_by: legacy_issue_id` and the entry
-is re-keyed (`rekeyed_from` holds the old id). Otherwise the answer is stale
-and asked again as above.
+`candidate_keys`. That id can't be recomputed reliably: older listings
+offered each same-prefix `packages.yaml` external as its own candidate. So
+JARVIS accepts such an entry once, when its `constraint` names exactly one
+current candidate (as its constraint, an alias, its id or its key). The
+answer is applied with `resolved_by: legacy_issue_id` and
+`recorded_issue_id` (the old id), and the entry is re-keyed (`rekeyed_from`
+holds the old id). From then on, the strict rule above applies. A legacy
+entry whose constraint names no single candidate is listed in
+`stale_decisions` and asked again.
+
+Several `packages.yaml` externals at one prefix (for example two module
+names for the same install) are one candidate. Their specs are its
+`aliases`, and their `modules` are merged, whether or not the prefix is in
+`spack find` yet.
 
 Every `jarvis.install-report.v1` (`ppl install [+check] +json`) reports:
 

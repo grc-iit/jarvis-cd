@@ -25,7 +25,6 @@ from __future__ import annotations
 import contextlib
 import errno
 import hashlib
-import itertools
 import json
 import os
 import posixpath
@@ -775,30 +774,20 @@ def mpi_candidate_id(name: str, version: str, key: str) -> str:
     return f"{name}-{version}-{hashlib.sha256(key.encode('utf-8')).hexdigest()[:7]}"
 
 
-def _legacy_issue_ids(
-    kind: str, subject: str, candidates: Sequence[Mapping[str, Any]], limit: int = 4096
-) -> set:
-    """Issue ids the same candidate set had under the constraint-based identity.
-
-    Each candidate may have been listed under any of its ``aliases`` before
-    (e.g. ``^openmpi@5.0.5-cphqvsy`` before the external entered ``spack
-    find``), so every combination is tried, up to ``limit``.
-    """
-    choices = [list(item.get("aliases") or [item.get("constraint")]) for item in candidates]
-    total = 1
-    for options in choices:
-        total *= max(1, len(options))
-    if total > limit:
-        choices = [[item.get("constraint")] for item in candidates]
-    return {
-        _issue_digest(
-            _issue_identity(
-                kind=kind, subject=subject, package=None,
-                constraints=[str(c) for c in combination], detail="",
-            )
-        )
-        for combination in itertools.product(*choices)
-    }
+def matching_candidates(
+    candidates: Sequence[Mapping[str, Any]], value: Any
+) -> List[Mapping[str, Any]]:
+    """Every candidate ``value`` names (constraint, alias, id or key)."""
+    text = str(value).strip()
+    found: List[Mapping[str, Any]] = []
+    for candidate in candidates:
+        for field_name in ("constraint", "aliases", "id", "key"):
+            current = candidate.get(field_name)
+            values = current if isinstance(current, (list, tuple)) else [current]
+            if any(item is not None and str(item) == text for item in values):
+                found.append(candidate)
+                break
+    return found
 
 
 def match_candidate(
@@ -1344,14 +1333,23 @@ class SpackPlanner:
                     ),
                     None,
                 )
+                if twin is None:
+                    # Several packages.yaml externals at one prefix (e.g. two
+                    # module names for the same install) are one candidate.
+                    own_key = mpi_candidate_key(
+                        provider, version, str(prefix) if prefix else None, modules, spec
+                    )
+                    twin = next((item for item in extra if item["key"] == own_key), None)
                 if twin is not None:
                     twin["source"] += f"; {origin}"
                     alias = f"^{spec}"
                     if alias not in twin.setdefault("aliases", []):
                         twin["aliases"].append(alias)
                     if modules:
-                        twin["modules"] = modules
-                    if not prefix:
+                        merged = list(twin.get("modules") or [])
+                        merged += [m for m in modules if m not in merged]
+                        twin["modules"] = merged
+                    if not prefix and twin.get("hashes"):
                         # Keep the key the module-only external had before it
                         # entered ``spack find`` (find adds a derived prefix).
                         twin["key"] = mpi_candidate_key(provider, version, None, modules)
@@ -1589,7 +1587,12 @@ class SpackPlanner:
                 "path": str(self.decisions.path),
                 "answered_at": recorded.get("answered_at"),
                 "superseded_by": issue["issue_id"],
-                "reason": "the candidate set changed, so the question changed",
+                "reason": (
+                    "the candidate set changed, so the question changed"
+                    if recorded.get("candidate_keys") is not None or recorded.get("candidate_key")
+                    else "recorded before candidate keys, and its constraint names no "
+                    "single current candidate"
+                ),
             }
             previous = None
             if recorded.get("candidate_key"):
@@ -1633,8 +1636,11 @@ class SpackPlanner:
 
         ``issue_id``: same candidate keys; the answer is found by its
         ``candidate_key`` or by any alias of its constraint. ``legacy_issue_id``:
-        a record written before candidate keys whose constraint-based id is
-        what this same candidate set had under some listing of its aliases.
+        a record written before candidate keys (no ``candidate_keys``). Its
+        constraint-based id can't be recomputed reliably (older listings
+        offered same-prefix externals as separate candidates), so it is
+        accepted once when its constraint names exactly one current
+        candidate; the caller then re-keys it.
         """
         def chosen() -> Optional[Mapping[str, Any]]:
             if recorded.get("candidate_key"):
@@ -1646,11 +1652,10 @@ class SpackPlanner:
         if recorded.get("issue_id") == issue["issue_id"]:
             candidate = chosen()
             return (candidate, "issue_id") if candidate is not None else None
-        if recorded.get("candidate_keys") is None and recorded.get("issue_id") in (
-            _legacy_issue_ids("ambiguous_provider", "mpi", options)
-        ):
-            candidate = chosen()
-            return (candidate, "legacy_issue_id") if candidate is not None else None
+        if recorded.get("candidate_keys") is None and not recorded.get("candidate_key"):
+            named = matching_candidates(options, recorded["constraint"])
+            if len(named) == 1:
+                return named[0], "legacy_issue_id"
         return None
 
     def _concretize_issue(
