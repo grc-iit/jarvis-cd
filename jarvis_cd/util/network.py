@@ -21,6 +21,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+import shutil
 import socket
 import subprocess
 from datetime import datetime, timezone
@@ -32,6 +33,12 @@ LAUNCH_NETWORK_SCHEMA = "jarvis.mpi-network.v1"
 #: ``off``/``none`` disables the graph-driven launch network for one run
 MPI_NETWORK_ENVIRONMENT = "JARVIS_MPI_NETWORK"
 OVERRIDE_FIELD = "resource_graph.net.override"
+#: path of the ``ucx_info`` belonging to the UCX the MPI uses
+UCX_INFO_ENVIRONMENT = "JARVIS_UCX_INFO"
+_UCX_NON_RDMA_TRANSPORTS = frozenset({
+    "tcp", "self", "posix", "sysv", "cma", "knem", "xpmem",
+    "cuda_copy", "cuda_ipc", "gdr_copy", "rocm_copy", "rocm_ipc", "ze_copy", "ze_ipc",
+})
 
 _SYS_NET = Path("/sys/class/net")
 _SYS_IB = Path("/sys/class/infiniband")
@@ -87,23 +94,84 @@ def _interface_kind(name: str, addr: ipaddress.IPv4Interface) -> str:
     return "physical"
 
 
-def _rdma_device(name: str) -> tuple[Optional[str], Optional[str], Optional[str]]:
-    """Return (rdma device, UCX device ``dev:port``, port state) for ``name``."""
+def _rdma_device(
+    name: str,
+) -> tuple[Optional[str], Optional[str], Optional[str], Optional[str]]:
+    """Return (rdma device, ``dev:port``, port state, link layer) for ``name``."""
     ib_dir = _SYS_NET / name / "device" / "infiniband"
     try:
         devices = sorted(entry.name for entry in ib_dir.iterdir())
     except OSError:
-        return None, None, None
+        return None, None, None, None
     if not devices:
-        return None, None, None
+        return None, None, None, None
     device = devices[0]
     dev_port = _read(_SYS_NET / name / "dev_port") or "0"
     try:
         port = int(dev_port, 0) + 1
     except ValueError:
         port = 1
-    state = _read(_SYS_IB / device / "ports" / str(port) / "state")
-    return device, f"{device}:{port}", state
+    port_dir = _SYS_IB / device / "ports" / str(port)
+    return device, f"{device}:{port}", _read(port_dir / "state"), _read(port_dir / "link_layer")
+
+
+def parse_ucx_info_devices(text: str) -> Dict[str, List[str]]:
+    """Map each device ``ucx_info -d`` lists to its RDMA transports.
+
+    Devices UCX only reaches through TCP or shared memory are left out: a
+    device counts for ``UCX_NET_DEVICES`` only when this UCX build has an
+    RDMA transport (``rc_mlx5``, ``rc_verbs``, ``ud_*``, ``dc_*``...) for it.
+    """
+    devices: Dict[str, set] = {}
+    transport = None
+    for line in text.splitlines():
+        match = re.match(r"#\s*Transport:\s*(\S+)", line)
+        if match:
+            transport = match.group(1)
+            continue
+        match = re.match(r"#\s*Device:\s*(\S+)", line)
+        if match and transport and transport not in _UCX_NON_RDMA_TRANSPORTS:
+            devices.setdefault(match.group(1), set()).add(transport)
+    return {device: sorted(transports) for device, transports in sorted(devices.items())}
+
+
+def probe_ucx(timeout: int = 30) -> Dict[str, Any]:
+    """Ask this node's UCX which devices it can drive over RDMA.
+
+    ``$JARVIS_UCX_INFO`` names the ``ucx_info`` of the UCX the MPI uses when
+    that is not the one on ``PATH``. Only fixed arguments are passed.
+    """
+    path = os.environ.get(UCX_INFO_ENVIRONMENT) or shutil.which("ucx_info")
+    if not path:
+        return {"ucx_info": None, "status": "ucx_info_missing"}
+    result: Dict[str, Any] = {"ucx_info": path}
+    try:
+        version = subprocess.run([path, "-v"], capture_output=True, text=True,
+                                 timeout=timeout, check=False).stdout
+        match = re.search(r"version=(\S+)", version or "")
+        result["version"] = match.group(1) if match else None
+        listed = subprocess.run([path, "-d"], capture_output=True, text=True,
+                                timeout=timeout, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        return dict(result, status="ucx_info_failed", error=str(error)[-500:])
+    if listed.returncode != 0:
+        return dict(result, status="ucx_info_failed",
+                    error=(listed.stderr or listed.stdout or "")[-500:])
+    return dict(result, status="ok", rdma_devices=parse_ucx_info_devices(listed.stdout))
+
+
+def ucx_device_status(
+    port: Optional[str], port_state: Optional[str], ucx: Optional[Dict[str, Any]]
+) -> str:
+    """``usable`` only when the port is ACTIVE and this UCX lists it for RDMA."""
+    if "ACTIVE" not in str(port_state or ""):
+        return "port_not_active"
+    status = (ucx or {}).get("status") or "ucx_info_missing"
+    if status != "ok":
+        return status
+    if port not in ((ucx or {}).get("rdma_devices") or {}):
+        return "not_listed_by_ucx"
+    return "usable"
 
 
 def _speed_mbps(name: str) -> Optional[int]:
@@ -158,27 +226,41 @@ def collect_local_interfaces() -> Dict[str, Any]:
     except (OSError, subprocess.SubprocessError) as error:
         result["error"] = f"ip -o -4 addr show failed: {error}"
         return result
+    ucx: Optional[Dict[str, Any]] = None
     for name, cidr_text in _parse_ip_addr(output):
         try:
             addr = ipaddress.IPv4Interface(cidr_text)
         except ValueError:
             continue
-        rdma, ucx, port_state = _rdma_device(name)
-        result["interfaces"].append(
-            {
-                "name": name,
-                "addr": str(addr.ip),
-                "prefixlen": addr.network.prefixlen,
-                "cidr": str(addr.network),
-                "state": (_read(_SYS_NET / name / "operstate") or "unknown").lower(),
-                "speed_mbps": _speed_mbps(name),
-                "kind": _interface_kind(name, addr),
-                "mtu": _int_or_none(_read(_SYS_NET / name / "mtu")),
-                "rdma_device": rdma,
-                "ucx_device": ucx,
-                "rdma_port_state": port_state,
-            }
-        )
+        rdma, port, port_state, link_layer = _rdma_device(name)
+        interface = {
+            "name": name,
+            "addr": str(addr.ip),
+            "prefixlen": addr.network.prefixlen,
+            "cidr": str(addr.network),
+            "state": (_read(_SYS_NET / name / "operstate") or "unknown").lower(),
+            "speed_mbps": _speed_mbps(name),
+            "kind": _interface_kind(name, addr),
+            "mtu": _int_or_none(_read(_SYS_NET / name / "mtu")),
+            "rdma_device": rdma,
+            "ucx_device": None,
+            "rdma_port_state": port_state,
+        }
+        if rdma:
+            if ucx is None:
+                ucx = probe_ucx()
+            status = ucx_device_status(port, port_state, ucx)
+            interface.update({
+                "rdma_port": port,
+                "rdma_link_layer": link_layer,
+                "ucx_status": status,
+                "ucx_transports": ((ucx.get("rdma_devices") or {}).get(port) or []),
+                # Pinned only when this node's UCX can drive the port.
+                "ucx_device": port if status == "usable" else None,
+            })
+        result["interfaces"].append(interface)
+    if ucx is not None:
+        result["ucx"] = ucx
     return result
 
 
@@ -227,10 +309,13 @@ def analyze_net(
         speeds = [interface.get("speed_mbps") for _, interface in members]
         rdma = sorted({interface.get("rdma_device") or "" for _, interface in members})
         ucx = sorted({interface.get("ucx_device") or "" for _, interface in members})
+        ucx_states = {host: interface.get("ucx_status") for host, interface in members
+                      if interface.get("rdma_device")}
         states = {interface.get("state", "unknown") for _, interface in members}
-        port_states = {
-            str(interface.get("rdma_port_state") or "") for _, interface in members
-        }
+        verified = (
+            len(ucx) == 1 and bool(ucx[0]) and len(ucx_states) == len(members)
+            and all(status == "usable" for status in ucx_states.values())
+        )
         excluded = None
         if network.is_loopback or "loopback" in kinds:
             excluded = "loopback"
@@ -250,11 +335,11 @@ def analyze_net(
                     min(speeds) if speeds and all(s is not None for s in speeds) else None
                 ),
                 "rdma_device": rdma[0] if len(rdma) == 1 and rdma[0] else None,
-                "ucx_device": (
-                    ucx[0]
-                    if len(ucx) == 1 and ucx[0] and all("ACTIVE" in s for s in port_states)
-                    else None
-                ),
+                # Only a device every member's UCX verified (port ACTIVE and
+                # listed by ``ucx_info -d`` with an RDMA transport).
+                "ucx_device": ucx[0] if verified else None,
+                "ucx_verified": verified,
+                **({"ucx_status": ucx_states} if ucx_states else {}),
                 "nodes": len(member_hosts),
                 "reaches_all": member_hosts == hosts,
                 "usable": excluded is None,
@@ -305,6 +390,7 @@ def analyze_net(
             host: {
                 "control_addrs": node_facts[host].get("control_addrs", []),
                 "interfaces": node_facts[host].get("interfaces", []),
+                **({"ucx": node_facts[host]["ucx"]} if node_facts[host].get("ucx") else {}),
             }
             for host in hosts
         },
@@ -329,6 +415,7 @@ def _choice(
         "speed_mbps": network.get("speed_mbps"),
         "rdma_device": network.get("rdma_device"),
         "ucx_device": network.get("ucx_device"),
+        "ucx_verified": bool(network.get("ucx_verified")),
         "source": source,
         "reason": why,
     }
@@ -515,19 +602,34 @@ def apply_launch_network(
         return None
     withheld = []
     data = choice.get("data") or {}
-    if (flavour != "cray" and data.get("ucx_device") and choice.get("hosts_not_in_graph")
-            and (choice.get("sources") or {}).get("data") != "override"):
-        # A UCX device is a per-host name, and CIDRs say nothing about it:
-        # the graph only shows it ACTIVE on the nodes it saw. Leave
-        # UCX_NET_DEVICES unset so UCX picks the devices each node has.
-        withheld.append({
-            "setting": "UCX_NET_DEVICES",
-            "value": data["ucx_device"],
-            "hosts": list(choice["hosts_not_in_graph"]),
-            "reason": "the graph never saw these hosts, so it cannot say the "
-                      f"device {data['ucx_device']} is ACTIVE on them; UCX picks "
-                      "its own devices instead",
-        })
+    from_override = (choice.get("sources") or {}).get("data") == "override"
+    if flavour != "cray" and data.get("ucx_device") and not from_override:
+        if not data.get("ucx_verified"):
+            # A graph collected before JARVIS asked UCX itself: the device
+            # may exist in sysfs yet be one this UCX cannot drive.
+            withheld.append({
+                "setting": "UCX_NET_DEVICES",
+                "value": data["ucx_device"],
+                "hosts": list(choice.get("hosts") or []),
+                "cause": "unverified_graph",
+                "reason": "the graph predates UCX verification, so nothing shows "
+                          f"this UCX can drive {data['ucx_device']}; re-collect the "
+                          "net section to pin it",
+            })
+        elif choice.get("hosts_not_in_graph"):
+            # A UCX device is a per-host name, and CIDRs say nothing about it:
+            # the graph only shows it usable on the nodes it saw. Leave
+            # UCX_NET_DEVICES unset so UCX picks the devices each node has.
+            withheld.append({
+                "setting": "UCX_NET_DEVICES",
+                "value": data["ucx_device"],
+                "hosts": list(choice["hosts_not_in_graph"]),
+                "cause": "hosts_not_in_graph",
+                "reason": "the graph never saw these hosts, so it cannot say the "
+                          f"device {data['ucx_device']} is usable on them; UCX picks "
+                          "its own devices instead",
+            })
+    if withheld:
         choice = dict(choice, data={k: v for k, v in data.items() if k != "ucx_device"})
     settings = flavour_settings(flavour, choice)
     applied: Dict[str, Any] = {"launcher_env": {}, "rank_env": {}, "args": {}}
@@ -557,8 +659,9 @@ def apply_launch_network(
         record["hosts_not_in_graph_check"] = classify_hosts_not_in_graph(
             flavour, choice, record["hosts_not_in_graph"]
         )
-        if withheld:
-            record["hosts_not_in_graph_check"]["withheld"] = withheld
+        unseen = [item for item in withheld if item["cause"] == "hosts_not_in_graph"]
+        if unseen:
+            record["hosts_not_in_graph_check"]["withheld"] = unseen
     return record
 
 

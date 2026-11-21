@@ -49,7 +49,45 @@ Inside an allocation you can also run `jarvis rg build +net_only` directly.
 full `jarvis rg build` collects both. Each node reports its hostname, its
 hostname addresses (`control_addrs`), and per IPv4 interface: `name`, `addr`,
 `cidr`, `state`, `speed_mbps`, `kind`, `rdma_device`, `rdma_port_state` and
-`ucx_device`.
+`ucx_device`. Interfaces with an RDMA device also carry `rdma_port`
+(`dev:port`), `rdma_link_layer`, `ucx_status` and `ucx_transports`, and the
+node carries a `ucx` summary (see below).
+
+### UCX device verification
+
+A device in sysfs is not necessarily one UCX can use: the port may be down,
+the link layer may need transports this UCX build lacks, or the UCX the MPI
+loads may have no verbs support at all. So the collector asks UCX itself,
+once per node: it runs `ucx_info -v` and `ucx_info -d` (fixed arguments, no
+other code) and keeps the devices listed with an RDMA transport (`rc_*`,
+`ud_*`, `dc_*`, ...; `tcp`, shared-memory and GPU-copy transports don't
+count). Each RDMA interface gets a `ucx_status`:
+
+| `ucx_status` | Meaning |
+| --- | --- |
+| `usable` | the port is ACTIVE and `ucx_info -d` lists it with an RDMA transport |
+| `port_not_active` | the port state isn't ACTIVE |
+| `not_listed_by_ucx` | the port is ACTIVE, but this UCX lists no RDMA transport for it |
+| `ucx_info_missing` | no `ucx_info` to ask |
+| `ucx_info_failed` | `ucx_info` exited non-zero or timed out (`ucx.error`) |
+
+The interface's `ucx_device` is set only when the status is `usable`, and the
+network's `ucx_device` only when every member is usable on the same device
+(`ucx_verified: true`). Otherwise `UCX_NET_DEVICES` is not set, and the site
+fact explains why (`rdma_not_active` or `ucx_device_unusable`). The node's
+`ucx` summary records `ucx_info` (path), `version`, `status` and
+`rdma_devices` (device to transports).
+
+The `ucx_info` that counts is the one of the UCX the MPI loads. JARVIS uses
+`$JARVIS_UCX_INFO` when set, otherwise `ucx_info` on the collecting job's
+`PATH`, and passes that absolute path to every node it collects over SSH. If
+the MPI uses a different UCX (for example a Spack one), point
+`JARVIS_UCX_INFO` at its `ucx_info` and re-collect.
+
+A graph collected before this verification has `ucx_device` without
+`ucx_verified`. JARVIS no longer trusts it: at launch `UCX_NET_DEVICES` is
+withheld (`withheld[].cause: unverified_graph`) until the net is
+re-collected, unless the data network comes from a person's override.
 
 ### How the collector runs on each node
 
@@ -100,7 +138,9 @@ net:
       kind: physical                 # physical, bond, vlan, ipoib, virtual, ...
       speed_mbps: 40000              # slowest member
       rdma_device: rocep47s0
-      ucx_device: rocep47s0:1        # only when every port is ACTIVE
+      ucx_device: rocep47s0:1        # only when UCX can use it on every node
+      ucx_verified: true
+      ucx_status: {ares-comp-01: usable, ares-comp-02: usable}
       nodes: 2
       reaches_all: true
       usable: true
@@ -171,7 +211,7 @@ choice and applies each flavour's own settings:
 | MPICH (Hydra) | `-iface <data iface>` and `HYDRA_IFACE` | `MPIR_CVAR_CH3_NETWORK_IFACE`, `FI_TCP_IFACE` = data iface (`-genv`) |
 | Intel MPI | `I_MPI_HYDRA_IFACE` = control iface | `FI_TCP_IFACE`, `FI_SOCKETS_IFACE` = data iface |
 | Cray MPICH | nothing: Cray drives the high-speed network itself | nothing |
-| any but Cray, when data has a `ucx_device` and every launch host is in the graph (or the device comes from an override) | `UCX_NET_DEVICES` | `UCX_NET_DEVICES` |
+| any but Cray, when data has a verified `ucx_device` and every launch host is in the graph (or the device comes from an override) | `UCX_NET_DEVICES` | `UCX_NET_DEVICES` |
 
 Open MPI takes CIDRs, which stay correct when interface names differ
 between nodes. Hydra and Intel MPI need a name.
@@ -216,11 +256,13 @@ advisory `hosts_not_in_graph` [site-fact question](site-facts.md) in
 blocking question for MPICH and Intel MPI.
 
 A device name is a per-host fact that CIDRs don't cover: the graph shows the
-data network's `ucx_device` ACTIVE only on the nodes it saw. So when any
+data network's `ucx_device` usable only on the nodes it saw. So when any
 launch host is outside the graph, `UCX_NET_DEVICES` is withheld and UCX picks
 the devices each node has. The CIDR settings still apply. The launch record's
-`withheld[]` (and `hosts_not_in_graph_check.withheld`) has `setting`,
-`value`, `hosts` and `reason`, and the launch raises an advisory
+`withheld[]` has `setting`, `value`, `hosts`, `cause` (`hosts_not_in_graph`
+or `unverified_graph`, see [UCX device verification](#ucx-device-verification))
+and `reason`; the `hosts_not_in_graph` entries are also in
+`hosts_not_in_graph_check.withheld`. The launch raises an advisory
 `device_unverified` site-fact question. A device set by `rg net set` is a
 person's answer and is never withheld. To get the device pinned again,
 collect the net section in a job that spans every launch node (for example,
@@ -229,7 +271,8 @@ collect the net section in a job that spans every launch node (for example,
 ## Uncertain picks
 
 When the pick rests on an uncertain fact (near-equal data networks,
-interface names that differ, an RDMA port that isn't ACTIVE, a control
+interface names that differ, an RDMA port that isn't ACTIVE or that UCX
+can't use, a control
 fallback, a net collected outside an allocation, unseen hosts, or no
 reachable network), JARVIS raises a typed `site_fact_uncertain` question
 instead of guessing silently. `rg net show` reports it under `site_facts`.

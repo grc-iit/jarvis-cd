@@ -44,6 +44,8 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
 
+UCX_INFO_ENVIRONMENT = "JARVIS_UCX_INFO"
+
 SITE_FACT_KIND = "site_fact_uncertain"
 SITE_FACTS_SCHEMA = "jarvis.site-facts.v1"
 ANSWER_SCHEMA = "jarvis.site-fact-answer.v1"
@@ -232,8 +234,11 @@ def _why(network: Dict[str, Any], rank: Optional[int], total_nodes: int,
     if network.get("interface") is None:
         parts.append("interface names differ between nodes")
     if network.get("rdma_device"):
-        parts.append(f"RDMA {network.get('rdma_device')}"
-                     + ("" if network.get("ucx_device") else " (not ACTIVE on every node)"))
+        statuses = set((network.get("ucx_status") or {}).values())
+        parts.append(f"RDMA {network.get('rdma_device')}" + (
+            "" if network.get("ucx_device") else
+            " (not ACTIVE on every node)" if "port_not_active" in statuses or not statuses else
+            " (UCX cannot use it on every node)"))
     if picks:
         parts.append("picked as " + " and ".join(picks))
     return ", ".join(parts)
@@ -312,11 +317,24 @@ def net_launch_reasons(
 
     network = by_cidr.get((data or {}).get("cidr"))
     if network is not None:
-        states = {}
+        states, ucx_hosts = {}, {}
         for host in graph_hosts:
             interface = _node_interface(net, host, network["cidr"]) or {}
-            if interface.get("rdma_device"):
-                states[host] = interface.get("rdma_port_state") or "unknown"
+            if not interface.get("rdma_device"):
+                continue
+            states[host] = interface.get("rdma_port_state") or "unknown"
+            status = interface.get("ucx_status")
+            if status and status not in ("usable", "port_not_active"):
+                ucx = ((net.get("nodes") or {}).get(host) or {}).get("ucx") or {}
+                ucx_hosts[host] = {
+                    "status": status,
+                    "port": interface.get("rdma_port"),
+                    "link_layer": interface.get("rdma_link_layer"),
+                    "ucx_info": ucx.get("ucx_info"),
+                    "ucx_version": ucx.get("version"),
+                    "ucx_rdma_devices": sorted((ucx.get("rdma_devices") or {})),
+                    **({"error": ucx["error"]} if ucx.get("error") else {}),
+                }
         inactive = {h: s for h, s in states.items() if "ACTIVE" not in str(s)}
         if states and (inactive or len(states) < len(graph_hosts)):
             add("rdma_not_active", ADVISORY, ("data",),
@@ -324,6 +342,26 @@ def net_launch_reasons(
                 "on every node, so UCX_NET_DEVICES is not set",
                 "the run uses TCP on that network instead of RDMA: correct, but slower",
                 port_states=states)
+        if ucx_hosts:
+            add("ucx_device_unusable", ADVISORY, ("data",),
+                f"data {network['cidr']} has an RDMA device whose port is ACTIVE, "
+                "but UCX on " + ", ".join(sorted(ucx_hosts)) + " cannot use it "
+                "(" + ", ".join(sorted({v["status"] for v in ucx_hosts.values()}))
+                + "), so UCX_NET_DEVICES is not set",
+                "UCX picks its own devices, likely TCP: correct, but slower. If the "
+                "MPI uses a different UCX than the ucx_info checked, set "
+                f"{UCX_INFO_ENVIRONMENT} to its ucx_info and re-collect",
+                ucx=ucx_hosts)
+
+    override_roles = (net.get("override") or {})
+    if (hosts_check is None and flavour != "cray" and (data or {}).get("ucx_device")
+            and not (data or {}).get("ucx_verified") and "data" not in override_roles):
+        add("device_unverified", ADVISORY, ("data",),
+            f"the graph's UCX device {data['ucx_device']} predates UCX "
+            "verification (no ucx_verified)",
+            f"UCX_NET_DEVICES={data['ucx_device']} is withheld at launch, so UCX "
+            "picks its own devices; re-collect the net section to pin it",
+            withholds=["UCX_NET_DEVICES"], value=data["ucx_device"])
 
     control_net = by_cidr.get((control or {}).get("cidr"))
     if control_net is not None and graph_hosts:
@@ -356,12 +394,14 @@ def net_launch_reasons(
                 hosts=[entry.get("host") for entry in hosts_check.get("hosts") or []])
         for item in hosts_check.get("withheld") or []:
             add("device_unverified", ADVISORY, ("data",),
-                f"{item.get('setting')}={item.get('value')} was withheld: the "
-                "graph never saw " + ", ".join(item.get("hosts") or []),
+                f"{item.get('setting')}={item.get('value')} was withheld: "
+                + (item.get("reason") or "the graph never saw "
+                   + ", ".join(item.get("hosts") or [])),
                 "UCX picks its own devices on every node: correct, but it may "
                 "use TCP where the RDMA device would be faster",
                 setting=item.get("setting"), value=item.get("value"),
-                hosts=list(item.get("hosts") or []))
+                hosts=list(item.get("hosts") or []),
+                cause=item.get("cause") or "hosts_not_in_graph")
     elif launch_nodes is not None and launch_nodes > len(graph_hosts):
         severity = BLOCK if needs_names else ADVISORY
         device = (data or {}).get("ucx_device") if flavour != "cray" else None
@@ -388,16 +428,24 @@ def _evidence(net: Dict[str, Any], flavour: Optional[str],
             "ucx_device", "nodes", "reaches_all", "usable", "excluded_reason")
     iface_keep = ("name", "cidr", "addr", "kind", "speed_mbps", "state", "rdma_device",
                   "rdma_port_state", "ucx_device")
+    # Collected since UCX verification; absent keys stay out so older
+    # graphs keep their digests.
+    iface_optional = ("rdma_port", "rdma_link_layer", "ucx_status", "ucx_transports")
     nodes = {}
     for host in sorted(net.get("collected_on") or []):
         node = (net.get("nodes") or {}).get(host) or {}
         nodes[host] = {
             "control_addrs": sorted(node.get("control_addrs") or []),
             "interfaces": sorted(
-                ({key: interface.get(key) for key in iface_keep}
+                ({**{key: interface.get(key) for key in iface_keep},
+                  **{key: interface[key] for key in iface_optional if key in interface}}
                  for interface in node.get("interfaces") or []),
                 key=lambda item: (str(item.get("cidr")), str(item.get("name")))),
         }
+        if node.get("ucx"):
+            ucx = node["ucx"]
+            nodes[host]["ucx"] = {"status": ucx.get("status"), "ucx_info": ucx.get("ucx_info"),
+                                  "rdma_devices": ucx.get("rdma_devices") or {}}
     return {
         "fact": NET_LAUNCH,
         "flavour_needs_names": flavour in ("mpich", "intel"),
@@ -427,7 +475,8 @@ def _net_probes(net: Dict[str, Any], reasons: Sequence[Dict[str, Any]]) -> List[
     for name in interfaces:
         probes.append({"command": f"cat /sys/class/net/{name}/speed /sys/class/net/{name}/operstate",
                        "on": "each launch node", "why": f"link speed and state of {name}"})
-    if "rdma_not_active" in codes or any(n.get("rdma_device") for n in _ranked(net)):
+    if (codes & {"rdma_not_active", "ucx_device_unusable", "device_unverified"}
+            or any(n.get("rdma_device") for n in _ranked(net))):
         probes.append({"command": "ibv_devinfo", "on": "each launch node",
                        "why": "RDMA port state (PORT_ACTIVE) and link layer"})
         probes.append({"command": "ucx_info -d", "on": "one launch node",
@@ -871,10 +920,12 @@ def launch_site_facts(flavour: str, net: Optional[Dict[str, Any]],
         return None
     from jarvis_cd.util.network import active_graph_file
 
+    hosts_check = dict(record.get("hosts_not_in_graph_check") or {"severity": "info", "hosts": []})
+    hosts_check["withheld"] = list(record.get("withheld") or [])
     return site_fact_report(
         active_graph_file(), net, flavour=mpi_flavour(flavour),
         launch_nodes=len(record.get("hosts") or []),
-        hosts_check=record.get("hosts_not_in_graph_check") or {"severity": "info", "hosts": []},
+        hosts_check=hosts_check,
         stage="launch",
     )
 

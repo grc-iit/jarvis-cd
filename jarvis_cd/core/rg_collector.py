@@ -395,6 +395,13 @@ def collector_command(
     parts = [
         "env",
         f"PYTHONPATH={shlex.quote(str(package_root))}",
+    ]
+    # Every node checks UCX with the ucx_info this (job) environment resolves,
+    # not whatever a bare remote shell finds on its PATH.
+    ucx_info = os.environ.get("JARVIS_UCX_INFO") or shutil.which("ucx_info")
+    if ucx_info:
+        parts.append(f"JARVIS_UCX_INFO={shlex.quote(os.path.abspath(ucx_info))}")
+    parts += [
         shlex.quote(os.path.abspath(sys.executable)),
         "-m",
         "jarvis_cd.core.rg_collector",

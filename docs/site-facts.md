@@ -68,7 +68,10 @@ cluster does:
   exclusions);
 - per node: the control addresses, and each interface's `name`, `cidr`,
   `addr`, `kind`, `speed_mbps`, `state`, `rdma_device`, `rdma_port_state` and
-  `ucx_device`.
+  `ucx_device`, plus `rdma_port`, `rdma_link_layer`, `ucx_status` and
+  `ucx_transports` when the collector recorded them, and the node's `ucx`
+  `status`, `ucx_info` and `rdma_devices`. Keys an older collector didn't
+  record stay out, so those graphs keep their digests.
 
 It holds no timestamps, flavour name, reason codes or override, so
 re-collecting the same cluster gives the same `issue_id`.
@@ -85,10 +88,11 @@ JARVIS's pick, and the issue rides along so an agent can still engage.
 | `near_equal_data` | another network has the data network's class and is within 10% of its speed, or both speeds are unknown | advisory |
 | `interface_names_differ` | the data or control network has different interface names on the nodes | block for MPICH and Intel MPI (they take a name); advisory when the flavour isn't known yet; silent for Open MPI (it takes the CIDR) |
 | `rdma_not_active` | the data network has an RDMA device whose port isn't ACTIVE on every node, so `UCX_NET_DEVICES` isn't set | advisory |
+| `ucx_device_unusable` | the data network's RDMA port is ACTIVE, but UCX on some nodes can't use it (`ucx_status` `not_listed_by_ucx`, `ucx_info_missing` or `ucx_info_failed`), so `UCX_NET_DEVICES` isn't set. `ucx` maps each such host to its `status`, `port`, `link_layer`, `ucx_info`, `ucx_version` and `ucx_rdma_devices` | advisory |
 | `control_fallback` | no network holds every node's hostname address, so control fell back (possibly to the data network) | advisory |
 | `collected_outside_allocation` | the net section wasn't collected inside a scheduler allocation | advisory |
 | `hosts_not_in_graph` | before submit: the job asks more nodes than the graph was collected on (`withholds: ["UCX_NET_DEVICES"]` when the data network has a UCX device). At launch: the [hosts check](resource-graph-network.md#hosts-the-graph-has-not-seen) is a `warning` | before submit, block for MPICH and Intel MPI, advisory otherwise. At launch, advisory |
-| `device_unverified` | at launch: the graph's `ucx_device` was withheld because some launch hosts aren't in the graph (`setting`, `value`, `hosts`) | advisory |
+| `device_unverified` | the graph's `ucx_device` is withheld. At launch: because some launch hosts aren't in the graph (`cause: hosts_not_in_graph`), or because the graph predates UCX verification (`cause: unverified_graph`); it carries `setting`, `value`, `hosts`. Before submit: only the `unverified_graph` case (`withholds: ["UCX_NET_DEVICES"]`) | advisory |
 
 At the `launch` stage a question never blocks, because the allocation is
 already running. It is recorded with the launch instead.
