@@ -316,7 +316,13 @@ so it is safe on a login node. See [sched.md](sched.md).
 or calling `sbatch`. A blocking site-fact question (for example MPICH with
 interface names that differ between nodes) refuses with exit 3, also before
 any scheduler call. Advisory questions are submitted with the job and kept
-in the record's `metadata.site_facts` (see [Site facts](site-facts.md)). See
+in the record's `metadata.site_facts` (see [Site facts](site-facts.md)).
+`site_facts.net_plan` says what the MPI launch will do about the network. A
+multi-node job on a site whose graph has no net facts for its nodes (for
+example right after a site clean) gets the advisory `net_not_collected`: the
+launch [collects the facts](resource-graph-network.md#collected-at-launch)
+inside the allocation before it starts MPI, and refuses rather than launching
+blind if a host returns none. See
 [pipelines.md → Coupling and configuration checks](pipelines.md#coupling-and-configuration-checks-ppl-check).
 
 ## Cancelling and stopping executions

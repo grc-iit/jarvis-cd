@@ -84,9 +84,18 @@ class LocalMpiExec(LocalExec):
         The graph's ``net`` section (or a person's override in it) picks the
         networks; the flavour turns them into its own settings. Settings the
         pipeline already made win, and ``JARVIS_MPI_NETWORK=off`` disables
-        it. Best effort: a missing graph changes nothing.
+        it.
+
+        A launch that crosses nodes never goes out blind: when the graph has
+        no net section, misses some launch hosts, or predates UCX
+        verification, the net facts are collected on the launch hosts first
+        (read-only, inside the allocation) and saved as the graph's net
+        section. A collection that misses a host with no facts, or a
+        ``block`` site fact in the fresh facts, refuses the launch with a
+        typed issue.
         """
         import os
+        from ..core.issues import JarvisIssueError
         from ..util import network as net_util
 
         self.network_args = {}
@@ -94,36 +103,148 @@ class LocalMpiExec(LocalExec):
             self.mpi_env, os.environ
         ):
             return None
+        hosts = list(self.hostfile.hosts)
+        collected = None
+        record = None
         try:
-            choice = net_util.resolve_launch_network(
-                net_util.load_net_section(), list(self.hostfile.hosts)
-            )
-            if not choice:
-                return None
-            # Never mutate the package's env dict; ranks get a copy.
-            self.mpi_env = dict(self.mpi_env or {})
-            record = net_util.apply_launch_network(
-                self.network_flavour,
-                choice,
-                launcher_env=launcher_env,
-                rank_env=self.mpi_env,
-            )
-        except Exception as error:  # never block a launch on graph errors
-            return {'error': str(error)}
-        self.network_args = dict((record or {}).get('applied', {}).get('args', {}))
-        if record:
-            try:
-                from ..core.site_facts import launch_site_facts
-
-                # Advisory only: the launch already passed the pre-launch gate.
-                report = launch_site_facts(
-                    self.network_flavour, net_util.load_net_section(), record
+            net = net_util.load_net_section()
+            if self.network_flavour != 'cray':
+                collected = self._collect_launch_net(net, hosts)
+                if collected and collected.get('net'):
+                    net = collected['net']
+            choice = net_util.resolve_launch_network(net, hosts)
+            if choice:
+                # Never mutate the package's env dict; ranks get a copy.
+                self.mpi_env = dict(self.mpi_env or {})
+                record = net_util.apply_launch_network(
+                    self.network_flavour,
+                    choice,
+                    launcher_env=launcher_env,
+                    rank_env=self.mpi_env,
                 )
-                if report and (report.get('issues') or report.get('confirmed')):
-                    record['site_facts'] = report
-            except Exception as error:
-                record['site_facts'] = {'error': str(error)[:500]}
+            elif collected and collected.get('net'):
+                # Fresh facts with no usable network: the gate below decides.
+                record = {
+                    'schema_version': net_util.LAUNCH_NETWORK_SCHEMA,
+                    'data': None, 'control': None,
+                    'hosts': sorted({net_util._short(h) for h in hosts}),
+                    'hosts_not_in_graph': [],
+                    'flavour': self.network_flavour,
+                    'applied': {'launcher_env': {}, 'rank_env': {}, 'args': {}},
+                    'kept_from_caller': {},
+                }
+        except JarvisIssueError:
+            raise
+        except Exception as error:  # never block a launch on graph errors
+            failed = {'error': str(error)}
+            if collected:
+                failed['collected_at_launch'] = collected.get('summary')
+            return failed
+        if collected:
+            record = dict(record or {}, collected_at_launch=collected.get('summary'))
+        if not record:
+            return None
+        self.network_args = dict((record or {}).get('applied', {}).get('args', {}))
+        gate = bool(collected and collected.get('net'))
+        report = None
+        try:
+            from ..core.site_facts import launch_site_facts
+
+            # Facts the pre-launch check already saw are advisory here; facts
+            # collected by this launch pass the same block rules as a check.
+            report = launch_site_facts(self.network_flavour, net, record, collected=gate)
+            if report and (report.get('issues') or report.get('confirmed')):
+                record['site_facts'] = report
+        except Exception as error:
+            record['site_facts'] = {'error': str(error)[:500]}
+        if gate and report and report.get('blocking'):
+            from ..core.site_facts import EXIT_SITE_FACT
+
+            blocking = []
+            for issue in report['issues']:
+                if issue.get('blocking'):
+                    issue = dict(issue)
+                    issue['details'] = dict(
+                        issue.get('details') or {},
+                        collected_at_launch=record.get('collected_at_launch'))
+                    blocking.append(issue)
+            raise JarvisIssueError(
+                blocking,
+                exit_code=EXIT_SITE_FACT,
+                document={'site_facts': report,
+                          'collected_at_launch': record.get('collected_at_launch')},
+            )
         return record
+
+    def _collect_launch_net(self, net, hosts):
+        """Collect the launch hosts' net facts when the graph lacks them.
+
+        Returns None when the graph covers the launch, else
+        ``{"summary": ..., "net": <fresh net section or None>}``.
+        """
+        import time
+        from ..core.issues import JarvisIssueError
+        from ..util import network as net_util
+
+        if not net_util.launch_crosses_network(hosts):
+            return None
+        reasons = net_util.net_collect_reasons(net, hosts=hosts)
+        if not reasons:
+            return None
+        from ..core.rg_collector import collect_failure_issue, collect_net_facts
+
+        unique = list(dict.fromkeys(hosts))
+        started = time.time()
+        try:
+            result = collect_net_facts(unique, ssh_port=self.ssh_port)
+        except Exception as error:  # a launch that needs facts never goes blind
+            result = {'facts': {}, 'failures': {
+                host: {'host': host, 'via': None, 'exit_code': None, 'stderr': '',
+                       'reason': f'error running the collector: {error}'}
+                for host in unique}}
+        facts, failures = result['facts'], result['failures']
+        summary = {
+            'reasons': reasons,
+            'hosts': unique,
+            'collected': sorted(facts),
+            'failed': sorted(failures),
+            'seconds': round(time.time() - started, 3),
+        }
+        if failures:
+            if reasons == ['graph_predates_ucx_verification']:
+                # Every host has facts already; only the UCX pin waits.
+                summary['fallback'] = ('the stored graph; its UCX device stays '
+                                       'withheld (cause unverified_graph)')
+                summary['failures'] = [failures[h] for h in sorted(failures)]
+                return {'summary': summary, 'net': None}
+            raise JarvisIssueError(
+                [collect_failure_issue(unique, sorted(facts),
+                                       [failures[h] for h in sorted(failures)],
+                                       stage='launch')],
+                document={'collected_at_launch': summary},
+            )
+        try:
+            fresh = net_util.analyze_net(facts, override=(net or {}).get('override'))
+        except Exception as error:
+            from ..core.issues import make_jarvis_issue
+
+            raise JarvisIssueError([make_jarvis_issue(
+                kind='resource_graph_net_invalid',
+                subject='resource graph net',
+                message=('The net facts collected on the launch hosts could not be '
+                         f'analyzed ({error}); the MPI launch was refused rather '
+                         'than sent out with no network.'),
+                identity={'hosts': sorted(unique)},
+                field='resource_graph.net',
+                details={'stage': 'launch', 'error': str(error)[:500],
+                         'collected_at_launch': summary},
+            )]) from error
+        summary['persisted'] = net_util.persist_net_section(fresh)
+        summary['selected'] = {
+            role: (choice or {}).get('cidr')
+            for role, choice in (fresh.get('selected') or {}).items()
+        }
+        return {'summary': summary, 'net': fresh}
 
     def _process_cmd_list(self, cmd_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """

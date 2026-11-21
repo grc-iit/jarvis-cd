@@ -259,11 +259,14 @@ def net_launch_reasons(
     hosts_check: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """The deterministic uncertainty rules for the MPI launch network."""
+    from jarvis_cd.util.network import predates_ucx_verification
+
     selected = net.get("selected") or {}
     data, control = selected.get("data"), selected.get("control")
     by_cidr = {n.get("cidr"): n for n in net.get("networks") or []}
     graph_hosts = list(net.get("collected_on") or [])
     needs_names = flavour in ("mpich", "intel")
+    override_roles = net.get("override") or {}
     reasons: List[Dict[str, Any]] = []
 
     def add(code, severity, roles, message, consequence, **extra):
@@ -353,15 +356,16 @@ def net_launch_reasons(
                 f"{UCX_INFO_ENVIRONMENT} to its ucx_info and re-collect",
                 ucx=ucx_hosts)
 
-    override_roles = (net.get("override") or {})
-    if (hosts_check is None and flavour != "cray" and (data or {}).get("ucx_device")
-            and not (data or {}).get("ucx_verified") and "data" not in override_roles):
+    if "data" not in override_roles and (hosts_check is None and flavour != "cray"
+                                         and predates_ucx_verification(net)):
+        device = (data or {}).get("ucx_device") or (data or {}).get("rdma_device")
         add("device_unverified", ADVISORY, ("data",),
-            f"the graph's UCX device {data['ucx_device']} predates UCX "
-            "verification (no ucx_verified)",
-            f"UCX_NET_DEVICES={data['ucx_device']} is withheld at launch, so UCX "
-            "picks its own devices; re-collect the net section to pin it",
-            withholds=["UCX_NET_DEVICES"], value=data["ucx_device"])
+            f"the graph's RDMA device {device} predates UCX verification "
+            "(no ucx_verified)",
+            "each multi-node MPI launch collects the net facts on its hosts first, "
+            "inside the allocation, and sets UCX_NET_DEVICES only if UCX verifies "
+            "the device there; if that collection fails the device is withheld",
+            withholds=["UCX_NET_DEVICES"], value=device, plan="collect_at_launch")
 
     control_net = by_cidr.get((control or {}).get("cidr"))
     if control_net is not None and graph_hosts:
@@ -403,18 +407,17 @@ def net_launch_reasons(
                 hosts=list(item.get("hosts") or []),
                 cause=item.get("cause") or "hosts_not_in_graph")
     elif launch_nodes is not None and launch_nodes > len(graph_hosts):
-        severity = BLOCK if needs_names else ADVISORY
-        device = (data or {}).get("ucx_device") if flavour != "cray" else None
-        add("hosts_not_in_graph", severity, ("data", "control"),
+        # Advisory at check time: the hosts are not known yet, and the launch
+        # collects their facts inside the allocation before it applies any.
+        add("hosts_not_in_graph", ADVISORY, ("data", "control"),
             f"the job asks {launch_nodes} nodes but the graph was collected on "
             f"{len(graph_hosts)}",
-            ((f"{flavour} sets interface names the graph never saw on the other "
-              "nodes; a wrong name fails the launch") if needs_names else
-             ("Open MPI takes CIDRs, which fit any node with an address in them; "
-              "a node without one fails the launch with an mpi_network issue"))
-            + (f"; UCX_NET_DEVICES={device} is withheld at launch, so UCX picks "
-               "its own devices" if device else ""),
-            **({"withholds": ["UCX_NET_DEVICES"]} if device else {}))
+            "the launch collects the net facts on its hosts first, inside the "
+            "allocation, and applies the settings those facts give; a block-class "
+            "finding there"
+            + (f" (e.g. {flavour} interface names that differ)" if needs_names else "")
+            + " refuses the launch with exit 3 instead of guessing",
+            plan="collect_at_launch")
     return reasons
 
 
@@ -564,6 +567,8 @@ def net_launch_issue(
     severity = BLOCK if any(r["severity"] == BLOCK for r in reasons) else ADVISORY
     if stage == "launch":
         # Inside an allocation the run goes ahead; the issue is advisory.
+        # ``launch_collected`` (facts this launch collected, which no check
+        # saw) keeps the check's block rules.
         severity = ADVISORY
     from jarvis_cd.util.network import resolve_launch_network
 
@@ -897,25 +902,112 @@ def _pipeline_flavour(ppl: Any) -> Optional[str]:
     return flavours.pop() if len(flavours) == 1 else None
 
 
+def _net_plan(net: Optional[Dict[str, Any]], launch_nodes: int) -> Dict[str, Any]:
+    """What the MPI launch will do about the network, for check and submit."""
+    from jarvis_cd.util.network import net_collect_reasons
+
+    reasons = net_collect_reasons(net, launch_nodes=launch_nodes)
+    if not reasons:
+        return {"action": "use_graph", "reasons": [],
+                "note": "the launch applies the graph's net section as is"}
+    return {
+        "action": "collect_at_launch",
+        "reasons": reasons,
+        "note": ("before each multi-node MPI launch JARVIS collects the net facts "
+                 "on that launch's hosts (read-only, inside the allocation), saves "
+                 "them as the graph's net section and applies the normal selection; "
+                 "a host that returns no facts, or a block-class site fact in the "
+                 "fresh facts, refuses the launch with a typed issue instead of "
+                 "launching with no network"),
+    }
+
+
+def _net_not_collected_issue(launch_nodes: int, flavour: Optional[str],
+                             plan: Dict[str, Any]) -> Dict[str, Any]:
+    field = f"{ANSWER_FIELD_PREFIX}.{NET_LAUNCH}"
+    issue = make_jarvis_issue(
+        kind=SITE_FACT_KIND,
+        subject="net",
+        message=(
+            f"The resource graph has no net facts, and this launch crosses "
+            f"{launch_nodes} nodes. JARVIS will collect them on the launch hosts, "
+            "inside the allocation, before the MPI launch, then apply the normal "
+            "network selection. Nothing to answer now."
+        ),
+        identity={"fact": NET_LAUNCH, "reason": "net_not_collected"},
+        field=field,
+        details={
+            "schema_version": SITE_FACTS_SCHEMA,
+            "fact": NET_LAUNCH,
+            "severity": ADVISORY,
+            "blocking": False,
+            "stage": "check",
+            "plan": plan["action"],
+            "reasons": [{
+                "code": "net_not_collected", "severity": ADVISORY,
+                "roles": ["data", "control"],
+                "message": "the resource graph has no net section",
+                "consequence": ("the launch collects the net facts first; a host "
+                                "with no facts, or a block-class finding in them, "
+                                "refuses the launch (exit 3 for a site fact) "
+                                "rather than launching blind"),
+                "plan": plan["action"],
+            }],
+            "pick": {"data": None, "control": None, "flavour": flavour,
+                     "consequence_if_wrong": []},
+            "probes": [{"purpose": "collect the net facts ahead of time (optional)",
+                        "command": "jarvis ppl submit <site_net.yaml> (builtin.resource_graph "
+                                   "net_only=true over the nodes)"}],
+            "answer": {"field": field, "values": [],
+                       "note": "not needed: the launch collects the facts itself"},
+        },
+        remedy=("none needed; to collect ahead of time, submit builtin.resource_graph "
+                "with net_only=true over the compute nodes"),
+    )
+    issue["severity"] = ADVISORY
+    issue["blocking"] = False
+    return issue
+
+
 def pipeline_site_facts(ppl: Any, *, launch_nodes: Optional[int]) -> Optional[Dict[str, Any]]:
     """Site facts for a pipeline about to be submitted or run, or None.
 
-    Only a launch over more than one node crosses a network.
+    Only a launch over more than one node crosses a network. The report's
+    ``net_plan`` says whether the launch uses the graph or collects first.
     """
     if launch_nodes is None or launch_nodes <= 1:
         return None
-    from jarvis_cd.util.network import load_net_section, active_graph_file
+    from jarvis_cd.util.network import active_graph_file, load_net_section, network_disabled
 
-    net = load_net_section()
-    if not net:
+    if network_disabled(getattr(ppl, "env", None), os.environ):
         return None
-    return site_fact_report(active_graph_file(), net, flavour=_pipeline_flavour(ppl),
-                            launch_nodes=launch_nodes, stage="check")
+    flavour = _pipeline_flavour(ppl)
+    if flavour == "cray":
+        return None  # Cray MPICH picks the network itself; JARVIS sets nothing
+    net = load_net_section()
+    plan = _net_plan(net, launch_nodes)
+    if not net:
+        graph_file = active_graph_file()
+        return {"schema_version": SITE_FACTS_SCHEMA, "stage": "check",
+                "answers_path": str(SiteFactStore(graph_file).answers_path),
+                "issues": [_net_not_collected_issue(launch_nodes, flavour, plan)],
+                "confirmed": [], "resolved_by_override": [], "blocking": False,
+                "net_present": False, "net_plan": plan}
+    report = site_fact_report(active_graph_file(), net, flavour=flavour,
+                              launch_nodes=launch_nodes, stage="check")
+    report["net_present"] = True
+    report["net_plan"] = plan
+    return report
 
 
 def launch_site_facts(flavour: str, net: Optional[Dict[str, Any]],
-                      record: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Site facts for one MPI launch, from its applied network record."""
+                      record: Dict[str, Any], *,
+                      collected: bool = False) -> Optional[Dict[str, Any]]:
+    """Site facts for one MPI launch, from its applied network record.
+
+    ``collected``: this launch collected the facts itself, so no check saw
+    them and the check's block rules apply (stage ``launch_collected``).
+    """
     if not net or not record:
         return None
     from jarvis_cd.util.network import active_graph_file
@@ -926,7 +1018,7 @@ def launch_site_facts(flavour: str, net: Optional[Dict[str, Any]],
         active_graph_file(), net, flavour=mpi_flavour(flavour),
         launch_nodes=len(record.get("hosts") or []),
         hosts_check=hosts_check,
-        stage="launch",
+        stage="launch_collected" if collected else "launch",
     )
 
 

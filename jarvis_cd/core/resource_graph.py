@@ -357,7 +357,8 @@ class ResourceGraphManager:
 
     def _collect_error(self, nodes: List[str], failed_hosts: List[str]):
         """The typed error for a collection that missed some or all nodes."""
-        from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
+        from jarvis_cd.core.issues import JarvisIssueError
+        from jarvis_cd.core.rg_collector import collect_failure_issue
 
         failures = [
             self._collect_failures.get(
@@ -367,43 +368,7 @@ class ResourceGraphManager:
             for host in failed_hosts
         ]
         collected = [host for host in nodes if host in self._collected_hosts]
-        partial = bool(collected)
-        kind = "resource_graph_collect_partial" if partial else "resource_graph_collect_failed"
-        if partial:
-            message = (
-                f"The resource graph collector failed on {len(failed_hosts)} of "
-                f"{len(nodes)} nodes ({', '.join(failed_hosts)}); the graph was "
-                "not changed."
-            )
-        else:
-            message = (
-                f"The resource graph collector returned no data from any of the "
-                f"{len(nodes)} nodes; the graph was not changed."
-            )
-        stderr = "; ".join(
-            f"{item['host']}: {str(item.get('stderr') or item.get('reason')).strip()[:200]}"
-            for item in failures
-        )
-        if stderr:
-            message += f" Per-host errors: {stderr}"
-        issue = make_jarvis_issue(
-            kind=kind,
-            subject="resource graph collection",
-            message=message,
-            identity={"nodes": sorted(nodes), "failed_hosts": sorted(failed_hosts)},
-            field="resource_graph.net",
-            details={
-                "nodes": list(nodes),
-                "collected_hosts": collected,
-                "failed_hosts": failures,
-            },
-            remedy=(
-                "Check that the JARVIS install is on a filesystem every node "
-                "mounts and that ssh to each failed host works, then submit "
-                "builtin.resource_graph again"
-            ),
-        )
-        return JarvisIssueError([issue])
+        return JarvisIssueError([collect_failure_issue(nodes, collected, failures)])
 
     def _save(self):
         """Save resource graph through the configured JARVIS state boundary."""

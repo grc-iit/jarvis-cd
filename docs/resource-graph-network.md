@@ -85,9 +85,11 @@ the MPI uses a different UCX (for example a Spack one), point
 `JARVIS_UCX_INFO` at its `ucx_info` and re-collect.
 
 A graph collected before this verification has `ucx_device` without
-`ucx_verified`. JARVIS no longer trusts it: at launch `UCX_NET_DEVICES` is
-withheld (`withheld[].cause: unverified_graph`) until the net is
-re-collected, unless the data network comes from a person's override.
+`ucx_verified`. JARVIS no longer trusts it: the next multi-node MPI launch
+[collects the net facts again](#collected-at-launch) on its hosts and pins
+the device only if UCX verifies it there. If that collection fails,
+`UCX_NET_DEVICES` is withheld (`withheld[].cause: unverified_graph`). A data
+network from a person's override is used as set.
 
 ### How the collector runs on each node
 
@@ -229,10 +231,70 @@ setting was held back, `withheld[]`. Container MPI
 launches get the same settings through the container command's
 environment.
 
+### Collected at launch
+
+A multi-node MPI launch never goes out without network facts. Before it
+applies any setting, `MpiExecInfo` checks the graph against the launch's
+hosts. It runs the net-only collector on **every** launch host (read-only:
+`ip`, sysfs and `ucx_info`, locally and over SSH, inside the allocation)
+when any of these holds:
+
+| Reason | When |
+|--------|------|
+| `net_missing` | the graph has no `net` section, for example right after a site clean |
+| `hosts_not_in_graph` | some launch hosts are not in `net.collected_on` |
+| `graph_predates_ucx_verification` | the data pick has an RDMA device but no `ucx_verified` |
+
+It does not collect for Cray MPICH, under `JARVIS_MPI_NETWORK=off`, for a
+single-node launch, or when a person's override sets both data and control.
+
+The fresh facts go through the normal selection, and the launch applies the
+result. They are also saved as the graph's `net` section, under a lock on the
+graph's directory. A person's override already in the file is kept. As with
+`rg build +net_only`, the section then describes the nodes that ran the
+collector last, so the next launch on the same hosts uses the graph without
+collecting. Because a fresh collect covers every launch host, it also settles
+`hosts_not_in_graph` and an unverified UCX device for those hosts: the device
+is pinned only when UCX verifies it on each of them.
+
+The launch record's `network.collected_at_launch` has `reasons`, `hosts`,
+`collected`, `failed`, `seconds`, `selected` (data and control CIDR) and
+`persisted` (`path`, `persisted`, `replaced_collected_on`, or `error`).
+
+The launch is refused, with a typed issue in the execution record's
+`metadata.issues`, rather than sent out blind:
+
+- **A host returns no facts.** The issue is `resource_graph_collect_failed` or
+  `resource_graph_collect_partial` (see [Collection failures](#collection-failures))
+  with `details.stage: launch`. The only exception is a collection run for
+  `graph_predates_ucx_verification` alone: every host already has facts, so
+  the launch uses the stored graph with the device withheld, and records
+  `collected_at_launch.fallback`.
+- **A `block` site fact in the fresh facts.** No check saw these facts, so
+  they go through the check's block rules (stage `launch_collected`), for
+  example `no_reachable_network`, or interface names that differ for MPICH or
+  Intel MPI. The launch exits 3 with the `site_fact_uncertain` issue, which
+  also carries `details.collected_at_launch`. The facts are saved, so the next
+  `ppl check` or `ppl submit` raises the same question before submit, and an
+  answer with `jarvis rg facts answer` applies to the next run.
+- **Advisory site facts** are attached to `network.site_facts`, and the launch
+  goes ahead.
+
+Before submit, `ppl check +json` and `ppl submit` say what will happen in
+`site_facts.net_plan`: `action` (`collect_at_launch` or `use_graph`), the
+`reasons`, and a `note`. With no `net` section, the report has
+`net_present: false` and an advisory `site_fact_uncertain` issue with reason
+`net_not_collected` (`details.plan: collect_at_launch`; nothing to answer).
+To collect ahead of time instead, submit `builtin.resource_graph` with
+`net_only: true` over the compute nodes.
+
 ### Hosts the graph has not seen
 
-A launch can span nodes the net collect never ran on, for example a 4-node
-run after a 2-node collect. They are listed in `hosts_not_in_graph`, and
+A launch whose hosts the graph has not seen [collects them first](#collected-at-launch),
+so after that collection every host is in the graph. The check below is
+what a launch reports when the collection did not run for them: under the
+`graph_predates_ucx_verification` fallback, or when a person's override sets
+both roles. The hosts are listed in `hosts_not_in_graph`, and
 `hosts_not_in_graph_check` says whether that matters:
 
 | Field | Meaning |
@@ -252,21 +314,20 @@ set interface names the graph has not seen on those hosts. The launch is
 never blocked: a wrong network still shows up as an
 [`mpi_network` issue](#network-launch-failures). A `warning` also raises an
 advisory `hosts_not_in_graph` [site-fact question](site-facts.md) in
-`network.site_facts`. Before submit, a job wider than the graph is a
-blocking question for MPICH and Intel MPI.
+`network.site_facts`. Before submit, a job wider than the graph is an
+advisory question for every flavour: the hosts are not known yet, and the
+launch collects their facts.
 
 A device name is a per-host fact that CIDRs don't cover: the graph shows the
-data network's `ucx_device` usable only on the nodes it saw. So when any
-launch host is outside the graph, `UCX_NET_DEVICES` is withheld and UCX picks
-the devices each node has. The CIDR settings still apply. The launch record's
-`withheld[]` has `setting`, `value`, `hosts`, `cause` (`hosts_not_in_graph`
-or `unverified_graph`, see [UCX device verification](#ucx-device-verification))
-and `reason`; the `hosts_not_in_graph` entries are also in
-`hosts_not_in_graph_check.withheld`. The launch raises an advisory
-`device_unverified` site-fact question. A device set by `rg net set` is a
-person's answer and is never withheld. To get the device pinned again,
-collect the net section in a job that spans every launch node (for example,
-`builtin.resource_graph` as the pipeline's first package).
+data network's `ucx_device` usable only on the nodes it saw. So when a
+launch host is still outside the graph, `UCX_NET_DEVICES` is withheld and UCX
+picks the devices each node has. The CIDR settings still apply. The launch
+record's `withheld[]` has `setting`, `value`, `hosts`, `cause`
+(`hosts_not_in_graph` or `unverified_graph`, see
+[UCX device verification](#ucx-device-verification)) and `reason`; the
+`hosts_not_in_graph` entries are also in `hosts_not_in_graph_check.withheld`.
+The launch raises an advisory `device_unverified` site-fact question. A
+device set by `rg net set` is a person's answer and is never withheld.
 
 ## Uncertain picks
 

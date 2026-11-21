@@ -518,6 +518,109 @@ def resolve_launch_network(
     }
 
 
+def launch_crosses_network(hosts: Iterable[str]) -> bool:
+    """True unless the launch is one node that is this one."""
+    launch_hosts = {_short(host) for host in hosts}
+    local = {"localhost", "127.0.0.1", _short(socket.gethostname())}
+    return bool(launch_hosts) and not (launch_hosts <= local and len(launch_hosts) == 1)
+
+
+def predates_ucx_verification(net: Optional[Dict[str, Any]]) -> bool:
+    """True for a graph whose data pick has an RDMA device but no UCX check."""
+    data = ((net or {}).get("selected") or {}).get("data") or {}
+    return "ucx_verified" not in data and bool(
+        data.get("ucx_device") or data.get("rdma_device")
+    )
+
+
+def net_collect_reasons(
+    net: Optional[Dict[str, Any]],
+    *,
+    hosts: Optional[Iterable[str]] = None,
+    launch_nodes: Optional[int] = None,
+) -> List[str]:
+    """Why a multi-node launch must collect its hosts' net facts first.
+
+    ``net_missing``: the graph has no ``net`` section. ``hosts_not_in_graph``:
+    some launch hosts (or, before the hosts are known, more nodes than the
+    graph saw) have no facts. ``graph_predates_ucx_verification``: the data
+    pick's RDMA device was never checked with UCX. A person's override of
+    both roles needs no facts. Empty when the graph covers the launch.
+    """
+    if not net or not (net.get("collected_on") or net.get("override")):
+        return ["net_missing"]
+    override = net.get("override") or {}
+    if "data" in override and "control" in override:
+        return []
+    reasons = []
+    graph_hosts = {_short(host) for host in net.get("collected_on") or []}
+    if hosts is not None:
+        local = {"localhost", "127.0.0.1", _short(socket.gethostname())}
+        if any(_short(host) not in graph_hosts and _short(host) not in local
+               for host in hosts):
+            reasons.append("hosts_not_in_graph")
+    elif launch_nodes is not None and launch_nodes > len(graph_hosts):
+        reasons.append("hosts_not_in_graph")
+    if "data" not in override and predates_ucx_verification(net):
+        reasons.append("graph_predates_ucx_verification")
+    return reasons
+
+
+def persist_net_section(net: Dict[str, Any]) -> Dict[str, Any]:
+    """Write ``net`` as the active graph's net section, under a lock.
+
+    Like ``jarvis rg build +net_only``, the section then describes the nodes
+    that ran the collector last. A person's override already in the file
+    is kept. Never raises: the launch has its facts either way.
+    """
+    import tempfile
+
+    import yaml
+
+    path = active_graph_file()
+    result: Dict[str, Any] = {"path": str(path), "persisted": False}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path.parent / ".resource_graph.lock", "a+") as lock:
+            try:
+                import fcntl
+
+                fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            except ImportError:  # pragma: no cover - non-POSIX
+                pass
+            try:
+                graph = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+            except FileNotFoundError:
+                graph = {}
+            if not isinstance(graph, dict):
+                graph = {}
+            previous = graph.get("net") if isinstance(graph.get("net"), dict) else None
+            section = dict(net)
+            if previous is not None:
+                section["override"] = previous.get("override")
+            graph["net"] = section
+            descriptor, temporary = tempfile.mkstemp(
+                dir=path.parent, prefix=".resource_graph.", suffix=".tmp", text=True
+            )
+            try:
+                if os.name != "nt":
+                    os.fchmod(descriptor, 0o600)
+                with os.fdopen(descriptor, "w") as stream:
+                    yaml.dump(graph, stream, default_flow_style=False)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(temporary, path)
+            finally:
+                Path(temporary).unlink(missing_ok=True)
+        result.update({
+            "persisted": True,
+            "replaced_collected_on": (previous or {}).get("collected_on"),
+        })
+    except Exception as error:
+        result["error"] = str(error)[:500]
+    return result
+
+
 def _ident(entry: Optional[Dict[str, Any]], *, prefer: str) -> Optional[str]:
     if not entry:
         return None

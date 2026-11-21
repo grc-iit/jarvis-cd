@@ -415,6 +415,127 @@ def collector_command(
     return " ".join(parts)
 
 
+def collect_net_facts(hosts: List[str], *, ssh_port: Optional[int] = None) -> Dict[str, Any]:
+    """Run the net-only collector on ``hosts`` (this node locally, others by ssh).
+
+    Returns ``{"facts": {host: net facts}, "failures": {host: failure}}``.
+    Read-only: the collector reads ``ip``, sysfs and ``ucx_info``.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    cmd = collector_command(net_only=True)
+    me = socket.gethostname()
+    local = {"localhost", "127.0.0.1", me, me.split(".", 1)[0]}
+    facts: Dict[str, Dict[str, Any]] = {}
+    failures: Dict[str, Dict[str, Any]] = {}
+
+    def tail(text: Any, limit: int = 2000) -> str:
+        text = str(text or "")
+        return text if len(text) <= limit else "…" + text[-limit:]
+
+    def one(host: str) -> None:
+        via = "local" if host in local else "ssh"
+        exit_code, stderr = None, ""
+
+        def failed(reason: str) -> None:
+            failures[host] = {"host": host, "via": via, "reason": reason,
+                              "exit_code": exit_code, "stderr": tail(stderr),
+                              "command": cmd}
+
+        try:
+            if via == "local":
+                executor = LocalExec(cmd, LocalExecInfo(collect_output=True,
+                                                        hide_output=True))
+            else:
+                from jarvis_cd.shell import Exec, PsshExecInfo
+                from jarvis_cd.util.hostfile import Hostfile
+
+                info = PsshExecInfo(
+                    hostfile=Hostfile(hosts=[host], find_ips=False),
+                    collect_output=True, hide_output=True,
+                    **({"port": ssh_port} if ssh_port else {}),
+                )
+                executor = Exec(cmd, info)
+                executor.run()
+            key = host if host in executor.exit_code else "localhost"
+            exit_code = executor.exit_code.get(key, 1)
+            stderr = executor.stderr.get(key, "")
+            if exit_code != 0:
+                return failed("collector exited non-zero")
+            output = executor.stdout.get(key, "")
+            if not output.strip():
+                return failed("collector printed nothing")
+            try:
+                net = json.loads(output).get("net")
+            except (ValueError, AttributeError) as error:
+                return failed(f"collector output is not JSON: {error}")
+            if not isinstance(net, dict):
+                return failed("collector returned no net facts")
+            facts[host] = net
+        except Exception as error:
+            failed(f"error running the collector: {error}")
+
+    unique = list(dict.fromkeys(hosts))
+    with ThreadPoolExecutor(max_workers=max(1, min(len(unique), 16))) as pool:
+        list(pool.map(one, unique))
+    return {"facts": facts, "failures": failures}
+
+
+def collect_failure_issue(
+    nodes: List[str],
+    collected: List[str],
+    failures: List[Dict[str, Any]],
+    *,
+    stage: Optional[str] = None,
+) -> Dict[str, Any]:
+    """The typed issue for a net collection that missed some or all nodes.
+
+    ``stage="launch"`` is the collection an MPI launch runs on its hosts
+    first: the launch is refused rather than sent out with no network.
+    """
+    from jarvis_cd.core.issues import make_jarvis_issue
+
+    failed_hosts = [item["host"] for item in failures]
+    partial = bool(collected)
+    kind = "resource_graph_collect_partial" if partial else "resource_graph_collect_failed"
+    if partial:
+        message = (f"The resource graph collector failed on {len(failed_hosts)} of "
+                   f"{len(nodes)} nodes ({', '.join(failed_hosts)})")
+    else:
+        message = (f"The resource graph collector returned no data from any of the "
+                   f"{len(nodes)} nodes")
+    if stage == "launch":
+        message += ("; the MPI launch was refused, because these hosts have no "
+                    "network facts and a launch without them can hang or fail.")
+    else:
+        message += "; the graph was not changed."
+    stderr = "; ".join(
+        f"{item['host']}: {str(item.get('stderr') or item.get('reason')).strip()[:200]}"
+        for item in failures
+    )
+    if stderr:
+        message += f" Per-host errors: {stderr}"
+    details: Dict[str, Any] = {"nodes": list(nodes), "collected_hosts": list(collected),
+                               "failed_hosts": list(failures)}
+    if stage:
+        details["stage"] = stage
+    return make_jarvis_issue(
+        kind=kind,
+        subject="resource graph collection",
+        message=message,
+        identity={"nodes": sorted(nodes), "failed_hosts": sorted(failed_hosts),
+                  **({"stage": stage} if stage else {})},
+        field="resource_graph.net",
+        details=details,
+        remedy=(
+            "Check that the JARVIS install is on a filesystem every node "
+            "mounts and that ssh to each failed host works, then "
+            + ("submit the pipeline again" if stage == "launch"
+               else "submit builtin.resource_graph again")
+        ),
+    )
+
+
 def main():
     """Main entry point for resource collection."""
     cli = ResourceGraphCLI()

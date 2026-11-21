@@ -44,7 +44,7 @@ as long as the evidence does, at check time and at launch alike.
 | `blocking` | `true` for `block` |
 | `details.schema_version` | `jarvis.site-facts.v1` |
 | `details.fact` | `net.launch` |
-| `details.stage` | `check` (before submit) or `launch` (inside the job) |
+| `details.stage` | `check` (before submit), `launch` (inside the job, facts a check already saw) or `launch_collected` (inside the job, facts the launch [collected itself](resource-graph-network.md#collected-at-launch)) |
 | `details.reasons[]` | `code`, `severity`, `roles` (`data`, `control`), `message`, `consequence`, plus per-code facts (`near`, `names`, `port_states`, `hosts`) |
 | `details.evidence` | the raw facts the question rests on (below) |
 | `details.evidence_digest` | `sha256:` of the canonical evidence JSON |
@@ -91,17 +91,26 @@ JARVIS's pick, and the issue rides along so an agent can still engage.
 | `ucx_device_unusable` | the data network's RDMA port is ACTIVE, but UCX on some nodes can't use it (`ucx_status` `not_listed_by_ucx`, `ucx_info_missing` or `ucx_info_failed`), so `UCX_NET_DEVICES` isn't set. `ucx` maps each such host to its `status`, `port`, `link_layer`, `ucx_info`, `ucx_version` and `ucx_rdma_devices` | advisory |
 | `control_fallback` | no network holds every node's hostname address, so control fell back (possibly to the data network) | advisory |
 | `collected_outside_allocation` | the net section wasn't collected inside a scheduler allocation | advisory |
-| `hosts_not_in_graph` | before submit: the job asks more nodes than the graph was collected on (`withholds: ["UCX_NET_DEVICES"]` when the data network has a UCX device). At launch: the [hosts check](resource-graph-network.md#hosts-the-graph-has-not-seen) is a `warning` | before submit, block for MPICH and Intel MPI, advisory otherwise. At launch, advisory |
-| `device_unverified` | the graph's `ucx_device` is withheld. At launch: because some launch hosts aren't in the graph (`cause: hosts_not_in_graph`), or because the graph predates UCX verification (`cause: unverified_graph`); it carries `setting`, `value`, `hosts`. Before submit: only the `unverified_graph` case (`withholds: ["UCX_NET_DEVICES"]`) | advisory |
+| `hosts_not_in_graph` | before submit: the job asks more nodes than the graph was collected on (`plan: collect_at_launch`: the launch collects their facts first). At launch, when that collection didn't run for them: the [hosts check](resource-graph-network.md#hosts-the-graph-has-not-seen) is a `warning` | advisory |
+| `device_unverified` | the graph's `ucx_device` is withheld. At launch: because some launch hosts aren't in the graph (`cause: hosts_not_in_graph`), or because the graph predates UCX verification and the collection at launch failed (`cause: unverified_graph`); it carries `setting`, `value`, `hosts`. Before submit: only the `unverified_graph` case (`plan: collect_at_launch`) | advisory |
+| `net_not_collected` | before submit: the graph has no net section and the job spans more than one node. The issue says the launch will collect the facts (`details.plan: collect_at_launch`); there is nothing to answer, and its identity is `{fact, reason}` | advisory |
 
 At the `launch` stage a question never blocks, because the allocation is
-already running. It is recorded with the launch instead.
+already running and a check already saw those facts. It is recorded with the
+launch instead. At the `launch_collected` stage the launch collected the
+facts itself, so no check saw them: a `block` reason refuses the launch with
+exit 3, and the issue (with `details.collected_at_launch`) lands in the
+execution record's `metadata.issues`. The facts are saved to the graph, so
+the next check asks the same question before submit, and an answer recorded
+with `rg facts answer` covers the next launch.
 
 A reason whose roles are all covered by a person's `rg net set` override is
 listed under `resolved_by_override` rather than asked.
 
-Each question is evaluated only for launches over more than one node, and
-only when the graph has a net section.
+Each question is evaluated only for launches over more than one node. With
+no net section, the only check-time question is `net_not_collected`. Cray
+MPICH and `JARVIS_MPI_NETWORK=off` (in the environment or the pipeline's
+env) get no network questions.
 
 ## Where questions appear
 
@@ -109,7 +118,7 @@ only when the graph has a net section.
 |-------|------|
 | `jarvis rg facts show +json` | the `jarvis.site-facts.v1` report (below) |
 | `jarvis rg net show +json` | the same report under `site_facts` |
-| `jarvis ppl check +json` | `site_facts`. Blocking questions go to `questions[]`, advisory ones to `warnings[]`, and `ok` is false while `questions` is non-empty. The command exits 3 on questions (5 on errors) |
+| `jarvis ppl check +json` | `site_facts`. Blocking questions go to `questions[]`, advisory ones to `warnings[]`, and `ok` is false while `questions` is non-empty. The command exits 3 on questions (5 on errors). `site_facts.net_plan` says what the launch will do about the network: `action` (`collect_at_launch` or `use_graph`), `reasons`, `note`; `site_facts.net_present` says whether the graph has a net section |
 | `jarvis ppl submit` | refuses before any scheduler call with exit 3 and the blocking issues (`+json` prints `{exit_code, issues}`). Advisory questions are submitted with the job |
 | execution record | `metadata.site_facts`: `schema_version`, `issues[]` (deduplicated by `issue_id`), `confirmed[]`, and `stages[]`, one per evaluation (`stage`, `launch`, `blocking`, `issue_ids`, `confirmed`) |
 | launch provenance | `provenance/launch-*/launch.json` → `network.site_facts`, when the launch raised or confirmed a question |
