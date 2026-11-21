@@ -24,6 +24,15 @@ The Resource Graph provides:
 - **Device Classification**: Categorizes storage by type (SSD, HDD, etc.) and filesystem
 - **Programmatic Access**: Query storage resources from packages and applications
 - **Persistent Storage**: Save and load resource graphs for reuse
+- **Network Selection**: A `net` section from which every MPI launch picks its data and control networks (see [Resource graph network](resource-graph-network.md))
+
+### Site-level graph (`JARVIS_RESOURCE_GRAPH`)
+
+Set `JARVIS_RESOURCE_GRAPH=<path>` to use one site-level graph file instead of
+`<JARVIS_ROOT>/resource_graph.yaml`. Every JARVIS root on the site then reads
+and writes the same graph, including the per-job roots a relay creates.
+`jarvis init` never overwrites it, and `rg build` and `rg net set|clear`
+write to it. `jarvis rg path` prints the active file.
 
 ### Key Components
 
@@ -72,7 +81,7 @@ localhost
 3. **Device Analysis**: Determines device type, model, and capacity
 4. **Performance Benchmarking**: Measures I/O performance (optional)
 5. **Common Storage Analysis**: Identifies shared mount points across nodes
-6. **Persistent Storage**: Saves results to `~/.ppi-jarvis/resource_graph.yaml`
+6. **Persistent Storage**: Saves results to `~/.ppi-jarvis/resource_graph.yaml`, or to `$JARVIS_RESOURCE_GRAPH` when it is set
 
 ## Querying Storage Devices
 
@@ -151,7 +160,14 @@ jarvis rg build +no_benchmark
 
 # Build with custom benchmark duration
 jarvis rg build duration=30
+
+# Collect only the network section (keeps the stored storage view);
+# run it on compute nodes, see resource-graph-network.md
+jarvis rg build +net_only
 ```
+
+The `jarvis rg net show|set|clear` menu manages the network selection and a
+person's override. See [Resource graph network](resource-graph-network.md).
 
 ### Query Commands
 

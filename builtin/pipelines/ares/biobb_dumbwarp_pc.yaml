@@ -16,7 +16,7 @@ container_binds:
   - ${HOME}/jarvis-bench-scripts/biobb_md_extend.sh:/opt/biobb_md_extend.sh
 
 ssh_cmd: "env -u LD_LIBRARY_PATH ssh"
-mpi_cmd: 'mpiexec --mca btl_tcp_if_include enp47s0np0 --mca oob_tcp_if_include eno1 --prtemca prte_if_include eno1 --prtemca prte_tmpdir_base /home/llogan/iowarp_prte_tmp'
+mpi_cmd: 'mpiexec --prtemca prte_tmpdir_base /home/llogan/iowarp_prte_tmp'
 
 env:
   TMPDIR: "/home/llogan/iowarp_prte_tmp"

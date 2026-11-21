@@ -233,13 +233,79 @@ The generated script is written to
 execution ID is generated for every CLI submission; API callers may provide a
 bounded path-safe ID for end-to-end correlation.
 
-For a submitted nonterminal record, `Pipeline.get_execution()` also asks the
-selected scheduler provider for current state. The SLURM provider checks the
-live queue and then accounting when available. A provider-reported terminal
-state is committed into the same durable execution record. If SLURM no longer
-recognizes an accepted job and no historical record is available, JARVIS waits
-through a bounded startup grace period before recording failure; generic query
-errors do not silently terminalize the execution.
+For a submitted nonterminal record, `Pipeline.get_execution()` (and so
+`jarvis execution get|status +json`) also asks the selected scheduler
+provider for current state. The SLURM provider runs `squeue --states=all`,
+which keeps ended jobs visible for `MinJobAge` (it reads the exit code of an
+ended job from `scontrol show job`), and then `sacct` when accounting is
+available. A
+provider-reported terminal state is committed into the same durable
+execution record, with `metadata.scheduler_observation`
+(`jarvis.scheduler.observation.v1`: `state`, `provider_state`, `basis`,
+`accounting`, `diagnostic`, and `reconciliation` when JARVIS had to infer
+the outcome). Generic query errors never terminalize the execution.
+
+### Reconciliation without accounting
+
+Sites without slurmdbd (no `sacct`) forget a job as soon as it leaves the
+queue. A job that ended normally finalized its own record from the batch
+script, so a record that is still open when the scheduler no longer knows
+the job tells JARVIS what happened. After the startup grace period, JARVIS
+commits one of these outcomes:
+
+| Situation | Committed state | `reconciliation.basis` |
+|-----------|-----------------|------------------------|
+| a `cancel_request` or `stop_request` was recorded | `canceled` (rc 143) | `cancel_request` / `stop_request` |
+| the record never left `submitted` and the job wrote no batch output | `canceled` (rc 143): removed while pending, for example by an external `scancel` | `vanished_pending` |
+| the runtime started but never finalized | `failed` (rc 1): "never finalized the record (lost); scheduler accounting is unavailable" | `vanished_running` |
+
+Within the grace period the record stays `submitted`.
+
+### Queue facts
+
+While a job is pending, `execution get|status +json` carries
+`metadata.queue` (`jarvis.scheduler.queue.v1`):
+
+| Field | Meaning |
+|-------|---------|
+| `partition`, `nodes`, `time_limit`, `time_limit_s` | what the job asked for |
+| `reason` | Slurm's pending reason (e.g. `Resources`, `Priority`, `QOSMaxJobsPerUserLimit`) |
+| `reason_kind` | `resources`, `limit`, `job_hold` or `other` |
+| `estimated_start`, `starts_in_s` | the scheduler's start estimate, when it has one |
+| `partitions[]` | every other partition that is `up`: `partition`, `default`, `available`, `idle_nodes`, `allocated_nodes`, `other_nodes`, `total_nodes`, `max_time`, `max_time_s`, `cpus_per_node`, `memory_mb_per_node`, `gres`, and `fits` (enough idle nodes now and a long enough time limit), sorted with fitting partitions first |
+| `move_supported` | whether `execution move` works for this provider |
+
+When the job leaves the queue, the block stays with `state: left_queue`.
+
+### Moving a pending job (`execution move`)
+
+```bash
+jarvis execution move <execution-id> --queue <partition> [--pipeline-id P] +json
+```
+
+This runs `scontrol update JobId=<job> Partition=<partition>` (adding
+`--clusters` only when sbatch reported a cluster) and prints the record.
+`metadata.move_request` (`jarvis.execution.control.v1`, `action: move`)
+records `from_queue`, `to_queue`, the exact `command`, `status` and the
+scheduler's `result`. A move is refused with exit **5** and a
+`jarvis.refusal.v1` document whose issue has kind `execution_move_refused`,
+`field: scheduler.queue` and a `details.reason`:
+
+| `reason` | When |
+|----------|------|
+| `not_pending` | the job is already running or has ended |
+| `invalid_queue` | no such partition |
+| `does_not_fit` | the partition's node or time limits reject the job |
+| `not_permitted` | the account may not use the partition |
+| `not_scheduler` / `unsupported_provider` | a direct execution, or a provider without a move verb |
+| `scheduler_unavailable` / `scheduler_rejected` | the query failed, or another rejection |
+
+## Validation before submit (`ppl check`)
+
+`ppl submit` and `ppl run` first run the same static check as
+`jarvis ppl check`. On errors they refuse with exit 5 before writing a script
+or calling `sbatch`. See
+[pipelines.md → Coupling and configuration checks](pipelines.md#coupling-and-configuration-checks-ppl-check).
 
 ## Cancelling and stopping executions
 
@@ -325,9 +391,31 @@ jarvis ppl install +check +submit +json                           # report only
 jarvis ppl install +submit --answers answers.json +json           # re-run with answers
 ```
 
-The job uses the pipeline's `scheduler:` block with `nodes: 1`. It keeps
-`account`, `partition`, `time` and the other site keys, and drops `ntasks`,
-`ntasks_per_node`, `gpus`, `gpus_per_node`, `gres` and `array`. The answers
+The job uses the pipeline's `scheduler:` block, sized by JARVIS for a build.
+It keeps `account`, `partition`, `time` and the other site keys. It drops
+`ntasks_per_node`, `gpus`, `gpus_per_node`, `gres` and `array`, and sets
+`nodes: 1` and `ntasks: 1`. A build (not `+check`) also gets `exclusive:
+true`, because `spack install -j` defaults to all of the node's cores. A
+`+check` stays a light single task. An optional `scheduler.install` mapping
+overrides any directive for install jobs only. For example, it can send
+builds to another partition with a longer limit. `nodes` there must be 1:
+
+```yaml
+scheduler:
+  name: slurm
+  nodes: 16
+  partition: compute
+  time: "01:00:00"
+  install:                 # only for `ppl install +submit`
+    partition: debug
+    time: "00:45:00"
+    mem: 0
+```
+
+The record's `metadata.install_job` shows the shape JARVIS submitted:
+`nodes`, `ntasks`, `cpus_per_task`, `mem`, `exclusive`, `time`,
+`partition`, `account`, `qos` (when set), and `overrides`, the keys taken
+from `scheduler.install`. Run jobs ignore `scheduler.install`. The answers
 file is sealed into `input/answers.json`. Inside the allocation the script
 runs `jarvis ppl install yaml <runtime>/pipeline.yaml [+check] [--answers …]
 +json` in place of `ppl run`. The execution record carries

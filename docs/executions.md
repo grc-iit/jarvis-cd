@@ -71,7 +71,28 @@ jarvis execution artifacts render-2018-asteroid --pipeline-id visualization +jso
 jarvis execution service-runtimes render-2018-asteroid --pipeline-id visualization +json
 jarvis execution cancel render-2018-asteroid --pipeline-id visualization +json
 jarvis execution stop render-2018-asteroid --pipeline-id visualization +wait +json
+jarvis execution move render-2018-asteroid --queue debug --pipeline-id visualization +json
 ```
+
+`execution status` is an alias of `execution get`. While a scheduler job is
+pending, its record carries `metadata.queue`: the pending reason, the
+estimated start, and the other partitions with `fits`. `execution move`
+moves it to another queue. A job the scheduler no longer knows is
+reconciled to a terminal state even without scheduler accounting. See
+[scheduler.md → Queue facts](scheduler.md#queue-facts).
+
+### Typed issues and refusals
+
+Gaps and refusals that a caller must relay to a person are `jarvis.issue.v1`
+documents. Each has a stable `issue_id` (`sha256:` of its kind, subject and
+identity, so a changed situation gets a new id), `kind`, `subject`,
+`message`, an optional `field` naming the configuration to change, and
+optional `details`, `candidates` and `remedy`. A refused command exits **5**
+and, with `+json`, prints a `jarvis.refusal.v1` document (`refused: true`,
+`exit_code`, `issues[]`). Exit **3** means an install decision is needed, and
+exit **4** means a build was refused outside an allocation. A failed run
+whose output matches an MPI network signature gets an `mpi_network` issue in
+`metadata.issues[]` (see [Resource graph network](resource-graph-network.md)).
 
 `execution get +json` and `execution list +json` emit clean machine-readable
 JSON. `execution progress +json` returns the latest identity-checked event and

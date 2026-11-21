@@ -141,6 +141,18 @@ class Installer(ABC):
             report["log"] = str(context.log_path)
             report["issues_path"] = str(context.issues_path)
             report["issues"] = list(context.issues)
+            report["open_issues"] = [issue["issue_id"] for issue in context.issues]
+            report["applied_decisions"] = list(context.applied_decisions)
+            report["stale_decisions"] = list(context.stale_decisions)
+            report["decisions_path"] = str(context.decisions_path)
+            report["answer_with"] = {
+                "format": "answers.json: {issue_id: constraint | "
+                          "{constraint, answered_by, ask_id}}",
+                "flag": "--answers <answers.json>",
+                "env": "JARVIS_INSTALL_ANSWERS",
+                "replay": "an answer applies only to the exact issue_id; a "
+                          "changed question gets a new issue_id",
+            }
         report["satisfied"] = not (context is not None and context.issues) and all(
             result.get("status") in ("done", "satisfied", "installed", "unchecked")
             for result in report["installers"].values()
@@ -442,6 +454,7 @@ def install_context_for(ppl, mode: str = "install", require_allocation=None):
         install_dir=install_dir,
         mode=mode,
         answers=load_answers(Path(answers_path)) if answers_path else {},
+        answers_path=Path(answers_path) if answers_path else None,
         decisions_path=decisions_path,
         progress=getattr(ppl, '_install_progress', None),
         require_allocation=(

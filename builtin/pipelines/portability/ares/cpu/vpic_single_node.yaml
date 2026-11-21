@@ -11,9 +11,6 @@ container_base: ubuntu:24.04
 
 hostfile: /home/imuradli/hostfile_single.txt
 
-container_env:
-  OMPI_MCA_btl_tcp_if_include: eno1
-  OMPI_MCA_oob_tcp_if_include: eno1
 
 pkgs:
   - pkg_type: builtin.vpic

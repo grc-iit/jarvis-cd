@@ -403,6 +403,30 @@ that pipeline. That is how the chosen MPI reaches a run (see
 [MPI selection](#mpi-selection)). Set `JARVIS_SPACK_DECISIONS` to share one
 decisions file across pipelines on a site.
 
+#### Decision provenance
+
+A recorded answer is replayed only for the exact `issue_id` it answered. Each
+entry in `decisions.yaml` stores the `issue_id`, `constraint`, `answered_by`,
+`ask_id` and `answered_at`. When the question changes (for example a third
+MPI appears, so the candidate set changes), the new issue gets a new
+`issue_id`. JARVIS then asks again instead of replaying the old answer. The
+new issue carries `supersedes` (the old `issue_id`) and `previous_answer`, so
+a caller can offer the old choice as a default.
+
+Every `jarvis.install-report.v1` (`ppl install [+check] +json`) reports:
+
+| Field | Content |
+|-------|---------|
+| `applied_decisions[]` | each answer this run used: `issue_id`, `kind`, `subject`, `scope`, `package`, `constraint`, `answered_by`, `ask_id`, `answered_at`, `source` (`answers_file` for a `--answers`/`JARVIS_INSTALL_ANSWERS` answer, `decisions_file` for a replayed one), `path` (the file it came from), and `recorded_to` (the decisions file it was written to) |
+| `stale_decisions[]` | recorded answers that were not replayed because the question changed: `issue_id`, `constraint`, `path`, `answered_at`, `superseded_by`, `reason` |
+| `open_issues[]` | the `issue_id`s still unanswered |
+| `decisions_path` | the decisions file in use |
+| `answer_with` | how to answer: `flag` (`--answers <answers.json>`), `env` (`JARVIS_INSTALL_ANSWERS`), the answers `format`, and the `replay` rule |
+
+A caller therefore needs no store of its own. It shows `applied_decisions` as
+"chosen before", asks the person about `open_issues`, and passes the answers
+back with `--answers`.
+
 `JARVIS_SPACK_CONFIG=<dir>` (or `JARVIS_SPACK_ROOT`) turns on
 `SPACK_DISABLE_LOCAL_CONFIG=1`, so Spack reads no user or system
 configuration. Put site configuration in `<root>/etc/spack` (see above).
@@ -534,7 +558,10 @@ jarvis ppl install +allow_local +json           # build on this host outside an 
 
 The final stdout line with `+json` is a `jarvis.install-report.v1` document:
 `mode`, `satisfied`, per-installer `status`/`packages`, `issues`,
-`issues_path`, `log`, `record_path` and `exit_code`. The exit code is `0`
+`issues_path`, `log`, `record_path`, `exit_code`, and the decision fields
+`applied_decisions`, `stale_decisions`, `open_issues`, `decisions_path` and
+`answer_with` (see [Decision provenance](#decision-provenance)). With `+json`,
+stdout carries only the document; logs and Spack output go to stderr. The exit code is `0`
 when everything is satisfied, `3` when a decision is needed or `+check`
 found missing packages, `4` when a build was refused because it would run
 outside a scheduler allocation, and `1` on errors such as a failed build.

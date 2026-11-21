@@ -9,6 +9,8 @@ from jarvis_cd.util.hostfile import Hostfile
 
 
 _JARVIS_ROOT_ENVIRONMENT = "JARVIS_ROOT"
+#: one site-level resource graph shared by every JARVIS root on a site
+RESOURCE_GRAPH_ENVIRONMENT = "JARVIS_RESOURCE_GRAPH"
 _STATE_ROOT_FIELDS = ("config_dir", "private_dir", "shared_dir")
 MAX_BUILTIN_RESOURCE_GRAPH_PROFILES = 128
 
@@ -151,7 +153,16 @@ class Jarvis:
 
         self.config_file = self.jarvis_root / "jarvis_config.yaml"
         self.repos_file = self.jarvis_root / "repos.yaml"
-        self.resource_graph_file = self.jarvis_root / "resource_graph.yaml"
+        # JARVIS_RESOURCE_GRAPH names one site-level graph shared by every
+        # JARVIS root on the site (for example a per-job root a relay
+        # creates), so the graph is the site record rather than per root.
+        site_graph = os.environ.get(RESOURCE_GRAPH_ENVIRONMENT, "").strip()
+        self.resource_graph_is_site = bool(site_graph)
+        self.resource_graph_file = (
+            Path(site_graph).expanduser().resolve()
+            if site_graph
+            else self.jarvis_root / "resource_graph.yaml"
+        )
 
         # Lazy-loaded properties
         self._config = None
@@ -252,7 +263,12 @@ class Jarvis:
 
         # Handle resource_graph.yaml
         resource_graph_exists = self.resource_graph_file.exists()
-        if resource_graph_exists and not force:
+        if resource_graph_exists and self.resource_graph_is_site:
+            logger.info(
+                f"Using the site resource graph {self.resource_graph_file} "
+                f"({RESOURCE_GRAPH_ENVIRONMENT}); init never overwrites it"
+            )
+        elif resource_graph_exists and not force:
             logger.warning(
                 "Existing resource_graph.yaml detected - preserving (use +force to override)"
             )
@@ -358,11 +374,12 @@ class Jarvis:
         self._repos = self._bind_distribution_builtin_repository(repos)
 
     def save_resource_graph(self, resource_graph: Dict[str, Any]):
-        """Atomically save the active graph under the configured JARVIS root."""
-        self.jarvis_root.mkdir(parents=True, exist_ok=True)
+        """Atomically save the active graph (the site graph when configured)."""
+        graph_dir = self.resource_graph_file.parent
+        graph_dir.mkdir(parents=True, exist_ok=True)
         persisted_graph = copy.deepcopy(resource_graph)
         descriptor, temporary_name = tempfile.mkstemp(
-            dir=self.jarvis_root,
+            dir=graph_dir,
             prefix=".resource_graph.",
             suffix=".tmp",
             text=True,
@@ -377,7 +394,7 @@ class Jarvis:
                 os.fsync(stream.fileno())
             os.replace(temporary_path, self.resource_graph_file)
             self._resource_graph = persisted_graph
-            _fsync_directory(self.jarvis_root)
+            _fsync_directory(graph_dir)
         finally:
             temporary_path.unlink(missing_ok=True)
 

@@ -82,6 +82,19 @@ Execution profiles use only two portable kinds:
 Configuration conditions support `equals`, `greater_than`, `is_empty`, and
 `is_not_empty`. Every profile and rule is explicit; clients do not need to
 interpret help prose to discover requirements. A profile may also include a
+
+JARVIS enforces `configuration_rules` itself. `jarvis ppl check`, and every
+`ppl submit` and `ppl run`, evaluate each package's rules against its
+configuration, with menu defaults filled in. A rule applies when all its
+`when` conditions hold. Each unmet `requires` condition becomes a
+`configuration_rule_violated` error (a `jarvis.issue.v1` with `field:
+pkgs[<i>].<parameter>`, and `details.rule`, `details.unmet` and
+`details.value`). The pipeline is then refused with exit 5 before anything
+is submitted. A package declares its parameter constraints here, so callers
+need no rule tables of their own. See
+[pipelines.md → Coupling and configuration checks](pipelines.md#coupling-and-configuration-checks-ppl-check).
+The check also uses the selected execution profile's `execution_kind` and
+readiness to report which steps are services. A profile may also include a
 short package-owned `description` that explains the scientific meaning of that
 mode without exposing site paths or launcher details.
 

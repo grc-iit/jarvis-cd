@@ -1236,6 +1236,12 @@ class Pipeline:
             )
         if not self.name:
             raise ValueError("Pipeline name not set; cannot submit job.")
+        if action == "run":
+            from jarvis_cd.core.pipeline_check import enforce_pipeline_check
+
+            # Refuse a pipeline whose coupling or configuration rules are
+            # broken before anything reaches the scheduler.
+            enforce_pipeline_check(self)
 
         from jarvis_cd.core.scheduler import make_scheduler
 
@@ -1332,6 +1338,26 @@ class Pipeline:
                 ):
                     scheduler_spec.pop(workload_key, None)
                 scheduler_spec["nodes"] = 1
+                scheduler_spec["ntasks"] = 1
+                if not install_check:
+                    # A build uses every core of its node (spack -j defaults to
+                    # the node's cores); a check is a light single task.
+                    scheduler_spec.setdefault("exclusive", True)
+                overrides = scheduler_spec.pop("install", None) or {}
+                if not isinstance(overrides, dict):
+                    raise ValueError("scheduler.install must be a mapping of directives")
+                if "nodes" in overrides and int(overrides["nodes"]) != 1:
+                    raise ValueError("scheduler.install.nodes must be 1")
+                scheduler_spec.update(overrides)
+                install_job_shape = {
+                    key: scheduler_spec.get(key)
+                    for key in ("nodes", "ntasks", "cpus_per_task", "mem",
+                                "exclusive", "time", "partition", "account", "qos")
+                    if scheduler_spec.get(key) is not None
+                }
+                install_job_shape["overrides"] = sorted(overrides)
+            else:
+                scheduler_spec.pop("install", None)
             scheduler_spec["hostfile"] = str(execution_root / "hostfile.txt")
             scheduler_spec.setdefault("output", str(execution_root / "stdout.log"))
             scheduler_spec.setdefault("error", str(execution_root / "stderr.log"))
@@ -1363,6 +1389,7 @@ class Pipeline:
                     resolved_execution_id,
                     metadata={
                         "action": "install",
+                        "install_job": install_job_shape,
                         "install": {
                             "schema_version": "jarvis.install.progress.v1",
                             "mode": "check" if install_check else "install",
@@ -1689,7 +1716,10 @@ class Pipeline:
         ):
             return record
 
-        from jarvis_cd.core.scheduler import query_scheduler_execution
+        from jarvis_cd.core.scheduler import (
+            query_scheduler_execution,
+            query_scheduler_queue,
+        )
 
         observation = query_scheduler_execution(
             record.scheduler_provider,
@@ -1697,19 +1727,22 @@ class Pipeline:
         )
         if observation.state == "unknown":
             return record
+        queue_facts = None
+        reconciliation: Optional[Dict[str, Any]] = None
         if observation.state == "missing":
             created = datetime.fromisoformat(record.created_at.replace("Z", "+00:00"))
             age_seconds = (datetime.now(timezone.utc) - created).total_seconds()
             if age_seconds < _SCHEDULER_MISSING_GRACE_SECONDS:
                 return record
-            state = "failed"
-            terminal = True
-            return_code = 1
-            error = (
-                f"scheduler {record.scheduler_provider} no longer reports accepted "
-                f"job {record.scheduler_native_id}, and its JARVIS runtime never "
-                "activated within the reconciliation grace period"
+            state, return_code, error, basis = self._reconcile_vanished_job(
+                store, record, observation
             )
+            terminal = True
+            reconciliation = {
+                "basis": basis,
+                "accounting": observation.accounting,
+                "record_state_before": record.state,
+            }
         else:
             state = observation.state
             terminal = observation.terminal
@@ -1720,24 +1753,43 @@ class Pipeline:
                 if state in {"failed", "canceled"}
                 else None
             )
-        metadata = {
-            "scheduler_observation": {
-                "schema_version": "jarvis.scheduler.observation.v1",
-                "provider": record.scheduler_provider,
-                "native_id": record.scheduler_native_id,
-                "state": observation.state,
-                "provider_state": observation.provider_state,
-                "diagnostic": observation.diagnostic,
-            }
+            if state == "submitted":
+                queue_facts = query_scheduler_queue(
+                    record.scheduler_provider, record.scheduler_native_id
+                )
+        observation_document: Dict[str, Any] = {
+            "schema_version": "jarvis.scheduler.observation.v1",
+            "provider": record.scheduler_provider,
+            "native_id": record.scheduler_native_id,
+            "state": observation.state,
+            "provider_state": observation.provider_state,
+            "diagnostic": observation.diagnostic,
+            "basis": observation.basis,
+            "accounting": observation.accounting,
         }
+        if reconciliation is not None:
+            observation_document["reconciliation"] = reconciliation
+        metadata: Dict[str, Any] = {"scheduler_observation": observation_document}
+        if queue_facts is not None:
+            metadata["queue"] = queue_facts
+        elif (
+            isinstance(record.metadata.get("queue"), dict)
+            and record.metadata["queue"].get("state") == "pending"
+            and state != "submitted"
+        ):
+            # the job left the queue: keep the last facts, marked as historical
+            metadata["queue"] = dict(record.metadata["queue"], state="left_queue")
         if (
             state == record.state
             and terminal == record.terminal
             and return_code == record.return_code
             and error == record.error
+            and "queue" not in metadata
         ):
             return record
         try:
+            if state == record.state and not terminal:
+                return store.update(execution_id, metadata=metadata)
             return store.update(
                 execution_id,
                 state=state,
@@ -1751,6 +1803,141 @@ class Pipeline:
             if latest.terminal:
                 return latest
             raise
+
+    def _reconcile_vanished_job(
+        self, store, record: ExecutionRecord, observation
+    ) -> tuple[str, int, str, str]:
+        """Terminal (state, rc, error, basis) for a job the scheduler forgot.
+
+        Works without scheduler accounting (sites with no slurmdbd): a job
+        that ended normally would have finalized its own record from the
+        batch script, so a still-open record tells what happened.
+
+        - a ``cancel_request`` or ``stop_request`` was recorded: ``canceled``;
+        - the record never left ``submitted`` and the job wrote no batch
+          output: it never started, so it was removed while pending
+          (``canceled`` outside JARVIS);
+        - otherwise the runtime started and was lost: ``failed``.
+        """
+        provider = record.scheduler_provider
+        native_id = record.scheduler_native_id
+        unaccounted = (
+            "; scheduler accounting is unavailable"
+            if observation.accounting == "unavailable"
+            else ""
+        )
+        for key in ("cancel_request", "stop_request"):
+            request = record.metadata.get(key)
+            if isinstance(request, dict) and request.get("status") != "failed":
+                return (
+                    "canceled",
+                    143,
+                    f"scheduler {provider} job {native_id} ended after jarvis "
+                    f"execution {key.split('_')[0]}{unaccounted}",
+                    key,
+                )
+        execution_root = store.executions_dir / record.execution_id
+        batch_output = [
+            path
+            for path in (execution_root / "stdout.log", execution_root / "stderr.log")
+            if path.is_file() and path.stat().st_size > 0
+        ]
+        if record.state in {"submitted", "unknown"} and not batch_output:
+            return (
+                "canceled",
+                143,
+                f"scheduler {provider} job {native_id} left the queue before it "
+                f"started (removed outside JARVIS){unaccounted}",
+                "vanished_pending",
+            )
+        return (
+            "failed",
+            1,
+            f"scheduler {provider} no longer reports job {native_id}, and its "
+            f"JARVIS runtime never finalized the record (lost){unaccounted}",
+            "vanished_running",
+        )
+
+    def move_execution(self, execution_id: str, queue: str) -> ExecutionRecord:
+        """Move a pending scheduler execution to another queue (partition).
+
+        Refuses with :class:`~jarvis_cd.core.issues.JarvisIssueError`
+        (``execution_move_refused``) when the record is not a pending
+        scheduler job, the provider has no move verb, or the scheduler
+        rejects the move. The request and its outcome are recorded as
+        ``move_request`` metadata either way.
+        """
+        from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
+        from jarvis_cd.core.scheduler import (
+            SchedulerControlUnsupported,
+            move_scheduler_execution,
+        )
+
+        store = self._execution_store()
+        record = self.get_execution(execution_id)
+
+        def refuse(reason: str, message: str, **details: Any) -> JarvisIssueError:
+            issue = make_jarvis_issue(
+                kind="execution_move_refused",
+                subject=f"{record.execution_id}:{queue}",
+                message=message,
+                identity={"reason": reason, "state": record.state},
+                field="scheduler.queue",
+                details={"reason": reason, "queue": queue, "state": record.state, **details},
+            )
+            return JarvisIssueError(
+                [issue],
+                document={"execution": record.to_dict()},
+            )
+
+        if record.mode != "scheduler":
+            raise refuse("not_scheduler", "only scheduler executions can be moved")
+        if record.terminal or record.state != "submitted":
+            raise refuse(
+                "not_pending",
+                f"execution {execution_id} is {record.state}; only a pending job "
+                "can move to another queue",
+            )
+        provider, native_id = self._scheduler_control_target(record, "move")
+        control_cluster = self._scheduler_control_cluster(record)
+        previous = None
+        if isinstance(record.metadata.get("queue"), dict):
+            previous = record.metadata["queue"].get("partition")
+        request: Dict[str, Any] = {
+            "schema_version": "jarvis.execution.control.v1",
+            "action": "move",
+            "status": "requested",
+            "requested_at": datetime.now(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "provider": provider,
+            "native_id": native_id,
+            "from_queue": previous,
+            "to_queue": queue,
+        }
+        try:
+            result = move_scheduler_execution(
+                provider, native_id, queue, cluster=control_cluster
+            )
+        except SchedulerControlUnsupported as exc:
+            request["status"] = "unsupported"
+            store.update(execution_id, metadata={"move_request": request})
+            raise refuse("unsupported_provider", str(exc), provider=provider) from exc
+        except ValueError as exc:
+            raise refuse("invalid_queue", str(exc)) from exc
+        request["result"] = result
+        if not result["accepted"]:
+            request["status"] = "refused"
+            store.update(execution_id, metadata={"move_request": request})
+            raise refuse(
+                str(result["refusal"]),
+                f"{result['command'][0]} refused to move job {native_id} to "
+                f"{queue}: {result['diagnostic'] or 'exit ' + str(result['return_code'])}",
+                diagnostic=result["diagnostic"],
+            )
+        request["status"] = "accepted"
+        store.update(execution_id, metadata={"move_request": request})
+        return self.get_execution(execution_id)
 
     def _scheduler_control_target(
         self,
@@ -1981,6 +2168,7 @@ class Pipeline:
         )
         if answers_path:
             context.answers = load_answers(Path(answers_path))
+            context.answers_path = Path(answers_path)
         execution_id = getattr(self, "_execution_id", None)
         store = (
             self._execution_store()
@@ -3386,6 +3574,41 @@ class Pipeline:
         except Exception as error:
             logger.warning(f"provenance not written: {error}")
 
+    @staticmethod
+    def _launch_failure_issues(
+        execution_root: Path, error: BaseException
+    ) -> Optional[Dict[str, Any]]:
+        """Classify a failed run's MPI network signature as a typed issue.
+
+        Reads the error and the tail of the execution's logs; the issue names
+        ``resource_graph.net.override`` as the field to change.
+        """
+        try:
+            from jarvis_cd.util.network import classify_mpi_network_failure
+
+            texts = [str(error)]
+            for name in ("stdout.log", "stderr.log"):
+                path = execution_root / name
+                if path.is_file():
+                    with open(path, "rb") as stream:
+                        stream.seek(max(0, path.stat().st_size - 256 * 1024))
+                        texts.append(stream.read().decode("utf-8", "replace"))
+            launch_network = None
+            for launch in sorted((execution_root / "provenance").glob("launch-*")):
+                try:
+                    document = json.loads(
+                        (launch / "launch.json").read_text(encoding="utf-8")
+                    )
+                except (OSError, ValueError):
+                    continue
+                launch_network = document.get("network") or launch_network
+            issue = classify_mpi_network_failure(
+                "\n".join(texts), launch_network=launch_network
+            )
+        except Exception:
+            return None
+        return {"issues": [issue]} if issue else None
+
     def _started_package_instance(self, package_id: str) -> Optional[Any]:
         """Return the exact instance started for a package alias, if retained."""
         for instance in reversed(getattr(self, "_started_instances", [])):
@@ -3521,6 +3744,10 @@ class Pipeline:
         """
         if load_type and pipeline_file:
             self.load(load_type, pipeline_file)
+        if getattr(self, "_execution_root", None) is None:
+            from jarvis_cd.core.pipeline_check import enforce_pipeline_check
+
+            enforce_pipeline_check(self)
         if not wait:
             return self._launch_direct_execution(execution_id)
         store = self._execution_store()
@@ -3610,6 +3837,9 @@ class Pipeline:
                 logger.error(f"Error during cleanup: {stop_error}")
                 error.add_note(f"pipeline cleanup also failed: {stop_error}")
             self._write_execution_provenance(store, resolved_execution_id)
+            failure_metadata = self._launch_failure_issues(
+                store.executions_dir / resolved_execution_id, error
+            )
             try:
                 store.update(
                     resolved_execution_id,
@@ -3617,6 +3847,7 @@ class Pipeline:
                     terminal=True,
                     return_code=1,
                     error=_bounded_execution_error(error),
+                    **({"metadata": failure_metadata} if failure_metadata else {}),
                 )
             except Exception as record_error:
                 error.add_note(

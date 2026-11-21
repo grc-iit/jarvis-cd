@@ -1,8 +1,9 @@
 import json
 import sys
 import os
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 from pathlib import Path
+from typing import Any, Dict
 from jarvis_cd.util.argparse import ArgParse
 from jarvis_cd.core.config import BuiltinResourceGraphUnavailable, Jarvis
 from jarvis_cd.core.execution import ExecutionHandle
@@ -389,11 +390,41 @@ class JarvisCLI(ArgParse):
             ]
         )
 
+        self.add_cmd(
+            "ppl check",
+            msg="Validate coupling (services, host_slice, start_mode, ports) "
+            "and configuration_rules without running; exits 5 on errors",
+        )
+        self.add_args(
+            [
+                {
+                    "name": "load_type",
+                    "msg": "Type of pipeline to check (yaml) or current",
+                    "type": str,
+                    "pos": True,
+                    "default": "current",
+                },
+                {
+                    "name": "pipeline_file",
+                    "msg": "Pipeline YAML (required if load_type is yaml)",
+                    "type": str,
+                    "pos": True,
+                },
+                {
+                    "name": "json",
+                    "msg": "Print the jarvis.pipeline-check.v1 document",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
         self.add_menu("execution", msg="Durable pipeline execution records")
         self.add_cmd(
             "execution get",
             msg="Get one exact execution record",
-            aliases=["execution query"],
+            aliases=["execution query", "execution status"],
         )
         self.add_args(
             [
@@ -488,6 +519,43 @@ class JarvisCLI(ArgParse):
                 {
                     "name": "json",
                     "msg": "Print the resulting record as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
+        self.add_cmd(
+            "execution move",
+            msg="Move a pending scheduler execution to another queue (partition)",
+        )
+        self.add_args(
+            [
+                {
+                    "name": "execution_id",
+                    "msg": "JARVIS execution identity",
+                    "type": str,
+                    "required": True,
+                    "pos": True,
+                },
+                {
+                    "name": "queue",
+                    "aliases": ["partition"],
+                    "msg": "Target queue (Slurm partition)",
+                    "type": str,
+                    "required": True,
+                },
+                {
+                    "name": "pipeline_id",
+                    "aliases": ["pipeline-id"],
+                    "msg": "Pipeline identity (defaults to current pipeline)",
+                    "type": str,
+                    "required": False,
+                },
+                {
+                    "name": "json",
+                    "msg": "Print the resulting record (or refusal) as JSON",
                     "type": bool,
                     "default": False,
                     "prefix": "+",
@@ -1183,6 +1251,77 @@ class JarvisCLI(ArgParse):
                     "type": int,
                     "default": 25,
                 },
+                {
+                    "name": "net_only",
+                    "msg": "Collect only the net section (interfaces); keep storage",
+                    "type": bool,
+                    "default": False,
+                },
+            ]
+        )
+
+        self.add_menu("rg net", msg="Resource graph network selection (MPI launch network)")
+
+        self.add_cmd("rg net show", msg="Show the data/control network selection")
+        self.add_args(
+            [
+                {
+                    "name": "json",
+                    "msg": "Emit the net report as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                }
+            ]
+        )
+
+        self.add_cmd("rg net set", msg="Override the data and/or control network")
+        self.add_args(
+            [
+                {
+                    "name": "data",
+                    "msg": "Data network: CIDR, interface name, address, or none",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "control",
+                    "msg": "Control network: CIDR, interface name, address, or none",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "reason",
+                    "msg": "Why the override is needed (kept as provenance)",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "set_by",
+                    "msg": "Who set it (default: $USER)",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "json",
+                    "msg": "Emit the net report as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
+        self.add_cmd("rg net clear", msg="Drop the override; use the graph selection")
+        self.add_args(
+            [
+                {
+                    "name": "json",
+                    "msg": "Emit the net report as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                }
             ]
         )
 
@@ -1787,6 +1926,23 @@ class JarvisCLI(ArgParse):
         )
         self._emit_execution_record(record, json_output=bool(self.kwargs.get("json")))
 
+    def execution_move(self) -> None:
+        """Move a pending scheduler execution to another queue."""
+        from jarvis_cd.core.issues import JarvisIssueError
+
+        self._ensure_initialized()
+        json_output = bool(self.kwargs.get("json"))
+        try:
+            record = self._execution_pipeline().move_execution(
+                self.kwargs["execution_id"], self.kwargs["queue"]
+            )
+        except JarvisIssueError as refused:
+            if json_output:
+                print(json.dumps(refused.to_dict(), separators=(",", ":"), sort_keys=True))
+                refused.already_reported = True
+            raise
+        self._emit_execution_record(record, json_output=json_output)
+
     def _load_pipeline_yaml(self, pipeline_file: str, install_on_load: str) -> Pipeline:
         """Load a pipeline YAML with an explicit install-phase policy."""
         if not pipeline_file:
@@ -1795,6 +1951,44 @@ class JarvisCLI(ArgParse):
         pipeline._install_on_load = install_on_load
         pipeline.load("yaml", pipeline_file)
         return pipeline
+
+    def ppl_check(self) -> None:
+        """Validate the pipeline's coupling and configuration rules."""
+        from jarvis_cd.core.issues import JarvisIssueError
+        from jarvis_cd.core.pipeline_check import check_pipeline
+
+        json_output = bool(self.kwargs.get("json"))
+        with redirect_stdout(sys.stderr if json_output else sys.stdout):
+            self._ensure_initialized()
+            if self.kwargs.get("load_type", "current") == "yaml":
+                pipeline = self._load_pipeline_yaml(
+                    self.kwargs.get("pipeline_file"), install_on_load="skip"
+                )
+            else:
+                pipeline = self._require_current_pipeline()
+            document = check_pipeline(pipeline)
+        if json_output:
+            print(json.dumps(document, separators=(",", ":"), sort_keys=True, default=str))
+        else:
+            print(f"Pipeline {document['pipeline_id']}: "
+                  f"{'ok' if document['ok'] else 'refused'} "
+                  f"(allocation {document['allocation']['nodes']} nodes, "
+                  f"{document['allocation']['source']})")
+            for step in document["steps"]:
+                nodes = step.get("nodes")
+                where = f"nodes {nodes['first']}:{nodes['end']}" if nodes else "nodes ?"
+                ports = ",".join(str(p["port"]) for p in step.get("ports") or [])
+                print(f"  [{step['index']}] {step['pkg_id']} {step.get('role')} "
+                      f"{step.get('starts')} {where}" + (f" ports {ports}" if ports else ""))
+            for level, issues in (("ERROR", document["errors"]),
+                                  ("WARN", document["warnings"])):
+                for issue in issues:
+                    print(f"  {level} {issue['kind']} {issue.get('field', '')}: "
+                          f"{issue['message']}")
+        if document["errors"]:
+            error = JarvisIssueError(document["errors"])
+            error.already_reported = True
+            raise error
 
     def ppl_install(self) -> None:
         """Check or install packages; ``+submit`` runs it as a 1-node job."""
@@ -1805,16 +1999,18 @@ class JarvisCLI(ArgParse):
             InstallDecisionNeeded,
         )
 
-        self._ensure_initialized()
-        if self.kwargs.get("load_type", "current") == "yaml":
-            pipeline = self._load_pipeline_yaml(
-                self.kwargs.get("pipeline_file"), install_on_load="skip"
-            )
-        else:
-            pipeline = self._require_current_pipeline()
+        json_output = bool(self.kwargs.get("json"))
+        # +json keeps stdout for the one document; logs and Spack go to stderr
+        with redirect_stdout(sys.stderr) if json_output else nullcontext():
+            self._ensure_initialized()
+            if self.kwargs.get("load_type", "current") == "yaml":
+                pipeline = self._load_pipeline_yaml(
+                    self.kwargs.get("pipeline_file"), install_on_load="skip"
+                )
+            else:
+                pipeline = self._require_current_pipeline()
         check = bool(self.kwargs.get("check"))
         answers = self.kwargs.get("answers")
-        json_output = bool(self.kwargs.get("json"))
         if self.kwargs.get("submit"):
             handle = pipeline.submit(
                 submit=True,
@@ -1826,11 +2022,12 @@ class JarvisCLI(ArgParse):
             self._emit_execution_handle(handle, json_output=json_output)
             return
         try:
-            report = pipeline.install(
-                check=check,
-                answers_path=answers,
-                allow_local=bool(self.kwargs.get("allow_local")),
-            )
+            with redirect_stdout(sys.stderr) if json_output else nullcontext():
+                report = pipeline.install(
+                    check=check,
+                    answers_path=answers,
+                    allow_local=bool(self.kwargs.get("allow_local")),
+                )
             exit_code = 0
         except BuildOutsideAllocation as refused:
             context = install_context_for(pipeline, "install")
@@ -2877,7 +3074,68 @@ class JarvisCLI(ArgParse):
         self._ensure_initialized()
         benchmark = not self.kwargs.get("no_benchmark", False)
         duration = self.kwargs.get("duration", 25)
-        self.rg_manager.build(benchmark=benchmark, duration=duration)
+        self.rg_manager.build(
+            benchmark=benchmark,
+            duration=duration,
+            net_only=bool(self.kwargs.get("net_only", False)),
+        )
+
+    def _emit_net_report(self, report: Dict[str, Any]) -> None:
+        if self.kwargs.get("json"):
+            print(json.dumps(report, indent=2, sort_keys=True, default=str))
+            return
+        print(f"graph: {report['graph']} (site graph: {report['site_graph']})")
+        if not report.get("present"):
+            print("no net section: " + report["issues"][0]["message"])
+            return
+        print(f"collected: {report.get('collected_at')} on {report.get('collected_on')}")
+        for role in ("data", "control"):
+            choice = (report.get("effective") or {}).get(role) or {}
+            source = ((report.get("effective") or {}).get("sources") or {}).get(role)
+            print(
+                f"{role}: {choice.get('cidr')} iface={choice.get('interface')} "
+                f"speed={choice.get('speed_mbps')}Mb/s source={source}"
+            )
+        for network in report.get("networks") or []:
+            status = "usable" if network.get("usable") else network.get("excluded_reason")
+            print(
+                f"  {network['cidr']:<20} {str(network.get('interface')):<14} "
+                f"{network.get('kind'):<9} {network.get('speed_mbps')}Mb/s "
+                f"nodes={network.get('nodes')} reaches_all={network.get('reaches_all')} "
+                f"{status}"
+            )
+        for warning in report.get("warnings") or []:
+            print(f"warning: {warning}")
+
+    def _net_call(self, action):
+        """Run an rg net action; with +json keep stdout for the document."""
+        if self.kwargs.get("json"):
+            with redirect_stdout(sys.stderr):
+                self._ensure_initialized()
+                report = action()
+        else:
+            self._ensure_initialized()
+            report = action()
+        self._emit_net_report(report)
+
+    def rg_net_show(self):
+        """Show the resource graph's network selection."""
+        self._net_call(lambda: self.rg_manager.net_report())
+
+    def rg_net_set(self):
+        """Record a person's override of the data/control network."""
+        self._net_call(
+            lambda: self.rg_manager.net_set(
+                data=self.kwargs.get("data"),
+                control=self.kwargs.get("control"),
+                reason=self.kwargs.get("reason"),
+                set_by=self.kwargs.get("set_by"),
+            )
+        )
+
+    def rg_net_clear(self):
+        """Drop the network override."""
+        self._net_call(lambda: self.rg_manager.net_clear())
 
     def build_profile(self):
         """Build environment profile"""
@@ -3180,6 +3438,7 @@ def main():
         print("\nOperation cancelled by user")
         sys.exit(1)
     except Exception as e:
+        from jarvis_cd.core.issues import JarvisIssueError
         from jarvis_cd.core.spack_install import (
             BuildOutsideAllocation,
             InstallDecisionNeeded,
@@ -3190,6 +3449,12 @@ def main():
             sys.exit(e.exit_code)
         if isinstance(e, BuildOutsideAllocation):
             print(f"Build refused: {e}", file=sys.stderr)
+            sys.exit(e.exit_code)
+        if isinstance(e, JarvisIssueError):
+            if "+json" in sys.argv[1:] and not getattr(e, "already_reported", False):
+                print(json.dumps(e.to_dict(), separators=(",", ":"), sort_keys=True,
+                                 default=str))
+            print(f"Refused: {e}", file=sys.stderr)
             sys.exit(e.exit_code)
         print(f"Error: {e}")
         sys.exit(1)

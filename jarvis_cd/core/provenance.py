@@ -217,6 +217,7 @@ def capture_launch(launch: Any, cwd: Optional[str] = None) -> None:
             "hosts": list(getattr(hostfile, "hosts", []) or []),
             "hostfile": getattr(hostfile, "path", None),
             "binaries": binaries,
+            "network": getattr(launch, "network", None),
             "rank_env": redact_environment(env),
         }
         (launch_dir / "launch.json").write_text(
@@ -392,6 +393,13 @@ def write_provenance(
             for launch in launches for binary in launch["binaries"] if binary.get("realpath")
         }),
         "nodes": _nodes(all_ranks),
+        # The data/control networks each launch used and where they came
+        # from (resource graph selection or a person's override).
+        "mpi_network": [
+            {"launch": launch["id"], **launch["network"]}
+            for launch in launches
+            if isinstance(launch.get("network"), dict)
+        ],
         "launches": launches,
         "job_env": redact_environment(job_env if job_env is not None else os.environ),
     }

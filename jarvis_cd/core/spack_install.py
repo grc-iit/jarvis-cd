@@ -624,8 +624,11 @@ class Decisions:
         return dict(value) if isinstance(value, Mapping) else None
 
     def package_constraints(self, package: str) -> List[str]:
+        return [str(entry["constraint"]) for entry in self.package_entries(package)]
+
+    def package_entries(self, package: str) -> List[Dict[str, Any]]:
         return [
-            str(entry["constraint"])
+            dict(entry)
             for entry in self.data["packages"].get(package, [])
             if isinstance(entry, Mapping) and entry.get("constraint")
         ]
@@ -688,6 +691,8 @@ class InstallContext:
     progress: Optional[Callable[..., None]] = None
     #: refuse builds unless inside an allocation (or explicitly allowed)
     require_allocation: bool = False
+    #: the answers.json the answers came from (for decision provenance)
+    answers_path: Optional[Path] = None
 
     def __post_init__(self) -> None:
         if self.mode not in {"install", "check"}:
@@ -700,6 +705,10 @@ class InstallContext:
             )
         self.issues: List[Dict[str, Any]] = []
         self.used_answers: List[str] = []
+        #: every recorded answer this run applied, with where it came from
+        self.applied_decisions: List[Dict[str, Any]] = []
+        #: recorded answers not replayed because their question changed
+        self.stale_decisions: List[Dict[str, Any]] = []
         self._log_stream: Optional[IO[str]] = None
 
     @property
@@ -782,7 +791,47 @@ class InstallContext:
                 "constraints"
             )
         self.used_answers.append(str(issue["issue_id"]))
+        self.note_decision(
+            issue,
+            answer,
+            source="answers_file",
+            path=self.answers_path,
+            recorded_to=self.decisions_path,
+        )
         return answer
+
+    def note_decision(
+        self,
+        issue: Mapping[str, Any],
+        answer: Mapping[str, Any],
+        *,
+        source: str,
+        path: Optional[Path] = None,
+        recorded_to: Optional[Path] = None,
+        package: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Record that a stored answer was applied (``applied_decisions``)."""
+        entry: Dict[str, Any] = {
+            "issue_id": issue.get("issue_id"),
+            "kind": issue.get("kind"),
+            "subject": issue.get("subject"),
+            "scope": issue.get("scope") or ("package" if package else "site"),
+            "package": package if package is not None else issue.get("package"),
+            "constraint": answer.get("constraint"),
+            "source": source,
+            "path": str(path) if path is not None else None,
+        }
+        if recorded_to is not None:
+            entry["recorded_to"] = str(recorded_to)
+        for key in ("answered_at", "answered_by", "ask_id"):
+            if answer.get(key) is not None:
+                entry[key] = answer[key]
+        key = (entry["issue_id"], entry["package"], entry["constraint"])
+        for existing in self.applied_decisions:
+            if (existing["issue_id"], existing["package"], existing["constraint"]) == key:
+                return existing
+        self.applied_decisions.append(entry)
+        return entry
 
 
 def _node_is_version(node: "SpecNode", name: str, version: str) -> bool:
@@ -981,7 +1030,13 @@ class SpackPlanner:
     def plan_package(self, package: str, query: str) -> Dict[str, Any]:
         """Resolve one package; returns its install-record entry."""
         base_tokens = shlex.split(query)
-        constraints = self.decisions.package_constraints(package)
+        package_entries = self.decisions.package_entries(package)
+        constraints = [str(item["constraint"]) for item in package_entries]
+        for item in package_entries:
+            self.context.note_decision(
+                item, item, source="decisions_file",
+                path=self.decisions.path, package=package,
+            )
         entry: Dict[str, Any] = {
             "query": query,
             "status": "resolving",
@@ -1081,10 +1136,7 @@ class SpackPlanner:
         self, package: str, concretized: SpecNode
     ) -> tuple[Optional[str], str]:
         candidates = self.mpi_candidates()
-        constraints = {candidate["constraint"] for candidate in candidates}
         recorded = self.decisions.site("mpi")
-        if recorded is not None and recorded.get("constraint") in constraints:
-            return str(recorded["constraint"]), "decision"
         if len(candidates) == 1:
             return candidates[0]["constraint"], "auto_single_candidate"
         if not candidates:
@@ -1125,6 +1177,29 @@ class SpackPlanner:
             ],
             answerable=True,
         )
+        if recorded is not None and recorded.get("constraint"):
+            # A recorded answer is replayed only for the exact same question:
+            # a changed candidate set has a new issue_id and is asked again.
+            if recorded.get("issue_id") == issue["issue_id"]:
+                self.context.note_decision(
+                    issue, recorded, source="decisions_file",
+                    path=self.decisions.path,
+                )
+                return str(recorded["constraint"]), "decision"
+            stale = {
+                "issue_id": recorded.get("issue_id"),
+                "subject": "mpi",
+                "scope": "site",
+                "constraint": recorded.get("constraint"),
+                "path": str(self.decisions.path),
+                "answered_at": recorded.get("answered_at"),
+                "superseded_by": issue["issue_id"],
+                "reason": "the candidate set changed, so the question changed",
+            }
+            if stale not in self.context.stale_decisions:
+                self.context.stale_decisions.append(stale)
+            issue["supersedes"] = recorded.get("issue_id")
+            issue["previous_answer"] = recorded.get("constraint")
         answer = self.context.answer_for(issue)
         if answer is None:
             self.context.raise_issue(issue)
@@ -1754,6 +1829,8 @@ def run_spack_install(
     record["packages_total"] = total
     record["issues"] = [issue["issue_id"] for issue in context.issues]
     record["used_answers"] = list(context.used_answers)
+    record["applied_decisions"] = list(context.applied_decisions)
+    record["stale_decisions"] = list(context.stale_decisions)
     _atomic_write_text(
         context.record_path, json.dumps(record, indent=2, sort_keys=True) + "\n"
     )

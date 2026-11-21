@@ -110,45 +110,88 @@ class ResourceGraphManager:
         default_path = self.jarvis.resource_graph_file
         if default_path.exists():
             try:
-                self.resource_graph.load_from_file(default_path)
+                self.resource_graph.load_from_file(default_path, quiet=True)
             except Exception:
                 # Silently continue if load fails
                 pass
 
-    def build(self, benchmark: bool = True, duration: int = 25):
+    def build(
+        self,
+        benchmark: bool = True,
+        duration: int = 25,
+        net_only: bool = False,
+        hosts: Optional[List[str]] = None,
+    ):
         """
         Build resource graph by collecting information from all nodes in hostfile.
 
+        Run it on the compute nodes (inside an allocation, or as the
+        ``builtin.resource_graph`` package through ``jarvis ppl submit``):
+        the ``net`` section describes the nodes that ran the collector.
+
         :param benchmark: Whether to run performance benchmarks
         :param duration: Benchmark duration in seconds
+        :param net_only: Collect only the ``net`` section; keep the stored fs
+        :param hosts: Nodes to collect from (default: the active hostfile)
         """
-        # Get current hostfile
-        jarvis = Jarvis.get_instance()
-        if not jarvis.hostfile:
-            raise ValueError("No hostfile set. Use 'jarvis hostfile set <path>' first.")
+        from jarvis_cd.util.network import analyze_net
 
-        hostfile = jarvis.hostfile
-        nodes = hostfile.hosts
+        nodes = list(hosts or [])
+        if not nodes:
+            jarvis = Jarvis.get_instance()
+            if not jarvis.hostfile:
+                raise ValueError(
+                    "No hostfile set. Use 'jarvis hostfile set <path>' first."
+                )
+            nodes = jarvis.hostfile.hosts
 
         if not nodes:
             raise ValueError("Hostfile contains no hosts")
 
         logger.pipeline(f"Building resource graph for {len(nodes)} nodes...")
 
-        # Clear existing resource graph
+        previous = self.resource_graph
+        previous_override = (previous.net or {}).get("override")
+
+        # Clear existing resource graph (net-only keeps the stored storage view)
         self.resource_graph = ResourceGraph()
+        if net_only:
+            self.resource_graph.nodes = previous.nodes
+            self.resource_graph.common_mounts = previous.common_mounts
+        self._net_facts: Dict[str, Dict[str, Any]] = {}
 
         # Collect resources from all nodes in parallel
-        self._collect_from_nodes(nodes, benchmark, duration)
+        self._collect_from_nodes(nodes, benchmark, duration, net_only=net_only)
+        if self._net_facts:
+            self.resource_graph.net = analyze_net(
+                self._net_facts, override=previous_override
+            )
+        else:
+            self.resource_graph.net = previous.net
 
         # Save resource graph
         self._save()
 
         # Display summary
-        self.resource_graph.print_summary()
-        self.resource_graph.print_common_storage()
+        if not net_only:
+            self.resource_graph.print_summary()
+            self.resource_graph.print_common_storage()
+        if self.resource_graph.net:
+            selected = self.resource_graph.net.get("selected") or {}
+            for role in ("data", "control"):
+                choice = selected.get(role) or {}
+                logger.info(
+                    f"net {role}: {choice.get('cidr')} "
+                    f"({choice.get('interface')}, {choice.get('speed_mbps')} Mb/s)"
+                )
 
-    def _collect_from_nodes(self, nodes: List[str], benchmark: bool, duration: int):
+    def _collect_from_nodes(
+        self,
+        nodes: List[str],
+        benchmark: bool,
+        duration: int,
+        net_only: bool = False,
+    ):
         """
         Collect resource information from multiple nodes in parallel.
 
@@ -179,7 +222,9 @@ class ResourceGraphManager:
                     # Create a temporary hostfile for this specific node
                     from jarvis_cd.util.hostfile import Hostfile
 
-                    single_host_hostfile = Hostfile([hostname])
+                    single_host_hostfile = Hostfile(
+                        hosts=[hostname], find_ips=False
+                    )
 
                     # Create execution info for this node
                     exec_info = PsshExecInfo(
@@ -190,9 +235,11 @@ class ResourceGraphManager:
 
                 # Build command string
                 cmd_parts = ["jarvis_resource_graph"]
-                if not benchmark:
-                    cmd_parts.append("--no-benchmark")
-                if duration != 25:
+                if net_only:
+                    cmd_parts.append("+net_only")
+                elif not benchmark:
+                    cmd_parts.append("+no_benchmark")
+                if duration != 25 and not net_only:
                     cmd_parts.extend(["--duration", str(duration)])
                 cmd = " ".join(cmd_parts)
 
@@ -205,6 +252,7 @@ class ResourceGraphManager:
                     from jarvis_cd.shell import Exec
 
                     executor = Exec(cmd, exec_info)
+                    executor.run()
 
                 # Get results
                 exit_codes = executor.exit_code
@@ -252,8 +300,12 @@ class ResourceGraphManager:
                 try:
                     resource_data = future.result()
                     if resource_data:
+                        net_facts = resource_data.pop("net", None)
+                        if isinstance(net_facts, dict):
+                            self._net_facts[hostname] = net_facts
                         # Add to resource graph
-                        self.resource_graph.add_node_data(hostname, resource_data)
+                        if not net_only:
+                            self.resource_graph.add_node_data(hostname, resource_data)
                         logger.success(f"Added resources from {hostname} to graph")
                     else:
                         logger.warning(f"No resource data collected from {hostname}")
@@ -331,6 +383,102 @@ class ResourceGraphManager:
             f"{self.jarvis.resource_graph_file}"
         )
         return source, source_sha256
+
+    def net_report(self) -> Dict[str, Any]:
+        """Return the ``net`` query: selection, override, effective choice."""
+        from jarvis_cd.util.network import NET_SCHEMA, resolve_launch_network
+
+        net = self.resource_graph.net
+        document: Dict[str, Any] = {
+            "schema_version": "jarvis.resource-graph.net-report.v1",
+            "graph": str(self.jarvis.resource_graph_file),
+            "site_graph": bool(getattr(self.jarvis, "resource_graph_is_site", False)),
+            "present": bool(net),
+        }
+        if not net:
+            document["issues"] = [self._net_missing_issue()]
+            return document
+        effective = resolve_launch_network(net, net.get("collected_on") or [])
+        document.update(
+            {
+                "net_schema": net.get("schema_version", NET_SCHEMA),
+                "collected_at": net.get("collected_at"),
+                "collected_on": net.get("collected_on"),
+                "collected_in": net.get("collected_in"),
+                "selected": net.get("selected"),
+                "override": net.get("override"),
+                "effective": {
+                    "data": (effective or {}).get("data"),
+                    "control": (effective or {}).get("control"),
+                    "sources": (effective or {}).get("sources"),
+                },
+                "networks": net.get("networks"),
+            }
+        )
+        if not net.get("collected_in"):
+            document["warnings"] = [
+                "net was not collected inside a scheduler allocation; rebuild it "
+                "on the compute nodes (jarvis rg build +net_only in a job)"
+            ]
+        return document
+
+    @staticmethod
+    def _net_missing_issue() -> Dict[str, Any]:
+        from jarvis_cd.core.issues import make_jarvis_issue
+
+        return make_jarvis_issue(
+            kind="resource_graph_net_missing",
+            subject="resource graph net",
+            message=(
+                "The resource graph has no 'net' section. Collect it on the "
+                "compute nodes: submit the builtin.resource_graph package with "
+                "'jarvis ppl submit', or run 'jarvis rg build +net_only' inside "
+                "an allocation."
+            ),
+            field="resource_graph.net",
+            remedy="jarvis ppl submit of builtin.resource_graph (net_only=true)",
+        )
+
+    def net_set(
+        self,
+        *,
+        data: Optional[str],
+        control: Optional[str],
+        reason: Optional[str],
+        set_by: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Record a person's override of the data/control networks."""
+        from jarvis_cd.core.issues import JarvisIssueError
+        from jarvis_cd.util.network import make_override
+
+        if data is None and control is None:
+            raise ValueError("rg net set needs --data and/or --control")
+        net = self.resource_graph.net
+        if not net:
+            raise JarvisIssueError([self._net_missing_issue()])
+        previous = net.get("override") or {}
+        override = make_override(
+            net, data=data, control=control, reason=reason, set_by=set_by
+        )
+        for role in ("data", "control"):
+            if role not in override and role in previous:
+                override[role] = previous[role]
+        if previous:
+            override["previous"] = {
+                key: previous.get(key)
+                for key in ("data", "control", "set_at", "set_by", "reason")
+            }
+        net["override"] = override
+        self._save()
+        return self.net_report()
+
+    def net_clear(self) -> Dict[str, Any]:
+        """Drop the person's override; the graph selection applies again."""
+        net = self.resource_graph.net
+        if net and net.get("override"):
+            net["override"] = None
+            self._save()
+        return self.net_report()
 
     def show(self):
         """Display the current resource graph YAML file."""

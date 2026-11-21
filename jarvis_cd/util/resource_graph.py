@@ -21,6 +21,8 @@ class ResourceGraph:
         """Initialize empty resource graph."""
         self.nodes: Dict[str, List[Dict[str, Any]]] = {}
         self.common_mounts: Dict[str, List[Dict[str, Any]]] = {}
+        # ``net`` section (jarvis.resource-graph.net.v1), see util.network
+        self.net: Optional[Dict[str, Any]] = None
         
     def add_node_data(self, hostname: str, resource_data: Dict[str, Any]):
         """
@@ -159,7 +161,7 @@ class ResourceGraph:
                 filtered[hostname] = filtered_devices
         return filtered
         
-    def to_dict(self) -> Dict[str, List[Dict[str, Any]]]:
+    def to_dict(self) -> Dict[str, Any]:
         """Return the canonical persistent representation of this graph."""
         fs_data = []
         for devices in self.common_mounts.values():
@@ -167,7 +169,10 @@ class ResourceGraph:
                 device_dict = devices[0].copy()
                 device_dict.pop('hostname', None)
                 fs_data.append(device_dict)
-        return {'fs': fs_data}
+        data: Dict[str, Any] = {'fs': fs_data}
+        if self.net:
+            data['net'] = self.net
+        return data
 
     def save_to_file(self, output_path: Path, format: str = 'yaml'):
         """
@@ -187,7 +192,7 @@ class ResourceGraph:
 
         logger.success(f"Resource graph saved to {output_path}")
         
-    def load_from_file(self, input_path: Path):
+    def load_from_file(self, input_path: Path, quiet: bool = False):
         """
         Load resource graph from file.
 
@@ -202,14 +207,17 @@ class ResourceGraph:
         # Clear existing data
         self.nodes = {}
         self.common_mounts = {}
+        data = data or {}
+        net = data.get('net')
+        self.net = net if isinstance(net, dict) else None
 
         # Handle resource graph format with 'fs' section
-        if 'fs' in data:
+        if 'fs' in data or self.net is not None:
             # Determine hostname for resource graph files
             hostname = input_path.stem  # Use filename as hostname
             self.nodes[hostname] = []
 
-            for device_data in data['fs']:
+            for device_data in data.get('fs') or []:
                 # Expand environment variables in mount paths
                 mount_path = device_data.get('mount', '')
                 if mount_path:
@@ -234,12 +242,13 @@ class ResourceGraph:
                 device.setdefault('1m_seqwrite_bw', 'unknown')
                 self.nodes[hostname].append(device)
         else:
-            raise ValueError(f"Invalid resource graph format in {input_path}. Expected 'fs' section.")
+            raise ValueError(f"Invalid resource graph format in {input_path}. Expected an 'fs' or 'net' section.")
 
         # Reanalyze common mounts
         self._analyze_common_mounts()
 
-        logger.success(f"Resource graph loaded from {input_path}")
+        if not quiet:
+            logger.success(f"Resource graph loaded from {input_path}")
         
     def print_summary(self):
         """Print a summary of the resource graph."""

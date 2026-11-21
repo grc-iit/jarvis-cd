@@ -10,10 +10,12 @@ import time
 import threading
 import tempfile
 import shutil
+import socket
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 from jarvis_cd.util.argparse import ArgParse
+from jarvis_cd.util.network import collect_local_interfaces
 from jarvis_cd.shell import LocalExec, LocalExecInfo
 
 
@@ -322,6 +324,12 @@ class ResourceGraphCLI(ArgParse):
                 'default': False
             },
             {
+                'name': 'net_only',
+                'msg': 'Collect only network interfaces (fast, no storage scan)',
+                'type': bool,
+                'default': False
+            },
+            {
                 'name': 'output',
                 'msg': 'Output file (default: stdout)',
                 'type': str,
@@ -341,7 +349,11 @@ class ResourceGraphCLI(ArgParse):
         try:
             # Collect resources
             benchmark = not self.kwargs.get('no_benchmark', False)
-            resources = collect_storage_resources(benchmark=benchmark)
+            if self.kwargs.get('net_only', False):
+                resources = {'hostname': socket.gethostname(), 'fs': []}
+            else:
+                resources = collect_storage_resources(benchmark=benchmark)
+            resources['net'] = collect_local_interfaces()
             
             # Output results
             output_data = json.dumps(resources, indent=2)

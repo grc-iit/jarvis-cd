@@ -105,6 +105,25 @@ class ConfigurationCondition:
             value["value"] = self.value
         return value
 
+    def holds(self, config: Mapping[str, Any]) -> bool:
+        """Evaluate the predicate against one package configuration."""
+        actual = config.get(self.parameter)
+        empty = actual is None or (
+            isinstance(actual, (str, list, tuple, dict)) and len(actual) == 0
+        )
+        if self.operator == "is_empty":
+            return empty
+        if self.operator == "is_not_empty":
+            return not empty
+        if self.operator == "equals":
+            return actual == self.value
+        try:
+            if isinstance(actual, bool):
+                return False
+            return float(actual) > float(cast(float, self.value))
+        except (TypeError, ValueError):
+            return False
+
 
 @dataclass(frozen=True, slots=True)
 class ConfigurationRule:
@@ -129,6 +148,16 @@ class ConfigurationRule:
             "requires": [condition.to_dict() for condition in self.requires],
             "description": self.description,
         }
+
+    def violations(
+        self, config: Mapping[str, Any]
+    ) -> tuple[ConfigurationCondition, ...]:
+        """The unmet requirements when every ``when`` holds, else ``()``."""
+        if not all(condition.holds(config) for condition in self.when):
+            return ()
+        return tuple(
+            condition for condition in self.requires if not condition.holds(config)
+        )
 
 
 @dataclass(frozen=True, slots=True)

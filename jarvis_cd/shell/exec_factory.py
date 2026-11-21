@@ -26,6 +26,22 @@ class Exec(CoreExec):
         self.exec_info = exec_info
         self._delegate = None
 
+    @staticmethod
+    def _network_env_prefix(mpi_executor) -> str:
+        """``env K=V `` for the resource-graph network launcher settings.
+
+        Inside a container the host-side launcher env does not reach mpiexec,
+        so the selected network travels on the command line instead.
+        """
+        import shlex
+        network = getattr(mpi_executor, 'network', None) or {}
+        env = (network.get('applied') or {}).get('launcher_env') or {}
+        if not env:
+            return ''
+        return 'env ' + ' '.join(
+            f'{key}={shlex.quote(str(value))}' for key, value in sorted(env.items())
+        ) + ' '
+
     def _prepare_container(self, cmd: str):
         """
         Wrap a command for the configured container engine and return a cleaned ExecInfo.
@@ -181,6 +197,7 @@ class Exec(CoreExec):
                         'mpiexec ', 'mpiexec --mca plm rsh ', 1)
                 mpi_cmd = mpi_cmd.replace(
                     'mpiexec ', 'mpiexec -x PATH -x LD_LIBRARY_PATH ', 1)
+                mpi_cmd = self._network_env_prefix(mpi_executor) + mpi_cmd
                 wrapped_cmd, local_info = self._prepare_container(mpi_cmd)
                 wrapped_cmd, local_info = self._resolve_exec_info(
                     wrapped_cmd, local_info.mod(exec_type=ExecType.LOCAL))
@@ -191,7 +208,7 @@ class Exec(CoreExec):
                 mpi_executor = self._create_mpi_executor_with_type(
                     self.cmd, self.exec_info.mod(container='none', dry_run=True),
                     mpi_type)
-                mpi_cmd = mpi_executor.cmd
+                mpi_cmd = self._network_env_prefix(mpi_executor) + mpi_executor.cmd
                 wrapped_cmd, local_info = self._prepare_container(mpi_cmd)
                 wrapped_cmd, local_info = self._resolve_exec_info(
                     wrapped_cmd, local_info.mod(exec_type=ExecType.LOCAL))

@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -66,6 +67,10 @@ class SchedulerExecutionStatus:
     return_code: Optional[int]
     provider_state: Optional[str]
     diagnostic: Optional[str] = None
+    #: which query produced the state: ``queue``, ``accounting`` or ``absent``
+    basis: Optional[str] = None
+    #: ``available``, ``unavailable`` (no slurmdbd and similar) or ``None``
+    accounting: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Reject internally inconsistent provider observations."""
@@ -329,6 +334,40 @@ class Scheduler:
             provider_state=None,
             diagnostic=f"JARVIS cannot query scheduler provider {cls.NAME!r}",
         )
+
+    @classmethod
+    def query_queue(cls, native_id: str) -> Optional[Dict[str, Any]]:
+        """Queue facts for a pending job; ``None`` when the provider has none."""
+        del native_id
+        return None
+
+    @classmethod
+    def partition_facts(cls) -> List[Dict[str, Any]]:
+        """Partitions (queues) with node counts and limits, when known."""
+        return []
+
+    @classmethod
+    def move_argv(
+        cls, native_id: str, queue: str, *, cluster: Optional[str] = None
+    ) -> List[str]:
+        """Argv that moves a pending job to another queue."""
+        del native_id, queue, cluster
+        raise SchedulerControlUnsupported(
+            f"JARVIS has no move command for scheduler provider {cls.NAME!r}"
+        )
+
+    @classmethod
+    def interpret_move(
+        cls,
+        completed: Optional[subprocess.CompletedProcess[str]],
+        diagnostic: Optional[str],
+    ) -> tuple[bool, Optional[str], Optional[str]]:
+        """(accepted, refusal reason, diagnostic) for one move command."""
+        if completed is None:
+            return False, "scheduler_unavailable", diagnostic
+        if completed.returncode == 0:
+            return True, None, None
+        return False, "scheduler_rejected", (completed.stderr or "")[:2048]
 
     @classmethod
     def control_argv(
@@ -876,10 +915,13 @@ class SlurmScheduler(Scheduler):
         if _SLURM_NATIVE_ID.fullmatch(native_id) is None:
             raise ValueError("SLURM execution query requires a numeric job ID")
 
+        # --states=all keeps ended jobs visible for MinJobAge, so a cancel or
+        # an exit is seen even on sites without accounting (no slurmdbd).
         queue, queue_diagnostic = _run_scheduler_query(
             [
                 "squeue",
                 "--noheader",
+                "--states=all",
                 "--jobs",
                 native_id,
                 "--format=%i|%T",
@@ -889,9 +931,23 @@ class SlurmScheduler(Scheduler):
         if queue is not None and queue.returncode == 0:
             queue_record = _matching_slurm_status_line(queue.stdout, native_id, 2)
             if queue_record is not None:
-                return _slurm_execution_status(
+                observed = _slurm_execution_status(
                     queue_record[1],
                     return_code=None,
+                )
+                return_code = None
+                if observed.terminal:
+                    return_code = _slurm_control_exit_code(native_id)
+                    observed = _slurm_execution_status(
+                        queue_record[1], return_code=return_code
+                    )
+                return SchedulerExecutionStatus(
+                    state=observed.state,
+                    terminal=observed.terminal,
+                    return_code=observed.return_code,
+                    provider_state=observed.provider_state,
+                    diagnostic=observed.diagnostic,
+                    basis="queue",
                 )
             queue_reports_absent = True
 
@@ -919,12 +975,25 @@ class SlurmScheduler(Scheduler):
                     return_code=None,
                     provider_state=None,
                     diagnostic="SLURM accounting has no record for the accepted job",
+                    basis="accounting",
+                    accounting="available",
                 )
-            return _slurm_execution_status(
+            observed = _slurm_execution_status(
                 accounting_record[1],
                 return_code=_parse_slurm_exit_code(accounting_record[2]),
             )
+            return SchedulerExecutionStatus(
+                state=observed.state,
+                terminal=observed.terminal,
+                return_code=observed.return_code,
+                provider_state=observed.provider_state,
+                basis="accounting",
+                accounting="available",
+            )
 
+        accounting_state = (
+            "unavailable" if _slurm_accounting_unavailable(accounting) else None
+        )
         if queue_reports_absent or _slurm_queue_reports_missing(queue):
             return SchedulerExecutionStatus(
                 state="missing",
@@ -935,6 +1004,8 @@ class SlurmScheduler(Scheduler):
                     "SLURM no longer reports the accepted job; accounting did not "
                     "provide a historical allocation record"
                 ),
+                basis="absent",
+                accounting=accounting_state,
             )
 
         diagnostics = [
@@ -949,6 +1020,195 @@ class SlurmScheduler(Scheduler):
             provider_state=None,
             diagnostic="; ".join(diagnostics) or "SLURM state query was unavailable",
         )
+
+    _JOB_HOLD_REASONS = (
+        "dependency",
+        "begintime",
+        "jobheld",
+        "held",
+        "jobarraytasklimit",
+    )
+    _LIMIT_REASONS = ("assoc", "qos", "partitiontimelimit", "partitionnodelimit")
+
+    @classmethod
+    def query_queue(cls, native_id: str) -> Optional[Dict[str, Any]]:
+        """Queue facts for one pending job, or ``None`` when it is not pending.
+
+        Returns a ``jarvis.scheduler.queue.v1`` document: the job's partition,
+        pending reason, the scheduler's estimated start, and every other
+        available partition with its idle nodes and whether the job ``fits``
+        there (enough idle nodes now and a long enough time limit).
+        """
+        if _SLURM_NATIVE_ID.fullmatch(native_id) is None:
+            raise ValueError("SLURM queue query requires a numeric job ID")
+        job, _diagnostic = _run_scheduler_query(
+            [
+                "squeue",
+                "--noheader",
+                "--states=PENDING",
+                "--jobs",
+                native_id,
+                "--format=%i|%P|%r|%S|%D|%l",
+            ]
+        )
+        if job is None or job.returncode != 0:
+            return None
+        row = _matching_slurm_status_line(job.stdout, native_id, 6)
+        if row is None:
+            return None
+        _job_id, partition, reason, start_text, nodes_text, limit_text = row
+        nodes = int(nodes_text) if nodes_text.isdigit() else None
+        limit_s = _parse_slurm_duration(limit_text)
+        estimated_start: Optional[str] = None
+        starts_in_s: Optional[int] = None
+        try:
+            start: Optional[datetime] = datetime.fromisoformat(start_text)
+        except ValueError:
+            start = None
+        if start is not None:
+            estimated_start = start.isoformat()
+            starts_in_s = max(0, int((start - datetime.now()).total_seconds()))
+        lowered = reason.lower()
+        if any(lowered.startswith(prefix) for prefix in cls._JOB_HOLD_REASONS):
+            reason_kind = "job_hold"
+        elif any(lowered.startswith(prefix) for prefix in cls._LIMIT_REASONS):
+            reason_kind = "limit"
+        elif lowered.startswith(("resources", "priority", "reqnodenotavail", "reservation")):
+            reason_kind = "resources"
+        else:
+            reason_kind = "other"
+        current = {item for item in partition.split(",") if item}
+        partitions = [
+            entry
+            for entry in cls.partition_facts()
+            if entry["partition"] not in current and entry["available"] == "up"
+        ]
+        for entry in partitions:
+            time_ok = entry["max_time_s"] is None or (
+                limit_s is not None and entry["max_time_s"] >= limit_s
+            )
+            entry["fits"] = bool(
+                nodes is not None and entry["idle_nodes"] >= nodes and time_ok
+            )
+        partitions.sort(key=lambda entry: (not entry["fits"], -entry["idle_nodes"]))
+        return {
+            "schema_version": "jarvis.scheduler.queue.v1",
+            "provider": cls.NAME,
+            "native_id": native_id,
+            "observed_at": datetime.now(timezone.utc)
+            .isoformat()
+            .replace("+00:00", "Z"),
+            "state": "pending",
+            "partition": partition,
+            "reason": reason,
+            "reason_kind": reason_kind,
+            "estimated_start": estimated_start,
+            "starts_in_s": starts_in_s,
+            "nodes": nodes,
+            "time_limit": limit_text,
+            "time_limit_s": limit_s,
+            "partitions": partitions,
+            "move_supported": True,
+        }
+
+    @classmethod
+    def partition_facts(cls) -> List[Dict[str, Any]]:
+        """Every partition with availability, node counts and time limit."""
+        listing, _diagnostic = _run_scheduler_query(
+            ["sinfo", "--noheader", "--format=%P|%a|%F|%l|%c|%m|%G"]
+        )
+        if listing is None or listing.returncode != 0:
+            return []
+        merged: Dict[str, Dict[str, Any]] = {}
+        for raw_line in listing.stdout.splitlines():
+            fields = [field.strip() for field in raw_line.split("|")]
+            if len(fields) < 4 or not fields[0]:
+                continue
+            name = fields[0]
+            default = name.endswith("*")
+            name = name.rstrip("*")
+            counts = fields[2].split("/")
+            if len(counts) != 4 or not all(item.isdigit() for item in counts):
+                continue
+            entry = merged.setdefault(
+                name,
+                {
+                    "partition": name,
+                    "default": default,
+                    "available": fields[1],
+                    "allocated_nodes": 0,
+                    "idle_nodes": 0,
+                    "other_nodes": 0,
+                    "total_nodes": 0,
+                    "max_time": fields[3],
+                    "max_time_s": _parse_slurm_duration(fields[3]),
+                    "cpus_per_node": None,
+                    "memory_mb_per_node": None,
+                    "gres": None,
+                },
+            )
+            for key, value in zip(
+                ("allocated_nodes", "idle_nodes", "other_nodes", "total_nodes"),
+                counts,
+            ):
+                entry[key] += int(value)
+            if len(fields) >= 7:
+                cpus = fields[4].rstrip("+")
+                memory = fields[5].rstrip("+")
+                entry["cpus_per_node"] = int(cpus) if cpus.isdigit() else None
+                entry["memory_mb_per_node"] = int(memory) if memory.isdigit() else None
+                entry["gres"] = None if fields[6] in {"", "(null)"} else fields[6]
+        return list(merged.values())
+
+    @classmethod
+    def move_argv(
+        cls, native_id: str, queue: str, *, cluster: Optional[str] = None
+    ) -> List[str]:
+        """``scontrol update`` argv that moves a pending job to ``queue``."""
+        if _SLURM_NATIVE_ID.fullmatch(native_id) is None:
+            raise ValueError("SLURM move requires a numeric job ID")
+        if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", queue) is None:
+            raise ValueError("SLURM partition name is invalid")
+        argv = ["scontrol"]
+        if cluster is not None:
+            if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", cluster) is None:
+                raise ValueError("SLURM cluster name is invalid")
+            argv.append(f"--clusters={cluster}")
+        argv.extend(["update", f"JobId={native_id}", f"Partition={queue}"])
+        return argv
+
+    _MOVE_REFUSALS = (
+        ("no longer pending", "not_pending"),
+        ("already completing or completed", "not_pending"),
+        ("invalid job id", "not_pending"),
+        ("invalid partition", "invalid_queue"),
+        ("node configuration is not available", "does_not_fit"),
+        ("partition configuration not available", "does_not_fit"),
+        ("time limit", "does_not_fit"),
+        ("access denied", "not_permitted"),
+        ("not authorized", "not_permitted"),
+        ("permission denied", "not_permitted"),
+    )
+
+    @classmethod
+    def interpret_move(
+        cls,
+        completed: Optional[subprocess.CompletedProcess[str]],
+        diagnostic: Optional[str],
+    ) -> tuple[bool, Optional[str], Optional[str]]:
+        """(accepted, refusal reason, bounded diagnostic) for one move."""
+        if completed is None:
+            return False, "scheduler_unavailable", diagnostic
+        text = " ".join(
+            part.strip() for part in (completed.stderr, completed.stdout) if part
+        )
+        if completed.returncode == 0:
+            return True, None, text[:2048] or None
+        lowered = text.lower()
+        for marker, reason in cls._MOVE_REFUSALS:
+            if marker in lowered:
+                return False, reason, text[:2048]
+        return False, "scheduler_rejected", text[:2048] or diagnostic
 
     @classmethod
     def control_argv(
@@ -1206,6 +1466,56 @@ def _parse_slurm_exit_code(value: str) -> Optional[int]:
     return 0
 
 
+def _slurm_accounting_unavailable(
+    completed: Optional[subprocess.CompletedProcess[str]],
+) -> bool:
+    """Whether sacct failed because the site runs no accounting storage."""
+    if completed is None or completed.returncode == 0:
+        return False
+    text = ((completed.stderr or "") + (completed.stdout or "")).lower()
+    return "accounting storage is disabled" in text or "slurmdbd" in text
+
+
+def _slurm_control_exit_code(native_id: str) -> Optional[int]:
+    """ExitCode from ``scontrol show job`` while the ended job is still known."""
+    shown, _diagnostic = _run_scheduler_query(
+        ["scontrol", "show", "job", "--oneliner", native_id]
+    )
+    if shown is None or shown.returncode != 0:
+        return None
+    match = re.search(r"(?:^|\s)ExitCode=([0-9]+:[0-9]+)", shown.stdout or "")
+    return _parse_slurm_exit_code(match.group(1)) if match else None
+
+
+def _parse_slurm_duration(value: str) -> Optional[int]:
+    """Seconds for a Slurm time limit; ``None`` for unlimited or unknown."""
+    text = value.strip()
+    if not text or text.upper() in {"UNLIMITED", "INFINITE", "NOT_SET", "N/A"}:
+        return None
+    days = 0
+    if "-" in text:
+        day_text, text = text.split("-", 1)
+        if not day_text.isdigit():
+            return None
+        days = int(day_text)
+        parts = text.split(":")
+        if not all(part.isdigit() for part in parts) or len(parts) > 3:
+            return None
+        hours, minutes, seconds = ([int(part) for part in parts] + [0, 0])[:3]
+    else:
+        parts = text.split(":")
+        if not all(part.isdigit() for part in parts) or len(parts) > 3:
+            return None
+        numbers = [int(part) for part in parts]
+        if len(numbers) == 1:
+            hours, minutes, seconds = 0, numbers[0], 0
+        elif len(numbers) == 2:
+            hours, minutes, seconds = 0, numbers[0], numbers[1]
+        else:
+            hours, minutes, seconds = numbers
+    return ((days * 24 + hours) * 60 + minutes) * 60 + seconds
+
+
 def _slurm_execution_status(
     provider_state: str,
     *,
@@ -1281,6 +1591,59 @@ def query_scheduler_execution(
             diagnostic=f"JARVIS cannot query scheduler provider {provider!r}",
         )
     return scheduler_type.query_execution(native_id)
+
+
+def query_scheduler_queue(provider: str, native_id: str) -> Optional[Dict[str, Any]]:
+    """Queue facts (``jarvis.scheduler.queue.v1``) for one pending job."""
+    scheduler_type = _SCHEDULERS.get(provider.strip().lower())
+    if scheduler_type is None:
+        return None
+    return scheduler_type.query_queue(native_id)
+
+
+def scheduler_partition_facts(provider: str) -> List[Dict[str, Any]]:
+    """Partitions with node counts and limits for one provider."""
+    scheduler_type = _SCHEDULERS.get(provider.strip().lower())
+    if scheduler_type is None:
+        return []
+    return scheduler_type.partition_facts()
+
+
+def move_scheduler_execution(
+    provider: str,
+    native_id: str,
+    queue: str,
+    *,
+    cluster: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Run one bounded move of a pending job; returns the typed outcome."""
+    scheduler_type = _SCHEDULERS.get(provider.strip().lower())
+    if scheduler_type is None:
+        raise SchedulerControlUnsupported(
+            f"JARVIS has no move command for scheduler provider {provider!r}"
+        )
+    argv = scheduler_type.move_argv(native_id, queue, cluster=cluster)
+    try:
+        completed: Optional[subprocess.CompletedProcess[str]] = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            check=False,
+        )
+        diagnostic = None
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        completed, diagnostic = None, f"{argv[0]} failed: {str(exc)[:1024]}"
+    accepted, reason, detail = scheduler_type.interpret_move(completed, diagnostic)
+    return {
+        "command": argv,
+        "return_code": None if completed is None else completed.returncode,
+        "accepted": accepted,
+        "refusal": reason,
+        "diagnostic": detail,
+    }
 
 
 def resolve_scheduler_artifact_path(

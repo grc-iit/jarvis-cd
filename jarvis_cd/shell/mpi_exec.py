@@ -59,6 +59,9 @@ class LocalMpiExec(LocalExec):
 
         # Inside a JARVIS execution, record the launch (launcher and binary
         # realpaths, ldd) and wrap ranks for hostname and /proc maps capture.
+        launcher_env = dict(exec_info.basic_env or {})
+        self.network = self._apply_launch_network(launcher_env)
+
         from ..core.provenance import capture_launch
         capture_launch(self, cwd=getattr(exec_info, 'cwd', None))
 
@@ -67,10 +70,48 @@ class LocalMpiExec(LocalExec):
 
         # Create modified exec_info for LocalExec
         local_info = exec_info.mod(
-            env=exec_info.basic_env
+            env=launcher_env
         )
 
         super().__init__(mpi_cmd, local_info)
+
+    #: resource-graph network flavour of this launcher (see util.network)
+    network_flavour = None
+
+    def _apply_launch_network(self, launcher_env: Dict[str, Any]):
+        """Apply the resource graph's data/control network to this launch.
+
+        The graph's ``net`` section (or a person's override in it) picks the
+        networks; the flavour turns them into its own settings. Settings the
+        pipeline already made win, and ``JARVIS_MPI_NETWORK=off`` disables
+        it. Best effort: a missing graph changes nothing.
+        """
+        import os
+        from ..util import network as net_util
+
+        self.network_args = {}
+        if not self.network_flavour or net_util.network_disabled(
+            self.mpi_env, os.environ
+        ):
+            return None
+        try:
+            choice = net_util.resolve_launch_network(
+                net_util.load_net_section(), list(self.hostfile.hosts)
+            )
+            if not choice:
+                return None
+            # Never mutate the package's env dict; ranks get a copy.
+            self.mpi_env = dict(self.mpi_env or {})
+            record = net_util.apply_launch_network(
+                self.network_flavour,
+                choice,
+                launcher_env=launcher_env,
+                rank_env=self.mpi_env,
+            )
+        except Exception as error:  # never block a launch on graph errors
+            return {'error': str(error)}
+        self.network_args = dict((record or {}).get('applied', {}).get('args', {}))
+        return record
 
     def _process_cmd_list(self, cmd_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -120,6 +161,8 @@ class OpenMpiExec(LocalMpiExec):
     """
     Execute commands using OpenMPI.
     """
+
+    network_flavour = 'openmpi'
 
     def mpicmd(self) -> str:
         """Build OpenMPI command"""
@@ -193,9 +236,15 @@ class MpichExec(LocalMpiExec):
     Execute commands using MPICH.
     """
 
+    network_flavour = 'mpich'
+
     def mpicmd(self) -> str:
         """Build MPICH command"""
         params = self.mpi_cmd.split() if self.mpi_cmd else ['mpiexec']
+
+        # Hydra's -iface from the resource graph's control network.
+        for flag, value in getattr(self, 'network_args', {}).items():
+            params.append(f'{flag} {value}')
 
         # Forward the pipeline-level ssh_cmd as the bootstrap exec
         # for MPICH/hydra (default is ssh).
@@ -248,13 +297,15 @@ class IntelMpiExec(MpichExec):
     """
     Execute commands using Intel MPI (similar to MPICH).
     """
-    pass
+    network_flavour = 'intel'
 
 
 class CrayMpichExec(LocalMpiExec):
     """
     Execute commands using Cray MPICH.
     """
+
+    network_flavour = 'cray'
 
     def mpicmd(self) -> str:
         """Build Cray MPICH command"""

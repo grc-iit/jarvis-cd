@@ -895,6 +895,70 @@ jarvis ppl submit path/to/pipeline.yaml
 jarvis ppl submit +no_submit
 ```
 
+#### Coupling and configuration checks (`ppl check`)
+
+```bash
+jarvis ppl check                         # the current pipeline
+jarvis ppl check yaml coupled.yaml +json # a YAML, as jarvis.pipeline-check.v1
+```
+
+`ppl check` validates a pipeline without starting anything or running an
+install. `ppl submit` and `ppl run` run the same check first and refuse
+before any `sbatch` call or package start. A check with errors exits **5**.
+With `+json`, it prints one `jarvis.pipeline-check.v1` document on stdout
+(logs go to stderr), and a refused submit prints a `jarvis.refusal.v1`
+document whose `issues` are the same errors.
+
+The document holds:
+
+- `ok`;
+- `allocation` (`nodes` and their `source`: `scheduler.nodes` or `hostfile`);
+- `errors[]` and `warnings[]`, each a `jarvis.issue.v1` with an `issue_id`
+  and a `field` such as `pkgs[1].port_id`;
+- `steps[]`, one per package: `index`, `pkg_id`, `pkg_type`, `role`
+  (`service` or `batch`, from the package's deployment profile or its class),
+  `execution_profile`, `readiness`, `start_mode`, `starts` (`background` or
+  `foreground`), `host_slice`, `nodes` (`{first, end}`), `node_count`, and
+  `ports` (`[{parameter, port}]`);
+- `services[]`, the service steps.
+
+| Kind | Level | When |
+|------|-------|------|
+| `host_slice_invalid` | error | the slice is malformed, empty, or an explicit bound reaches past the allocation's nodes (negative indices count from the end) |
+| `start_mode_invalid` | error | `start_mode` is not `auto`, `foreground` or `background` |
+| `configuration_rule_violated` | error | a package's `configuration_rules` requirement is unmet; `field` names the parameter, `details` holds the rule, the unmet condition and the value |
+| `service_port_conflict` | error | two services listen on the same port on overlapping nodes |
+| `package_unloadable` | error | the package cannot be loaded |
+| `service_after_batch` | warning | a service starts only after a foreground batch step has finished |
+| `service_blocks_pipeline` | warning | a service starts in the foreground before batch steps |
+| `host_slice_overlap` | warning | a sliced service shares nodes with a batch step |
+| `deployment_contract_invalid` | warning | the package's deployment contract raised |
+
+A coupled service-plus-solver pipeline puts the service first, so it starts
+in the background and beside the solver. It gives each step its own
+`host_slice` of one allocation:
+
+```yaml
+name: coupled
+pkgs:
+  - pkg_type: builtin.paraview     # service: pvserver
+    pkg_name: viz
+    mode: service
+    start_mode: auto               # services start in the background
+    host_slice: "12:16"
+    port_id: 11111
+  - pkg_type: builtin.xcompact3d   # batch: the solver
+    pkg_name: sim
+    host_slice: "0:12"
+scheduler:
+  name: slurm
+  nodes: 16
+```
+
+Each `ppl run` and submit job waits for the service to become ready before
+the next step starts. On TERM, `ppl stop` stops both, in reverse order (see
+[scheduler.md → Cancelling and stopping](scheduler.md#cancelling-and-stopping-executions)).
+
 ### Pipeline Information and Status
 
 #### List Available Pipelines
