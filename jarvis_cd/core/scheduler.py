@@ -145,17 +145,18 @@ AUTO_SCHEDULER_NAMES = ("auto", "detect")
 def resolve_scheduler_name(spec: Optional[Dict[str, Any]]) -> str:
     """The scheduler a ``scheduler:`` block means, in lower case.
 
-    ``name: auto`` (or ``detect``) picks the scheduler whose client is on
-    ``PATH`` (``sbatch``, ``qsub``, ``bsub``, ``flux``), so a caller can
-    write one block for every site. Raises :class:`JarvisIssueError`
-    (``scheduler_missing`` or ``scheduler_unsupported``, exit 5).
+    ``name: auto`` (or ``detect``), or no ``name`` at all, picks the
+    scheduler whose client is on ``PATH`` (``sbatch``, ``qsub``, ``bsub``,
+    ``flux``), so a caller can write one block for every site. Raises
+    :class:`JarvisIssueError` (``scheduler_missing`` or
+    ``scheduler_unsupported``, exit 5).
     """
     from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
 
     raw = (spec or {}).get("name")
     name = str(raw).strip().lower() if isinstance(raw, str) and raw.strip() else ""
     requested = name or None
-    if name in AUTO_SCHEDULER_NAMES:
+    if name in AUTO_SCHEDULER_NAMES or not name:
         from jarvis_cd.core.sched_info import _CLIENTS, detect_provider
 
         name = detect_provider() or ""
@@ -164,7 +165,8 @@ def resolve_scheduler_name(spec: Optional[Dict[str, Any]]) -> str:
                 kind="scheduler_missing",
                 subject="scheduler",
                 message=(
-                    "scheduler.name is 'auto' but no scheduler client ("
+                    f"scheduler.name is {repr(requested) if requested else 'unset'} (auto) but no "
+                    "scheduler client ("
                     + ", ".join(client for client, _provider in _CLIENTS)
                     + ") is on PATH"
                 ),
@@ -174,16 +176,6 @@ def resolve_scheduler_name(spec: Optional[Dict[str, Any]]) -> str:
                 remedy="submit from a host with the site's scheduler client, or "
                 "name the scheduler in scheduler.name",
             )])
-    if not name:
-        raise JarvisIssueError([make_jarvis_issue(
-            kind="scheduler_missing",
-            subject="scheduler",
-            message="scheduler.name is required: a scheduler ("
-            + ", ".join(sorted(_SCHEDULERS)) + ") or 'auto'",
-            field="scheduler.name",
-            details={"supported": sorted(_SCHEDULERS)},
-            remedy="set scheduler.name, or 'auto' to use the host's scheduler",
-        )])
     if name not in _SCHEDULERS:
         raise JarvisIssueError([make_jarvis_issue(
             kind="scheduler_unsupported",

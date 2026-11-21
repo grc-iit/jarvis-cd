@@ -354,15 +354,27 @@ def net_launch_reasons(
                 "the settings may not fit those hosts; a wrong one fails the "
                 "launch with an mpi_network issue",
                 hosts=[entry.get("host") for entry in hosts_check.get("hosts") or []])
+        for item in hosts_check.get("withheld") or []:
+            add("device_unverified", ADVISORY, ("data",),
+                f"{item.get('setting')}={item.get('value')} was withheld: the "
+                "graph never saw " + ", ".join(item.get("hosts") or []),
+                "UCX picks its own devices on every node: correct, but it may "
+                "use TCP where the RDMA device would be faster",
+                setting=item.get("setting"), value=item.get("value"),
+                hosts=list(item.get("hosts") or []))
     elif launch_nodes is not None and launch_nodes > len(graph_hosts):
         severity = BLOCK if needs_names else ADVISORY
+        device = (data or {}).get("ucx_device") if flavour != "cray" else None
         add("hosts_not_in_graph", severity, ("data", "control"),
             f"the job asks {launch_nodes} nodes but the graph was collected on "
             f"{len(graph_hosts)}",
-            (f"{flavour} sets interface names the graph never saw on the other "
-             "nodes; a wrong name fails the launch") if needs_names else
-            ("Open MPI takes CIDRs, which fit any node with an address in them; "
-             "a node without one fails the launch with an mpi_network issue"))
+            ((f"{flavour} sets interface names the graph never saw on the other "
+              "nodes; a wrong name fails the launch") if needs_names else
+             ("Open MPI takes CIDRs, which fit any node with an address in them; "
+              "a node without one fails the launch with an mpi_network issue"))
+            + (f"; UCX_NET_DEVICES={device} is withheld at launch, so UCX picks "
+               "its own devices" if device else ""),
+            **({"withholds": ["UCX_NET_DEVICES"]} if device else {}))
     return reasons
 
 

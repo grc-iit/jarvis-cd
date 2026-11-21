@@ -87,7 +87,8 @@ JARVIS's pick, and the issue rides along so an agent can still engage.
 | `rdma_not_active` | the data network has an RDMA device whose port isn't ACTIVE on every node, so `UCX_NET_DEVICES` isn't set | advisory |
 | `control_fallback` | no network holds every node's hostname address, so control fell back (possibly to the data network) | advisory |
 | `collected_outside_allocation` | the net section wasn't collected inside a scheduler allocation | advisory |
-| `hosts_not_in_graph` | before submit: the job asks more nodes than the graph was collected on. At launch: the [hosts check](resource-graph-network.md#hosts-the-graph-has-not-seen) is a `warning` | before submit, block for MPICH and Intel MPI, advisory otherwise. At launch, advisory |
+| `hosts_not_in_graph` | before submit: the job asks more nodes than the graph was collected on (`withholds: ["UCX_NET_DEVICES"]` when the data network has a UCX device). At launch: the [hosts check](resource-graph-network.md#hosts-the-graph-has-not-seen) is a `warning` | before submit, block for MPICH and Intel MPI, advisory otherwise. At launch, advisory |
+| `device_unverified` | at launch: the graph's `ucx_device` was withheld because some launch hosts aren't in the graph (`setting`, `value`, `hosts`) | advisory |
 
 At the `launch` stage a question never blocks, because the allocation is
 already running. It is recorded with the launch instead.

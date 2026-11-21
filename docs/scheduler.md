@@ -86,7 +86,7 @@ pkgs:
 
 | Key                | SBATCH flag             | Notes                               |
 |--------------------|-------------------------|-------------------------------------|
-| `name`             | (selects backend)       | Required: `slurm`, or `auto` (also `detect`) to use the scheduler whose client is on `PATH` (`sbatch`, `qsub`, `bsub`, `flux`). The record keeps the resolved provider. No client gives `scheduler_missing`; a provider JARVIS lacks gives `scheduler_unsupported` (exit 5, `field: scheduler.name`) |
+| `name`             | (selects backend)       | `slurm`, or `auto` (also `detect`, and the default when `name` is omitted) to use the scheduler whose client is on `PATH` (`sbatch`, `qsub`, `bsub`, `flux`). The record keeps the resolved provider. No client gives `scheduler_missing`; a provider JARVIS lacks gives `scheduler_unsupported` (exit 5, `field: scheduler.name`) |
 | `hostfile`         | (used by Jarvis)        | Direct scheduler use defaults to `${SHARED_DIR}/hostfile.txt`; `Pipeline.submit` isolates it per execution |
 | `suffix`           | (used by Jarvis)        | Appended to every hostname pulled from the allocation, e.g. `-40g` to target a 40GbE NIC |
 | `job_name`         | `--job-name`            |                                     |

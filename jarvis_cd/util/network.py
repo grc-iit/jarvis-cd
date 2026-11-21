@@ -513,6 +513,22 @@ def apply_launch_network(
     """Apply a choice in place; settings the caller already made win."""
     if not choice:
         return None
+    withheld = []
+    data = choice.get("data") or {}
+    if (flavour != "cray" and data.get("ucx_device") and choice.get("hosts_not_in_graph")
+            and (choice.get("sources") or {}).get("data") != "override"):
+        # A UCX device is a per-host name, and CIDRs say nothing about it:
+        # the graph only shows it ACTIVE on the nodes it saw. Leave
+        # UCX_NET_DEVICES unset so UCX picks the devices each node has.
+        withheld.append({
+            "setting": "UCX_NET_DEVICES",
+            "value": data["ucx_device"],
+            "hosts": list(choice["hosts_not_in_graph"]),
+            "reason": "the graph never saw these hosts, so it cannot say the "
+                      f"device {data['ucx_device']} is ACTIVE on them; UCX picks "
+                      "its own devices instead",
+        })
+        choice = dict(choice, data={k: v for k, v in data.items() if k != "ucx_device"})
     settings = flavour_settings(flavour, choice)
     applied: Dict[str, Any] = {"launcher_env": {}, "rank_env": {}, "args": {}}
     kept: Dict[str, Any] = {}
@@ -533,11 +549,16 @@ def apply_launch_network(
             continue
         applied["args"][key] = value
     record = dict(choice)
+    if withheld:
+        record["data"] = dict(data)
+        record["withheld"] = withheld
     record.update({"flavour": flavour, "applied": applied, "kept_from_caller": kept})
     if record.get("hosts_not_in_graph"):
         record["hosts_not_in_graph_check"] = classify_hosts_not_in_graph(
             flavour, choice, record["hosts_not_in_graph"]
         )
+        if withheld:
+            record["hosts_not_in_graph_check"]["withheld"] = withheld
     return record
 
 

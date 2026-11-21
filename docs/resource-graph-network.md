@@ -171,7 +171,7 @@ choice and applies each flavour's own settings:
 | MPICH (Hydra) | `-iface <data iface>` and `HYDRA_IFACE` | `MPIR_CVAR_CH3_NETWORK_IFACE`, `FI_TCP_IFACE` = data iface (`-genv`) |
 | Intel MPI | `I_MPI_HYDRA_IFACE` = control iface | `FI_TCP_IFACE`, `FI_SOCKETS_IFACE` = data iface |
 | Cray MPICH | nothing: Cray drives the high-speed network itself | nothing |
-| any but Cray, when data has a `ucx_device` | `UCX_NET_DEVICES` | `UCX_NET_DEVICES` |
+| any but Cray, when data has a `ucx_device` and every launch host is in the graph (or the device comes from an override) | `UCX_NET_DEVICES` | `UCX_NET_DEVICES` |
 
 Open MPI takes CIDRs, which stay correct when interface names differ
 between nodes. Hydra and Intel MPI need a name.
@@ -184,7 +184,8 @@ network for a run. A single-node launch sets nothing.
 The applied choice is written to the launch's provenance (`launch.json` →
 `network`, schema `jarvis.mpi-network.v1`). It holds `data`, `control`,
 `sources`, `override`, `flavour`, `applied` (`launcher_env`, `rank_env`,
-`args`), `kept_from_caller`, `hosts` and `hosts_not_in_graph`. Container MPI
+`args`), `kept_from_caller`, `hosts`, `hosts_not_in_graph` and, when a
+setting was held back, `withheld[]`. Container MPI
 launches get the same settings through the container command's
 environment.
 
@@ -213,6 +214,17 @@ never blocked: a wrong network still shows up as an
 advisory `hosts_not_in_graph` [site-fact question](site-facts.md) in
 `network.site_facts`. Before submit, a job wider than the graph is a
 blocking question for MPICH and Intel MPI.
+
+A device name is a per-host fact that CIDRs don't cover: the graph shows the
+data network's `ucx_device` ACTIVE only on the nodes it saw. So when any
+launch host is outside the graph, `UCX_NET_DEVICES` is withheld and UCX picks
+the devices each node has. The CIDR settings still apply. The launch record's
+`withheld[]` (and `hosts_not_in_graph_check.withheld`) has `setting`,
+`value`, `hosts` and `reason`, and the launch raises an advisory
+`device_unverified` site-fact question. A device set by `rg net set` is a
+person's answer and is never withheld. To get the device pinned again,
+collect the net section in a job that spans every launch node (for example,
+`builtin.resource_graph` as the pipeline's first package).
 
 ## Uncertain picks
 
