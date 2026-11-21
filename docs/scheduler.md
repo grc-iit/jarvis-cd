@@ -483,6 +483,38 @@ JARVIS Spack to the site's upstreams, compilers and externals first, run
 scheduler's `pre_cmds`, to make a run job verify instead of building. It then
 fails fast with exit 3 when something is missing. `skip` disables the phase.
 
+### Captured load environment
+
+Resolving and loading Spack specs inside every run job can take minutes. So
+an install that ends with every package satisfied (a `ppl install`, an
+install job, or an install-on-load) captures the environment `spack load`
+produced, once, in `<pipeline shared>/install/spack-load-env.json`
+(`jarvis.spack-load-env.v1`). It holds `captured_at`, `captured_in` (the
+install's execution id), the per-package `hashes`, the `inputs` digests, the
+`env_delta` (path variables as `prepend` lists, others as `set`), the MPI
+environment, the `watched_paths` (the prefixes it prepended), and the install
+record and result.
+
+A run's install phase (the default `install` policy) then applies the
+capture with no Spack call, if it is still fresh. It is stale, and the run
+falls back to `spack spec`/`spack load` and writes a new capture, when:
+
+- any input changed: the packages' `install*` settings, `decisions.yaml` (or
+  `JARVIS_SPACK_DECISIONS`), the Spack root or `JARVIS_SPACK_ROOT` /
+  `JARVIS_SPACK_CONFIG`, or, with a Spack env, its `spack.lock`;
+- a watched path no longer exists (a package was uninstalled or moved);
+- the schema differs, or the file is missing or unreadable.
+
+`JARVIS_SPACK_ENV_CAPTURE=off` disables capture and its use. `ppl install`
+itself always resolves and captures again. `ppl install +check +json`
+reports `env_capture` (`path`, `fresh`, `captured_at`, `stale_reason`).
+
+The run records which path it took as the install report's `activation`,
+and in the execution's
+[`metadata.phase_timings.env_activation`](executions.md#phase-timings):
+`method` (`captured`, `spack_load` or `none`), `seconds`, `policy`, and, for
+`spack_load`, the `stale_reason` and whether a new capture was written.
+
 Install and run jobs see `JARVIS_SPACK_ROOT`, `JARVIS_SPACK_CONFIG` and
 `JARVIS_SPACK_ENV_DIR` through Slurm's default environment export
 (`--export=ALL`). If the site exports nothing, set them in `pre_cmds`. The job

@@ -2360,6 +2360,14 @@ def finalize_execution(
         raise RuntimeError("scheduler finalizer cannot update a direct execution")
     if current.terminal:
         return current
+    try:
+        from jarvis_cd.core.site_facts import record_execution_site_facts
+
+        # Catch-all for a run that never reached its own merge (TERM, wall time).
+        record_execution_site_facts(root, validated_id)
+        current = read_execution_record(root, expected_execution_id=validated_id)
+    except Exception:
+        pass
     store = ExecutionStore(root.parent, current.pipeline_id)
     if _control_requested(current.metadata.get("cancel_request")):
         return store.update(

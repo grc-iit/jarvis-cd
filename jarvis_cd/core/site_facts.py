@@ -38,6 +38,7 @@ import ipaddress
 import json
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
@@ -1076,9 +1077,46 @@ def execution_site_facts(execution_root: Path,
     return {
         "schema_version": SITE_FACTS_SCHEMA,
         "issues": list(issues.values()),
+        "advisories": launch_advisories({"issues": list(issues.values())}),
         "confirmed": list(confirmed.values()),
         "stages": summaries,
     }
+
+
+def launch_advisories(report: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The non-blocking issues of a site-facts report (always a list)."""
+    if not isinstance(report, dict):
+        return []
+    return [issue for issue in report.get("issues") or []
+            if isinstance(issue, dict) and not issue.get("blocking")]
+
+
+def record_execution_site_facts(execution_root: Path,
+                                execution_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Merge the launches' site facts into the execution record now.
+
+    Called right after each launch writes its ``launch.json`` and again when
+    the run ends or the scheduler script finalizes, so a run killed at its
+    wall time still carries its launch advisories. Idempotent; never raises.
+    """
+    try:
+        from jarvis_cd.core.execution import ExecutionStore, read_execution_record
+
+        root = Path(execution_root)
+        if not (root / ".jarvis-execution.json").is_file():
+            return None
+        current = read_execution_record(root, expected_execution_id=execution_id or root.name)
+        merged = execution_site_facts(root, current.metadata.get("site_facts"))
+        if merged is None:
+            return None
+        if merged == current.metadata.get("site_facts"):
+            return merged
+        ExecutionStore(root.parent, current.pipeline_id).update(
+            current.execution_id, metadata={"site_facts": merged})
+        return merged
+    except Exception as error:  # advisory evidence must never fail a run
+        print(f"jarvis: site facts not recorded: {error}", file=sys.stderr)
+        return None
 
 
 def summarize(issues: Iterable[Dict[str, Any]]) -> List[str]:

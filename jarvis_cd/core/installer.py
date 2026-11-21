@@ -12,10 +12,13 @@ binaries / libraries the installer produced.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import time
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Type
+from typing import Dict, List, Any, Optional, Tuple, Type
 
 
 class Installer(ABC):
@@ -96,12 +99,16 @@ class Installer(ABC):
         return reg[method]()
 
     @staticmethod
-    def install_all(ppl, mode: str = "install", context=None) -> Dict[str, Any]:
+    def install_all(ppl, mode: str = "install", context=None,
+                    use_capture: bool = False) -> Dict[str, Any]:
         """Run (or, with ``mode='check'``, only verify) every installer.
 
         Returns a ``jarvis.install-report.v1`` document. Raises
         ``InstallDecisionNeeded`` (CLI exit 3) when any installer wrote an
         issue: a choice to make, or in check mode a package still missing.
+        ``use_capture`` (a pipeline load) lets the Spack group apply the env
+        the last install captured instead of resolving and loading again;
+        ``report["activation"]`` says which happened and how long it took.
         """
         from jarvis_cd.core.spack_install import (
             REPORT_SCHEMA,
@@ -111,6 +118,7 @@ class Installer(ABC):
 
         if mode not in ("install", "check"):
             raise ValueError("install mode must be 'install' or 'check'")
+        started = time.monotonic()
         grouped = Installer.get_installers(ppl)
         report: Dict[str, Any] = {
             "schema_version": REPORT_SCHEMA,
@@ -118,6 +126,13 @@ class Installer(ABC):
             "mode": mode,
             "installers": {},
         }
+        activation: Optional[Dict[str, Any]] = None
+        if use_capture and mode == "install" and context is None and grouped.get("spack"):
+            captured = SpackInstaller.activate_captured(ppl, grouped["spack"])
+            activation = captured["activation"]
+            if captured["result"] is not None:
+                report["installers"]["spack"] = captured["result"]
+                grouped = {m: pkgs for m, pkgs in grouped.items() if m != "spack"}
         owns_context = False
         if context is None and grouped:
             context = install_context_for(ppl, mode)
@@ -160,6 +175,18 @@ class Installer(ABC):
                     report["last_install"] = read_last_install(ppl, context=context)
                 except Exception as exc:  # reporting must never fail a check
                     report["last_install"] = {"error": str(exc)[:512]}
+                spack_pkgs = Installer.get_installers(ppl).get("spack")
+                if spack_pkgs:
+                    try:
+                        captured, stale = load_spack_env_capture(ppl, spack_pkgs)
+                        report["env_capture"] = {
+                            "path": str(spack_env_capture_path(ppl)),
+                            "fresh": captured is not None,
+                            "captured_at": (captured or {}).get("captured_at"),
+                            "stale_reason": stale,
+                        }
+                    except Exception as exc:
+                        report["env_capture"] = {"error": str(exc)[:512]}
             report["answer_with"] = {
                 "format": "answers.json: {issue_id: constraint | "
                           "{constraint, answered_by, ask_id}}",
@@ -176,6 +203,16 @@ class Installer(ABC):
             result.get("status") in ("done", "satisfied", "installed", "unchecked")
             for result in report["installers"].values()
         )
+        spack_result = report["installers"].get("spack") or {}
+        if activation is not None or spack_result.get("activation"):
+            final = dict(activation or {})
+            ran = spack_result.get("activation") or {}
+            if final.get("method") != "captured":
+                final.update(method="spack_load",
+                             spack_load_seconds=ran.get("seconds"),
+                             capture_written=ran.get("capture"))
+            final["seconds"] = round(time.monotonic() - started, 3)
+            report["activation"] = final
         if failure is not None:
             # A failed build wins over open questions: exit 6 with all issues.
             failure.report = report
@@ -308,6 +345,7 @@ class SpackInstaller(Installer):
             context = install_context_for(ppl, mode)
             context.open()
         env_dir = spack_env_dir_for(ppl) if spack_env_enabled() else None
+        raw_pkg_list = pkg_list
         try:
             pkg_list = _with_absolute_repos(ppl, pkg_list)
             record = run_spack_install(pkg_list, context, env_dir=env_dir)
@@ -357,25 +395,19 @@ class SpackInstaller(Installer):
         ]
         mpi_env: Dict[str, str] = {}
         if hashes and not context.issues:
+            from jarvis_cd.core.spack_install import spack_subprocess_environment
+
             env_manager = EnvironmentManager(ppl.jarvis)
+            base_env = spack_subprocess_environment()
+            loaded = time.monotonic()
             spack_env = env_manager.capture_spack_environment(
                 hashes,
                 config_scopes=[record["spack_scope"]] if record.get("spack_scope") else (),
             )
-            ppl.env.update(spack_env)
+            load_seconds = round(time.monotonic() - loaded, 3)
             print(f"SpackInstaller: merged {len(spack_env)} env vars from spack load")
             mpi_env = mpi_environment(record)
-            for name in ("JARVIS_MPI_NAME", "JARVIS_MPI_SPEC", "JARVIS_MPI_TYPE",
-                         "JARVIS_MPI_PREFIX"):
-                ppl.env.pop(name, None)
-            ppl.env.update(mpi_env)
-            prefix = mpi_env.get("JARVIS_MPI_PREFIX")
-            if prefix:
-                # Externals (site MPIs) are not put on PATH by spack load.
-                mpi_bin = os.path.join(prefix, "bin")
-                path = [p for p in ppl.env.get("PATH", "").split(os.pathsep) if p]
-                if mpi_bin not in path:
-                    ppl.env["PATH"] = os.pathsep.join([mpi_bin, *path])
+            _apply_spack_env(ppl, spack_env, mpi_env)
             if mpi_env:
                 print(f"SpackInstaller: MPI {mpi_env.get('JARVIS_MPI_SPEC')}"
                       f" ({mpi_env.get('JARVIS_MPI_TYPE', 'probe')})")
@@ -387,7 +419,7 @@ class SpackInstaller(Installer):
             overall = "installed"
         else:
             overall = "satisfied"
-        return {
+        result = {
             "status": overall,
             "record": str(context.record_path),
             "spack_env": record.get("spack_env"),
@@ -402,6 +434,44 @@ class SpackInstaller(Installer):
                 for name, entry in record["packages"].items()
             },
         }
+        if mode == "install" and hashes and not context.issues:
+            result["activation"] = {
+                "method": "spack_load", "seconds": load_seconds,
+                "capture": write_spack_env_capture(
+                    ppl, raw_pkg_list, base_env=base_env, spack_env=spack_env,
+                    mpi_env=mpi_env, hashes=hashes, result=result,
+                    record_path=context.record_path),
+            }
+        return result
+
+    @staticmethod
+    def activate_captured(ppl, pkg_list) -> Dict[str, Any]:
+        """Apply the env captured by the last install, without running Spack.
+
+        Returns ``{"activation": {...}, "result": <installer result> | None}``;
+        ``result`` is None when the capture is missing or stale (then the
+        caller runs the normal resolve and ``spack load``).
+        """
+        started = time.monotonic()
+        document, stale = load_spack_env_capture(ppl, pkg_list)
+        activation: Dict[str, Any] = {"capture": str(spack_env_capture_path(ppl))}
+        if document is None:
+            activation.update(method="spack_load", stale_reason=stale)
+            return {"activation": activation, "result": None}
+        from jarvis_cd.core.spack_install import spack_subprocess_environment
+
+        spack_env = _apply_env_delta(
+            _filtered_env(spack_subprocess_environment()), document["env_delta"])
+        _apply_spack_env(ppl, spack_env, document.get("mpi_env") or {})
+        result = dict(document.get("result") or {})
+        result["status"] = "satisfied"
+        activation.update(method="captured", captured_at=document.get("captured_at"),
+                          seconds=round(time.monotonic() - started, 3))
+        result["activation"] = activation
+        print(f"SpackInstaller: activated the install's captured env "
+              f"({len(spack_env)} vars, captured {document.get('captured_at')}); "
+              "no spack calls")
+        return {"activation": activation, "result": result}
 
     def install(self, ppl, pkg_list):
         return self._run(ppl, pkg_list, "install")
@@ -466,6 +536,214 @@ def default_require_allocation(ppl) -> bool:
 
 LAST_INSTALL_NAME = "last-install.json"
 LAST_INSTALL_SCHEMA = "jarvis.install-pointer.v1"
+
+SPACK_ENV_CAPTURE_NAME = "spack-load-env.json"
+SPACK_ENV_CAPTURE_SCHEMA = "jarvis.spack-load-env.v1"
+_PATH_VARS = frozenset({
+    "PATH", "LD_LIBRARY_PATH", "LIBRARY_PATH", "DYLD_LIBRARY_PATH", "CPATH",
+    "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "MANPATH", "INFOPATH",
+    "PKG_CONFIG_PATH", "CMAKE_PREFIX_PATH", "ACLOCAL_PATH", "PYTHONPATH",
+})
+
+
+def spack_env_capture_enabled() -> bool:
+    """``JARVIS_SPACK_ENV_CAPTURE=off`` re-resolves Spack on every load."""
+    value = os.environ.get("JARVIS_SPACK_ENV_CAPTURE", "").strip().lower()
+    return value not in ("off", "0", "false", "no", "none")
+
+
+def spack_env_capture_path(ppl) -> Path:
+    """``<pipeline shared>/install/spack-load-env.json``."""
+    return shared_install_dir(ppl) / SPACK_ENV_CAPTURE_NAME
+
+
+def _file_digest(path: Optional[Path]) -> Optional[str]:
+    if path is None:
+        return None
+    try:
+        return "sha256:" + hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def _capture_inputs(ppl, pkg_list) -> Dict[str, Optional[str]]:
+    """Digests of everything that decides what an install loads.
+
+    The packages' install settings, the recorded decisions (answers given to
+    an install are recorded there, so an answers file is not an input), the
+    Spack that runs, and (with a Spack env) its ``spack.lock``.
+    """
+    from jarvis_cd.core.spack_install import _resolved_spack_root, spack_env_enabled
+
+    packages = sorted(
+        (
+            {
+                "pkg_id": pkg_def.get("pkg_id"),
+                "pkg_type": pkg_def.get("pkg_type"),
+                "install": {
+                    key: value
+                    for key, value in sorted((pkg_def.get("config") or {}).items())
+                    if str(key).startswith("install")
+                },
+            }
+            for pkg_def in pkg_list
+        ),
+        key=lambda item: str(item["pkg_id"]),
+    )
+    configured = os.environ.get("JARVIS_SPACK_DECISIONS", "").strip()
+    decisions = Path(configured) if configured else shared_install_dir(ppl) / "decisions.yaml"
+    try:
+        root = _resolved_spack_root()
+    except Exception:
+        root = None
+    spack_identity = {
+        "root": str(root) if root else None,
+        "JARVIS_SPACK_ROOT": os.environ.get("JARVIS_SPACK_ROOT"),
+        "JARVIS_SPACK_CONFIG": os.environ.get("JARVIS_SPACK_CONFIG"),
+    }
+    lock = None
+    if spack_env_enabled():
+        lock = _file_digest(spack_env_dir_for(ppl) / "spack.lock") or "absent"
+    return {
+        "packages": "sha256:" + hashlib.sha256(
+            json.dumps(packages, sort_keys=True, default=str).encode()).hexdigest(),
+        "decisions": _file_digest(decisions),
+        "spack": "sha256:" + hashlib.sha256(
+            json.dumps(spack_identity, sort_keys=True).encode()).hexdigest(),
+        "spack_lock": lock,
+    }
+
+
+def _filtered_env(environment: Dict[str, str]) -> Dict[str, str]:
+    """The variables ``capture_spack_environment`` keeps."""
+    from jarvis_cd.core.environment import EnvironmentManager
+
+    kept = {name: environment[name] for name in EnvironmentManager.COMMON_ENV_VARS
+            if name in environment}
+    kept.update({k: v for k, v in environment.items() if k.startswith("SPACK_")})
+    return kept
+
+
+def _env_delta(base: Dict[str, str], loaded: Dict[str, str]) -> Dict[str, Any]:
+    """What ``spack load`` changed: entries prepended to path lists, else values."""
+    delta: Dict[str, Any] = {}
+    for name, value in loaded.items():
+        before = base.get(name)
+        if value == before:
+            continue
+        if name in _PATH_VARS and before:
+            old = [p for p in before.split(os.pathsep) if p]
+            new = [p for p in value.split(os.pathsep) if p]
+            if all(p in new for p in old):
+                delta[name] = {"prepend": [p for p in new if p not in old]}
+                continue
+        delta[name] = {"set": value}
+    return delta
+
+
+def _apply_env_delta(base: Dict[str, str], delta: Dict[str, Any]) -> Dict[str, str]:
+    """Replay ``_env_delta`` on today's environment (what ``spack load`` gives)."""
+    result = dict(base)
+    for name, change in delta.items():
+        if "set" in change:
+            result[name] = change["set"]
+            continue
+        added = list(change.get("prepend") or [])
+        current = [p for p in (base.get(name) or "").split(os.pathsep) if p]
+        result[name] = os.pathsep.join(added + [p for p in current if p not in added])
+    return result
+
+
+def _apply_spack_env(ppl, spack_env: Dict[str, str], mpi_env: Dict[str, str]) -> None:
+    """Merge a loaded Spack env and the chosen MPI's variables into ``ppl.env``."""
+    ppl.env.update(spack_env)
+    for name in ("JARVIS_MPI_NAME", "JARVIS_MPI_SPEC", "JARVIS_MPI_TYPE",
+                 "JARVIS_MPI_PREFIX"):
+        ppl.env.pop(name, None)
+    ppl.env.update(mpi_env)
+    prefix = mpi_env.get("JARVIS_MPI_PREFIX")
+    if prefix:
+        # Externals (site MPIs) are not put on PATH by spack load.
+        mpi_bin = os.path.join(prefix, "bin")
+        path = [p for p in ppl.env.get("PATH", "").split(os.pathsep) if p]
+        if mpi_bin not in path:
+            ppl.env["PATH"] = os.pathsep.join([mpi_bin, *path])
+
+
+def write_spack_env_capture(ppl, pkg_list, *, base_env, spack_env, mpi_env, hashes,
+                            result, record_path) -> Optional[str]:
+    """Store what this install's ``spack load`` did, for cheap later loads.
+
+    Written after every successful install-mode resolve to
+    ``<pipeline shared>/install/spack-load-env.json``. Returns its path, or
+    None when disabled or not writable (never fails the install).
+    """
+    from jarvis_cd.core.spack_install import _atomic_write_text, _utc_now
+
+    if not spack_env_capture_enabled():
+        return None
+    delta = _env_delta(_filtered_env(base_env), spack_env)
+    # Directories spack load added; a removed install drops its prefix.
+    watched = sorted({
+        entry
+        for name in ("PATH", "LD_LIBRARY_PATH")
+        for entry in (delta.get(name) or {}).get("prepend") or []
+        if os.path.isdir(entry)
+    })
+    if mpi_env.get("JARVIS_MPI_PREFIX") and os.path.isdir(mpi_env["JARVIS_MPI_PREFIX"]):
+        watched.append(mpi_env["JARVIS_MPI_PREFIX"])
+    document = {
+        "schema_version": SPACK_ENV_CAPTURE_SCHEMA,
+        "pipeline_id": getattr(ppl, "name", None),
+        "captured_at": _utc_now(),
+        "captured_in": os.environ.get("JARVIS_EXECUTION_ID"),
+        "hashes": list(hashes),
+        "inputs": _capture_inputs(ppl, pkg_list),
+        "env_delta": delta,
+        "mpi_env": dict(mpi_env or {}),
+        "watched_paths": watched,
+        "record": str(record_path),
+        "result": {key: value for key, value in result.items() if key != "activation"},
+    }
+    path = spack_env_capture_path(ppl)
+    try:
+        _atomic_write_text(path, json.dumps(document, indent=2, sort_keys=True) + "\n")
+    except OSError as exc:
+        print(f"SpackInstaller: env capture not written ({exc})")
+        return None
+    return str(path)
+
+
+def load_spack_env_capture(ppl, pkg_list) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """The last install's env capture if still valid, else ``(None, why)``.
+
+    Stale when the packages' install settings, the decisions or answers, the
+    Spack root, or the env's ``spack.lock`` changed, or when a directory the
+    load added no longer exists.
+    """
+    if not spack_env_capture_enabled():
+        return None, "disabled (JARVIS_SPACK_ENV_CAPTURE=off)"
+    path = spack_env_capture_path(ppl)
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None, "no capture (no install has finished yet)"
+    except (OSError, ValueError) as exc:
+        return None, f"unreadable capture: {exc}"
+    if not isinstance(document, dict) or document.get("schema_version") != SPACK_ENV_CAPTURE_SCHEMA:
+        return None, "capture schema differs"
+    stored = document.get("inputs") or {}
+    current = _capture_inputs(ppl, pkg_list)
+    changed = sorted(key for key in current if stored.get(key) != current[key])
+    if changed:
+        return None, "inputs changed: " + ", ".join(changed)
+    missing = [entry for entry in document.get("watched_paths") or []
+               if not os.path.isdir(entry)]
+    if missing:
+        return None, "installed path gone: " + missing[0]
+    if not isinstance(document.get("env_delta"), dict):
+        return None, "capture has no env"
+    return document, None
 
 
 def shared_install_dir(ppl) -> Path:

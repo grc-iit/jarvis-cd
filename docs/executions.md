@@ -145,6 +145,23 @@ Install jobs (`jarvis ppl install +submit`) add `action: install` and a live
 `install` progress document. See
 [scheduler.md → Install jobs](scheduler.md#install-jobs).
 
+## Phase timings
+
+An owned run records where its time goes before and during its steps in
+`metadata.phase_timings` (`jarvis.phase-timings.v1`), so a pilot run reports
+its overhead and a caller can budget the production run's wall time. The
+record is updated as each phase ends, so a job killed at its time limit
+keeps what it reached. `provenance.json` carries the same document.
+
+| Field | Content |
+|-------|---------|
+| `run_started_at` | when the run began (after load) |
+| `env_activation` | the load's install phase: `method` (`captured`, `spack_load`, `none`), `seconds`, `policy`, and for `spack_load` the capture's `stale_reason` (see [Captured load environment](scheduler.md#captured-load-environment)); `null` when the pipeline was not loaded with an install phase |
+| `configure` | `{seconds}` for configuring every package |
+| `packages[]` | per started package: `pkg_id`, `pkg_type`, `role` (`service` or `step`), `start_mode` (`background` or `foreground`), `started_at`, `started_after_seconds` (since the run began); services add `ready_at` and `ready_seconds` (start to ready); foreground packages add `returned_seconds` |
+| `first_step` | the first non-service package: `pkg_id`, `started_at`, `started_after_seconds` |
+| `before_first_step_seconds` | env activation plus everything from the run's start to the first step: the overhead before any solver step |
+
 ## Provenance record
 
 Every owned run (`ppl run`, and each `ppl submit` job) writes
@@ -161,6 +178,7 @@ provenance`, `role: provenance`), so `execution artifacts +json` lists it:
 | `nodes` | `[{hostname, ranks}]` across all launches, from the ranks that actually started |
 | `launches[]` | One per MPI launch: `launcher_realpath`, `mpi_prefix`, `nprocs`, `ppn` (the ranks per node actually passed to the launcher), `placement` (how `ppn` was chosen; see [Ranks per node inside an allocation](scheduler.md#ranks-per-node-inside-an-allocation)), `hosts`, `binaries[]` with `realpath` and `ldd` (`returncode`, `lines`), `ranks[]` (`hostname`, `rank`, `pid`), `nodes`, `rank_env`, and `maps` (`hostname`, `rank`, `pid`, `exe`, `text` = one rank's `/proc/<pid>/maps`, `files` = the mapped paths) |
 | `mpi_placement` | `[{launch, ...placement}]` for each launch that ran inside an allocation |
+| `phase_timings` | The run's [phase timings](#phase-timings), as recorded in the execution record |
 | `job_env` | The run's environment |
 | `scheduler_job` | `SLURM_JOB_ID`/`SLURM_JOB_NODELIST`, `PBS_JOBID`, `LSB_JOBID` or `FLUX_JOB_ID` |
 | `jarvis` | version, package path, Python, and `jarvis` command realpath |

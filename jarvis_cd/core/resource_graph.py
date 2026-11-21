@@ -170,9 +170,22 @@ class ResourceGraphManager:
             self.resource_graph = previous
             raise self._collect_error(nodes, failed_hosts)
         if self._net_facts:
-            self.resource_graph.net = analyze_net(
-                self._net_facts, override=previous_override
-            )
+            if net_only:
+                from jarvis_cd.util.network import merge_net_facts
+
+                # A net-only collect merges per host: hosts it did not reach
+                # keep their facts (a full build replaces the graph).
+                self.resource_graph.net, merge = merge_net_facts(
+                    previous.net, self._net_facts, override=previous_override
+                )
+                logger.info(
+                    f"net merge ({merge['mode']}): collected "
+                    f"{sorted(self._net_facts)}, kept {merge['kept_hosts']}"
+                )
+            else:
+                self.resource_graph.net = analyze_net(
+                    self._net_facts, override=previous_override
+                )
         else:
             self.resource_graph.net = previous.net
 

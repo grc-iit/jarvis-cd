@@ -179,6 +179,9 @@ class LocalMpiExec(LocalExec):
             report = launch_site_facts(self.network_flavour, net, record, collected=gate)
             if report and (report.get('issues') or report.get('confirmed')):
                 record['site_facts'] = report
+            from ..core.site_facts import launch_advisories
+
+            record['advisories'] = launch_advisories(report)
         except Exception as error:
             record['site_facts'] = {'error': str(error)[:500]}
         if gate and report and report.get('blocking'):
@@ -263,12 +266,22 @@ class LocalMpiExec(LocalExec):
                 details={'stage': 'launch', 'error': str(error)[:500],
                          'collected_at_launch': summary},
             )]) from error
-        summary['persisted'] = net_util.persist_net_section(fresh)
+        # Merge per host into the stored graph (other hosts' facts and the
+        # person's override stay); the launch uses the merged selection.
+        persisted = net_util.persist_net_section(fresh, facts=facts)
+        merged = persisted.pop('net', None)
+        if merged is None:
+            try:
+                merged, persisted['merge'] = net_util.merge_net_facts(
+                    net, facts, override=(net or {}).get('override'))
+            except Exception:
+                merged = fresh
+        summary['persisted'] = persisted
         summary['selected'] = {
             role: (choice or {}).get('cidr')
-            for role, choice in (fresh.get('selected') or {}).items()
+            for role, choice in (merged.get('selected') or {}).items()
         }
-        return {'summary': summary, 'net': fresh}
+        return {'summary': summary, 'net': merged}
 
     def _process_cmd_list(self, cmd_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """

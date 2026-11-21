@@ -204,6 +204,10 @@ def capture_launch(launch: Any, cwd: Optional[str] = None) -> None:
                 "ldd": _ldd(real, env) if real else None,
             })
         hostfile = getattr(launch, "hostfile", None)
+        network = getattr(launch, "network", None)
+        launch_facts = (network or {}).get("site_facts") if isinstance(network, dict) else None
+        from jarvis_cd.core.site_facts import launch_advisories
+
         document = {
             "schema_version": "jarvis.provenance-launch.v1",
             "launched_at": _utc_now(),
@@ -217,13 +221,24 @@ def capture_launch(launch: Any, cwd: Optional[str] = None) -> None:
             "hosts": list(getattr(hostfile, "hosts", []) or []),
             "hostfile": getattr(hostfile, "path", None),
             "binaries": binaries,
-            "network": getattr(launch, "network", None),
+            "network": network,
+            # Non-blocking site-fact issues of this launch (including those
+            # from a launch-time net collect), and the full report.
+            "advisories": launch_advisories(launch_facts),
+            "site_facts": launch_facts if isinstance(launch_facts, dict) else None,
             "placement": getattr(launch, "placement", None),
             "rank_env": redact_environment(env),
         }
         (launch_dir / "launch.json").write_text(
             json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
+        if isinstance(launch_facts, dict) and launch_facts.get("issues"):
+            from jarvis_cd.core.site_facts import record_execution_site_facts
+
+            # Into the execution record now, not only when the run ends.
+            record_execution_site_facts(Path(root).parent,
+                                        env.get("JARVIS_EXECUTION_ID")
+                                        or os.environ.get("JARVIS_EXECUTION_ID"))
         prefix = f"/bin/sh {shlex.quote(str(wrapper))} {shlex.quote(str(launch_dir))} "
         if getattr(launch, "cmd_list", None):
             for entry in launch.cmd_list:
@@ -370,6 +385,7 @@ def write_provenance(
     pipeline_id: Optional[str],
     install_records: Iterable[Path] = (),
     job_env: Optional[Mapping[str, str]] = None,
+    phase_timings: Optional[Mapping[str, Any]] = None,
 ) -> Path:
     """Assemble ``<execution>/provenance.json`` from the launch captures."""
     execution_root = Path(execution_root)
@@ -414,6 +430,10 @@ def write_provenance(
             if isinstance(launch.get("placement"), dict)
         ],
         "launches": launches,
+        # Where the run's time went before and during its steps: env
+        # activation (captured env or spack load), configure, each
+        # package's start and ready, the first step (jarvis.phase-timings.v1).
+        "phase_timings": dict(phase_timings) if phase_timings else None,
         "job_env": redact_environment(job_env if job_env is not None else os.environ),
     }
     path = execution_root / PROVENANCE_FILE

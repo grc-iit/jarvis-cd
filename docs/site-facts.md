@@ -120,8 +120,8 @@ env) get no network questions.
 | `jarvis rg net show +json` | the same report under `site_facts` |
 | `jarvis ppl check +json` | `site_facts`. Blocking questions go to `questions[]`, advisory ones to `warnings[]`, and `ok` is false while `questions` is non-empty. The command exits 3 on questions (5 on errors). `site_facts.net_plan` says what the launch will do about the network: `action` (`collect_at_launch` or `use_graph`), `reasons`, `note`; `site_facts.net_present` says whether the graph has a net section |
 | `jarvis ppl submit` | refuses before any scheduler call with exit 3 and the blocking issues (`+json` prints `{exit_code, issues}`). Advisory questions are submitted with the job |
-| execution record | `metadata.site_facts`: `schema_version`, `issues[]` (deduplicated by `issue_id`), `confirmed[]`, and `stages[]`, one per evaluation (`stage`, `launch`, `blocking`, `issue_ids`, `confirmed`) |
-| launch provenance | `provenance/launch-*/launch.json` → `network.site_facts`, when the launch raised or confirmed a question |
+| execution record | `metadata.site_facts`: `schema_version`, `issues[]` (deduplicated by `issue_id`), `advisories[]` (the non-blocking ones), `confirmed[]`, and `stages[]`, one per evaluation (`stage`, `launch`, `blocking`, `issue_ids`, `confirmed`). Updated at check/submit, again when each launch is captured, and at finalization |
+| launch provenance | `provenance/launch-*/launch.json` → top-level `advisories` and `site_facts`, and `network.site_facts` / `network.advisories`, when the launch raised or confirmed a question |
 
 The report is:
 

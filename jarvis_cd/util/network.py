@@ -566,12 +566,82 @@ def net_collect_reasons(
     return reasons
 
 
-def persist_net_section(net: Dict[str, Any]) -> Dict[str, Any]:
-    """Write ``net`` as the active graph's net section, under a lock.
+def merge_net_facts(
+    previous: Optional[Dict[str, Any]],
+    facts: Dict[str, Dict[str, Any]],
+    *,
+    override: Optional[Dict[str, Any]] = None,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Merge freshly collected per-host facts into a stored net section.
 
-    Like ``jarvis rg build +net_only``, the section then describes the nodes
-    that ran the collector last. A person's override already in the file
-    is kept. Never raises: the launch has its facts either way.
+    Hosts in ``facts`` replace their stored entries (matched by short host
+    name); every other stored host is kept, then the selection is
+    recomputed over the union. ``node_collected`` records when and in
+    which job each host's facts were collected. A stored section without
+    per-node facts (older schema) cannot be merged and is replaced.
+    Returns ``(section, merge)``.
+    """
+    fresh_short = {_short(host) for host in facts}
+    previous = previous if isinstance(previous, dict) else None
+    stored_nodes = (previous or {}).get("nodes")
+    kept: Dict[str, Dict[str, Any]] = {}
+    merge: Dict[str, Any] = {"mode": "new"}
+    if previous and previous.get("collected_on"):
+        if isinstance(stored_nodes, dict) and stored_nodes:
+            merge["mode"] = "merged"
+            errors = previous.get("errors") or {}
+            for host, entry in stored_nodes.items():
+                if _short(host) in fresh_short or not isinstance(entry, dict):
+                    continue
+                kept[host] = dict(entry)
+                if errors.get(host):
+                    kept[host]["error"] = errors[host]
+        else:
+            merge.update(mode="replaced",
+                         why="the stored net section has no per-node facts "
+                             "(older schema), so it cannot be merged")
+    union = dict(kept)
+    union.update(facts)
+    section = analyze_net(union, override=override)
+    job = section.get("collected_in")
+    stored_collected = (previous or {}).get("node_collected") or {}
+    node_collected: Dict[str, Any] = {}
+    for host in section["collected_on"]:
+        if host in kept:
+            node_collected[host] = stored_collected.get(host) or {
+                "collected_at": previous.get("collected_at"),
+                "collected_in": previous.get("collected_in"),
+            }
+        else:
+            node_collected[host] = {"collected_at": section["collected_at"],
+                                    "collected_in": job}
+    section["node_collected"] = node_collected
+    if not all(entry.get("collected_in") for entry in node_collected.values()):
+        # Some hosts' facts did not come from inside an allocation.
+        section["collected_in"] = None
+    previous_short = {_short(host) for host in (previous or {}).get("collected_on") or []}
+    merge.update(
+        kept_hosts=sorted(kept),
+        replaced_hosts=sorted(h for h in facts if _short(h) in previous_short),
+        added_hosts=sorted(h for h in facts if _short(h) not in previous_short),
+        collected_on=section["collected_on"],
+    )
+    return section, merge
+
+
+def persist_net_section(
+    net: Optional[Dict[str, Any]],
+    *,
+    facts: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Save net facts into the active graph's net section, under a lock.
+
+    With ``facts`` (per-host collector output) the save merges per host:
+    the collected hosts' entries are replaced, all other hosts are kept,
+    and the selection is recomputed over the union (``merge_net_facts``);
+    the merged section is returned as ``net``. Without ``facts``, ``net``
+    replaces the section. A person's override already in the file is
+    kept either way. Never raises: the launch has its facts either way.
     """
     import tempfile
 
@@ -595,9 +665,19 @@ def persist_net_section(net: Dict[str, Any]) -> Dict[str, Any]:
             if not isinstance(graph, dict):
                 graph = {}
             previous = graph.get("net") if isinstance(graph.get("net"), dict) else None
-            section = dict(net)
-            if previous is not None:
-                section["override"] = previous.get("override")
+            if facts is not None:
+                section, merge = merge_net_facts(
+                    previous, facts,
+                    override=(previous or {}).get("override")
+                    if previous is not None else (net or {}).get("override"),
+                )
+                result["merge"] = merge
+            else:
+                section = dict(net or {})
+                if previous is not None:
+                    section["override"] = previous.get("override")
+                result["merge"] = {"mode": "replaced",
+                                   "replaced_collected_on": (previous or {}).get("collected_on")}
             graph["net"] = section
             descriptor, temporary = tempfile.mkstemp(
                 dir=path.parent, prefix=".resource_graph.", suffix=".tmp", text=True
@@ -612,10 +692,8 @@ def persist_net_section(net: Dict[str, Any]) -> Dict[str, Any]:
                 os.replace(temporary, path)
             finally:
                 Path(temporary).unlink(missing_ok=True)
-        result.update({
-            "persisted": True,
-            "replaced_collected_on": (previous or {}).get("collected_on"),
-        })
+        result["persisted"] = True
+        result["net"] = section
     except Exception as error:
         result["error"] = str(error)[:500]
     return result

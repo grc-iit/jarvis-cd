@@ -45,8 +45,9 @@ JARVIS_RESOURCE_GRAPH=/site/jarvis/resource_graph.yaml \
 ```
 
 Inside an allocation you can also run `jarvis rg build +net_only` directly.
-`+net_only` collects only interfaces and keeps the stored storage view. A
-full `jarvis rg build` collects both. Each node reports its hostname, its
+`+net_only` collects only interfaces and keeps the stored storage view. It
+[merges per host](#merging-collections) into the stored `net` section. A
+full `jarvis rg build` collects both and replaces the whole graph. Each node reports its hostname, its
 hostname addresses (`control_addrs`), and per IPv4 interface: `name`, `addr`,
 `cidr`, `state`, `speed_mbps`, `kind`, `rdma_device`, `rdma_port_state` and
 `ucx_device`. Interfaces with an RDMA device also carry `rdma_port`
@@ -152,7 +153,30 @@ net:
     control: {cidr: 172.20.0.0/16, interface: eno1, source: graph, ...}
   override: null
   nodes: {...}                       # the raw per-node facts
+  node_collected:                    # when and in which job each host was collected
+    ares-comp-01: {collected_at: '2026-11-21T04:00:00Z', collected_in: {provider: slurm, native_id: '5001'}}
+  merge: {mode: merged, kept_hosts: [...], replaced_hosts: [...], added_hosts: [...], collected_on: [...]}
 ```
+
+### Merging collections
+
+A net-only collection (`rg build +net_only`, `builtin.resource_graph`, or a
+[launch-time collect](#collected-at-launch)) merges into the stored section,
+per host, under a lock on the graph's directory:
+
+- the collected hosts' entries in `nodes` are replaced;
+- hosts it did not collect keep their stored facts, together with their
+  `node_collected` time and job;
+- a person's `override` is kept;
+- `networks`, the exclusions and `selected` are recomputed across the union
+  of hosts, so data must still reach every host the graph knows.
+
+`collected_on` is the union. `collected_at` is the latest collection, and
+`collected_in` is `null` unless every host was collected inside a job.
+`merge.mode` is `new` (no previous section), `merged`, or `replaced` (a
+previous section from before per-node facts were stored, with `why`).
+`kept_hosts`, `replaced_hosts` and `added_hosts` say what changed. To start
+over, run `jarvis rg net clear` or a full `jarvis rg build`.
 
 JARVIS excludes the following networks:
 
@@ -248,18 +272,27 @@ when any of these holds:
 It does not collect for Cray MPICH, under `JARVIS_MPI_NETWORK=off`, for a
 single-node launch, or when a person's override sets both data and control.
 
-The fresh facts go through the normal selection, and the launch applies the
-result. They are also saved as the graph's `net` section, under a lock on the
-graph's directory. A person's override already in the file is kept. As with
-`rg build +net_only`, the section then describes the nodes that ran the
-collector last, so the next launch on the same hosts uses the graph without
-collecting. Because a fresh collect covers every launch host, it also settles
+The fresh facts are [merged per host](#merging-collections) into the graph's
+`net` section, under a lock on the graph's directory: the launch hosts'
+entries are replaced, other hosts and a person's override are kept, and the
+selection is recomputed across the union. The launch applies that merged
+selection. So a later launch on other nodes adds to the graph instead of
+erasing what earlier launches collected, and the next launch on the same
+hosts uses the graph without collecting. Because a fresh collect covers every launch host, it also settles
 `hosts_not_in_graph` and an unverified UCX device for those hosts: the device
 is pinned only when UCX verifies it on each of them.
 
 The launch record's `network.collected_at_launch` has `reasons`, `hosts`,
-`collected`, `failed`, `seconds`, `selected` (data and control CIDR) and
-`persisted` (`path`, `persisted`, `replaced_collected_on`, or `error`).
+`collected`, `failed`, `seconds`, `selected` (the merged data and control
+CIDR) and `persisted` (`path`, `persisted`, `merge`, or `error`). If the
+graph could not be written, the launch still merges in memory.
+
+Advisories a launch raises, including those from its own collect (for
+example `ucx_device_unusable` when `ucx_info` fails on one host), appear in
+`launch.json` as top-level `advisories` and in `network.advisories` (always
+a list), and in the execution record's `metadata.site_facts` as soon as the
+launch is captured. Finalization merges them again, so a run killed at its
+wall time still carries them.
 
 The launch is refused, with a typed issue in the execution record's
 `metadata.issues`, rather than sent out blind:

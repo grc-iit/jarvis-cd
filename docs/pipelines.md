@@ -270,6 +270,11 @@ pkgs:
 4. Merges the spack environment into the pipeline environment
 5. All packages run bare-metal using the spack-provided binaries
 
+After a satisfied install, the loaded environment is saved in
+`<pipeline shared>/install/spack-load-env.json`. Later loads apply it
+without calling Spack while it is fresh, and fall back to `spack load` when
+it is stale. See [scheduler.md → Captured load environment](scheduler.md#captured-load-environment).
+
 **Requirements:** Spack must be installed and accessible. If `SPACK_ROOT` is set, Jarvis sources `$SPACK_ROOT/share/spack/setup-env.sh` before running spack commands.
 
 **Per-package `install` key:**

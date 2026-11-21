@@ -3247,11 +3247,21 @@ class Pipeline:
                             f"Package {pkg_def['pkg_id']} has no start method"
                         )
                     elif self._package_starts_in_background(pkg_instance):
-                        background.append(
-                            self._start_package_in_background(pkg_instance, pkg_def)
-                        )
+                        phase_started = time.monotonic()
+                        self._time_package_phase(pkg_def, pkg_instance, "started",
+                                                 phase_started, start_mode="background")
+                        handle = self._start_package_in_background(pkg_instance, pkg_def)
+                        background.append(handle)
+                        self._time_package_phase(
+                            pkg_def, pkg_instance,
+                            handle.get("start_outcome") or "ready", phase_started)
                     else:
+                        phase_started = time.monotonic()
+                        self._time_package_phase(pkg_def, pkg_instance, "started",
+                                                 phase_started, start_mode="foreground")
                         pkg_instance.start()
+                        self._time_package_phase(pkg_def, pkg_instance, "returned",
+                                                 phase_started)
 
                     # Propagate environment changes to next packages
                     self.env.update(pkg_instance.env)
@@ -3273,6 +3283,83 @@ class Pipeline:
     def _package_starts_in_background(pkg_instance: Any) -> bool:
         probe = getattr(pkg_instance, "starts_in_background", None)
         return bool(probe()) if callable(probe) else False
+
+    PHASE_TIMINGS_SCHEMA = "jarvis.phase-timings.v1"
+
+    def _begin_phase_timings(self, store: Any, execution_id: str) -> None:
+        """Start recording where the run's time goes, in ``metadata.phase_timings``."""
+        self._phase_clock = time.monotonic()
+        self._phase_store = (store, execution_id)
+        self._phase_timings: Optional[Dict[str, Any]] = {
+            "schema_version": self.PHASE_TIMINGS_SCHEMA,
+            "run_started_at": _utc_timestamp(),
+            "env_activation": getattr(self, "_install_activation", None),
+            "configure": None,
+            "packages": [],
+            "first_step": None,
+            "before_first_step_seconds": None,
+        }
+        self._publish_phase_timings()
+
+    def _phase_elapsed(self) -> float:
+        return round(time.monotonic() - getattr(self, "_phase_clock", time.monotonic()), 3)
+
+    def _publish_phase_timings(self) -> None:
+        """Write the timings so far; a run killed at its wall time keeps them."""
+        timings = getattr(self, "_phase_timings", None)
+        target = getattr(self, "_phase_store", None)
+        if not timings or not target:
+            return
+        try:
+            target[0].update(target[1], metadata={"phase_timings": json.loads(
+                json.dumps(timings, default=str))})
+        except Exception as error:  # timings must never fail a run
+            logger.warning(f"phase timings not recorded: {error}")
+
+    def _end_phase_timings(self) -> None:
+        self._publish_phase_timings()
+        self._phase_timings = None
+        self._phase_store = None
+
+    def _time_package_phase(self, pkg_def: Dict[str, Any], pkg_instance: Any,
+                            event: str, started: float, **fields: Any) -> None:
+        """Record one package's start milestone (``started``, ``ready``, ``returned``)."""
+        timings = getattr(self, "_phase_timings", None)
+        if timings is None:
+            return
+        from jarvis_cd.core.pkg import Service
+
+        pkg_id = pkg_def.get("pkg_id")
+        entry = next((e for e in timings["packages"] if e["pkg_id"] == pkg_id), None)
+        if entry is None:
+            entry = {
+                "pkg_id": pkg_id,
+                "pkg_type": pkg_def.get("pkg_type"),
+                "role": "service" if isinstance(pkg_instance, Service) else "step",
+                "started_at": _utc_timestamp(),
+                "started_after_seconds": self._phase_elapsed(),
+            }
+            timings["packages"].append(entry)
+        elapsed = round(time.monotonic() - started, 3)
+        if event == "started" and entry["role"] == "step" and timings["first_step"] is None:
+            activation = (timings.get("env_activation") or {}).get("seconds") or 0
+            timings["first_step"] = {
+                "pkg_id": pkg_id, "started_at": entry["started_at"],
+                "started_after_seconds": entry["started_after_seconds"],
+            }
+            timings["before_first_step_seconds"] = round(
+                activation + entry["started_after_seconds"], 3)
+        elif event == "ready":
+            entry["ready_at"] = _utc_timestamp()
+            entry["ready_seconds"] = elapsed
+        elif event == "returned":
+            entry["returned_seconds"] = elapsed
+            if entry["role"] == "service" and "ready_seconds" not in entry:
+                # A foreground service's start() returns once it is ready.
+                entry["ready_at"] = _utc_timestamp()
+                entry["ready_seconds"] = elapsed
+        entry.update(fields)
+        self._publish_phase_timings()
 
     def _start_package_in_background(
         self, pkg_instance: Any, pkg_def: Dict[str, Any]
@@ -3313,10 +3400,12 @@ class Pipeline:
                         f"background start failed: {handle['error']}"
                     ) from handle["error"]
                 logger.info(f"[{pkg_def['pkg_type']}] [START] start() returned")
+                handle["start_outcome"] = "returned"
                 return handle
             state = pkg_instance.ready() if hasattr(pkg_instance, "ready") else None
             if state is True:
                 logger.success(f"[{pkg_def['pkg_type']}] [START] ready")
+                handle["start_outcome"] = "ready"
                 return handle
             if state is False:
                 raise RuntimeError("service reported failed/stopped before ready")
@@ -3584,11 +3673,16 @@ class Pipeline:
                     / "install"
                     / "install-record.json"
                 )
+            try:
+                phase_timings = store.get(execution_id).metadata.get("phase_timings")
+            except Exception:
+                phase_timings = None
             path = write_provenance(
                 execution_root,
                 execution_id=execution_id,
                 pipeline_id=self.name,
                 install_records=install_records,
+                phase_timings=phase_timings,
             )
             self._register_execution_file(
                 store,
@@ -3609,15 +3703,9 @@ class Pipeline:
 
     def _record_site_facts(self, store: Any, execution_id: str) -> None:
         """Merge each launch's site facts into the record's ``site_facts``."""
-        try:
-            from jarvis_cd.core.site_facts import execution_site_facts
+        from jarvis_cd.core.site_facts import record_execution_site_facts
 
-            prior = store.get(execution_id).metadata.get("site_facts")
-            merged = execution_site_facts(store.executions_dir / execution_id, prior)
-            if merged is not None:
-                store.update(execution_id, metadata={"site_facts": merged})
-        except Exception as error:  # advisory evidence must never fail a run
-            logger.warning(f"could not record site facts: {error}")
+        record_execution_site_facts(store.executions_dir / execution_id, execution_id)
 
     @staticmethod
     def _launch_failure_issues(
@@ -3872,14 +3960,20 @@ class Pipeline:
                 self._execution_id = original_execution_id
                 raise
         try:
+            self._begin_phase_timings(store, resolved_execution_id)
             # Configure all packages before starting.
             # This runs _configure() on each package, which sets up
             # environment variables (e.g., CHI_SERVER_CONF) needed by start().
+            configure_started = time.monotonic()
             self.configure_all_packages()
+            if getattr(self, "_phase_timings", None) is not None:
+                self._phase_timings["configure"] = {
+                    "seconds": round(time.monotonic() - configure_started, 3)}
 
             self.start()
             logger.pipeline("Pipeline started successfully. Stopping packages...")
             self.stop()
+            self._end_phase_timings()
             self._write_execution_provenance(store, resolved_execution_id)
             self._record_site_facts(store, resolved_execution_id)
             if record.mode == "scheduler":
@@ -3901,6 +3995,7 @@ class Pipeline:
             except BaseException as stop_error:
                 logger.error(f"Error during cleanup: {stop_error}")
                 error.add_note(f"pipeline cleanup also failed: {stop_error}")
+            self._end_phase_timings()
             self._write_execution_provenance(store, resolved_execution_id)
             self._record_site_facts(store, resolved_execution_id)
             failure_metadata = self._launch_failure_issues(
@@ -4843,9 +4938,17 @@ class Pipeline:
                 "JARVIS_INSTALL_ON_LOAD must be 'install', 'check' or 'skip'"
             )
         pending_decision: Optional[RuntimeError] = None
+        self._install_activation = None
         if install_policy != "skip":
+            install_started = time.monotonic()
             try:
-                Installer.install_all(self, mode=install_policy)
+                install_report = Installer.install_all(
+                    self, mode=install_policy, use_capture=True)
+                activation = dict(install_report.get("activation") or {})
+                activation.setdefault("method", "none")
+                activation["policy"] = install_policy
+                activation["seconds"] = round(time.monotonic() - install_started, 3)
+                self._install_activation = activation
             except (InstallDecisionNeeded, BuildOutsideAllocation) as needed:
                 # Keep the loaded pipeline so the caller can answer, or submit
                 # ``jarvis ppl install +submit``, then report why it stopped.
