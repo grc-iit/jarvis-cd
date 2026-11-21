@@ -157,7 +157,7 @@ class Installer(ABC):
             report["decisions_path"] = str(context.decisions_path)
             if mode == "check":
                 try:
-                    report["last_install"] = read_last_install(ppl)
+                    report["last_install"] = read_last_install(ppl, context=context)
                 except Exception as exc:  # reporting must never fail a check
                     report["last_install"] = {"error": str(exc)[:512]}
             report["answer_with"] = {
@@ -513,12 +513,72 @@ def write_last_install(ppl, context, *, execution_id=None, phase: str) -> Option
     return path
 
 
-def read_last_install(ppl) -> Optional[Dict[str, Any]]:
+def _classify_last_issues(issue_ids, record, decisions_path, context):
+    """Split the last install's questions into still-open and resolved ones.
+
+    A question is resolved when a recorded decision answers it (directly or
+    by ``rekeyed_from``), when a newer question superseded it, or, during a
+    check, when the current check no longer raises it. Only open ones are
+    re-presented.
+    """
+    from jarvis_cd.core.spack_install import Decisions
+
+    answered: Dict[str, Dict[str, Any]] = {}
+    if decisions_path:
+        try:
+            for entry in Decisions(Path(decisions_path)).entries():
+                for key in (entry.get("issue_id"), entry.get("rekeyed_from")):
+                    if key:
+                        answered[str(key)] = entry
+        except Exception:
+            pass
+    superseded: Dict[str, Optional[str]] = {}
+    for stale in record.get("stale_decisions") or []:
+        if isinstance(stale, dict) and stale.get("issue_id"):
+            superseded[str(stale["issue_id"])] = stale.get("superseded_by")
+    current: Optional[set] = None
+    if context is not None and getattr(context, "mode", None) == "check":
+        current = set()
+        for issue in context.issues:
+            current.add(issue.get("issue_id"))
+            if issue.get("supersedes"):
+                superseded.setdefault(str(issue["supersedes"]), issue.get("issue_id"))
+        for stale in context.stale_decisions:
+            if isinstance(stale, dict) and stale.get("issue_id"):
+                superseded.setdefault(str(stale["issue_id"]), stale.get("superseded_by"))
+    open_ids: List[str] = []
+    resolved: List[Dict[str, Any]] = []
+    for issue_id in issue_ids:
+        issue_id = str(issue_id)
+        if current is not None and issue_id in current:
+            open_ids.append(issue_id)
+        elif issue_id in answered:
+            entry = answered[issue_id]
+            resolved.append({"issue_id": issue_id, "resolved_by": "decision",
+                             "constraint": entry.get("constraint"),
+                             "decision_issue_id": entry.get("issue_id"),
+                             "scope": entry.get("scope")})
+        elif issue_id in superseded:
+            resolved.append({"issue_id": issue_id, "resolved_by": "superseded",
+                             "superseded_by": superseded[issue_id]})
+        elif current is not None:
+            resolved.append({"issue_id": issue_id, "resolved_by": "not_raised",
+                             "note": "the current check no longer raises it"})
+        else:
+            open_ids.append(issue_id)
+    return open_ids, resolved
+
+
+def read_last_install(ppl, context=None) -> Optional[Dict[str, Any]]:
     """The last install's pointer plus a summary of the record it wrote.
 
     Without a pointer (an install from an older jarvis) the newest
     ``<shared>/executions/*/install/install-record.json`` in install mode is
-    used. Returns ``None`` when no install has run.
+    used. Returns ``None`` when no install has run. ``open_issues`` holds only
+    the record's questions that are still open (see
+    :func:`_classify_last_issues`); the others are in ``resolved_issues``.
+    ``context`` is the running check, whose own questions decide what is
+    still open.
     """
     import json
 
@@ -579,7 +639,13 @@ def read_last_install(ppl) -> Optional[Dict[str, Any]]:
         if isinstance(entry, dict)
     }
     pointer["applied_decisions"] = record.get("applied_decisions") or []
-    pointer["open_issues"] = record.get("issues") or []
+    open_issues, resolved = _classify_last_issues(
+        list(record.get("issues") or []), record,
+        pointer.get("decisions") or (context.decisions_path if context is not None else None),
+        context,
+    )
+    pointer["open_issues"] = open_issues
+    pointer["resolved_issues"] = resolved
     if record.get("spack_env"):
         pointer["spack_env"] = record.get("spack_env")
     return pointer

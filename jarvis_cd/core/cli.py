@@ -2395,7 +2395,7 @@ class JarvisCLI(ArgParse):
         def emit(report: dict) -> None:
             if forgotten is not None:
                 report["forgotten"] = forgotten["forgotten"]
-            emit(report)
+            self._emit_install_report(report, json_output=json_output)
 
         if self.kwargs.get("submit"):
             handle = pipeline.submit(

@@ -489,8 +489,19 @@ or not, also writes `<pipeline shared>/install/last-install.json`
 `issues`, `decisions` and `written_at`. `ppl install +check +json` reads it
 and reports `last_install`: the pointer, plus the record's `finished_at`,
 per-package `status`, `spec` and `mpi` (`hash`, `prefix`, `candidate_id`,
-`candidate_key`), `applied_decisions`, `open_issues` and `spack_env`. When
-no pointer exists, because the install ran under an older JARVIS, the
+`candidate_key`), `applied_decisions`, `open_issues`, `resolved_issues` and
+`spack_env`. `open_issues` lists only the record's questions that are still
+open, so a resumed caller never re-presents a stale ask. A question the
+current check raises again stays open. The others move to
+`resolved_issues[]`, each with `issue_id` and `resolved_by`:
+
+| `resolved_by` | When | Extra fields |
+|---------------|------|--------------|
+| `decision` | `decisions.yaml` answers it (by `issue_id` or `rekeyed_from`) | `constraint`, `decision_issue_id`, `scope` |
+| `superseded` | a newer question replaced it (`supersedes`, or a `stale_decisions` entry) | `superseded_by` |
+| `not_raised` | the current check no longer raises it | `note` |
+
+When no pointer exists, because the install ran under an older JARVIS, the
 newest install-mode
 `<pipeline shared>/executions/*/install/install-record.json` is used instead
 (`found_by: scan`). Decisions are never split this way: `decisions.yaml` is
@@ -701,7 +712,25 @@ jarvis ppl install --answers answers.json +json # apply answers, then build
 jarvis ppl install yaml pipeline.yaml +check    # a YAML instead of the current pipeline
 jarvis ppl install +submit +json                # the same, as a 1-node scheduler job
 jarvis ppl install +allow_local +json           # build on this host outside an allocation
+jarvis ppl install --forget mpi +json           # forget a recorded answer, then ask again
 ```
+
+`--forget <selector>` removes recorded answers from `decisions.yaml` and
+prints a `jarvis.install-forget.v1` document with `decisions_path`,
+`forgotten[]` (each with `selector` and `forgotten_at`) and `remaining[]`.
+It only forgets; with `+check` or `+submit` it then continues, and the
+report carries the forget document as `forgotten`. The selector is one of:
+
+- `all`;
+- an `issue_id`, or a prefix of at least 8 hex digits (`rekeyed_from`
+  matches too);
+- a site subject: `mpi`, `compiler` or `spack`;
+- a package name;
+- a recorded `constraint`, `candidate_id` or `candidate_key`.
+
+A selector that matches nothing refuses with `decision_not_found` (exit 5),
+whose `details.recorded` lists what is recorded, and nothing is removed. The
+next `ppl install +check` asks the question again.
 
 The final stdout line with `+json` is a `jarvis.install-report.v1` document:
 `mode`, `satisfied`, per-installer `status`/`packages`, `issues`,
