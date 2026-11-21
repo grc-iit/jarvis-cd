@@ -1262,14 +1262,24 @@ class Pipeline:
         shared_dir.mkdir(parents=True, exist_ok=True)
         resolved_execution_id = _validated_execution_id(execution_id)
         store = self._execution_store()
+        recorded_facts = None
+        if site_facts_report and "issues" in site_facts_report:
+            from jarvis_cd.core.site_facts import SITE_FACTS_FILE, record_site_facts
+
+            recorded_facts = record_site_facts(
+                site_facts_report,
+                full_in=str(store.executions_dir / resolved_execution_id / SITE_FACTS_FILE))
         store.create(
             resolved_execution_id,
             mode="scheduler",
             scheduler_provider=scheduler_provider,
-            **({"metadata": {"site_facts": site_facts_report}}
-               if site_facts_report and "issues" in site_facts_report else {}),
+            **({"metadata": {"site_facts": recorded_facts}} if recorded_facts else {}),
         )
         execution_root = store.executions_dir / resolved_execution_id
+        if recorded_facts:
+            from jarvis_cd.core.site_facts import write_site_facts_file
+
+            write_site_facts_file(execution_root, site_facts_report)
 
         def persist_stage_exception(
             error: BaseException,
@@ -3231,7 +3241,9 @@ class Pipeline:
             # package starts once they report ready, and start() returns only
             # after every background start() has returned (e.g. on ppl stop).
             background: List[Dict[str, Any]] = []
-            for pkg_def in self.packages:
+            last_step_index: Optional[int] = None
+            self._stopped_after_steps: set = set()
+            for index, pkg_def in enumerate(self.packages):
                 try:
                     # Print BEGIN message
                     logger.success(f"[{pkg_def['pkg_type']}] [START] BEGIN")
@@ -3251,6 +3263,7 @@ class Pipeline:
                         self._time_package_phase(pkg_def, pkg_instance, "started",
                                                  phase_started, start_mode="background")
                         handle = self._start_package_in_background(pkg_instance, pkg_def)
+                        handle.update(index=index, instance=pkg_instance, pkg_def=pkg_def)
                         background.append(handle)
                         self._time_package_phase(
                             pkg_def, pkg_instance,
@@ -3262,6 +3275,8 @@ class Pipeline:
                         pkg_instance.start()
                         self._time_package_phase(pkg_def, pkg_instance, "returned",
                                                  phase_started)
+                        if self._is_step_package(pkg_instance):
+                            last_step_index = index
 
                     # Propagate environment changes to next packages
                     self.env.update(pkg_instance.env)
@@ -3277,7 +3292,92 @@ class Pipeline:
                     raise RuntimeError(
                         f"Pipeline startup failed at package '{pkg_def['pkg_id']}': {e}"
                     ) from e
+            self._stop_services_after_steps(background, last_step_index)
             self._wait_background_packages(background)
+
+    @staticmethod
+    def _is_step_package(pkg_instance: Any) -> bool:
+        """A package whose foreground start() is the work itself (not a service)."""
+        from jarvis_cd.core.pkg import Library, Service
+
+        return not isinstance(pkg_instance, (Service, Library))
+
+    @staticmethod
+    def _after_steps_policy(handle: Dict[str, Any], last_step_index: Optional[int]) -> str:
+        """``stop`` or ``keep`` for one background package once the steps returned.
+
+        ``auto`` (the default) stops a package a step started after, since the
+        steps it served are done; one listed after the last step (or in a
+        pipeline without steps) is the pipeline's purpose and is kept.
+        """
+        config = getattr(handle.get("instance"), "config", {}) or {}
+        policy = str(config.get("after_steps") or "auto").strip().lower()
+        if policy not in ("auto", "stop", "keep"):
+            raise ValueError(
+                f"{handle['pkg_id']}: after_steps must be auto, stop or keep")
+        if policy == "auto":
+            if last_step_index is not None and handle.get("index", 0) < last_step_index:
+                return "stop"
+            return "keep"
+        return policy
+
+    def _stop_services_after_steps(
+        self, background: List[Dict[str, Any]], last_step_index: Optional[int]
+    ) -> None:
+        """Stop background packages the finished steps no longer need.
+
+        Runs after every foreground package returned OK. Each stopped
+        package's stop() runs here (newest first) and its start() thread is
+        joined, so the execution finalizes ``completed`` instead of holding
+        the allocation until its wall time. ``Pipeline.stop`` then skips them.
+        """
+        from jarvis_cd.util.logger import logger
+
+        decisions: List[Dict[str, Any]] = []
+        for handle in reversed(background):
+            policy = self._after_steps_policy(handle, last_step_index)
+            entry: Dict[str, Any] = {"pkg_id": handle["pkg_id"], "after_steps": policy}
+            if policy == "stop" and not handle["thread"].is_alive():
+                entry["after_steps"] = "already_returned"
+            elif policy == "stop":
+                if handle["error"] is not None:
+                    raise RuntimeError(
+                        f"Background package '{handle['pkg_id']}' failed: {handle['error']}"
+                    ) from handle["error"]
+                logger.info(f"[{handle['pkg_def']['pkg_type']}] [STOP] the pipeline's "
+                            "last step returned; stopping (after_steps)")
+                stop_started = time.monotonic()
+                self._bind_package_execution_environment(handle["pkg_def"])
+                instance = handle["instance"]
+                if hasattr(instance, "stop"):
+                    instance.stop()
+                # stop() ends the service; give its start() a bounded join.
+                timeout = 120.0
+                handle["thread"].join(timeout)
+                entry["stop_seconds"] = round(time.monotonic() - stop_started, 3)
+                if handle["thread"].is_alive():
+                    entry["start_thread"] = "still running after stop"
+                    logger.warning(f"{handle['pkg_id']}: start() still running "
+                                   f"{timeout:g}s after stop(); not waiting on it")
+                elif handle["error"] is not None:
+                    # start() failing because stop() ended it is the expected exit.
+                    entry["start_error_after_stop"] = str(handle["error"])[:512]
+                handle["stopped_after_steps"] = True
+                self._stopped_after_steps.add(str(handle["pkg_id"]))
+            decisions.append(entry)
+        timings = getattr(self, "_phase_timings", None)
+        if timings is not None and decisions:
+            timings["services_after_steps"] = {
+                "last_step": (self.packages[last_step_index]["pkg_id"]
+                              if last_step_index is not None else None),
+                "packages": list(reversed(decisions)),
+            }
+            for decision in decisions:
+                entry = next((e for e in timings["packages"]
+                              if e["pkg_id"] == decision["pkg_id"]), None)
+                if entry is not None:
+                    entry["after_steps"] = decision["after_steps"]
+            self._publish_phase_timings()
 
     @staticmethod
     def _package_starts_in_background(pkg_instance: Any) -> bool:
@@ -3419,10 +3519,12 @@ class Pipeline:
         """Block until every background start() returns; re-raise the first error."""
         from jarvis_cd.util.logger import logger
 
+        background = [h for h in background if not h.get("stopped_after_steps")]
         if not background:
             return
         logger.info(
-            "Pipeline started; waiting on background package(s): "
+            "Pipeline started; holding for background package(s) (after_steps "
+            "keep, or no step after them): "
             + ", ".join(handle["pkg_id"] for handle in background)
         )
         for handle in background:
@@ -3776,7 +3878,17 @@ class Pipeline:
         else:
             # Standard deployment mode - stop each package individually
             failures: list[Exception] = []
+            already_stopped = set(getattr(self, "_stopped_after_steps", None) or ())
+            by_request = self._read_stopped_by_request() - already_stopped
             for pkg_def in reversed(self.packages):
+                if str(pkg_def["pkg_id"]) in already_stopped:
+                    logger.info(f"[{pkg_def['pkg_type']}] [STOP] already stopped "
+                                "after the last step")
+                    continue
+                if str(pkg_def["pkg_id"]) in by_request:
+                    logger.info(f"[{pkg_def['pkg_type']}] [STOP] already stopped "
+                                "by this execution's stop request")
+                    continue
                 try:
                     # Print BEGIN message
                     logger.success(f"[{pkg_def['pkg_type']}] [STOP] BEGIN")
@@ -3796,12 +3908,51 @@ class Pipeline:
 
                     # Print END message
                     logger.success(f"[{pkg_def['pkg_type']}] [STOP] END")
+                    self._record_stopped_by_request(package_id)
 
                 except Exception as e:
                     logger.error(f"Error stopping package {pkg_def['pkg_id']}: {e}")
                     failures.append(e)
             if failures:
                 raise ExceptionGroup("pipeline package stop failed", failures)
+
+    @staticmethod
+    def _stopped_marker_path():
+        """``runtime/stopped-packages.json`` of the scheduler execution, if any.
+
+        The batch shell's TERM trap runs ``ppl stop`` against the same
+        runtime snapshot as the waited ``ppl run`` child, so the child's own
+        stop skips packages the trap already stopped.
+        """
+        snapshot = os.getenv(_SNAPSHOT_ENVIRONMENT)
+        if not snapshot:
+            return None
+        directory = Path(snapshot)
+        return directory / "stopped-packages.json" if directory.is_dir() else None
+
+    def _read_stopped_by_request(self) -> set:
+        path = self._stopped_marker_path()
+        if path is None or not path.is_file():
+            return set()
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return set()
+        if not isinstance(data, dict) or data.get("pipeline") != self.name:
+            return set()
+        return {str(item) for item in data.get("packages") or []}
+
+    def _record_stopped_by_request(self, package_id: str) -> None:
+        path = self._stopped_marker_path()
+        if path is None:
+            return
+        packages = sorted(self._read_stopped_by_request() | {package_id})
+        tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+        try:
+            tmp.write_text(json.dumps({"pipeline": self.name, "packages": packages}))
+            os.replace(tmp, path)
+        except OSError:
+            pass
 
     def kill(self):
         """Force kill all packages in the pipeline"""
@@ -3942,12 +4093,23 @@ class Pipeline:
             resolved_execution_id = _validated_execution_id(execution_id)
             pending = getattr(self, "_pending_site_facts", None)
             self._pending_site_facts = None
+            recorded_facts = None
+            if pending:
+                from jarvis_cd.core.site_facts import SITE_FACTS_FILE, record_site_facts
+
+                recorded_facts = record_site_facts(
+                    pending,
+                    full_in=str(store.executions_dir / resolved_execution_id / SITE_FACTS_FILE))
             record = store.create(
                 resolved_execution_id, mode="direct",
-                **({"metadata": {"site_facts": pending}} if pending else {}),
+                **({"metadata": {"site_facts": recorded_facts}} if recorded_facts else {}),
             )
             self._execution_root = store.executions_dir / resolved_execution_id
             self._execution_id = resolved_execution_id
+            if recorded_facts:
+                from jarvis_cd.core.site_facts import write_site_facts_file
+
+                write_site_facts_file(self._execution_root, pending)
             try:
                 store.update(
                     resolved_execution_id,
@@ -4047,13 +4209,24 @@ class Pipeline:
         }
         pending = getattr(self, "_pending_site_facts", None)
         self._pending_site_facts = None
+        recorded_facts = None
+        if pending:
+            from jarvis_cd.core.site_facts import SITE_FACTS_FILE, record_site_facts
+
+            recorded_facts = record_site_facts(
+                pending,
+                full_in=str(store.executions_dir / resolved_execution_id / SITE_FACTS_FILE))
         store.create(
             resolved_execution_id,
             mode="direct",
             metadata={"direct_launch": direct_launch,
-                      **({"site_facts": pending} if pending else {})},
+                      **({"site_facts": recorded_facts} if recorded_facts else {})},
         )
         execution_root = store.executions_dir / resolved_execution_id
+        if recorded_facts:
+            from jarvis_cd.core.site_facts import write_site_facts_file
+
+            write_site_facts_file(execution_root, pending)
         process: Optional[subprocess.Popen[Any]] = None
         try:
             runtime_dir, input_dir, snapshot_sha256 = self._write_execution_snapshot(
@@ -4939,13 +5112,21 @@ class Pipeline:
             )
         pending_decision: Optional[RuntimeError] = None
         self._install_activation = None
-        if install_policy != "skip":
+        if install_policy == "skip":
+            self._install_activation = {
+                "method": "none", "policy": "skip",
+                "why_not_loaded": "install phase skipped (JARVIS_INSTALL_ON_LOAD=skip "
+                                  "or a command that runs its own phase)",
+            }
+        else:
             install_started = time.monotonic()
             try:
                 install_report = Installer.install_all(
                     self, mode=install_policy, use_capture=True)
                 activation = dict(install_report.get("activation") or {})
                 activation.setdefault("method", "none")
+                if activation["method"] == "none":
+                    activation.setdefault("why_not_loaded", "no installer loaded an env")
                 activation["policy"] = install_policy
                 activation["seconds"] = round(time.monotonic() - install_started, 3)
                 self._install_activation = activation

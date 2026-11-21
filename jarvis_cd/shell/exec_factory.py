@@ -241,6 +241,11 @@ class Exec(CoreExec):
         """Get the command string"""
         return self.cmd
 
+    def launch_record(self):
+        """The MPI launch's ``launch_record()`` (None before run or for non-MPI)."""
+        probe = getattr(self._delegate, 'launch_record', None)
+        return probe() if callable(probe) else None
+
     def wait(self, hostname: str = 'localhost') -> int:
         """Wait for execution to complete"""
         if self._delegate:

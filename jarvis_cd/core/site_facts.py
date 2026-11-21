@@ -258,14 +258,24 @@ def net_launch_reasons(
     flavour: Optional[str],
     launch_nodes: Optional[int] = None,
     hosts_check: Optional[Dict[str, Any]] = None,
+    launch_hosts: Optional[Sequence[str]] = None,
 ) -> List[Dict[str, Any]]:
-    """The deterministic uncertainty rules for the MPI launch network."""
+    """The deterministic uncertainty rules for the MPI launch network.
+
+    ``launch_hosts``: at a launch, the per-host checks (RDMA port state, UCX
+    usability, control fallback) look only at the launch hosts the graph
+    holds, so another job's host in a merged graph raises nothing here.
+    """
     from jarvis_cd.util.network import predates_ucx_verification
 
     selected = net.get("selected") or {}
     data, control = selected.get("data"), selected.get("control")
     by_cidr = {n.get("cidr"): n for n in net.get("networks") or []}
     graph_hosts = list(net.get("collected_on") or [])
+    scope_hosts = graph_hosts
+    if launch_hosts:
+        known = set(graph_hosts)
+        scope_hosts = [host for host in dict.fromkeys(launch_hosts) if host in known]
     needs_names = flavour in ("mpich", "intel")
     override_roles = net.get("override") or {}
     reasons: List[Dict[str, Any]] = []
@@ -322,7 +332,7 @@ def net_launch_reasons(
     network = by_cidr.get((data or {}).get("cidr"))
     if network is not None:
         states, ucx_hosts = {}, {}
-        for host in graph_hosts:
+        for host in scope_hosts:
             interface = _node_interface(net, host, network["cidr"]) or {}
             if not interface.get("rdma_device"):
                 continue
@@ -340,11 +350,15 @@ def net_launch_reasons(
                     **({"error": ucx["error"]} if ucx.get("error") else {}),
                 }
         inactive = {h: s for h, s in states.items() if "ACTIVE" not in str(s)}
-        if states and (inactive or len(states) < len(graph_hosts)):
+        ompi_tcp = (" Open MPI is kept off UCX (OMPI_MCA_pml and OMPI_MCA_osc "
+                    "set to ^ucx) so every rank runs ob1/TCP on the data network."
+                    if flavour == "openmpi" else "")
+        if states and (inactive or len(states) < len(scope_hosts)):
             add("rdma_not_active", ADVISORY, ("data",),
                 f"data {network['cidr']} has an RDMA device that is not ACTIVE "
                 "on every node, so UCX_NET_DEVICES is not set",
-                "the run uses TCP on that network instead of RDMA: correct, but slower",
+                "the run uses TCP on that network instead of RDMA: correct, but "
+                "slower." + ompi_tcp,
                 port_states=states)
         if ucx_hosts:
             add("ucx_device_unusable", ADVISORY, ("data",),
@@ -352,8 +366,8 @@ def net_launch_reasons(
                 "but UCX on " + ", ".join(sorted(ucx_hosts)) + " cannot use it "
                 "(" + ", ".join(sorted({v["status"] for v in ucx_hosts.values()}))
                 + "), so UCX_NET_DEVICES is not set",
-                "UCX picks its own devices, likely TCP: correct, but slower. If the "
-                "MPI uses a different UCX than the ucx_info checked, set "
+                "the run uses TCP instead of RDMA: correct, but slower." + ompi_tcp
+                + " If the MPI uses a different UCX than the ucx_info checked, set "
                 f"{UCX_INFO_ENVIRONMENT} to its ucx_info and re-collect",
                 ucx=ucx_hosts)
 
@@ -369,10 +383,10 @@ def net_launch_reasons(
             withholds=["UCX_NET_DEVICES"], value=device, plan="collect_at_launch")
 
     control_net = by_cidr.get((control or {}).get("cidr"))
-    if control_net is not None and graph_hosts:
+    if control_net is not None and scope_hosts:
         subnet = ipaddress.IPv4Network(control_net["cidr"])
         outside = []
-        for host in graph_hosts:
+        for host in scope_hosts:
             addrs = ((net.get("nodes") or {}).get(host) or {}).get("control_addrs") or []
             if not any(ipaddress.IPv4Address(a) in subnet for a in addrs):
                 outside.append(host)
@@ -540,6 +554,7 @@ def net_launch_issue(
     launch_nodes: Optional[int] = None,
     hosts_check: Optional[Dict[str, Any]] = None,
     stage: str = "check",
+    launch_hosts: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Evaluate ``net.launch``: ``{issue, reasons, resolved_by_override, evidence_digest}``."""
     result: Dict[str, Any] = {"fact": NET_LAUNCH, "issue": None, "reasons": [],
@@ -547,7 +562,7 @@ def net_launch_issue(
     if not net:
         return result
     all_reasons = net_launch_reasons(net, flavour=flavour, launch_nodes=launch_nodes,
-                                     hosts_check=hosts_check)
+                                     hosts_check=hosts_check, launch_hosts=launch_hosts)
     if hosts_check is not None:
         covers = not hosts_check.get("hosts")
     else:
@@ -628,6 +643,9 @@ def net_launch_issue(
     )
     issue["severity"] = severity
     issue["blocking"] = severity == BLOCK
+    # Top-level codes so a caller can match the cause (e.g.
+    # ucx_device_unusable) without walking details.reasons.
+    issue["reason_codes"] = [r["code"] for r in reasons]
     result["issue"] = issue
     return result
 
@@ -646,6 +664,7 @@ def site_fact_report(
     hosts_check: Optional[Dict[str, Any]] = None,
     stage: str = "check",
     record: bool = True,
+    launch_hosts: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Evaluate every site fact; drop questions a recorded answer covers."""
     store = SiteFactStore(resource_graph_file)
@@ -660,7 +679,8 @@ def site_fact_report(
         "blocking": False,
     }
     evaluated = net_launch_issue(net, flavour=flavour, launch_nodes=launch_nodes,
-                                 hosts_check=hosts_check, stage=stage)
+                                 hosts_check=hosts_check, stage=stage,
+                                 launch_hosts=launch_hosts)
     if evaluated["resolved_by_override"]:
         document["resolved_by_override"].append(
             {"fact": NET_LAUNCH, "reasons": evaluated["resolved_by_override"],
@@ -967,6 +987,7 @@ def _net_not_collected_issue(launch_nodes: int, flavour: Optional[str],
     )
     issue["severity"] = ADVISORY
     issue["blocking"] = False
+    issue["reason_codes"] = ["net_not_collected"]
     return issue
 
 
@@ -1020,6 +1041,7 @@ def launch_site_facts(flavour: str, net: Optional[Dict[str, Any]],
         launch_nodes=len(record.get("hosts") or []),
         hosts_check=hosts_check,
         stage="launch_collected" if collected else "launch",
+        launch_hosts=list(record.get("hosts") or []),
     )
 
 
@@ -1060,11 +1082,27 @@ def execution_site_facts(execution_root: Path,
             stages.append({**report, "launch": launch.name})
     if not stages:
         return None
-    issues: Dict[str, Dict[str, Any]] = {}
+    issues: Dict[Any, Dict[str, Any]] = {}
     confirmed: Dict[str, Dict[str, Any]] = {}
+    superseded: List[str] = []
+    for stage in stages:
+        superseded.extend(stage.get("superseded_by_launch") or [])
+    launch_evaluated = any(stage.get("launch") for stage in stages)
     for stage in stages:
         for issue in stage.get("issues") or []:
-            issues.setdefault(issue["issue_id"], issue)
+            details = issue.get("details") or {}
+            # Once a launch evaluated the network on its hosts, the check's
+            # graph-wide prediction (made before the hosts were known) is
+            # superseded; launches over different hosts keep each version.
+            if (launch_evaluated and not stage.get("launch")
+                    and details.get("fact") == NET_LAUNCH
+                    and details.get("stage") in (None, "check")):
+                superseded.append(issue.get("issue_id"))
+                continue
+            key = (issue.get("issue_id"), tuple(issue.get("reason_codes") or ()))
+            if stage.get("launch") and key not in issues:
+                issue = dict(issue, launch=stage["launch"])
+            issues.setdefault(key, issue)
         for item in stage.get("confirmed") or []:
             confirmed.setdefault(str(item.get("issue_id")), item)
         if "stages" not in stage:
@@ -1079,6 +1117,7 @@ def execution_site_facts(execution_root: Path,
         "issues": list(issues.values()),
         "advisories": launch_advisories({"issues": list(issues.values())}),
         "confirmed": list(confirmed.values()),
+        "superseded_by_launch": sorted({i for i in superseded if i}),
         "stages": summaries,
     }
 
@@ -1091,13 +1130,123 @@ def launch_advisories(report: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
             if isinstance(issue, dict) and not issue.get("blocking")]
 
 
+# The execution record caps all metadata at 48 KB; per-node evidence grows
+# with the host count, so the record holds a bounded copy and the full report
+# lives next to it.
+SITE_FACTS_FILE = "site-facts.json"
+RECORD_SITE_FACTS_BUDGET = 24_000
+_SLIM_DETAILS = ("schema_version", "fact", "severity", "blocking", "stage",
+                 "evidence_digest", "pick", "answer", "previous_answer")
+_SLIM_REASON = ("code", "severity", "roles", "message", "consequence", "plan",
+                "hosts", "setting", "value", "cause")
+_SLIM_CANDIDATE = ("value", "cidr", "kind", "speed_mbps", "rank", "picked_as", "usable")
+_MINIMAL_ISSUE = ("schema_version", "issue_id", "kind", "subject", "field", "severity",
+                  "blocking", "reason_codes", "supersedes", "remedy")
+
+
+def _json_size(value: Any) -> int:
+    return len(json.dumps(value, sort_keys=True, separators=(",", ":"), default=str))
+
+
+def _slim_issue(issue: Dict[str, Any], minimal: bool) -> Dict[str, Any]:
+    if not isinstance(issue, dict):
+        return issue
+    if minimal:
+        slim = {key: issue[key] for key in _MINIMAL_ISSUE if key in issue}
+        slim["message"] = str(issue.get("message") or "")[:400]
+    else:
+        slim = {key: value for key, value in issue.items()
+                if key not in ("details", "candidates")}
+        details = issue.get("details") or {}
+        slim["details"] = {key: details[key] for key in _SLIM_DETAILS if key in details}
+        slim["details"]["reasons"] = [
+            {key: reason[key] for key in _SLIM_REASON if key in reason}
+            for reason in details.get("reasons") or [] if isinstance(reason, dict)
+        ]
+        slim["candidates"] = [
+            {key: candidate[key] for key in _SLIM_CANDIDATE if key in candidate}
+            for candidate in issue.get("candidates") or [] if isinstance(candidate, dict)
+        ]
+    slim["trimmed"] = True
+    return slim
+
+
+def record_site_facts(report: Optional[Dict[str, Any]],
+                      full_in: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """A copy of a site-facts report that fits the execution record.
+
+    Unchanged when small. Otherwise the issues and advisories drop their
+    per-node evidence and probes (then everything but their identity and
+    codes), and ``trimmed.full_in`` names the file with the full report.
+    Issue ids, kinds, severities and ``reason_codes`` always stay.
+    """
+    if not isinstance(report, dict) or _json_size(report) <= RECORD_SITE_FACTS_BUDGET:
+        return report
+    for minimal in (False, True):
+        bounded = {key: value for key, value in report.items()
+                   if key not in ("net_plan",)}
+        for key in ("issues", "advisories"):
+            if isinstance(report.get(key), list):
+                bounded[key] = [_slim_issue(issue, minimal) for issue in report[key]]
+        if minimal and isinstance(report.get("confirmed"), list):
+            bounded["confirmed"] = [
+                {key: item.get(key) for key in ("fact", "issue_id", "evidence_digest",
+                                                "value", "reasons")}
+                for item in report["confirmed"] if isinstance(item, dict)
+            ]
+        bounded["trimmed"] = {
+            "reason": "the full report exceeds the execution record's metadata budget",
+            "level": "minimal" if minimal else "no_evidence",
+            "full_in": full_in,
+        }
+        if _json_size(bounded) <= RECORD_SITE_FACTS_BUDGET:
+            return bounded
+    return {
+        "schema_version": report.get("schema_version"),
+        "issue_ids": [i.get("issue_id") for i in report.get("issues") or []
+                      if isinstance(i, dict)],
+        "reason_codes": sorted({code for i in report.get("issues") or []
+                                if isinstance(i, dict) for code in i.get("reason_codes") or []}),
+        "trimmed": {"reason": "even the minimal report exceeds the budget",
+                    "level": "ids_only", "full_in": full_in},
+    }
+
+
+def write_site_facts_file(execution_root: Path,
+                          report: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Write the full report to ``<execution>/site-facts.json``; never raises."""
+    if not isinstance(report, dict):
+        return None
+    path = Path(execution_root) / SITE_FACTS_FILE
+    try:
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(report, indent=2, sort_keys=True, default=str) + "\n",
+                       encoding="utf-8")
+        os.replace(tmp, path)
+        return str(path)
+    except OSError as error:
+        print(f"jarvis: site facts file not written: {error}", file=sys.stderr)
+        return None
+
+
+def _full_prior(root: Path, recorded: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not (isinstance(recorded, dict) and recorded.get("trimmed")):
+        return recorded
+    try:
+        return json.loads((root / SITE_FACTS_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return recorded
+
+
 def record_execution_site_facts(execution_root: Path,
                                 execution_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Merge the launches' site facts into the execution record now.
 
     Called right after each launch writes its ``launch.json`` and again when
     the run ends or the scheduler script finalizes, so a run killed at its
-    wall time still carries its launch advisories. Idempotent; never raises.
+    wall time still carries its launch advisories. The full merged report is
+    written to ``site-facts.json``; the record holds :func:`record_site_facts`
+    of it. Idempotent; never raises.
     """
     try:
         from jarvis_cd.core.execution import ExecutionStore, read_execution_record
@@ -1106,13 +1255,16 @@ def record_execution_site_facts(execution_root: Path,
         if not (root / ".jarvis-execution.json").is_file():
             return None
         current = read_execution_record(root, expected_execution_id=execution_id or root.name)
-        merged = execution_site_facts(root, current.metadata.get("site_facts"))
+        recorded = current.metadata.get("site_facts")
+        merged = execution_site_facts(root, _full_prior(root, recorded))
         if merged is None:
             return None
-        if merged == current.metadata.get("site_facts"):
+        full_in = write_site_facts_file(root, merged)
+        bounded = record_site_facts(merged, full_in=full_in)
+        if bounded == recorded:
             return merged
         ExecutionStore(root.parent, current.pipeline_id).update(
-            current.execution_id, metadata={"site_facts": merged})
+            current.execution_id, metadata={"site_facts": bounded})
         return merged
     except Exception as error:  # advisory evidence must never fail a run
         print(f"jarvis: site facts not recorded: {error}", file=sys.stderr)

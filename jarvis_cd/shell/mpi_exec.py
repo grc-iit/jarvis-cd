@@ -61,6 +61,15 @@ class LocalMpiExec(LocalExec):
         # realpaths, ldd) and wrap ranks for hostname and /proc maps capture.
         launcher_env = dict(exec_info.basic_env or {})
         self.network = self._apply_launch_network(launcher_env)
+        # The site-fact advisories of this launch, on the object, so a
+        # package that records its launch (e.g. a service's launch file)
+        # carries them top-level, as jarvis's launch.json does.
+        site_facts = (self.network or {}).get('site_facts') if isinstance(
+            self.network, dict) else None
+        self.site_facts = site_facts if isinstance(site_facts, dict) else None
+        self.advisories = list((self.network or {}).get('advisories') or []) \
+            if isinstance(self.network, dict) else []
+        self.launch_json = None
         self.placement = self._resolve_placement()
 
         from ..core.provenance import capture_launch
@@ -78,6 +87,31 @@ class LocalMpiExec(LocalExec):
 
     #: resource-graph network flavour of this launcher (see util.network)
     network_flavour = None
+
+    LAUNCH_RECORD_SCHEMA = 'jarvis.mpi-launch.v1'
+
+    def launch_record(self):
+        """A JSON-ready summary of this launch for a package to store.
+
+        Packages that write their own launch file (e.g. a service's
+        ``<name>-launch.json``) should dump this rather than pick attributes,
+        so the site-fact ``advisories`` stay top-level. jarvis's own record
+        is ``launch_json`` (``provenance/launch-NNN/launch.json``).
+        """
+        hostfile = getattr(self, 'hostfile', None)
+        return {
+            'schema_version': self.LAUNCH_RECORD_SCHEMA,
+            'built_by': f"{type(self).__module__}.{type(self).__name__}",
+            'command': getattr(self, 'cmd', None),
+            'nprocs': self.nprocs,
+            'ppn': self.ppn,
+            'hosts': list(getattr(hostfile, 'hosts', []) or []),
+            'network': self.network,
+            'advisories': list(self.advisories or []),
+            'site_facts': self.site_facts,
+            'placement': self.placement,
+            'launch_json': self.launch_json,
+        }
 
     def _resolve_placement(self):
         """Bound ranks per node by the allocation's task geometry.
@@ -177,7 +211,9 @@ class LocalMpiExec(LocalExec):
             # Facts the pre-launch check already saw are advisory here; facts
             # collected by this launch pass the same block rules as a check.
             report = launch_site_facts(self.network_flavour, net, record, collected=gate)
-            if report and (report.get('issues') or report.get('confirmed')):
+            if report:
+                # Recorded even with no issues: the launch's evaluation on its
+                # hosts supersedes the check's graph-wide prediction.
                 record['site_facts'] = report
             from ..core.site_facts import launch_advisories
 

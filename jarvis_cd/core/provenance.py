@@ -232,7 +232,11 @@ def capture_launch(launch: Any, cwd: Optional[str] = None) -> None:
         (launch_dir / "launch.json").write_text(
             json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
-        if isinstance(launch_facts, dict) and launch_facts.get("issues"):
+        try:
+            launch.launch_json = str(launch_dir / "launch.json")
+        except Exception:
+            pass
+        if isinstance(launch_facts, dict) and "issues" in launch_facts:
             from jarvis_cd.core.site_facts import record_execution_site_facts
 
             # Into the execution record now, not only when the run ends.

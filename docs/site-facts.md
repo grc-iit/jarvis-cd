@@ -42,6 +42,7 @@ as long as the evidence does, at check time and at launch alike.
 |-------|---------|
 | `severity` | `block` or `advisory` (also in `details.severity`) |
 | `blocking` | `true` for `block` |
+| `reason_codes` | the codes of `details.reasons[]`, top level, e.g. `["ucx_device_unusable"]`, so a caller can switch on them without walking `details` |
 | `details.schema_version` | `jarvis.site-facts.v1` |
 | `details.fact` | `net.launch` |
 | `details.stage` | `check` (before submit), `launch` (inside the job, facts a check already saw) or `launch_collected` (inside the job, facts the launch [collected itself](resource-graph-network.md#collected-at-launch)) |
@@ -112,6 +113,13 @@ no net section, the only check-time question is `net_not_collected`. Cray
 MPICH and `JARVIS_MPI_NETWORK=off` (in the environment or the pipeline's
 env) get no network questions.
 
+Before submit the per-host reasons (`rdma_not_active`, `ucx_device_unusable`,
+`control_fallback`) look at every host of the graph. At a launch they look
+only at the launch hosts the graph holds: in a graph merged from several
+jobs, a host outside this launch raises nothing for it. The evidence (and so
+`evidence_digest` and `issue_id`) stays graph-wide at both stages, so an
+answer recorded before submit still covers the launch.
+
 ## Where questions appear
 
 | Where | What |
@@ -120,8 +128,9 @@ env) get no network questions.
 | `jarvis rg net show +json` | the same report under `site_facts` |
 | `jarvis ppl check +json` | `site_facts`. Blocking questions go to `questions[]`, advisory ones to `warnings[]`, and `ok` is false while `questions` is non-empty. The command exits 3 on questions (5 on errors). `site_facts.net_plan` says what the launch will do about the network: `action` (`collect_at_launch` or `use_graph`), `reasons`, `note`; `site_facts.net_present` says whether the graph has a net section |
 | `jarvis ppl submit` | refuses before any scheduler call with exit 3 and the blocking issues (`+json` prints `{exit_code, issues}`). Advisory questions are submitted with the job |
-| execution record | `metadata.site_facts`: `schema_version`, `issues[]` (deduplicated by `issue_id`), `advisories[]` (the non-blocking ones), `confirmed[]`, and `stages[]`, one per evaluation (`stage`, `launch`, `blocking`, `issue_ids`, `confirmed`). Updated at check/submit, again when each launch is captured, and at finalization |
-| launch provenance | `provenance/launch-*/launch.json` → top-level `advisories` and `site_facts`, and `network.site_facts` / `network.advisories`, when the launch raised or confirmed a question |
+| execution record | `metadata.site_facts`: `schema_version`, `issues[]` (deduplicated by `issue_id` and `reason_codes`; a launch's evaluation of a question, scoped to its hosts, replaces the check's graph-wide one, and each launch's distinct version carries `launch`), `advisories[]` (the non-blocking ones), `confirmed[]`, `superseded_by_launch[]` (the check's `net.launch` issue ids that a launch's own evaluation replaced: before submit the hosts aren't known, so the check judges the whole graph; once a launch evaluated its hosts, that evaluation is the record, even when it found nothing), and `stages[]`, one per evaluation (`stage`, `launch`, `blocking`, `issue_ids`, `confirmed`). Updated at check/submit, again when each launch is captured, and at finalization. The full report is always in `<execution>/site-facts.json`. The record's metadata is capped (48 KB), so when the report exceeds 24 KB the record keeps a trimmed copy: issues and advisories keep their identity, `severity`, `blocking`, `reason_codes`, `message`, `remedy`, `details.reasons` (without per-host evidence) and `details.pick`, then only identity and codes if that is still too large. `trimmed: {reason, level, full_in}` marks it, each trimmed issue has `trimmed: true`, and `full_in` is the path of `site-facts.json` |
+| launch provenance | `provenance/launch-*/launch.json` → top-level `advisories` and `site_facts`, and `network.site_facts` / `network.advisories`, for every multi-node launch the network rules evaluated (with an empty `issues[]` when that launch raised nothing) |
+| the launcher object | after an `MpiExecInfo` launch, the executor (`Exec`, `OpenMpiExec`, ...) has `advisories`, `site_facts`, `network` and `launch_json` attributes, and `launch_record()` returns a `jarvis.mpi-launch.v1` dict (`command`, `nprocs`, `ppn`, `hosts`, `network`, `advisories`, `site_facts`, `placement`, `launch_json`). A package that writes its own launch file should embed `launch_record()`, not rebuild it from executor attributes, so `advisories` is never lost |
 
 The report is:
 

@@ -75,7 +75,11 @@ count). Each RDMA interface gets a `ucx_status`:
 The interface's `ucx_device` is set only when the status is `usable`, and the
 network's `ucx_device` only when every member is usable on the same device
 (`ucx_verified: true`). Otherwise `UCX_NET_DEVICES` is not set, and the site
-fact explains why (`rdma_not_active` or `ucx_device_unusable`). The node's
+fact explains why (`rdma_not_active` or `ucx_device_unusable`). In a graph
+merged from several jobs, the network's device can be unset because of a host
+outside the launch: a launch whose own hosts all verified the same device
+still pins it, and the record's `data` then has `ucx_scope: launch_hosts`.
+The node's
 `ucx` summary records `ucx_info` (path), `version`, `status` and
 `rdma_devices` (device to transports).
 
@@ -237,10 +241,22 @@ choice and applies each flavour's own settings:
 | MPICH (Hydra) | `-iface <data iface>` and `HYDRA_IFACE` | `MPIR_CVAR_CH3_NETWORK_IFACE`, `FI_TCP_IFACE` = data iface (`-genv`) |
 | Intel MPI | `I_MPI_HYDRA_IFACE` = control iface | `FI_TCP_IFACE`, `FI_SOCKETS_IFACE` = data iface |
 | Cray MPICH | nothing: Cray drives the high-speed network itself | nothing |
-| any but Cray, when data has a verified `ucx_device` and every launch host is in the graph (or the device comes from an override) | `UCX_NET_DEVICES` | `UCX_NET_DEVICES` |
+| any but Cray, when data has a verified `ucx_device` and every launch host is in the graph (or the device comes from an override), or every launch host verified the same device (`ucx_scope: launch_hosts`) | `UCX_NET_DEVICES` | `UCX_NET_DEVICES` |
+| Open MPI, when some launch hosts have an RDMA device on the data network but UCX can't use it there (`ucx_status` other than `usable`, a port not ACTIVE, or no RDMA device on a host while others have one) | `OMPI_MCA_pml=^ucx`, `OMPI_MCA_osc=^ucx` | the same |
 
 Open MPI takes CIDRs, which stay correct when interface names differ
 between nodes. Hydra and Intel MPI need a name.
+
+When UCX is unusable on some hosts, Open MPI is kept off UCX entirely, for
+both point-to-point (`pml`) and one-sided (`osc`) communication. Every rank
+then runs ob1/TCP on the data CIDR, instead of a UCX that errors on some
+nodes (for example osc/ucx printing an error at `MPI_Win` creation) or picks
+different transports on different nodes. The record's `ucx_excluded` holds
+the `hosts` (host to status), the `settings` applied, `kept_from_caller`
+(when the caller already set `OMPI_MCA_pml` or `OMPI_MCA_osc`, its value
+wins), and a `reason`. A person's data override skips this rule. The matching
+`rdma_not_active` or `ucx_device_unusable` advisory says so in its
+`consequence`.
 
 Settings that the caller's environment or `container_env` already makes win.
 This includes the `_if_exclude` partner of an `_if_include`. They are
@@ -251,7 +267,8 @@ The applied choice is written to the launch's provenance (`launch.json` →
 `network`, schema `jarvis.mpi-network.v1`). It holds `data`, `control`,
 `sources`, `override`, `flavour`, `applied` (`launcher_env`, `rank_env`,
 `args`), `kept_from_caller`, `hosts`, `hosts_not_in_graph` and, when a
-setting was held back, `withheld[]`. Container MPI
+setting was held back, `withheld[]`, plus `ucx_excluded` when Open MPI was
+kept off UCX. Container MPI
 launches get the same settings through the container command's
 environment.
 

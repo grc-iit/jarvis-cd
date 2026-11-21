@@ -94,7 +94,9 @@ exit **4** means a build was refused outside an allocation. Exit **3** also
 means a blocking `site_fact_uncertain` question: the pipeline rests on a
 cluster fact a person must confirm. `metadata.site_facts` holds the site-fact
 questions and confirmed answers of the execution, per stage (see
-[Site facts](site-facts.md)). A failed run
+[Site facts](site-facts.md)); the full report is in `site-facts.json` in the
+execution directory, and the record's copy is trimmed (`trimmed.full_in`)
+when it would not fit the metadata limit. A failed run
 whose output matches an MPI network signature gets an `mpi_network` issue in
 `metadata.issues[]` (see [Resource graph network](resource-graph-network.md)).
 
@@ -156,11 +158,12 @@ keeps what it reached. `provenance.json` carries the same document.
 | Field | Content |
 |-------|---------|
 | `run_started_at` | when the run began (after load) |
-| `env_activation` | the load's install phase: `method` (`captured`, `spack_load`, `none`), `seconds`, `policy`, and for `spack_load` the capture's `stale_reason` (see [Captured load environment](scheduler.md#captured-load-environment)); `null` when the pipeline was not loaded with an install phase |
+| `env_activation` | the load's install phase: `method` (`captured`, `spack_load`, `none`), `seconds`, `policy`; for `spack_load` also `resolve_seconds`, `spack_load_seconds`, the capture's `stale_reason` and `capture_written`; for `none` a `why_not_loaded` (see [Captured load environment](scheduler.md#captured-load-environment)); `null` when the pipeline was not loaded with an install phase |
 | `configure` | `{seconds}` for configuring every package |
 | `packages[]` | per started package: `pkg_id`, `pkg_type`, `role` (`service` or `step`), `start_mode` (`background` or `foreground`), `started_at`, `started_after_seconds` (since the run began); services add `ready_at` and `ready_seconds` (start to ready); foreground packages add `returned_seconds` |
 | `first_step` | the first non-service package: `pkg_id`, `started_at`, `started_after_seconds` |
 | `before_first_step_seconds` | env activation plus everything from the run's start to the first step: the overhead before any solver step |
+| `services_after_steps` | once the last step returned: `last_step` (its `pkg_id`) and `packages[]` with each background package's `pkg_id` and `after_steps` decision (`stop`, `keep`, `already_returned`), plus `stop_seconds` and `start_error_after_stop` or `start_thread` for stopped ones (see [after_steps](scheduler.md#services-once-the-last-step-returns-after_steps)); each `packages[]` entry above also gets its `after_steps` |
 
 ## Provenance record
 

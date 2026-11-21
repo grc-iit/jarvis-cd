@@ -356,7 +356,9 @@ For each Spack package, JARVIS:
    several, it asks with `ambiguous_provider` and never takes `spack spec`'s
    silent default. This applies to `ppl install +check`, to install mode,
    and to an install-on-load (`JARVIS_INSTALL_ON_LOAD=check` or `install`)
-   in a `ppl submit` job. All of them exit `3`.
+   in a `ppl submit` job. All of them exit `3`. Nothing is asked when the
+   query already names the MPI: a `^openmpi…` dependency, or a spec whose
+   root is itself an MPI (e.g. `install: openmpi/smvs5sq`).
 4. Reuses everything already present. Only in install mode, and only for
    what is missing, it builds through the pipeline's Spack environment (see
    [Per-pipeline Spack environment](#per-pipeline-spack-environment)). It

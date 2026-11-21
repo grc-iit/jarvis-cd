@@ -2193,7 +2193,9 @@ class SpackPlanner:
 
         tokens = [*base_tokens, *(t for c in constraints for t in shlex.split(c))]
         mpi_nodes = [node for node in nodes if node.name in MPI_PROVIDERS]
-        if mpi_nodes and not _query_pins_mpi(tokens):
+        # A spec whose root is itself an MPI names its provider; there is no choice to ask.
+        root_is_mpi = nodes[0].name in MPI_PROVIDERS
+        if mpi_nodes and not root_is_mpi and not _query_pins_mpi(tokens):
             pin, source = self._choose_mpi(package, mpi_nodes[0])
             if pin is None and source.startswith("needs_decision:"):
                 entry["status"] = "needs_decision"

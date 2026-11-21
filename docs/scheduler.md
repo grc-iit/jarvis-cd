@@ -372,7 +372,11 @@ would delay it until the child exits. On TERM, the trap does this, in order:
    (`stop_request`, `cancel_request` or `scheduler`) with `received_at`.
 2. Only for `stop_request`: runs `jarvis ppl stop yaml <runtime>/pipeline.yaml`
    (bounded by `stop_timeout`). This stops services in reverse order and
-   finalizes their service runtimes.
+   finalizes their service runtimes. Each package it stops is listed in
+   `<runtime>/stopped-packages.json`, and the pipeline child's own stop (a
+   `ppl run` stops its packages once `start` returns) skips those, logging
+   `already stopped by this execution's stop request`, so no package's
+   `stop()` runs twice.
 3. TERMs the pipeline child and its descendants, waits up to `stop_grace`,
    KILLs whatever is left, then `wait`s on the child to reap it.
 4. Records `stopped_at`, `stop_return_code` and `child_reaped`, then exits:
@@ -493,11 +497,15 @@ produced, once, in `<pipeline shared>/install/spack-load-env.json`
 install's execution id), the per-package `hashes`, the `inputs` digests, the
 `env_delta` (path variables as `prepend` lists, others as `set`), the MPI
 environment, the `watched_paths` (the prefixes it prepended), and the install
-record and result.
+record and result. With `JARVIS_SPACK_ENV_DIR` set, the capture lives in that
+shared env dir instead (`$JARVIS_SPACK_ENV_DIR/spack-load-env.json`), so every
+pipeline and operation sharing the env reuses one capture; its inputs must
+still match.
 
-A run's install phase (the default `install` policy) then applies the
-capture with no Spack call, if it is still fresh. It is stale, and the run
-falls back to `spack spec`/`spack load` and writes a new capture, when:
+A run's install phase, under both the `install` (default) and `check` policies,
+then applies the capture with no Spack call, if it is still fresh. It is
+stale, and the run falls back to `spack spec`/`spack load` and writes a new
+capture, when:
 
 - any input changed: the packages' `install*` settings, `decisions.yaml` (or
   `JARVIS_SPACK_DECISIONS`), the Spack root or `JARVIS_SPACK_ROOT` /
@@ -512,8 +520,17 @@ reports `env_capture` (`path`, `fresh`, `captured_at`, `stale_reason`).
 The run records which path it took as the install report's `activation`,
 and in the execution's
 [`metadata.phase_timings.env_activation`](executions.md#phase-timings):
-`method` (`captured`, `spack_load` or `none`), `seconds`, `policy`, and, for
-`spack_load`, the `stale_reason` and whether a new capture was written.
+`method` (`captured`, `spack_load` or `none`), `seconds`, `policy`, and:
+
+- for `spack_load`: `resolve_seconds` (the find-first `spack spec`/`spack
+  find`), `spack_load_seconds`, the capture's `stale_reason`, and
+  `capture_written` (the new capture's path);
+- for `none`: `why_not_loaded`, e.g. `policy skip`, `open install issues`,
+  `no package is installed yet` or `no Spack packages`.
+
+A long `env_activation` with `method: spack_load` therefore says whether the
+time went to resolving or to `spack load`, and the `stale_reason` says why
+the capture was not used.
 
 Install and run jobs see `JARVIS_SPACK_ROOT`, `JARVIS_SPACK_CONFIG` and
 `JARVIS_SPACK_ENV_DIR` through Slurm's default environment export
@@ -590,14 +607,37 @@ Ready means the package's `ready()` returns true. By default that's when its
 service runtime (`JARVIS_SERVICE_RUNTIME_PATH`) reports `ready` or `degraded`.
 A `start()` that returns also counts as ready. A `failed` or `stopped` report
 before ready, a `start()` that raises, or `start_timeout` seconds (default
-600, `0` for no limit) without readiness fails the pipeline start. After the
-last package, `start()` waits until every background `start()` has returned.
-A service therefore keeps the job alive until `jarvis execution stop` or the
-time limit, even after the solver finishes.
+600, `0` for no limit) without readiness fails the pipeline start.
+
+### Services once the last step returns (`after_steps`)
+
+A *step* is a foreground package that isn't a `Service` or `Library` (the
+solver). When the last step returns OK, each background package is handled
+by its `after_steps` option (a common option for every package):
+
+| `after_steps` | Behaviour |
+|---------------|-----------|
+| `auto` (default) | `stop` if a step comes after the package in the pipeline (it served those steps, and they are done); `keep` if it is listed after the last step, or the pipeline has no step (the service is the pipeline's purpose) |
+| `stop` | call its `stop()` right away (newest first), join its `start()` thread for up to 120 s, and let the run finalize `completed` |
+| `keep` | hold the job until its `start()` returns: `jarvis execution stop`, cancel, or the time limit |
+
+A stopped package is not stopped again by the run's `ppl stop`. A `start()`
+that raises because `stop()` ended it doesn't fail the run (it's recorded as
+`start_error_after_stop`). A `start()` that failed before the steps ended
+still fails the run. The decisions are recorded in
+[`metadata.phase_timings.services_after_steps`](executions.md#phase-timings).
+If a step fails, nothing is stopped early: the run's normal stop and failure
+path applies.
+
+So in a pilot where pvserver starts before xcompact3d, the execution ends
+`completed` when xcompact3d returns, instead of holding the allocation until
+its wall time. To keep the viewer up after the solver, set `after_steps: keep`
+on it, or list it after the solver.
 
 For the viz-plus-solver demo above, the service comes first. pvserver starts and its supervisor reports `ready`. xcompact3d then runs on
-its 12 nodes while pvserver serves on the other 4. `jarvis execution stop`
-TERMs the batch shell. The trap runs `ppl stop`, then TERMs the pipeline child
+its 12 nodes while pvserver serves on the other 4. When xcompact3d returns,
+`after_steps: auto` stops pvserver and the execution completes. Before then,
+`jarvis execution stop` TERMs the batch shell. The trap runs `ppl stop`, then TERMs the pipeline child
 and its whole process tree. That stops both the paraview supervisor (which
 finalizes its service runtime as `stopped`) and the solver's `mpirun`, before
 the record is finalized.

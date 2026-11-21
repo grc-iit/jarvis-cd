@@ -505,7 +505,7 @@ def resolve_launch_network(
     if launch_hosts and set(launch_hosts) <= local and len(launch_hosts) == 1:
         # A single-node launch never crosses a network.
         return None
-    return {
+    choice = {
         "schema_version": LAUNCH_NETWORK_SCHEMA,
         "data": selected.get("data"),
         "control": selected.get("control"),
@@ -516,6 +516,74 @@ def resolve_launch_network(
         "hosts": launch_hosts,
         "hosts_not_in_graph": missing,
     }
+    if sources.get("data") != "override":
+        unusable = ucx_unusable_hosts(net, (selected.get("data") or {}).get("cidr"),
+                                      [h for h in launch_hosts if h in graph_hosts])
+        if unusable:
+            choice["ucx_unusable"] = unusable
+        elif not missing:
+            device = launch_ucx_device(net, selected.get("data"), launch_hosts)
+            if device:
+                choice["data"] = dict(selected["data"], ucx_device=device,
+                                      ucx_verified=True, ucx_scope="launch_hosts")
+    return choice
+
+
+def launch_ucx_device(net: Optional[Dict[str, Any]], data: Optional[Dict[str, Any]],
+                      hosts: Iterable[str]) -> Optional[str]:
+    """The UCX device every launch host verified, when the graph-wide one is unset.
+
+    A merged graph leaves ``ucx_device`` unset when UCX can't use it on some
+    host; a launch whose own hosts all verified the same device still pins
+    it. None when the graph already pins one, or any launch host lacks it.
+    """
+    if not net or not data or data.get("ucx_device") or not data.get("cidr"):
+        return None
+    devices = set()
+    hosts = list(hosts)
+    for host in hosts:
+        interfaces = ((net.get("nodes") or {}).get(host) or {}).get("interfaces") or []
+        interface = next((i for i in interfaces if i.get("cidr") == data["cidr"]), None)
+        if (interface is None or interface.get("ucx_status") != "usable"
+                or not interface.get("ucx_device")):
+            return None
+        devices.add(interface["ucx_device"])
+    return devices.pop() if hosts and len(devices) == 1 else None
+
+
+def ucx_unusable_hosts(
+    net: Optional[Dict[str, Any]], data_cidr: Optional[str], hosts: Iterable[str]
+) -> Dict[str, str]:
+    """Launch hosts where UCX cannot use the data network's RDMA device.
+
+    Empty when no launch host has an RDMA device on the data network (UCX
+    then has nothing to prefer over TCP) or when UCX can use it on all of
+    them. Otherwise ``{host: status}`` for each host that cannot (its
+    ``ucx_status``, ``port_not_active``, ``unverified`` or
+    ``no_rdma_device``): ranks there would use different transports than
+    the rest, or a UCX that errors, so Open MPI is kept off UCX.
+    """
+    if not net or not data_cidr:
+        return {}
+    statuses: Dict[str, str] = {}
+    any_rdma = False
+    for host in hosts:
+        interfaces = ((net.get("nodes") or {}).get(host) or {}).get("interfaces") or []
+        interface = next((i for i in interfaces if i.get("cidr") == data_cidr), None)
+        if interface is None:
+            continue
+        if not interface.get("rdma_device"):
+            statuses[host] = "no_rdma_device"
+            continue
+        any_rdma = True
+        status = interface.get("ucx_status")
+        if not status:
+            port = str(interface.get("rdma_port_state") or "")
+            status = "unverified" if "ACTIVE" in port else "port_not_active"
+        statuses[host] = status
+    if not any_rdma:
+        return {}
+    return {host: status for host, status in sorted(statuses.items()) if status != "usable"}
 
 
 def launch_crosses_network(hosts: Iterable[str]) -> bool:
@@ -831,10 +899,33 @@ def apply_launch_network(
         if "HYDRA_IFACE" in kept:
             continue
         applied["args"][key] = value
+    ucx_excluded = None
+    unusable = choice.get("ucx_unusable") or {}
+    if flavour == "openmpi" and unusable:
+        # UCX cannot use the data network's RDMA device on these hosts: keep
+        # Open MPI's UCX components (pml and osc both open UCX) off, so every
+        # rank runs ob1/TCP on the data CIDR set above instead of a UCX that
+        # errors or picks different transports on different nodes.
+        ucx_excluded = {"hosts": dict(unusable), "settings": {}, "kept_from_caller": {}}
+        for key in ("OMPI_MCA_pml", "OMPI_MCA_osc"):
+            if key in launcher_env or key in rank_env:
+                ucx_excluded["kept_from_caller"][key] = _caller_value(
+                    rank_env, launcher_env, key)
+                kept.setdefault(key, ucx_excluded["kept_from_caller"][key])
+                continue
+            launcher_env[key] = rank_env[key] = "^ucx"
+            applied["launcher_env"][key] = applied["rank_env"][key] = "^ucx"
+            ucx_excluded["settings"][key] = "^ucx"
+        ucx_excluded["reason"] = (
+            "UCX cannot use the data network's RDMA device on "
+            + ", ".join(f"{h} ({s})" for h, s in sorted(unusable.items()))
+            + "; Open MPI runs ob1/TCP on the data network instead")
     record = dict(choice)
     if withheld:
         record["data"] = dict(data)
         record["withheld"] = withheld
+    if ucx_excluded:
+        record["ucx_excluded"] = ucx_excluded
     record.update({"flavour": flavour, "applied": applied, "kept_from_caller": kept})
     if record.get("hosts_not_in_graph"):
         record["hosts_not_in_graph_check"] = classify_hosts_not_in_graph(

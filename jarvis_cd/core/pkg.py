@@ -978,6 +978,17 @@ class Pkg:
                 "type": int,
                 "default": 600,
             },
+            {
+                "name": "after_steps",
+                "msg": (
+                    "What a background package does when the pipeline's last "
+                    "step returns: stop, keep (hold until ppl stop / cancel / "
+                    "wall time) or auto (stop if a step runs after it, else keep)"
+                ),
+                "type": str,
+                "choices": ["auto", "stop", "keep"],
+                "default": "auto",
+            },
         ]
 
         # These controls remain part of the CLI and persisted package config,

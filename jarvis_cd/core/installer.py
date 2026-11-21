@@ -127,7 +127,10 @@ class Installer(ABC):
             "installers": {},
         }
         activation: Optional[Dict[str, Any]] = None
-        if use_capture and mode == "install" and context is None and grouped.get("spack"):
+        # Both load policies (install and check) apply a fresh capture: it was
+        # written by an install that ended satisfied, so it is what a check
+        # would confirm, without minutes of spack spec/find/load.
+        if use_capture and context is None and grouped.get("spack"):
             captured = SpackInstaller.activate_captured(ppl, grouped["spack"])
             activation = captured["activation"]
             if captured["result"] is not None:
@@ -204,15 +207,25 @@ class Installer(ABC):
             for result in report["installers"].values()
         )
         spack_result = report["installers"].get("spack") or {}
-        if activation is not None or spack_result.get("activation"):
+        if activation is not None or spack_result:
             final = dict(activation or {})
             ran = spack_result.get("activation") or {}
             if final.get("method") != "captured":
-                final.update(method="spack_load",
-                             spack_load_seconds=ran.get("seconds"),
-                             capture_written=ran.get("capture"))
+                if ran:
+                    final.update(method="spack_load",
+                                 resolve_seconds=ran.get("resolve_seconds"),
+                                 spack_load_seconds=ran.get("seconds"),
+                                 capture_written=ran.get("capture"))
+                else:
+                    final.update(method="none",
+                                 resolve_seconds=spack_result.get("resolve_seconds"),
+                                 why_not_loaded=spack_result.get("not_loaded")
+                                 or "the Spack installer loaded nothing")
             final["seconds"] = round(time.monotonic() - started, 3)
             report["activation"] = final
+        elif not Installer.get_installers(ppl).get("spack"):
+            report["activation"] = {"method": "none",
+                                    "why_not_loaded": "no Spack packages"}
         if failure is not None:
             # A failed build wins over open questions: exit 6 with all issues.
             failure.report = report
@@ -348,7 +361,9 @@ class SpackInstaller(Installer):
         raw_pkg_list = pkg_list
         try:
             pkg_list = _with_absolute_repos(ppl, pkg_list)
+            resolve_started = time.monotonic()
             record = run_spack_install(pkg_list, context, env_dir=env_dir)
+            resolve_seconds = round(time.monotonic() - resolve_started, 3)
         finally:
             if owns_context:
                 context.close()
@@ -422,6 +437,7 @@ class SpackInstaller(Installer):
         result = {
             "status": overall,
             "record": str(context.record_path),
+            "resolve_seconds": resolve_seconds,
             "spack_env": record.get("spack_env"),
             "mpi_env": mpi_env or None,
             "packages": {
@@ -434,14 +450,21 @@ class SpackInstaller(Installer):
                 for name, entry in record["packages"].items()
             },
         }
-        if mode == "install" and hashes and not context.issues:
+        if hashes and not context.issues:
+            # A check that confirmed every package loaded the same env an
+            # install would, so it captures too (the next load is cheap).
             result["activation"] = {
                 "method": "spack_load", "seconds": load_seconds,
+                "resolve_seconds": resolve_seconds,
                 "capture": write_spack_env_capture(
                     ppl, raw_pkg_list, base_env=base_env, spack_env=spack_env,
                     mpi_env=mpi_env, hashes=hashes, result=result,
                     record_path=context.record_path),
             }
+        else:
+            result["not_loaded"] = (
+                "open install issues" if context.issues
+                else "no package is installed yet")
         return result
 
     @staticmethod
@@ -553,7 +576,14 @@ def spack_env_capture_enabled() -> bool:
 
 
 def spack_env_capture_path(ppl) -> Path:
-    """``<pipeline shared>/install/spack-load-env.json``."""
+    """``<pipeline shared>/install/spack-load-env.json``.
+
+    With ``JARVIS_SPACK_ENV_DIR`` set it lives in that shared env dir, so
+    every pipeline and operation sharing the env shares the capture (its
+    ``inputs`` still have to match before it is applied).
+    """
+    if os.environ.get("JARVIS_SPACK_ENV_DIR", "").strip():
+        return spack_env_dir_for(ppl) / SPACK_ENV_CAPTURE_NAME
     return shared_install_dir(ppl) / SPACK_ENV_CAPTURE_NAME
 
 
