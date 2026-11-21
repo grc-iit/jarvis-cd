@@ -25,8 +25,10 @@ from __future__ import annotations
 import contextlib
 import errno
 import hashlib
+import itertools
 import json
 import os
+import posixpath
 import re
 import shlex
 import shutil
@@ -705,6 +707,114 @@ def _error_excerpt(output: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _issue_identity(
+    *,
+    kind: str,
+    subject: str,
+    package: Optional[str],
+    constraints: Sequence[str],
+    detail: str,
+    identity_keys: Optional[Sequence[str]] = None,
+) -> Dict[str, Any]:
+    identity: Dict[str, Any] = {
+        "kind": kind,
+        "subject": subject,
+        "package": package,
+        "candidates": sorted(constraints),
+        "detail": detail,
+    }
+    if identity_keys is not None:
+        identity["candidates"] = sorted(str(key) for key in identity_keys)
+        identity["identity"] = CANDIDATE_KEY_IDENTITY
+    return identity
+
+
+def _issue_digest(identity: Mapping[str, Any]) -> str:
+    digest = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return f"sha256:{digest}"
+
+
+#: marks issue ids computed from stable candidate keys (not constraints)
+CANDIDATE_KEY_IDENTITY = "candidate-key.v1"
+_PREFIX_HASH = re.compile(r"-([a-z0-9]{32})$")
+
+
+def mpi_candidate_key(
+    name: str,
+    version: str,
+    prefix: Optional[str],
+    modules: Sequence[str] = (),
+    spec: Optional[str] = None,
+) -> str:
+    """A key naming one MPI no matter how Spack lists it.
+
+    The same install can show up as a ``packages.yaml`` external that is not
+    in ``spack find`` yet, then as an external hash once something was built
+    against it, and (via an upstream) as a real install hash. All three share
+    the prefix, so the prefix is the key; a module-only external (no prefix)
+    is keyed on its name, version and modules.
+    """
+    if modules and not prefix:
+        return f"modules:{name}@{version}:{','.join(sorted(modules))}"
+    if prefix:
+        return "prefix:" + posixpath.normpath(str(prefix))
+    return f"spec:{spec or name + '@' + version}"
+
+
+def mpi_candidate_id(name: str, version: str, key: str) -> str:
+    """A readable id derived only from the stable key (see :func:`mpi_candidate_key`)."""
+    if key.startswith("prefix:"):
+        base = posixpath.basename(key[len("prefix:"):])
+        match = _PREFIX_HASH.search(base)
+        if match is not None and base[: match.start()]:
+            return f"{base[: match.start()]}-{match.group(1)[:7]}"
+    if key.startswith("modules:"):
+        return f"{name}-{version}-external"
+    return f"{name}-{version}-{hashlib.sha256(key.encode('utf-8')).hexdigest()[:7]}"
+
+
+def _legacy_issue_ids(
+    kind: str, subject: str, candidates: Sequence[Mapping[str, Any]], limit: int = 4096
+) -> set:
+    """Issue ids the same candidate set had under the constraint-based identity.
+
+    Each candidate may have been listed under any of its ``aliases`` before
+    (e.g. ``^openmpi@5.0.5-cphqvsy`` before the external entered ``spack
+    find``), so every combination is tried, up to ``limit``.
+    """
+    choices = [list(item.get("aliases") or [item.get("constraint")]) for item in candidates]
+    total = 1
+    for options in choices:
+        total *= max(1, len(options))
+    if total > limit:
+        choices = [[item.get("constraint")] for item in candidates]
+    return {
+        _issue_digest(
+            _issue_identity(
+                kind=kind, subject=subject, package=None,
+                constraints=[str(c) for c in combination], detail="",
+            )
+        )
+        for combination in itertools.product(*choices)
+    }
+
+
+def match_candidate(
+    candidates: Sequence[Mapping[str, Any]], value: Any
+) -> Optional[Mapping[str, Any]]:
+    """The candidate ``value`` names: its constraint, an alias, its id or key."""
+    text = str(value).strip()
+    for field_name in ("constraint", "aliases", "id", "key"):
+        for candidate in candidates:
+            current = candidate.get(field_name)
+            values = current if isinstance(current, (list, tuple)) else [current]
+            if any(item is not None and str(item) == text for item in values):
+                return candidate
+    return None
+
+
 def make_issue(
     *,
     kind: str,
@@ -717,26 +827,28 @@ def make_issue(
     evidence: Sequence[str] = (),
     answerable: bool,
     hint: Optional[str] = None,
+    identity_keys: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """Build one ``jarvis.install-issue.v1`` record with a stable id.
 
     The id digests the kind, subject, package (for package scope) and the
     candidate set, so the same situation keeps its id and a changed candidate
-    set asks a new question.
+    set asks a new question. With ``identity_keys`` the candidate set is
+    identified by those stable keys (e.g. an MPI's prefix) instead of each
+    candidate's constraint, which can change when Spack lists the same MPI
+    differently (an external entering ``spack find``).
     """
-    identity = {
-        "kind": kind,
-        "subject": subject,
-        "package": package if scope == "package" else None,
-        "candidates": sorted(str(item.get("constraint")) for item in candidates),
-        "detail": detail if not candidates else "",
-    }
-    digest = hashlib.sha256(
-        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
+    identity = _issue_identity(
+        kind=kind,
+        subject=subject,
+        package=package if scope == "package" else None,
+        constraints=[str(item.get("constraint")) for item in candidates],
+        detail=detail if not candidates else "",
+        identity_keys=identity_keys,
+    )
     issue: Dict[str, Any] = {
         "schema": ISSUE_SCHEMA,
-        "issue_id": f"sha256:{digest}",
+        "issue_id": _issue_digest(identity),
         "kind": kind,
         "package": package,
         "subject": subject,
@@ -820,17 +932,30 @@ class Decisions:
             if isinstance(entry, Mapping) and entry.get("constraint")
         ]
 
-    def record(self, issue: Mapping[str, Any], answer: Mapping[str, Any]) -> None:
+    def record(
+        self,
+        issue: Mapping[str, Any],
+        answer: Mapping[str, Any],
+        extra: Optional[Mapping[str, Any]] = None,
+    ) -> None:
+        """Store ``answer`` for ``issue``.
+
+        ``extra`` adds fields such as the chosen ``candidate_key``; an
+        ``answered_at`` already on ``answer`` (a re-keyed replay) is kept.
+        """
         entry = {
             "kind": issue["kind"],
             "subject": issue["subject"],
             "issue_id": issue["issue_id"],
             "constraint": answer["constraint"],
-            "answered_at": _utc_now(),
+            "answered_at": answer.get("answered_at") or _utc_now(),
         }
         for key in ("answered_by", "ask_id"):
             if answer.get(key) is not None:
                 entry[key] = answer[key]
+        for key, value in (extra or {}).items():
+            if value is not None:
+                entry[key] = value
         if issue["scope"] == "site":
             self.data["site"][issue["subject"]] = entry
         else:
@@ -966,17 +1091,31 @@ class InstallContext:
         self.log(f"ISSUE {issue['kind']} {issue['issue_id']}: {issue['question']}\n")
 
     def answer_for(self, issue: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+        """The answers-file answer for ``issue``, or ``None``.
+
+        For a question with candidates the answer may name a candidate by
+        any of its ``aliases`` (constraints it was or is listed under), its
+        ``id`` or its ``key``; it is normalized to the candidate's current
+        ``constraint`` and carries ``candidate_key``/``candidate_id``.
+        """
         answer = self.answers.get(str(issue["issue_id"]))
         if answer is None:
             return None
         candidates = issue.get("candidates") or []
-        if candidates and answer["constraint"] not in {
-            str(candidate.get("constraint")) for candidate in candidates
-        }:
-            raise ValueError(
-                f"answer for {issue['issue_id']} must be one of the candidate "
-                "constraints"
-            )
+        if candidates:
+            chosen = match_candidate(candidates, answer["constraint"])
+            if chosen is None:
+                raise ValueError(
+                    f"answer for {issue['issue_id']} must be one of the candidate "
+                    "constraints (or a candidate id or key)"
+                )
+            answer = dict(answer)
+            if answer["constraint"] != chosen.get("constraint"):
+                answer["answered_constraint"] = answer["constraint"]
+            answer["constraint"] = str(chosen.get("constraint"))
+            for field_name, key in (("candidate_key", "key"), ("candidate_id", "id")):
+                if chosen.get(key) is not None:
+                    answer[field_name] = chosen[key]
         self.used_answers.append(str(issue["issue_id"]))
         self.note_decision(
             issue,
@@ -1010,7 +1149,8 @@ class InstallContext:
         }
         if recorded_to is not None:
             entry["recorded_to"] = str(recorded_to)
-        for key in ("answered_at", "answered_by", "ask_id"):
+        for key in ("answered_at", "answered_by", "ask_id", "candidate_key",
+                    "candidate_id", "answered_constraint"):
             if answer.get(key) is not None:
                 entry[key] = answer[key]
         key = (entry["issue_id"], entry["package"], entry["constraint"])
@@ -1090,9 +1230,13 @@ class SpackPlanner:
                     )
                 else:
                     is_external = external not in ("", "None")
-                record = {"hash": short, "external": is_external}
+                record = {
+                    "hash": short,
+                    "external": is_external,
+                    "version": match.group("version"),
+                }
                 existing = by_prefix.setdefault(
-                    prefix,
+                    posixpath.normpath(prefix),
                     {
                         "name": match.group("name"),
                         "version": match.group("version"),
@@ -1108,14 +1252,19 @@ class SpackPlanner:
             records.sort(key=lambda item: {False: 0, None: 1, True: 2}[item["external"]])
             pinned = records[0]
             short = pinned["hash"]
+            candidate["version"] = pinned["version"]
+            key = mpi_candidate_key(candidate["name"], candidate["version"],
+                                    candidate["prefix"])
             candidate.update(
                 {
-                    "id": f"{candidate['name']}-{candidate['version']}-{short}",
+                    "key": key,
+                    "id": mpi_candidate_id(candidate["name"], candidate["version"], key),
                     "constraint": f"^{candidate['name']}/{short}",
                     "hashes": [item["hash"] for item in records],
                     "external_hashes": [
                         item["hash"] for item in records if item["external"]
                     ],
+                    "aliases": [f"^{candidate['name']}/{item['hash']}" for item in records],
                 }
             )
             others = records[1:]
@@ -1181,7 +1330,12 @@ class SpackPlanner:
                 twin = next(
                     (
                         item for item in found
-                        if (prefix and item.get("prefix") == str(prefix))
+                        if (
+                            prefix
+                            and item.get("prefix")
+                            and posixpath.normpath(str(item["prefix"]))
+                            == posixpath.normpath(str(prefix))
+                        )
                         or (
                             not prefix
                             and item["name"] == provider
@@ -1192,13 +1346,26 @@ class SpackPlanner:
                 )
                 if twin is not None:
                     twin["source"] += f"; {origin}"
+                    alias = f"^{spec}"
+                    if alias not in twin.setdefault("aliases", []):
+                        twin["aliases"].append(alias)
                     if modules:
                         twin["modules"] = modules
+                    if not prefix:
+                        # Keep the key the module-only external had before it
+                        # entered ``spack find`` (find adds a derived prefix).
+                        twin["key"] = mpi_candidate_key(provider, version, None, modules)
+                        twin["id"] = mpi_candidate_id(provider, version, twin["key"])
                     continue
+                key = mpi_candidate_key(
+                    provider, version, str(prefix) if prefix else None, modules, spec
+                )
                 extra.append(
                     {
-                        "id": f"{provider}-{version}-external",
+                        "id": mpi_candidate_id(provider, version, key),
+                        "key": key,
                         "constraint": f"^{spec}",
+                        "aliases": [f"^{spec}"],
                         "name": provider,
                         "version": version,
                         "prefix": str(prefix) if prefix else None,
@@ -1295,6 +1462,8 @@ class SpackPlanner:
             ):
                 entry["version"] = candidate["version"]
                 entry["prefix"] = candidate["prefix"]
+                entry["candidate_id"] = candidate.get("id")
+                entry["candidate_key"] = candidate.get("key")
                 if candidate.get("modules"):
                     entry["modules"] = candidate["modules"]
                 break
@@ -1338,7 +1507,8 @@ class SpackPlanner:
             options.append(
                 {
                     key: candidate[key]
-                    for key in ("id", "constraint", "source", "prefix", "hashes")
+                    for key in ("id", "key", "constraint", "aliases", "source",
+                                "prefix", "hashes")
                 }
                 | ({"modules": candidate["modules"]} if candidate.get("modules") else {})
                 | {
@@ -1349,6 +1519,7 @@ class SpackPlanner:
                     )
                 }
             )
+        keys = sorted(str(candidate["key"]) for candidate in candidates)
         issue = make_issue(
             kind="ambiguous_provider",
             package=package,
@@ -1363,36 +1534,124 @@ class SpackPlanner:
                 f"spack spec -I -l (concretizer picked {concretized.name}/{concretized.hash})",
             ],
             answerable=True,
+            identity_keys=keys,
         )
         if recorded is not None and recorded.get("constraint"):
-            # A recorded answer is replayed only for the exact same question:
-            # a changed candidate set has a new issue_id and is asked again.
-            if recorded.get("issue_id") == issue["issue_id"]:
-                self.context.note_decision(
-                    issue, recorded, source="decisions_file",
+            # A recorded answer is replayed only for the same question (the
+            # same candidate set, identified by stable keys), applying the
+            # chosen candidate's current constraint. A changed set has a new
+            # issue_id and is asked again.
+            resolved = self._resolve_recorded_mpi(recorded, issue, options)
+            if resolved is not None:
+                chosen, resolved_by = resolved
+                answer = dict(recorded)
+                answer["constraint"] = str(chosen["constraint"])
+                answer["candidate_key"] = chosen["key"]
+                answer["candidate_id"] = chosen["id"]
+                applied = self.context.note_decision(
+                    issue, answer, source="decisions_file",
                     path=self.decisions.path,
                 )
-                return str(recorded["constraint"]), "decision"
+                applied["resolved_by"] = resolved_by
+                if recorded.get("constraint") != answer["constraint"]:
+                    applied["recorded_constraint"] = recorded.get("constraint")
+                if recorded.get("issue_id") != issue["issue_id"]:
+                    applied["recorded_issue_id"] = recorded.get("issue_id")
+                if (
+                    recorded.get("issue_id") != issue["issue_id"]
+                    or recorded.get("constraint") != answer["constraint"]
+                    or recorded.get("candidate_key") != chosen["key"]
+                ):
+                    # Re-key the stored answer (keeping who answered and when).
+                    self.decisions.record(
+                        issue,
+                        answer,
+                        extra={
+                            "candidate_key": chosen["key"],
+                            "candidate_id": chosen["id"],
+                            "candidate_keys": keys,
+                            "rekeyed_from": (
+                                recorded.get("issue_id")
+                                if recorded.get("issue_id") != issue["issue_id"]
+                                else recorded.get("rekeyed_from")
+                            ),
+                            "rekeyed_at": _utc_now(),
+                        },
+                    )
+                    applied["recorded_to"] = str(self.decisions.path)
+                return answer["constraint"], "decision"
             stale = {
                 "issue_id": recorded.get("issue_id"),
                 "subject": "mpi",
                 "scope": "site",
                 "constraint": recorded.get("constraint"),
+                "candidate_key": recorded.get("candidate_key"),
                 "path": str(self.decisions.path),
                 "answered_at": recorded.get("answered_at"),
                 "superseded_by": issue["issue_id"],
                 "reason": "the candidate set changed, so the question changed",
             }
+            previous = None
+            if recorded.get("candidate_key"):
+                previous = match_candidate(options, recorded["candidate_key"])
+            if previous is None:
+                previous = match_candidate(options, recorded["constraint"])
+            recorded_keys = recorded.get("candidate_keys")
+            if isinstance(recorded_keys, list):
+                stale["added_candidates"] = sorted(set(keys) - set(recorded_keys))
+                stale["removed_candidates"] = sorted(set(recorded_keys) - set(keys))
             if stale not in self.context.stale_decisions:
                 self.context.stale_decisions.append(stale)
             issue["supersedes"] = recorded.get("issue_id")
             issue["previous_answer"] = recorded.get("constraint")
+            if previous is not None:
+                # The earlier choice is still on offer: a caller can preselect it.
+                issue["previous_candidate_id"] = previous["id"]
+                issue["previous_candidate_key"] = previous["key"]
         answer = self.context.answer_for(issue)
         if answer is None:
             self.context.raise_issue(issue)
             return None, f"needs_decision:{issue['issue_id']}"
-        self.decisions.record(issue, answer)
+        self.decisions.record(
+            issue,
+            answer,
+            extra={
+                "candidate_key": answer.get("candidate_key"),
+                "candidate_id": answer.get("candidate_id"),
+                "candidate_keys": keys,
+            },
+        )
         return str(answer["constraint"]), "decision"
+
+    def _resolve_recorded_mpi(
+        self,
+        recorded: Mapping[str, Any],
+        issue: Mapping[str, Any],
+        options: Sequence[Mapping[str, Any]],
+    ) -> Optional[tuple[Mapping[str, Any], str]]:
+        """The candidate a recorded MPI answer chose, if its question still stands.
+
+        ``issue_id``: same candidate keys; the answer is found by its
+        ``candidate_key`` or by any alias of its constraint. ``legacy_issue_id``:
+        a record written before candidate keys whose constraint-based id is
+        what this same candidate set had under some listing of its aliases.
+        """
+        def chosen() -> Optional[Mapping[str, Any]]:
+            if recorded.get("candidate_key"):
+                found = match_candidate(options, recorded["candidate_key"])
+                if found is not None:
+                    return found
+            return match_candidate(options, recorded["constraint"])
+
+        if recorded.get("issue_id") == issue["issue_id"]:
+            candidate = chosen()
+            return (candidate, "issue_id") if candidate is not None else None
+        if recorded.get("candidate_keys") is None and recorded.get("issue_id") in (
+            _legacy_issue_ids("ambiguous_provider", "mpi", options)
+        ):
+            candidate = chosen()
+            return (candidate, "legacy_issue_id") if candidate is not None else None
+        return None
 
     def _concretize_issue(
         self, kind: str, package: str, tokens: Sequence[str], output: str

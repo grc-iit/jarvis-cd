@@ -441,6 +441,15 @@ runs `jarvis ppl install yaml <runtime>/pipeline.yaml [+check] [--answers …]
 | `issues` | `<execution>/install/issues.jsonl`: questions, when `phase` is `needs_decision` |
 | `record` | `<execution>/install/install-record.json`: final per-package result |
 
+Because an install job's files live under its execution, the job also writes
+`<pipeline shared>/install/last-install.json` (`jarvis.install-pointer.v1`)
+with its `execution_id`, `phase` and the record, log and issues paths. A later
+`ppl install +check +json` outside a job reports it as `last_install` (see
+[Install records](pipeline_tests.md#install-records)). Decisions stay in the
+pipeline's `<pipeline shared>/install/decisions.yaml` (or
+`JARVIS_SPACK_DECISIONS`) for both, so an answer given to an install job is
+replayed by the next check.
+
 The job exits `3` when it needs a decision, or when `+check` finds packages
 that still need building. The record is then `failed` with `return_code: 3`
 and `metadata.install.phase: needs_decision`. Answer the questions, then

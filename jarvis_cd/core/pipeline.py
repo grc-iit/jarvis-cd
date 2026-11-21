@@ -2154,7 +2154,11 @@ class Pipeline:
         ``BuildOutsideAllocation`` (CLI exit 4) unless ``allow_local`` or
         ``JARVIS_ALLOW_LOCAL_BUILD=1``; a check never builds.
         """
-        from jarvis_cd.core.installer import Installer, install_context_for
+        from jarvis_cd.core.installer import (
+            Installer,
+            install_context_for,
+            write_last_install,
+        )
         from jarvis_cd.core.spack_install import (
             PROGRESS_SCHEMA,
             BuildOutsideAllocation,
@@ -2203,9 +2207,12 @@ class Pipeline:
         context.progress = publish
         context.open()
         publish()
+        outcome = "failed"
         try:
             report = Installer.install_all(self, mode=mode, context=context)
+            outcome = "done"
         except InstallDecisionNeeded as needed:
+            outcome = "needs_decision"
             publish(
                 phase="needs_decision",
                 current_package=None,
@@ -2213,6 +2220,7 @@ class Pipeline:
             )
             raise
         except BuildOutsideAllocation as refused:
+            outcome = "refused"
             publish(phase="refused", current_package=None, refused=refused.to_dict())
             raise
         except BaseException as exc:
@@ -2221,6 +2229,7 @@ class Pipeline:
             raise
         finally:
             context.close()
+            write_last_install(self, context, execution_id=execution_id, phase=outcome)
         self.save()
         publish(
             phase="done",
@@ -3546,6 +3555,14 @@ class Pipeline:
             execution_root = store.executions_dir / execution_id
             install_records = [execution_root / "install" / "install-record.json"]
             if self.name:
+                from jarvis_cd.core.installer import read_last_install
+
+                try:
+                    last = read_last_install(self) or {}
+                except Exception:
+                    last = {}
+                if last.get("record"):
+                    install_records.append(Path(last["record"]))
                 install_records.append(
                     Path(self.jarvis.get_pipeline_shared_dir(self.name))
                     / "install"

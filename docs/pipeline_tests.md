@@ -379,7 +379,7 @@ JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
 
 | `kind` | When | Answerable |
 |--------|------|------------|
-| `ambiguous_provider` | several MPI candidates (installed, upstream or `packages.yaml` externals) and neither the query nor a recorded answer pins one (`subject: mpi`, `scope: site`); `candidates[]` lists `{id, constraint, source, prefix, hashes, implies}` (`hashes` puts the pinned real install first), plus `modules` for module externals | yes, with one candidate's `constraint` |
+| `ambiguous_provider` | several MPI candidates (installed, upstream or `packages.yaml` externals) and neither the query nor a recorded answer pins one (`subject: mpi`, `scope: site`); `candidates[]` lists `{id, key, constraint, aliases, source, prefix, hashes, implies}` (`hashes` puts the pinned real install first), plus `modules` for module externals; see [Stable MPI candidates](#stable-mpi-candidates) | yes, with one candidate's `constraint` (or an `aliases` entry, its `id` or its `key`) |
 | `spack_missing` | the pipeline has Spack packages but JARVIS has no Spack to run (`subject: spack`, `scope: site`, `package: "*"`); `site_spacks[]` (also `candidates[]`) lists the Spack checkouts found on the host, see [Missing Spack](#missing-spack-spack_missing) | yes, with one `site_spacks` `root` |
 | `variant_conflict` | the concretizer reports a conflict | yes, with a spec constraint (e.g. `~cuda`) |
 | `concretize_failed` | any other concretizer error (`detail` holds the excerpt) | yes, with a spec constraint |
@@ -396,7 +396,9 @@ stays the same across re-runs. Answer by writing `answers.json`:
 A plain string value (`{"sha256:3f…": "^mpich/fffffff"}`) also works. Then
 re-run with `--answers answers.json`, or export
 `JARVIS_INSTALL_ANSWERS=answers.json` for an install-on-load. An answer must
-be one of the issue's candidate constraints when it has any. Applied answers
+name one of the issue's candidates when it has any: its `constraint`, one of
+its `aliases`, its `id` or its `key`. It is stored as the candidate's current
+`constraint`. Applied answers
 are recorded in `<pipeline shared>/install/decisions.yaml`
 (`jarvis.install-decisions.v1`: `site:` entries such as `mpi`, and
 per-package constraint lists). The file is per pipeline, not per execution,
@@ -407,27 +409,84 @@ decisions file across pipelines on a site.
 
 #### Decision provenance
 
-A recorded answer is replayed only for the exact `issue_id` it answered. Each
+A recorded answer is replayed only for the `issue_id` it answered. Each
 entry in `decisions.yaml` stores the `issue_id`, `constraint`, `answered_by`,
-`ask_id` and `answered_at`. When the question changes (for example a third
-MPI appears, so the candidate set changes), the new issue gets a new
-`issue_id`. JARVIS then asks again instead of replaying the old answer. The
-new issue carries `supersedes` (the old `issue_id`) and `previous_answer`, so
-a caller can offer the old choice as a default.
+`ask_id` and `answered_at`. An MPI answer also stores the chosen
+`candidate_key` and `candidate_id`, and `candidate_keys`, the set the
+question offered. When the question changes (for example a third MPI
+appears, so the candidate set changes), the new issue gets a new `issue_id`.
+JARVIS then asks again instead of replaying the old answer. The new issue
+carries `supersedes` (the old `issue_id`) and `previous_answer`. When the
+earlier choice is still offered, it also carries `previous_candidate_id` and
+`previous_candidate_key`, so a caller can preselect it.
+
+#### Stable MPI candidates
+
+Spack lists one MPI differently over time. Before anything is built against
+a site's `packages.yaml` external, the external is not in `spack find`, so the
+candidate pins its spec (`^openmpi@5.0.5-cphqvsy`). After the first install,
+`spack find` lists it as an external hash at the same prefix
+(`^openmpi/smvs5sq`). Through an upstream it may also show a real install
+hash. The `ambiguous_provider` question is therefore keyed on each candidate's
+`key`, not its constraint:
+
+| `key` | When |
+|-------|------|
+| `prefix:<normalized prefix>` | the candidate has a prefix (installs, upstreams, prefix externals) |
+| `modules:<name>@<version>:<modules>` | a module-only external, before and after it enters `spack find` |
+| `spec:<spec>` | neither (rare) |
+
+The `issue_id` digests the sorted keys. The `id` comes only from the key: for
+a Spack layout prefix (`.../openmpi-5.0.5-<32-char hash>`) it is
+`openmpi-5.0.5-cphqvsy`. So the same MPIs keep the same `issue_id` and
+candidate ids before and after an external enters `spack find`. Each
+candidate's `aliases` lists every constraint it can be pinned with (each
+hash at its prefix and each `packages.yaml` spec).
+
+A replayed answer uses the chosen candidate's current `constraint`. The
+entry in `applied_decisions` then has `resolved_by: issue_id` and
+`recorded_constraint` (what was stored), and `decisions.yaml` is re-keyed
+in place (`rekeyed_at`), keeping `answered_by`, `ask_id` and `answered_at`.
+An entry written by an older JARVIS has a constraint-based `issue_id` and no
+`candidate_keys`. JARVIS recomputes that older id for the current candidates
+under every listing of their aliases. If one matches, the question is the
+same: the answer is applied with `resolved_by: legacy_issue_id` and the entry
+is re-keyed (`rekeyed_from` holds the old id). Otherwise the answer is stale
+and asked again as above.
 
 Every `jarvis.install-report.v1` (`ppl install [+check] +json`) reports:
 
 | Field | Content |
 |-------|---------|
-| `applied_decisions[]` | each answer this run used: `issue_id`, `kind`, `subject`, `scope`, `package`, `constraint`, `answered_by`, `ask_id`, `answered_at`, `source` (`answers_file` for a `--answers`/`JARVIS_INSTALL_ANSWERS` answer, `decisions_file` for a replayed one), `path` (the file it came from), and `recorded_to` (the decisions file it was written to) |
-| `stale_decisions[]` | recorded answers that were not replayed because the question changed: `issue_id`, `constraint`, `path`, `answered_at`, `superseded_by`, `reason` |
+| `applied_decisions[]` | each answer this run used: `issue_id`, `kind`, `subject`, `scope`, `package`, `constraint`, `answered_by`, `ask_id`, `answered_at`, `source` (`answers_file` for a `--answers`/`JARVIS_INSTALL_ANSWERS` answer, `decisions_file` for a replayed one), `path` (the file it came from), and `recorded_to` (the decisions file it was written to); for an MPI also `candidate_id`, `candidate_key`, `resolved_by` (`issue_id` or `legacy_issue_id`), and `recorded_constraint`/`recorded_issue_id` when the stored entry differed |
+| `stale_decisions[]` | recorded answers that were not replayed because the question changed: `issue_id`, `constraint`, `candidate_key`, `path`, `answered_at`, `superseded_by`, `reason`, and `added_candidates`/`removed_candidates` (keys) when the old set is known |
 | `open_issues[]` | the `issue_id`s still unanswered |
 | `decisions_path` | the decisions file in use |
+| `last_install` | `+check` only: what the last install wrote, even as a `+submit` job under `<execution>/install` (see [Install records](#install-records)) |
 | `answer_with` | how to answer: `flag` (`--answers <answers.json>`), `env` (`JARVIS_INSTALL_ANSWERS`), the answers `format`, and the `replay` rule |
 
 A caller therefore needs no store of its own. It shows `applied_decisions` as
 "chosen before", asks the person about `open_issues`, and passes the answers
 back with `--answers`.
+
+#### Install records
+
+A check outside a job writes its own files to `<pipeline shared>/install/`.
+An install job writes to `<execution>/install/`. So every install, in a job
+or not, also writes `<pipeline shared>/install/last-install.json`
+(`jarvis.install-pointer.v1`), with `execution_id`, `phase` (`done`,
+`needs_decision`, `refused` or `failed`), `install_dir`, `record`, `log`,
+`issues`, `decisions` and `written_at`. `ppl install +check +json` reads it
+and reports `last_install`: the pointer, plus the record's `finished_at`,
+per-package `status`, `spec` and `mpi` (`hash`, `prefix`, `candidate_id`,
+`candidate_key`), `applied_decisions`, `open_issues` and `spack_env`. When
+no pointer exists, because the install ran under an older JARVIS, the
+newest install-mode
+`<pipeline shared>/executions/*/install/install-record.json` is used instead
+(`found_by: scan`). Decisions are never split this way: `decisions.yaml` is
+always `<pipeline shared>/install/decisions.yaml` (or
+`JARVIS_SPACK_DECISIONS`), for checks, local installs and install jobs alike.
+Provenance reads the same record.
 
 #### Missing Spack (`spack_missing`)
 
@@ -614,7 +673,8 @@ jarvis ppl install +allow_local +json           # build on this host outside an 
 The final stdout line with `+json` is a `jarvis.install-report.v1` document:
 `mode`, `satisfied`, per-installer `status`/`packages`, `issues`,
 `issues_path`, `log`, `record_path`, `exit_code`, and the decision fields
-`applied_decisions`, `stale_decisions`, `open_issues`, `decisions_path` and
+`applied_decisions`, `stale_decisions`, `open_issues`, `decisions_path`,
+`last_install` (`+check` only) and
 `answer_with` (see [Decision provenance](#decision-provenance)). With `+json`,
 stdout carries only the document; logs and Spack output go to stderr. The exit code is `0`
 when everything is satisfied, `3` when a decision is needed or `+check`

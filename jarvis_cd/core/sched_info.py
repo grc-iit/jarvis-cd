@@ -149,7 +149,7 @@ def mpi_facts(issues: List[Dict[str, Any]]) -> Dict[str, Any]:
             return document
     document["spack_candidates"] = [
         {key: candidate.get(key) for key in
-         ("id", "name", "version", "constraint", "prefix", "hashes",
+         ("id", "key", "name", "version", "constraint", "aliases", "prefix", "hashes",
           "external_hashes", "modules", "source")}
         for candidate in candidates
     ]

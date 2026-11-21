@@ -145,13 +145,22 @@ class Installer(ABC):
             report["applied_decisions"] = list(context.applied_decisions)
             report["stale_decisions"] = list(context.stale_decisions)
             report["decisions_path"] = str(context.decisions_path)
+            if mode == "check":
+                try:
+                    report["last_install"] = read_last_install(ppl)
+                except Exception as exc:  # reporting must never fail a check
+                    report["last_install"] = {"error": str(exc)[:512]}
             report["answer_with"] = {
                 "format": "answers.json: {issue_id: constraint | "
                           "{constraint, answered_by, ask_id}}",
                 "flag": "--answers <answers.json>",
                 "env": "JARVIS_INSTALL_ANSWERS",
-                "replay": "an answer applies only to the exact issue_id; a "
-                          "changed question gets a new issue_id",
+                "replay": "a recorded answer applies to the same issue_id; MPI "
+                          "questions are keyed on each candidate's stable key "
+                          "(its prefix), so the same MPIs listed differently keep "
+                          "the issue_id. A changed candidate set gets a new "
+                          "issue_id; an answer may name a candidate by "
+                          "constraint, alias, id or key",
             }
         report["satisfied"] = not (context is not None and context.issues) and all(
             result.get("status") in ("done", "satisfied", "installed", "unchecked")
@@ -425,6 +434,127 @@ def default_require_allocation(ppl) -> bool:
     return bool(getattr(ppl, 'scheduler', None)) or host_is_cluster_login()
 
 
+LAST_INSTALL_NAME = "last-install.json"
+LAST_INSTALL_SCHEMA = "jarvis.install-pointer.v1"
+
+
+def shared_install_dir(ppl) -> Path:
+    """``<pipeline shared>/install``, as the submitting host sees it.
+
+    Inside a scheduler job the execution lives at
+    ``<pipeline shared>/executions/<id>``, so that path is derived from the
+    execution root (the job and the submitting host agree on it).
+    """
+    execution_root = getattr(ppl, '_execution_root', None)
+    if execution_root is not None:
+        return Path(execution_root).parent.parent / "install"
+    return Path(ppl.jarvis.get_pipeline_shared_dir(ppl.name)) / "install"
+
+
+def write_last_install(ppl, context, *, execution_id=None, phase: str) -> Optional[Path]:
+    """Point ``<shared>/install/last-install.json`` at the record an install wrote.
+
+    An install job writes under ``<execution>/install``; a later check
+    (``<shared>/install``) reads the pointer to report what that job did.
+    """
+    import json
+    from jarvis_cd.core.spack_install import _atomic_write_text, _utc_now
+
+    if context is None or context.mode != "install":
+        return None
+    document = {
+        "schema_version": LAST_INSTALL_SCHEMA,
+        "pipeline_id": getattr(ppl, 'name', None),
+        "execution_id": execution_id,
+        "phase": phase,
+        "install_dir": str(context.install_dir),
+        "record": str(context.record_path),
+        "log": str(context.log_path),
+        "issues": str(context.issues_path),
+        "decisions": str(context.decisions_path),
+        "written_at": _utc_now(),
+    }
+    path = shared_install_dir(ppl) / LAST_INSTALL_NAME
+    try:
+        _atomic_write_text(path, json.dumps(document, indent=2, sort_keys=True) + "\n")
+    except OSError as exc:
+        context.log(f"WARNING: could not write {path}: {exc}\n")
+        return None
+    return path
+
+
+def read_last_install(ppl) -> Optional[Dict[str, Any]]:
+    """The last install's pointer plus a summary of the record it wrote.
+
+    Without a pointer (an install from an older jarvis) the newest
+    ``<shared>/executions/*/install/install-record.json`` in install mode is
+    used. Returns ``None`` when no install has run.
+    """
+    import json
+
+    shared = shared_install_dir(ppl)
+    pointer_path = shared / LAST_INSTALL_NAME
+    pointer: Optional[Dict[str, Any]] = None
+    try:
+        pointer = json.loads(pointer_path.read_text(encoding="utf-8"))
+        pointer["pointer"] = str(pointer_path)
+    except (OSError, ValueError):
+        pointer = None
+    if not isinstance(pointer, dict):
+        newest = None
+        for record_path in (shared.parent / "executions").glob("*/install/install-record.json"):
+            try:
+                document = json.loads(record_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if document.get("mode") != "install":
+                continue
+            stamp = str(document.get("finished_at") or document.get("started_at") or "")
+            if newest is None or stamp > newest[0]:
+                newest = (stamp, record_path)
+        if newest is None:
+            return None
+        record_path = newest[1]
+        pointer = {
+            "schema_version": LAST_INSTALL_SCHEMA,
+            "execution_id": record_path.parent.parent.name,
+            "install_dir": str(record_path.parent),
+            "record": str(record_path),
+            "log": str(record_path.parent / "install.log"),
+            "pointer": None,
+            "found_by": "scan",
+        }
+    try:
+        record = json.loads(Path(pointer["record"]).read_text(encoding="utf-8"))
+    except (OSError, ValueError, KeyError, TypeError):
+        pointer["record_readable"] = False
+        return pointer
+    pointer["record_readable"] = True
+    pointer["finished_at"] = record.get("finished_at")
+    pointer["packages"] = {
+        name: {
+            key: value
+            for key, value in {
+                "status": entry.get("status"),
+                "spec": entry.get("spec"),
+                "mpi": (
+                    {k: entry["mpi"].get(k) for k in
+                     ("name", "hash", "prefix", "candidate_id", "candidate_key")}
+                    if isinstance(entry.get("mpi"), dict) else None
+                ),
+            }.items()
+            if value is not None
+        }
+        for name, entry in (record.get("packages") or {}).items()
+        if isinstance(entry, dict)
+    }
+    pointer["applied_decisions"] = record.get("applied_decisions") or []
+    pointer["open_issues"] = record.get("issues") or []
+    if record.get("spack_env"):
+        pointer["spack_env"] = record.get("spack_env")
+    return pointer
+
+
 def install_context_for(ppl, mode: str = "install", require_allocation=None):
     """Build the install context (log, issues, record) for ``ppl``.
 
@@ -434,20 +564,22 @@ def install_context_for(ppl, mode: str = "install", require_allocation=None):
     ``JARVIS_SPACK_DECISIONS`` is set) so an answer given to an install job
     (e.g. the MPI) is reused by every later run job of the pipeline.
     ``JARVIS_INSTALL_ANSWERS`` names an ``answers.json`` to apply.
+    Every install also points ``<pipeline shared>/install/last-install.json``
+    at the record it wrote, which a later check reports as ``last_install``.
     ``require_allocation`` (default :func:`default_require_allocation`)
     refuses builds outside a batch job.
     """
     from jarvis_cd.core.spack_install import InstallContext, load_answers
 
-    shared_install_dir = Path(ppl.jarvis.get_pipeline_shared_dir(ppl.name)) / "install"
+    shared_dir = shared_install_dir(ppl)
     execution_root = getattr(ppl, '_execution_root', None)
     if execution_root is not None:
         install_dir = Path(execution_root) / "install"
     else:
-        install_dir = shared_install_dir
+        install_dir = shared_dir
     configured = os.environ.get("JARVIS_SPACK_DECISIONS", "").strip()
     decisions_path = (
-        Path(configured) if configured else shared_install_dir / "decisions.yaml"
+        Path(configured) if configured else shared_dir / "decisions.yaml"
     )
     answers_path = os.environ.get("JARVIS_INSTALL_ANSWERS", "").strip()
     return InstallContext(
