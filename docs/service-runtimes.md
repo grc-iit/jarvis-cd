@@ -21,7 +21,8 @@ jarvis execution service-runtimes <execution-id> \
 
 The result is an exact `jarvis.execution.service-runtimes.v1` document with
 `schema_version`, `execution_id`, `pipeline_id`, `execution_state`, `terminal`,
-and `service_runtimes`. The array contains the latest validated revision for
+`service_runtimes` and `service_endpoints` (see
+[Service endpoints](#service-endpoints-the-port-a-service-actually-bound)). The array contains the latest validated revision for
 every concrete service instance. Current reporters emit
 `jarvis.service-runtime.v2`; readers retain strict v1 compatibility for stored
 executions created before authorization became part of the runtime contract.
@@ -101,6 +102,66 @@ and `/commands` paths. `delivery_mode` is `push`. These cluster endpoints are
 not desktop URLs: relay owns authenticated routing, connectors, and local URL
 publication. Every ParaView service GET and POST, including `/healthz`, rejects
 a missing or incorrect Bearer token with HTTP 401.
+
+## Service endpoints (the port a service actually bound)
+
+A service configured with port `0` lets the operating system pick a free
+port, so its configured port says nothing about where it listens. Only its
+ready event knows. For example, clio-jarvis's pvserver prints
+`clio-pvserver ready port=59629`, and the package's progress provider (see
+[package-progress.md](package-progress.md)) turns that line into a `ready`
+observation.
+
+When JARVIS persists a `ready` observation, it reads the announced ports from
+the observation's `metadata` and appends one `jarvis.service-endpoint.v1`
+record per port to `<runtime sidecar stem>.endpoints.jsonl`, next to the
+package's service-runtime sidecar. Writes are appended under a lock and
+fsynced. The provider can announce ports in any of these shapes:
+
+| Shape in `metadata` | Example |
+|---------------------|---------|
+| `service_endpoints: [{name, protocol, host, port}]` | `{"service_endpoints": [{"name": "pvserver", "protocol": "tcp", "port": 59629}]}` |
+| `service: {ports: [{name, protocol, bind, port}]}` | `{"service": {"ports": [{"name": "pvserver", "protocol": "tcp", "bind": "0.0.0.0", "port": 59629}]}}` |
+| the same, with the port parsed from the ready line in `fields.port` (it wins over a configured `0`) | `{"service": {"ports": [{"name": "pvserver", "port": 0}]}, "fields": {"port": 59629}}` |
+| a bare `port` (or `fields.port`) | `{"port": 59629}` |
+
+Each shape may sit at the top of `metadata` or one level down, in a package
+namespace such as `metadata.clio`. A port must be an integer from 1 to 65535.
+Port `0` is never recorded.
+
+`jarvis execution service-runtimes <id> --pipeline-id <p> +json` returns them
+as the top-level `service_endpoints` array. The array is always present, and
+is empty when nothing has announced a port yet. It also holds one entry per
+service-runtime report (`source: "service_runtime"`), so a caller can read
+every endpoint from one place:
+
+| Field | Meaning |
+|-------|---------|
+| `schema_version` | `jarvis.service-endpoint.v1` |
+| `execution_id`, `package_id`, `package_name` | the owning execution and package |
+| `name` | the port's name from the ready event (`port<N>` when it has none); the `service_instance_id` for a runtime report |
+| `protocol` | as announced (`tcp` by default) |
+| `port` | the port the service actually bound |
+| `bind_host` | the address it bound, as announced (`0.0.0.0`, a node address, or `null`) |
+| `node` | the hostname of the node where JARVIS observed the ready event |
+| `host` | the address a client on the cluster should dial: `bind_host` unless it is a wildcard (`0.0.0.0`, `::`, `*`, empty), else `node` |
+| `loopback_only` | `true` when the service bound only `127.0.0.1`, `::1` or `localhost` |
+| `ready_at`, `ready_at_epoch` | when the ready event was observed (ISO-8601 UTC, and epoch seconds). A later ready event for the same name and port keeps the first time |
+| `source` | `progress_ready` (from a ready event) or `service_runtime` (from a runtime report) |
+| `progress_sequence` | the ready observation's progress sequence number (`progress_ready` only) |
+| `lifecycle`, `service_instance_id`, `revision` | `service_runtime` entries only |
+
+The latest record per name wins, so a service that restarts on a new port
+shows the new port. Records stay after the execution ends, so a finished run
+still shows where its service listened. A service package that announces
+readiness only through progress, and writes no service-runtime report, counts
+as ready for a background start once it has endpoint records. Its
+`service_runtimes` array is then empty, but `service_endpoints` is not. Text
+output (`jarvis execution service-runtimes <id>`) prints one `ready` line per
+endpoint taken from a ready event.
+
+Relay should forward `host`, `port` and `protocol` from this array as they
+are, and should not reserve or guess a port of its own.
 
 ## Dataset descriptor
 

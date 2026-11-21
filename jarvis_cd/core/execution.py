@@ -24,6 +24,11 @@ from jarvis_cd.artifacts import (
     ArtifactStore,
 )
 from jarvis_cd.progress import ProgressEvent, ProgressStore
+from jarvis_cd.service_runtime.endpoints import (
+    ServiceEndpointStore,
+    endpoint_from_runtime_report,
+    endpoint_path_for,
+)
 from jarvis_cd.service_runtime import (
     SERVICE_RUNTIME_SNAPSHOT_SCHEMA_VERSION,
     ServiceAuthorization,
@@ -174,6 +179,7 @@ class ExecutionServiceRuntimeSnapshot:
     execution_state: str
     terminal: bool
     service_runtimes: tuple[ServiceRuntimeReport, ...]
+    service_endpoints: tuple[dict[str, Any], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the stable agent-facing service-runtime snapshot."""
@@ -186,6 +192,7 @@ class ExecutionServiceRuntimeSnapshot:
             "service_runtimes": [
                 runtime.to_dict() for runtime in self.service_runtimes
             ],
+            "service_endpoints": [dict(item) for item in self.service_endpoints],
         }
 
 
@@ -1554,6 +1561,7 @@ class ExecutionStore:
                     "execution service runtime path is not a real directory"
                 )
         current: list[ServiceRuntimeReport] = []
+        endpoints: list[dict[str, Any]] = []
         seen_instances: set[str] = set()
         for runtime_key, entry in sorted(runtime_files.items()):
             if (
@@ -1583,11 +1591,20 @@ class ExecutionStore:
                 )
             sidecar = runtime_root / filename
             try:
-                reports = ServiceRuntimeStore(sidecar).current().values()
+                history = ServiceRuntimeStore(sidecar).read_all()
             except (OSError, PermissionError, ValueError) as exc:
                 raise RuntimeError(
                     f"invalid service runtime sidecar for package {package_id!r}"
                 ) from exc
+            latest_reports: dict[str, ServiceRuntimeReport] = {}
+            first_ready: dict[str, float] = {}
+            for item in history:
+                latest_reports[item.service_instance_id] = item
+                if item.lifecycle.value in {"ready", "degraded"}:
+                    first_ready.setdefault(
+                        item.service_instance_id, item.observed_at_epoch
+                    )
+            reports = latest_reports.values()
             for report in reports:
                 if (
                     report.execution_id != record.execution_id
@@ -1603,6 +1620,19 @@ class ExecutionStore:
                     )
                 seen_instances.add(report.service_instance_id)
                 current.append(report)
+                endpoints.append(
+                    endpoint_from_runtime_report(
+                        report, first_ready.get(report.service_instance_id)
+                    )
+                )
+            for endpoint in ServiceEndpointStore(
+                endpoint_path_for(sidecar)
+            ).current():
+                if (
+                    endpoint.get("execution_id") == record.execution_id
+                    and endpoint.get("package_id") == package_id
+                ):
+                    endpoints.append(endpoint)
         return ExecutionServiceRuntimeSnapshot(
             execution_id=record.execution_id,
             pipeline_id=record.pipeline_id,
@@ -1614,6 +1644,16 @@ class ExecutionStore:
                     key=lambda report: (
                         report.package_id,
                         report.service_instance_id,
+                    ),
+                )
+            ),
+            service_endpoints=tuple(
+                sorted(
+                    endpoints,
+                    key=lambda item: (
+                        str(item.get("package_id")),
+                        str(item.get("name")),
+                        str(item.get("source")),
                     ),
                 )
             ),

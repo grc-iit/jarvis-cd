@@ -40,14 +40,44 @@ class _PackageProgressLineCallback:
         execution_id: str,
         package_name: str,
         package_id: str,
+        endpoint_path: Optional[Path] = None,
     ) -> None:
         self._provider = provider
         self._reporter = reporter
         self._progress_path = progress_path
         self._expected_identity = (execution_id, package_name, package_id)
+        self._endpoint_path = endpoint_path
         self._lock = threading.Lock()
         self._finalized = False
         self._source: Optional[str] = None
+
+    def _record_ready_endpoints(self, event: Any) -> None:
+        """Record where a service listens when its progress reports ready."""
+        from jarvis_cd.progress import ProgressState
+
+        if self._endpoint_path is None or event.state != ProgressState.READY:
+            return
+        from jarvis_cd.service_runtime.endpoints import (
+            ServiceEndpointStore,
+            ready_endpoint_records,
+        )
+
+        execution_id, package_name, package_id = self._expected_identity
+        try:
+            ServiceEndpointStore(self._endpoint_path).append(
+                ready_endpoint_records(
+                    execution_id=execution_id,
+                    package_id=package_id,
+                    package_name=package_name,
+                    metadata=dict(event.metadata),
+                    progress_sequence=event.sequence,
+                    observed_at_epoch=event.observed_at_epoch,
+                )
+            )
+        except OSError as error:  # never fail the package over the record
+            from jarvis_cd.util.logger import logger
+
+            logger.warning(f"could not record service endpoint: {error}")
 
     def __call__(self, stream_name: str, line: str) -> None:
         """Interpret one stdout line and persist validated observations."""
@@ -79,6 +109,7 @@ class _PackageProgressLineCallback:
                     raise ValueError("structured package progress identity mismatch")
                 ProgressStore(self._progress_path).append(event)
                 self._source = "structured_stdout"
+                self._record_ready_endpoints(event)
                 return
             if self._source == "structured_stdout" or self._provider is None:
                 return
@@ -129,7 +160,7 @@ class _PackageProgressLineCallback:
     def _persist(self, observations: list["ProgressObservation"]) -> None:
         """Persist typed observations with JARVIS-owned identity and sequence."""
         for observation in observations:
-            self._reporter.emit(
+            event = self._reporter.emit(
                 label=observation.label,
                 state=observation.state,
                 current=observation.current,
@@ -138,6 +169,7 @@ class _PackageProgressLineCallback:
                 message=observation.message,
                 metadata=dict(observation.metadata),
             )
+            self._record_ready_endpoints(event)
 
 
 class _PackageArtifactLineCallback:
@@ -669,6 +701,12 @@ class Pkg:
             path=cast(str, progress_path),
         )
 
+        runtime_path = self.mod_env.get("JARVIS_SERVICE_RUNTIME_PATH")
+        endpoint_path = None
+        if isinstance(runtime_path, str) and runtime_path:
+            from jarvis_cd.service_runtime.endpoints import endpoint_path_for
+
+            endpoint_path = endpoint_path_for(runtime_path)
         return _PackageProgressLineCallback(
             provider,
             reporter,
@@ -676,6 +714,7 @@ class Pkg:
             execution_id=cast(str, execution_id),
             package_name=cast(str, package_name),
             package_id=cast(str, package_id),
+            endpoint_path=endpoint_path,
         )
 
     def _artifact_line_callback(self) -> Optional[Callable[[str, str], None]]:
@@ -1242,7 +1281,17 @@ class Pkg:
         path = self.mod_env.get("JARVIS_SERVICE_RUNTIME_PATH") or self.env.get(
             "JARVIS_SERVICE_RUNTIME_PATH"
         )
-        if not path or not os.path.exists(path):
+        if not path:
+            return None
+        if not os.path.exists(path):
+            # A package that announces readiness only through progress.
+            from jarvis_cd.service_runtime.endpoints import (
+                ServiceEndpointStore,
+                endpoint_path_for,
+            )
+
+            if ServiceEndpointStore(endpoint_path_for(path)).read_all():
+                return True
             return None
         from jarvis_cd.service_runtime import ServiceRuntimeStore
 

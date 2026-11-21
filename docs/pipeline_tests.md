@@ -306,9 +306,10 @@ Which Spack runs:
   only `<root>/etc/spack/defaults`, the site scope `<root>/etc/spack` (each
   with its `linux/` subdirectory), and the `-C`/`-e` scopes JARVIS passes.
   Put the site's `upstreams.yaml`, `packages.yaml`, `compilers.yaml` and
-  `config.yaml` in `<root>/etc/spack`. This is the layout CLIO's
-  `spack_prepare_site` creates: a private Spack whose upstream is the site
-  Spack, with `mpi: buildable: false`. `install-record.json`
+  `config.yaml` in `<root>/etc/spack`. This is the layout
+  [`jarvis spack prepare`](spack.md) creates: a private Spack whose upstream
+  is the site Spack, with `mpi: buildable: false`, the site's compiler
+  preference and its module and tool externals. `install-record.json`
   (`spack_config_scopes`) and the run's
   [provenance record](executions.md#provenance-record) (`config_scopes`)
   list the scopes that were in effect.
@@ -379,6 +380,7 @@ JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
 | `kind` | When | Answerable |
 |--------|------|------------|
 | `ambiguous_provider` | several MPI candidates (installed, upstream or `packages.yaml` externals) and neither the query nor a recorded answer pins one (`subject: mpi`, `scope: site`); `candidates[]` lists `{id, constraint, source, prefix, hashes, implies}` (`hashes` puts the pinned real install first), plus `modules` for module externals | yes, with one candidate's `constraint` |
+| `spack_missing` | the pipeline has Spack packages but JARVIS has no Spack to run (`subject: spack`, `scope: site`, `package: "*"`); `site_spacks[]` (also `candidates[]`) lists the Spack checkouts found on the host, see [Missing Spack](#missing-spack-spack_missing) | yes, with one `site_spacks` `root` |
 | `variant_conflict` | the concretizer reports a conflict | yes, with a spec constraint (e.g. `~cuda`) |
 | `concretize_failed` | any other concretizer error (`detail` holds the excerpt) | yes, with a spec constraint |
 | `no_recipe` | Spack has no recipe for the package | no: add `install_repos` or change `install_query` |
@@ -426,6 +428,59 @@ Every `jarvis.install-report.v1` (`ppl install [+check] +json`) reports:
 A caller therefore needs no store of its own. It shows `applied_decisions` as
 "chosen before", asks the person about `open_issues`, and passes the answers
 back with `--answers`.
+
+#### Missing Spack (`spack_missing`)
+
+Before planning, JARVIS checks that it has a Spack to run. These are light
+file checks and a `PATH` lookup; nothing is executed. Spack counts as
+missing when `JARVIS_SPACK_ROOT` has no `bin/spack`, when `SPACK_ROOT` has no
+`share/spack/setup-env.sh`, or when neither is set and `spack` is not on
+`PATH`. Then `ppl install [+check]` (and a check- or install-mode
+install-on-load in a `ppl submit` job) exits `3` with one `spack_missing`
+issue, instead of failing on the first `spack` call. Every Spack package in
+`install-record.json` shows `status: blocked, blocked_by: spack_missing`.
+
+The issue lists the Spack checkouts the host offers in `site_spacks[]` (the
+same list is in `candidates[]`). They are probed in this order, and each one
+must have `bin/spack`:
+
+1. `JARVIS_SITE_SPACKS`, an `os.pathsep`-separated list a site sets;
+2. `<dir of JARVIS_RESOURCE_GRAPH>/spack`, a Spack kept next to the site
+   resource graph;
+3. the well-known locations `/opt/spack`, `/usr/local/spack`,
+   `/opt/apps/spack`, `/apps/spack`, `/sw/spack`, `/shared/spack` and
+   `~/spack`;
+4. a `spack` next to a broken `JARVIS_SPACK_ROOT` or `SPACK_ROOT`.
+
+| Field of a `site_spacks` entry | Meaning |
+|--------------------------------|---------|
+| `id` | `spack-1`, `spack-2`, … |
+| `root`, `constraint` | the checkout's absolute path (the value to answer with) |
+| `version` | the release read from `lib/spack/spack/__init__.py` (nothing is run), or `null` |
+| `executable` | `<root>/bin/spack` |
+| `source` | `JARVIS_SITE_SPACKS`, `resource_graph_site`, `well_known`, `JARVIS_SPACK_ROOT_sibling` or `SPACK_ROOT_sibling` |
+| `use` | the environment setting that selects it (`JARVIS_SPACK_ROOT=<root>`) |
+| `prepare` | the command that makes a JARVIS Spack chained to it (`jarvis spack prepare --site_spack <root>`, see [spack.md](spack.md)) |
+
+`site_spacks` is empty when nothing was found. The question then asks for a
+root, and any directory with `bin/spack` is accepted. Answer like any other
+issue:
+
+```json
+{"sha256:9c…": {"constraint": "/opt/spack", "answered_by": "jaime"}}
+```
+
+An answer without `bin/spack` is refused. The answer is recorded as the site
+decision `spack` in `decisions.yaml` and becomes `JARVIS_SPACK_ROOT` for that
+process, so the install, the run's `spack load` and the provenance record all
+use it. A later run replays it (`applied_decisions[].source:
+decisions_file`). When the set of candidates changes, for example a new
+checkout appears, the question gets a new `issue_id`. The old answer is then
+listed in `stale_decisions` and offered as `previous_answer`, with
+`supersedes` naming the old issue. A caller that prefers a prepared JARVIS
+Spack runs the entry's `prepare` command inside a job and answers with the
+prepared root. [`jarvis sched info +json`](sched.md) reports the same issue
+without a pipeline.
 
 `JARVIS_SPACK_CONFIG=<dir>` (or `JARVIS_SPACK_ROOT`) turns on
 `SPACK_DISABLE_LOCAL_CONFIG=1`, so Spack reads no user or system

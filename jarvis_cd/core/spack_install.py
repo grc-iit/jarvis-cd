@@ -352,6 +352,193 @@ def spack_config_scopes(
     return scopes
 
 
+# ---------------------------------------------------------------------------
+# Missing Spack: a typed ``spack_missing`` issue with ``site_spacks``
+# ---------------------------------------------------------------------------
+
+#: os.pathsep list of Spack roots a site offers (checked first)
+SITE_SPACKS_ENV = "JARVIS_SITE_SPACKS"
+#: well-known Spack locations probed (cheap ``is_file`` checks only)
+_WELL_KNOWN_SPACKS = (
+    "/opt/spack",
+    "/usr/local/spack",
+    "/opt/apps/spack",
+    "/apps/spack",
+    "/sw/spack",
+    "/shared/spack",
+    "~/spack",
+)
+_SPACK_VERSION_LINE = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']', re.M)
+_SPACK_VERSION_INFO = re.compile(r"^spack_version_info\s*=\s*\(([^)]*)\)", re.M)
+
+
+def spack_unavailable_reason() -> Optional[str]:
+    """Why jarvis has no Spack to run, or None when it has one.
+
+    Light: file checks and a PATH lookup, nothing is executed.
+    """
+    root = explicit_spack_root()
+    if root is not None:
+        executable = Path(root).expanduser().resolve() / "bin" / "spack"
+        return None if executable.is_file() else f"JARVIS_SPACK_ROOT={root} has no bin/spack"
+    root = spack_root()
+    if root is not None:
+        setup = Path(root).expanduser() / "share" / "spack" / "setup-env.sh"
+        return None if setup.is_file() else f"SPACK_ROOT={root} has no share/spack/setup-env.sh"
+    if shutil.which("spack") is not None:
+        return None
+    return "no JARVIS_SPACK_ROOT, no SPACK_ROOT and no spack on PATH"
+
+
+def spack_checkout_version(root: Path) -> Optional[str]:
+    """A Spack checkout's release, read from its source (nothing is run)."""
+    init = Path(root) / "lib" / "spack" / "spack" / "__init__.py"
+    try:
+        text = init.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = _SPACK_VERSION_LINE.search(text)
+    if match:
+        return match.group(1)
+    match = _SPACK_VERSION_INFO.search(text)
+    if match:
+        parts = [part.strip().strip("'\"") for part in match.group(1).split(",")]
+        return ".".join(part for part in parts if part) or None
+    return None
+
+
+def discover_site_spacks() -> List[Dict[str, Any]]:
+    """Spack checkouts this host offers, as ``spack_missing`` candidates.
+
+    Sources, in order: ``JARVIS_SITE_SPACKS``, the resource graph's site dir
+    (``<dir of JARVIS_RESOURCE_GRAPH>/spack``), well-known locations, and
+    the parent of a broken ``JARVIS_SPACK_ROOT``/``SPACK_ROOT``. Each one
+    must have ``bin/spack``; its release is read from the source tree.
+    """
+    probes: List[tuple[str, str]] = []
+    for item in os.environ.get(SITE_SPACKS_ENV, "").split(os.pathsep):
+        if item.strip():
+            probes.append((item.strip(), SITE_SPACKS_ENV))
+    graph = os.environ.get("JARVIS_RESOURCE_GRAPH", "").strip()
+    if graph:
+        probes.append((str(Path(graph).expanduser().parent / "spack"), "resource_graph_site"))
+    for item in _WELL_KNOWN_SPACKS:
+        probes.append((item, "well_known"))
+    for name in ("JARVIS_SPACK_ROOT", "SPACK_ROOT"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            probes.append((str(Path(value).expanduser().parent / "spack"), f"{name}_sibling"))
+    found: List[Dict[str, Any]] = []
+    seen: set[str] = set()
+    for raw, source in probes:
+        try:
+            root = Path(os.path.expandvars(raw)).expanduser().resolve()
+        except (OSError, RuntimeError):
+            continue
+        key = str(root)
+        if key in seen or not (root / "bin" / "spack").is_file():
+            continue
+        seen.add(key)
+        version = spack_checkout_version(root)
+        found.append(
+            {
+                "id": f"spack-{len(found) + 1}",
+                "constraint": key,
+                "root": key,
+                "version": version,
+                "executable": str(root / "bin" / "spack"),
+                "source": source,
+                "use": f"JARVIS_SPACK_ROOT={key}",
+                "prepare": f"jarvis spack prepare --site_spack {shlex.quote(key)}",
+            }
+        )
+        if len(found) >= 16:
+            break
+    return found
+
+
+def spack_missing_issue(reason: str, site_spacks: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """The ``spack_missing`` install issue (site scope, subject ``spack``)."""
+    issue = make_issue(
+        kind="spack_missing",
+        package="*",
+        subject="spack",
+        scope="site",
+        question=(
+            "Which Spack should jarvis use on this site?"
+            if site_spacks
+            else "No Spack was found on this site; which Spack root should jarvis use?"
+        ),
+        candidates=site_spacks,
+        detail=reason,
+        evidence=[
+            "JARVIS_SPACK_ROOT, SPACK_ROOT, `command -v spack`",
+            f"{SITE_SPACKS_ENV}, <resource graph dir>/spack, "
+            + ", ".join(_WELL_KNOWN_SPACKS),
+        ],
+        answerable=True,
+        hint=(
+            "answer with a site_spacks root (recorded as the site decision `spack` "
+            "and used as JARVIS_SPACK_ROOT), or set JARVIS_SPACK_ROOT; "
+            "`jarvis spack prepare --site_spack <root>` makes a jarvis Spack "
+            "chained to a site one"
+        ),
+    )
+    issue["site_spacks"] = [dict(item) for item in site_spacks]
+    return issue
+
+
+def ensure_spack_available(context: "InstallContext", decisions: "Decisions") -> Optional[Dict[str, Any]]:
+    """Make sure jarvis has a Spack; else raise the ``spack_missing`` issue.
+
+    A recorded answer (site decision ``spack``) is replayed only for the
+    exact same issue_id; an answer from ``answers.json`` is recorded. Either
+    one becomes ``JARVIS_SPACK_ROOT`` for this process (so the run's
+    ``spack load`` and the provenance use it too). Returns the open issue,
+    or None when Spack is available.
+    """
+    reason = spack_unavailable_reason()
+    if reason is None:
+        return None
+    issue = spack_missing_issue(reason, discover_site_spacks())
+    answer: Optional[Mapping[str, Any]] = None
+    recorded = decisions.site("spack")
+    if recorded is not None and recorded.get("constraint"):
+        if recorded.get("issue_id") == issue["issue_id"]:
+            answer = recorded
+            context.note_decision(issue, recorded, source="decisions_file",
+                                  path=decisions.path)
+        else:
+            stale = {
+                "issue_id": recorded.get("issue_id"),
+                "subject": "spack",
+                "scope": "site",
+                "constraint": recorded.get("constraint"),
+                "path": str(decisions.path),
+                "answered_at": recorded.get("answered_at"),
+                "superseded_by": issue["issue_id"],
+                "reason": "the Spack candidates changed, so the question changed",
+            }
+            if stale not in context.stale_decisions:
+                context.stale_decisions.append(stale)
+            issue["supersedes"] = recorded.get("issue_id")
+            issue["previous_answer"] = recorded.get("constraint")
+    if answer is None:
+        answer = context.answer_for(issue)
+        if answer is not None:
+            root = Path(str(answer["constraint"])).expanduser()
+            if not (root / "bin" / "spack").is_file():
+                raise ValueError(f"spack_missing answer {root} has no bin/spack")
+            decisions.record(issue, answer)
+    if answer is None:
+        context.raise_issue(issue)
+        return issue
+    root = str(Path(str(answer["constraint"])).expanduser().resolve())
+    os.environ["JARVIS_SPACK_ROOT"] = root
+    context.log(f"[{_utc_now()}] spack_missing answered: JARVIS_SPACK_ROOT={root}\n")
+    return None
+
+
 class SpackRunner:
     """Run ``spack`` through bash with the selected root, logging everything."""
 
@@ -1731,6 +1918,32 @@ def run_spack_install(
     caller decides whether to raise :class:`InstallDecisionNeeded`.
     """
     planner = SpackPlanner(context, runner)
+    if any(_package_query(pkg_def) for pkg_def in pkg_list):
+        missing = ensure_spack_available(context, planner.decisions)
+        if missing is not None:
+            record = {
+                "schema_version": RECORD_SCHEMA,
+                "mode": context.mode,
+                "spack_root": None,
+                "spack_missing": missing["issue_id"],
+                "decisions": str(context.decisions_path),
+                "started_at": _utc_now(),
+                "finished_at": _utc_now(),
+                "packages": {
+                    str(d.get("pkg_id") or d.get("pkg_name") or "pkg"): {
+                        "status": "blocked", "blocked_by": "spack_missing",
+                    }
+                    for d in pkg_list
+                },
+                "packages_total": len(pkg_list),
+                "issues": [issue["issue_id"] for issue in context.issues],
+                "applied_decisions": list(context.applied_decisions),
+                "stale_decisions": list(context.stale_decisions),
+            }
+            _atomic_write_text(
+                context.record_path, json.dumps(record, indent=2, sort_keys=True) + "\n"
+            )
+            return record
     repos = pipeline_repos(pkg_list)
     record: Dict[str, Any] = {
         "schema_version": RECORD_SCHEMA,
@@ -1753,6 +1966,9 @@ def run_spack_install(
     record["spack_config_scopes"] = spack_config_scopes(
         planner.runner.config_scopes, env_dir
     )
+    from jarvis_cd.core.spack_site import site_prep_record
+
+    record["spack_site_prep"] = site_prep_record(explicit_spack_root())
     packages = [
         (str(pkg_def.get("pkg_id") or pkg_def.get("pkg_name") or "pkg"), pkg_def)
         for pkg_def in pkg_list

@@ -1,0 +1,143 @@
+# Spack site preparation (`jarvis spack`)
+
+The `spack` menu prepares the JARVIS Spack (`JARVIS_SPACK_ROOT`) for a site,
+so that [find-first installs](pipeline_tests.md#find-first-spack-installs)
+reuse what the site already has instead of rebuilding it. It replaces the
+site preparation that callers used to do themselves (clio-kit's
+`spack_prepare_site`).
+
+| Command | Purpose |
+|---------|---------|
+| `jarvis spack prepare [options] [+json]` | Chain the JARVIS Spack to a site Spack and write its site configuration |
+
+## `jarvis spack prepare`
+
+```bash
+export JARVIS_SPACK_ROOT=$HOME/jarvis-cd/spack
+jarvis spack prepare --site_spack /opt/spack +json
+```
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `--root` | `$JARVIS_SPACK_ROOT` | The JARVIS Spack to prepare. One of the two is required |
+| `--site_spack` | none | A site Spack checkout to chain as an upstream. It must have `bin/spack` and must not be the root itself |
+| `--spack_version` | the site Spack's release | The Spack release for the root. Required when there is no site Spack |
+| `--install_tree` | asked from the site Spack (`spack.store.STORE.root`) | The site's install tree. It must contain `.spack-db/index.json` |
+| `--module_paths` | `$MODULEPATH` from a login shell | Colon-separated module directories to search for MPI modules |
+| `--build_tools` | autoconf, automake, bison, cmake, diffutils, findutils, flex, gawk, git, gmake, libtool, m4, ninja, perl, pkgconf, tar | Comma-separated tools to register as non-buildable externals, or `none`. An MPI is refused here |
+| `--compiler` | chosen by policy | The preferred compiler (`gcc@11.4.0`), or `auto` to forget an earlier choice. It answers `ambiguous_compiler` |
+| `--build_jobs` | 1024 (every CPU the build job gets) | `config:build_jobs` |
+| `--answers` | none | An `answers.json` keyed by `issue_id`, as for `ppl install` |
+| `+no_clone` | off | Refuse instead of cloning a missing root |
+| `+json` | off | Print the `jarvis.spack-site-prep.v1` record as one JSON line |
+
+### What it does
+
+1. **The checkout.** When the root has no `bin/spack`, it makes a shallow
+   `git clone --branch v<version>` of github.com/spack/spack. The version is
+   the site Spack's release (read from its source tree), or
+   `--spack_version`. Known releases are checked against a pinned commit. A
+   root that already holds a different release, or a non-empty directory
+   that is not a Spack, is refused and left alone.
+2. **The site scope.** Everything is written to `<root>/etc/spack`, the scope
+   that survives `SPACK_DISABLE_LOCAL_CONFIG=1` (see
+   [Spack example](pipeline_tests.md#spack-example)).
+   Each file is rewritten only when its content changes:
+   - `upstreams.yaml`: the site Spack's install tree, plus its `lmod` and
+     `tcl` module trees when they exist;
+   - `config.yaml`: `misc_cache`, `test_stage` and the bootstrap root under
+     `<root>/var/jarvis`, `build_stage` under `$tempdir/$user`, and
+     `build_jobs`;
+   - `concretizer.yaml`: `reuse: true`;
+   - `bootstrap.yaml`: a private bootstrap root.
+3. **Compilers and build tools.** `spack compiler find --scope site`, then
+   `spack external find --not-buildable --scope site <build tools>`.
+4. **MPI.** `packages:mpi:buildable:false`, so an MPI is never built. Every
+   site MPI module (`<modulepath>/<openmpi|mpich|…>/<version>[.lua]`, outside
+   Spack's own module trees) is loaded in a throwaway login shell. The prefix
+   of the `mpiexec` it puts first on `PATH` is recorded as an external
+   `{spec: <name>@<version>, prefix, modules: [<module>]}`. Existing
+   externals are kept, and a prefix that differs from the module's is
+   reported as a warning. The install's MPI choice then offers these modules
+   next to the upstream installs (see `ambiguous_provider` in
+   [pipeline_tests.md](pipeline_tests.md#find-first-spack-installs)).
+5. **Compiler preference.** `packages:all:compiler` lists the compilers in
+   order. Full toolchains (cc, cxx and fc) come first, and among them the one
+   the upstream MPI was built with. The first one is the preferred compiler,
+   picked in this order:
+   1. `--compiler`, or an answer to `ambiguous_compiler`. It is saved in
+      `<root>/var/jarvis/compiler-choice` (`source: person` or `answer`).
+   2. An earlier saved choice (`source: person_earlier`). A saved compiler
+      that is gone is forgotten, with a warning.
+   3. The single full toolchain that built an upstream MPI
+      (`upstream_mpi`), or the only full toolchain (`only_full_toolchain`).
+   4. With no full toolchain at all, the first compiler, with a warning
+      that Fortran packages cannot build (`no_full_toolchain`).
+
+   When several full toolchains qualify and nothing above picks one, JARVIS
+   asks instead of guessing: the command exits `3` with an
+   `ambiguous_compiler` issue (`jarvis.install-issue.v1`, `subject:
+   compiler`, `scope: site`). Its `candidates[]` are `{id, constraint, cc,
+   fc, built_upstream_mpi}`. Answer with `--compiler <constraint>` or with
+   `--answers answers.json`.
+
+It never installs or builds. Its Spack calls are configuration writes plus
+`compiler find`, `external find`, `config get` and `find`, each with a
+timeout. If a site allows nothing but `spack find` and `spack spec` on its
+login nodes, run it inside a JARVIS-submitted job.
+
+### The record
+
+The result is written to `<root>/var/jarvis/site-prep.json`
+(`jarvis.spack-site-prep.v1`) and printed with `+json`:
+
+| Field | Meaning |
+|-------|---------|
+| `status`, `exit_code` | `prepared` (0) or `needs_decision` (3) |
+| `root`, `version`, `commit`, `pinned`, `checkout` | the JARVIS Spack, its release and commit, the expected pin, and `present` or `cloned` |
+| `config_scope` | `<root>/etc/spack` |
+| `site_spack`, `site_version`, `upstream_install_tree` | the chained site Spack |
+| `build_jobs`, `build_tools` | as configured |
+| `changes[]` | each file written or unchanged, and each policy change |
+| `module_mpis[]` | `{name, version, module, prefix, modulepath}` found |
+| `mpi_externals_added[]` | the specs added to `packages.yaml` |
+| `installed_mpis[]` | `{name, version, hash, compiler, prefix}` from `spack find` |
+| `compiler` | `chosen`, `source`, `full_toolchain`, `order`, `toolchains[]`, `choice_needed`, `candidates` |
+| `issues[]`, `open_issues[]` | the open `ambiguous_compiler` question, if any |
+| `environment` | `{"JARVIS_SPACK_ROOT": <root>}`, to export for later runs |
+| `commands[]` | every command it ran, with its exit code |
+| `warnings[]`, `prepared_at`, `record_path` | |
+
+Every later `install-record.json` written with that root carries a
+`spack_site_prep` summary (path, time, version, commit, site Spack, upstream
+tree, chosen compiler and status), and the run's
+[provenance record](executions.md#provenance-record) repeats it as
+`spack.site_prep`.
+
+### Refusals
+
+A refusal exits `5` with a `jarvis.issue.v1` (`subject: spack_site_prep`)
+and changes nothing that was valid:
+
+| `kind` | When |
+|--------|------|
+| `spack_root_unset` | no `--root` and no `JARVIS_SPACK_ROOT` |
+| `site_spack_invalid` | `--site_spack` has no `bin/spack`, or is the root itself |
+| `site_install_tree_invalid` | the install tree has no `.spack-db/index.json` |
+| `spack_version_unknown`, `spack_version_invalid` | no release is known, or it is not `X.Y[.Z]` |
+| `spack_version_mismatch` | the root already holds another release |
+| `spack_root_not_spack`, `spack_root_missing` | the root is not a Spack, or is missing with `+no_clone` |
+| `spack_clone_failed`, `spack_pin_mismatch` | the clone failed, or its commit is not the release's pin |
+| `build_tool_invalid` | a build tool is not a package name, or is an MPI |
+| `compiler_invalid`, `compiler_not_found` | `--compiler` is malformed, or matches no compiler (or more than one) |
+| `build_jobs_invalid` | `--build_jobs` outside 1..1024 |
+| `answer_invalid` | an answer is not one of the candidates |
+| `spack_compiler_find_failed`, `spack_external_find_failed` | Spack itself failed |
+
+### Finding a site Spack
+
+When JARVIS has no Spack at all, `ppl install [+check]` and
+[`jarvis sched info`](sched.md) report a `spack_missing` issue. Its
+`site_spacks[]` candidates each carry a `prepare` command
+(`jarvis spack prepare --site_spack <root>`). See
+[Missing Spack](pipeline_tests.md#missing-spack-spack_missing).

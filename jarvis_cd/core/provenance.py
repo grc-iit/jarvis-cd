@@ -331,6 +331,7 @@ def _spack_section(record_path: Optional[Path]) -> Dict[str, Any]:
         # What the install's spec/find/concretize read, as it recorded them.
         "install_config_scopes": record.get("spack_config_scopes") or [],
         "spack_repos": record.get("spack_repos") or [],
+        "site_prep": record.get("spack_site_prep"),
         "env_dir": env.get("dir"),
         "lock": lock_path,
         "lock_sha256": lock_sha256,

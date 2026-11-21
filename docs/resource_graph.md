@@ -34,6 +34,11 @@ and writes the same graph, including the per-job roots a relay creates.
 `jarvis init` never overwrites it, and `rg build` and `rg net set|clear`
 write to it. `jarvis rg path` prints the active file.
 
+The graph's directory also holds the site's [skills](site-skills.md)
+(`<graph dir>/skills/`, managed with `jarvis rg skill`) and may hold a site
+Spack (`<graph dir>/spack`), which a `spack_missing` question offers as a
+candidate (see [Missing Spack](pipeline_tests.md#missing-spack-spack_missing)).
+
 ### Key Components
 
 - **ResourceGraphManager**: Coordinates resource collection across the cluster

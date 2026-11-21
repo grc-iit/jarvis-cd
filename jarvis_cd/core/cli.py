@@ -1396,6 +1396,209 @@ class JarvisCLI(ArgParse):
         self.add_cmd("rg path", msg="Show path to current resource graph file")
         self.add_args([])
 
+        self.add_menu("rg skill", msg="Site skills stored next to the resource graph")
+
+        self.add_cmd("rg skill list", msg="List the site skills")
+        self.add_args(
+            [
+                {
+                    "name": "json",
+                    "msg": "Emit the skill index as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                }
+            ]
+        )
+
+        self.add_cmd("rg skill show", msg="Show one site skill")
+        self.add_args(
+            [
+                {
+                    "name": "name",
+                    "msg": "Skill name ([a-z0-9][a-z0-9_.-]*)",
+                    "type": str,
+                    "required": True,
+                    "pos": True,
+                },
+                {
+                    "name": "json",
+                    "msg": "Emit the skill and its metadata as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
+        self.add_cmd("rg skill set", msg="Create or replace a site skill")
+        self.add_args(
+            [
+                {
+                    "name": "name",
+                    "msg": "Skill name ([a-z0-9][a-z0-9_.-]*)",
+                    "type": str,
+                    "required": True,
+                    "pos": True,
+                },
+                {
+                    "name": "file",
+                    "msg": "Markdown file to store (or - for stdin)",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "text",
+                    "msg": "Markdown text to store",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "description",
+                    "msg": "One-line description kept in the index",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "set_by",
+                    "msg": "Who set it (default: $USER)",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "json",
+                    "msg": "Emit the result as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
+        self.add_cmd("rg skill rm", msg="Remove a site skill")
+        self.add_args(
+            [
+                {
+                    "name": "name",
+                    "msg": "Skill name",
+                    "type": str,
+                    "required": True,
+                    "pos": True,
+                },
+                {
+                    "name": "json",
+                    "msg": "Emit the result as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
+        self.add_menu("sched", msg="Site scheduler facts")
+
+        self.add_cmd("sched info", msg="Partitions, limits, MPI and network facts (light reads)")
+        self.add_args(
+            [
+                {
+                    "name": "provider",
+                    "msg": "Scheduler provider (default: the client on PATH)",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "no_mpi",
+                    "msg": "Skip the spack find MPI discovery",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+                {
+                    "name": "json",
+                    "msg": "Emit jarvis.sched-info.v1 as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
+        self.add_menu("spack", msg="Spack site preparation")
+
+        self.add_cmd("spack prepare", msg="Prepare the jarvis Spack: upstreams, compilers, externals")
+        self.add_args(
+            [
+                {
+                    "name": "root",
+                    "msg": "The jarvis Spack root (default: $JARVIS_SPACK_ROOT)",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "site_spack",
+                    "msg": "Site Spack checkout to chain as an upstream",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "spack_version",
+                    "msg": "Spack release to clone (default: the site Spack's version)",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "install_tree",
+                    "msg": "Site install tree (default: asked from the site Spack)",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "module_paths",
+                    "msg": "Colon-separated module dirs to search for MPI modules",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "build_tools",
+                    "msg": "Comma-separated tools to register as externals, or none",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "compiler",
+                    "msg": "Preferred compiler (answers ambiguous_compiler)",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "build_jobs",
+                    "msg": "config:build_jobs (default: all CPUs of the build node)",
+                    "type": int,
+                    "default": None,
+                },
+                {
+                    "name": "answers",
+                    "msg": "answers.json keyed by issue_id",
+                    "type": str,
+                    "default": None,
+                },
+                {
+                    "name": "no_clone",
+                    "msg": "Refuse instead of cloning a missing root",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+                {
+                    "name": "json",
+                    "msg": "Emit jarvis.spack-site-prep.v1 as JSON",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+            ]
+        )
+
         # Build commands
         self.add_menu("build", msg="Build environment profiles and configurations")
 
@@ -2170,6 +2373,14 @@ class JarvisCLI(ArgParse):
             print(
                 f"  {runtime.package_id}/{runtime.service_instance_id}: "
                 f"{runtime.lifecycle.value} {runtime.base_url}"
+            )
+        for endpoint in snapshot.service_endpoints:
+            if endpoint.get("source") != "progress_ready":
+                continue
+            print(
+                f"  {endpoint['package_id']}/{endpoint['name']}: ready "
+                f"{endpoint['protocol']} {endpoint['host']}:{endpoint['port']} "
+                f"(bind {endpoint['bind_host'] or '*'}, at {endpoint['ready_at']})"
             )
 
     def execution_resolve_service_runtime_authority(self) -> None:
@@ -3136,6 +3347,139 @@ class JarvisCLI(ArgParse):
     def rg_net_clear(self):
         """Drop the network override."""
         self._net_call(lambda: self.rg_manager.net_clear())
+
+    def _json_call(self, action, text):
+        """Run ``action``; print its document as JSON (+json) or via ``text``."""
+        if self.kwargs.get("json"):
+            with redirect_stdout(sys.stderr):
+                self._ensure_initialized()
+                document = action()
+            print(json.dumps(document, separators=(",", ":"), sort_keys=True, default=str))
+        else:
+            self._ensure_initialized()
+            document = action()
+            text(document)
+        return document
+
+    def _site_skills(self):
+        from jarvis_cd.core.site_skills import SiteSkills
+
+        return SiteSkills(
+            self.jarvis.resource_graph_file,
+            site=bool(getattr(self.jarvis, "resource_graph_is_site", False)),
+        )
+
+    def rg_skill_list(self):
+        """List the site skills next to the resource graph."""
+        def text(document):
+            print(f"skills: {document['directory']} (site graph: {document['site_graph']})")
+            for entry in document["skills"]:
+                print(f"  {entry['name']:<24} {entry.get('updated_at') or '-':<28} "
+                      f"{entry.get('description') or ''}")
+
+        self._json_call(lambda: self._site_skills().listing(), text)
+
+    def rg_skill_show(self):
+        """Print one site skill."""
+        self._json_call(lambda: self._site_skills().show(self.kwargs["name"]),
+                        lambda document: print(document["content"], end=""))
+
+    def rg_skill_set(self):
+        """Create or replace one site skill."""
+        source = self.kwargs.get("file")
+        content = self.kwargs.get("text")
+        if (source is None) == (content is None):
+            from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
+
+            raise JarvisIssueError([make_jarvis_issue(
+                kind="skill_content_missing", subject="site skill",
+                message="give exactly one of --file or --text", field="--file")])
+        if source is not None:
+            content = sys.stdin.read() if source == "-" else Path(source).read_text(
+                encoding="utf-8")
+        self._json_call(
+            lambda: self._site_skills().set(
+                self.kwargs["name"], content,
+                description=self.kwargs.get("description"),
+                set_by=self.kwargs.get("set_by"),
+            ),
+            lambda document: print(f"set {document['name']}: {document['path']} "
+                                   f"({document['sha256']})"),
+        )
+
+    def rg_skill_rm(self):
+        """Remove one site skill."""
+        self._json_call(lambda: self._site_skills().remove(self.kwargs["name"]),
+                        lambda document: print(f"{document['action']}: {document['name']}"))
+
+    def sched_info(self):
+        """Report scheduler partitions, limits, MPI and network facts."""
+        from jarvis_cd.core.sched_info import sched_info
+
+        def text(document):
+            print(f"provider: {document['provider']} host: {document['host']} "
+                  f"in_allocation: {document['in_allocation']}")
+            for part in document["partitions"]:
+                limits = part.get("limits") or {}
+                print(f"  {part['partition']:<14} default={part.get('default')} "
+                      f"idle={part.get('idle_nodes')}/{part.get('total_nodes')} "
+                      f"cpus/node={part.get('cpus_per_node')} max_time={part.get('max_time')} "
+                      f"max_nodes={limits.get('max_nodes')}")
+            mpi = document.get("mpi") or {}
+            for candidate in mpi.get("spack_candidates") or []:
+                print(f"  mpi: {candidate['id']} {candidate['constraint']} {candidate['prefix']}")
+            data = ((document.get("net") or {}).get("effective") or {}).get("data") or {}
+            print(f"  net data: {data.get('cidr')} iface={data.get('interface')}")
+            for skill in document.get("site_skills") or []:
+                print(f"  skill: {skill['name']} {skill.get('description') or ''}")
+            for issue in document["issues"]:
+                print(f"  issue: {issue['kind']}: {issue.get('message')}")
+
+        self._json_call(
+            lambda: sched_info(self.jarvis, self.kwargs.get("provider"),
+                               include_mpi=not self.kwargs.get("no_mpi")),
+            text,
+        )
+
+    def spack_prepare(self):
+        """Prepare the jarvis Spack (upstreams, compilers, externals)."""
+        from jarvis_cd.core.spack_install import load_answers
+        from jarvis_cd.core.spack_site import prepare_site
+
+        def split(value, separator):
+            if value is None:
+                return None
+            if value.strip().lower() == "none":
+                return []
+            return [item.strip() for item in value.split(separator) if item.strip()]
+
+        def text(document):
+            print(f"{document['status']}: {document['root']} (spack {document.get('version')})")
+            for change in document.get("changes") or []:
+                print(f"  changed: {change}")
+            for warning in document.get("warnings") or []:
+                print(f"  warning: {warning}")
+            for issue in document.get("open_issues") or []:
+                print(f"  question: {issue['kind']} {issue['issue_id']}: {issue.get('message')}")
+
+        answers = self.kwargs.get("answers")
+        document = self._json_call(
+            lambda: prepare_site(
+                root=self.kwargs.get("root"),
+                site_spack=self.kwargs.get("site_spack"),
+                spack_version=self.kwargs.get("spack_version"),
+                install_tree=self.kwargs.get("install_tree"),
+                module_paths=split(self.kwargs.get("module_paths"), ":"),
+                build_tools=split(self.kwargs.get("build_tools"), ","),
+                compiler=self.kwargs.get("compiler"),
+                build_jobs=self.kwargs.get("build_jobs"),
+                clone=not self.kwargs.get("no_clone"),
+                answers=load_answers(Path(answers)) if answers else None,
+            ),
+            text,
+        )
+        if document.get("exit_code"):
+            sys.exit(int(document["exit_code"]))
 
     def build_profile(self):
         """Build environment profile"""

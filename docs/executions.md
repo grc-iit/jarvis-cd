@@ -102,9 +102,13 @@ sidecar paths. `ppl run +json` and `ppl submit +json` emit the handle JSON as
 their final line because package and scheduler logs remain visible before it.
 
 `execution service-runtimes +json` returns the latest identity-checked service
-revision for every package-owned instance. See [Execution-owned service
-runtimes](service-runtimes.md) for the package SPI and generic ParaView
-HTTP/SSE command contract.
+revision for every package-owned instance, and `service_endpoints[]`: where
+each ready service actually listens (`host`, `port`, `protocol`, `node`,
+`ready_at`), parsed from the package's ready event even when it was
+configured with port 0. See [Execution-owned service
+runtimes](service-runtimes.md) for the package SPI, the
+[endpoint fields](service-runtimes.md#service-endpoints-the-port-a-service-actually-bound)
+and the generic ParaView HTTP/SSE command contract.
 
 ## Cancelling and stopping
 
@@ -147,7 +151,7 @@ provenance`, `role: provenance`), so `execution artifacts +json` lists it:
 
 | Field | Content |
 |-------|---------|
-| `spack` | From `install-record.json`: `spack_root`, `spack_executable`, `spack_repos`, `env_dir`, `lock` with its recomputed `lock_sha256` (and `lock_sha256_recorded`), `roots`, and per package `spec`, `root_hash`, `lock_hash` and `mpi`. `config_scopes` lists the Spack configuration scopes the run's `spack load` read, lowest precedence first, as `{name, path, exists}`: `defaults` and `site` (`<root>/etc/spack`, each with its platform subdirectory), plus `system` and `user` only when local config is not disabled, then the `command_line` (`-C`) scope. `local_config_disabled` says whether `SPACK_DISABLE_LOCAL_CONFIG` was set. `install_config_scopes` is the list the install recorded, which adds the env manifest as the `environment` scope. Python entry-point scopes are not listed. |
+| `spack` | From `install-record.json`: `spack_root`, `spack_executable`, `spack_repos`, `env_dir`, `lock` with its recomputed `lock_sha256` (and `lock_sha256_recorded`), `roots`, and per package `spec`, `root_hash`, `lock_hash` and `mpi`. `config_scopes` lists the Spack configuration scopes the run's `spack load` read, lowest precedence first, as `{name, path, exists}`: `defaults` and `site` (`<root>/etc/spack`, each with its platform subdirectory), plus `system` and `user` only when local config is not disabled, then the `command_line` (`-C`) scope. `local_config_disabled` says whether `SPACK_DISABLE_LOCAL_CONFIG` was set. `install_config_scopes` is the list the install recorded, which adds the env manifest as the `environment` scope. `site_prep` is the root's [`jarvis spack prepare`](spack.md) summary (record path, time, version, commit, site Spack, upstream tree, chosen compiler, status), or `null`. Python entry-point scopes are not listed. |
 | `mpiexec_realpaths` | `readlink -f` of each MPI launcher used |
 | `binaries` | `readlink -f` of each rank program |
 | `nodes` | `[{hostname, ranks}]` across all launches, from the ranks that actually started |

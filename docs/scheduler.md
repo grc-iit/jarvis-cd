@@ -300,6 +300,15 @@ scheduler's `result`. A move is refused with exit **5** and a
 | `not_scheduler` / `unsupported_provider` | a direct execution, or a provider without a move verb |
 | `scheduler_unavailable` / `scheduler_rejected` | the query failed, or another rejection |
 
+### Site facts before submit (`sched info`)
+
+`jarvis sched info +json` reports the same partition facts for every
+partition, before any job exists: node counts, time and node limits from
+`scontrol show partition -o`, allowed accounts and QoS, the MPI candidates
+an install would offer, the resource graph's network, the site skills, and
+a `spack_missing` issue when JARVIS has no Spack. It runs only light reads,
+so it is safe on a login node. See [sched.md](sched.md).
+
 ## Validation before submit (`ppl check`)
 
 `ppl submit` and `ppl run` first run the same static check as
@@ -435,7 +444,12 @@ runs `jarvis ppl install yaml <runtime>/pipeline.yaml [+check] [--answers …]
 The job exits `3` when it needs a decision, or when `+check` finds packages
 that still need building. The record is then `failed` with `return_code: 3`
 and `metadata.install.phase: needs_decision`. Answer the questions, then
-resubmit with `--answers`.
+resubmit with `--answers`. A job (or a local `+check`) on a host where
+JARVIS finds no Spack at all asks a `spack_missing` question whose
+`site_spacks[]` lists the Spack checkouts it found (see
+[Missing Spack](pipeline_tests.md#missing-spack-spack_missing)). To chain a
+JARVIS Spack to the site's upstreams, compilers and externals first, run
+[`jarvis spack prepare`](spack.md); it never builds.
 
 `ppl run` loads still run the install phase on load, as before. Set
 `JARVIS_INSTALL_ON_LOAD=check` on the submitting process, or in the
@@ -463,6 +477,8 @@ to build is never refused:
 | Command on the submitting host | What runs there |
 |---|---|
 | `ppl install +check` | `spack spec -I` / `spack find` only: allowed |
+| `sched info` | `sinfo`, `scontrol show partition`, `spack find`: allowed |
+| `spack prepare` | config writes, `spack compiler find` / `external find`, a shallow clone when the root is missing; never a build: allowed (run it in a job where even that is too much) |
 | `ppl install +submit` (with or without `+check`) | writes the snapshot and calls `sbatch`: allowed; the build runs in the job |
 | `ppl submit yaml` with `JARVIS_INSTALL_ON_LOAD=check` | `spack spec -I` / `spack find`, then `sbatch`: allowed; exits 3 without submitting when something is missing |
 | `ppl install` (no `+submit`) | refused with exit **4** if anything must be built or the env must be concretized |

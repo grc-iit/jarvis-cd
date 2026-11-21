@@ -15,6 +15,7 @@ from jarvis_cd.core.execution import (
     ExecutionStore,
 )
 from jarvis_cd.core.pkg import Pkg
+from jarvis_cd.service_runtime.endpoints import endpoint_from_runtime_report
 from jarvis_cd.service_runtime import (
     DatasetArray,
     DatasetDescriptor,
@@ -353,6 +354,7 @@ def test_execution_snapshot_is_exact_identity_checked_wire_document(
         "execution_state": "running",
         "terminal": False,
         "service_runtimes": [report.to_dict()],
+        "service_endpoints": [endpoint_from_runtime_report(report, None)],
     }
     assert _RAW_TOKEN not in json.dumps(document)
     assert snapshot.service_runtimes[0].authorization == _AUTHORIZATION

@@ -17,11 +17,14 @@ Jarvis-CD is a unified platform for deploying scientific applications, storage s
 - [Pipeline Tests](pipeline_tests.md) — Automated testing with grid search and parameter sweeps
 - [Execution Handles](executions.md) — Durable direct and scheduler run identities, status records, and JSON queries
 - [Generated Artifacts](artifacts.md) — Durable output manifests, package providers, lifecycle, and location semantics
-- [Service Runtimes](service-runtimes.md) — Durable network-service lifecycle, intrinsic dataset descriptors, and ParaView HTTP/SSE commands
+- [Service Runtimes](service-runtimes.md) — Durable network-service lifecycle, the actual bound port of a ready service (`service_endpoints`), intrinsic dataset descriptors, and ParaView HTTP/SSE commands
 - [Hostfile Configuration](hostfile.md) — Multi-node setup, pattern expansion, IP resolution
 - [Scheduler Integration](scheduler.md) — Submit pipelines as SLURM jobs, automatic hostfile from `$SLURM_JOB_NODELIST`
+- [Site Scheduler Facts](sched.md) — `jarvis sched info`: partitions, limits, MPI candidates and network in one JSON document
+- [Spack Site Preparation](spack.md) — `jarvis spack prepare`: upstreams, compiler preference and externals for the JARVIS Spack
 - [Resource Graph](resource_graph.md) — Storage and network topology discovery
 - [Resource Graph Network](resource-graph-network.md) — `jarvis rg net`: per-flavour MPI launch network from the graph, person overrides, typed `mpi_network` failures
+- [Site Skills](site-skills.md) — `jarvis rg skill`: site notes stored next to the site resource graph
 - [Modules](modules.md) — Manual package installation with environment tracking
 - [Shell Execution](shell.md) — Exec, MPI, SSH, and SCP execution infrastructure
 - [Argument Parsing](argparse.md) — CLI argument parser internals
