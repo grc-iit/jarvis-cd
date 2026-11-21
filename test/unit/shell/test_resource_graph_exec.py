@@ -33,7 +33,7 @@ class TestResourceGraphExec(unittest.TestCase):
         try:
             rg_exec = ResourceGraphExec(exec_info, benchmark=True, duration=30)
             cmd = rg_exec.get_cmd()
-            self.assertIn('jarvis_resource_graph', cmd)
+            self.assertIn('-m jarvis_cd.core.rg_collector', cmd)
             self.assertIn('--duration', cmd)
             self.assertIn('30', cmd)
         except FileNotFoundError:
@@ -45,8 +45,8 @@ class TestResourceGraphExec(unittest.TestCase):
         try:
             rg_exec = ResourceGraphExec(exec_info, benchmark=False, duration=25)
             cmd = rg_exec.get_cmd()
-            self.assertIn('jarvis_resource_graph', cmd)
-            self.assertIn('--no-benchmark', cmd)
+            self.assertIn('-m jarvis_cd.core.rg_collector', cmd)
+            self.assertIn('+no_benchmark', cmd)
         except FileNotFoundError:
             pass  # Expected if script doesn't exist
 

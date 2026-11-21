@@ -161,7 +161,14 @@ class ResourceGraphManager:
         self._net_facts: Dict[str, Dict[str, Any]] = {}
 
         # Collect resources from all nodes in parallel
+        self._collected_hosts: List[str] = []
         self._collect_from_nodes(nodes, benchmark, duration, net_only=net_only)
+        failed_hosts = [host for host in nodes if host not in self._collected_hosts]
+        if failed_hosts:
+            # Never publish a partial graph: a net view built from some nodes
+            # would steer MPI onto a network the others may not reach.
+            self.resource_graph = previous
+            raise self._collect_error(nodes, failed_hosts)
         if self._net_facts:
             self.resource_graph.net = analyze_net(
                 self._net_facts, override=previous_override
@@ -200,8 +207,18 @@ class ResourceGraphManager:
         :param duration: Benchmark duration
         """
 
+        from jarvis_cd.core.rg_collector import collector_command
+
+        cmd = collector_command(net_only=net_only, benchmark=benchmark, duration=duration)
+        self._collect_failures: Dict[str, Dict[str, Any]] = {}
+
+        def tail(text: Any, limit: int = 2000) -> str:
+            text = str(text or "")
+            return text if len(text) <= limit else "…" + text[-limit:]
+
         def collect_from_node(hostname: str) -> Dict[str, Any]:
             """Collect from a single node."""
+            via = "local"
             try:
                 logger.package(f"Collecting resources from {hostname}...")
 
@@ -219,6 +236,7 @@ class ResourceGraphManager:
                 ):
                     exec_info = LocalExecInfo(collect_output=True, hide_output=True)
                 else:
+                    via = "ssh"
                     # Create a temporary hostfile for this specific node
                     from jarvis_cd.util.hostfile import Hostfile
 
@@ -233,16 +251,6 @@ class ResourceGraphManager:
                         hide_output=True,
                     )
 
-                # Build command string
-                cmd_parts = ["jarvis_resource_graph"]
-                if net_only:
-                    cmd_parts.append("+net_only")
-                elif not benchmark:
-                    cmd_parts.append("+no_benchmark")
-                if duration != 25 and not net_only:
-                    cmd_parts.extend(["--duration", str(duration)])
-                cmd = " ".join(cmd_parts)
-
                 logger.debug(f"Command to execute: {cmd}")
 
                 # Execute resource collection based on execution type
@@ -254,26 +262,40 @@ class ResourceGraphManager:
                     executor = Exec(cmd, exec_info)
                     executor.run()
 
-                # Get results
-                exit_codes = executor.exit_code
+                # Results are keyed by the host, or "localhost" for LocalExec.
+                key = hostname if hostname in executor.exit_code else "localhost"
+                exit_code = executor.exit_code.get(key, 1)
+                stderr = executor.stderr.get(key, "")
 
-                logger.debug(f"Exit codes: {exit_codes}")
+                logger.debug(f"Exit codes: {executor.exit_code}")
                 logger.debug(f"Stdout: {executor.stdout}")
                 logger.debug(f"Stderr: {executor.stderr}")
 
-                # Check for errors
-                if exit_codes.get(hostname, 1) != 0:
-                    error_msg = executor.stderr.get(hostname, "Unknown error")
-                    logger.error(f"Failed to collect from {hostname}: {error_msg}")
+                def failed(reason: str) -> None:
+                    self._collect_failures[hostname] = {
+                        "host": hostname,
+                        "via": via,
+                        "reason": reason,
+                        "exit_code": exit_code,
+                        "stderr": tail(stderr),
+                        "command": cmd,
+                    }
+                    logger.error(f"Failed to collect from {hostname}: {reason}: {tail(stderr, 400)}")
+
+                if exit_code != 0:
+                    failed("collector exited non-zero")
                     return None
 
                 # Parse JSON output
-                json_output = executor.stdout.get(hostname, "")
+                json_output = executor.stdout.get(key, "")
                 if not json_output.strip():
-                    logger.error(f"No output from {hostname}")
+                    failed("collector printed nothing")
                     return None
-
-                resource_data = json.loads(json_output)
+                try:
+                    resource_data = json.loads(json_output)
+                except ValueError as error:
+                    failed(f"collector output is not JSON: {error}")
+                    return None
                 logger.package(
                     f"Collected {len(resource_data.get('fs', []))} storage devices from {hostname}"
                 )
@@ -281,6 +303,14 @@ class ResourceGraphManager:
                 return resource_data
 
             except Exception as e:
+                self._collect_failures[hostname] = {
+                    "host": hostname,
+                    "via": via,
+                    "reason": f"error running the collector: {e}",
+                    "exit_code": None,
+                    "stderr": "",
+                    "command": cmd,
+                }
                 logger.error(f"Error collecting from {hostname}: {e}")
                 return None
 
@@ -300,6 +330,7 @@ class ResourceGraphManager:
                 try:
                     resource_data = future.result()
                     if resource_data:
+                        self._collected_hosts.append(hostname)
                         net_facts = resource_data.pop("net", None)
                         if isinstance(net_facts, dict):
                             self._net_facts[hostname] = net_facts
@@ -311,7 +342,68 @@ class ResourceGraphManager:
                         logger.warning(f"No resource data collected from {hostname}")
 
                 except Exception as e:
+                    self._collect_failures.setdefault(
+                        hostname,
+                        {
+                            "host": hostname,
+                            "via": None,
+                            "reason": f"error processing the collector output: {e}",
+                            "exit_code": None,
+                            "stderr": "",
+                            "command": cmd,
+                        },
+                    )
                     logger.error(f"Exception processing {hostname}: {e}")
+
+    def _collect_error(self, nodes: List[str], failed_hosts: List[str]):
+        """The typed error for a collection that missed some or all nodes."""
+        from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
+
+        failures = [
+            self._collect_failures.get(
+                host,
+                {"host": host, "via": None, "reason": "no data returned"},
+            )
+            for host in failed_hosts
+        ]
+        collected = [host for host in nodes if host in self._collected_hosts]
+        partial = bool(collected)
+        kind = "resource_graph_collect_partial" if partial else "resource_graph_collect_failed"
+        if partial:
+            message = (
+                f"The resource graph collector failed on {len(failed_hosts)} of "
+                f"{len(nodes)} nodes ({', '.join(failed_hosts)}); the graph was "
+                "not changed."
+            )
+        else:
+            message = (
+                f"The resource graph collector returned no data from any of the "
+                f"{len(nodes)} nodes; the graph was not changed."
+            )
+        stderr = "; ".join(
+            f"{item['host']}: {str(item.get('stderr') or item.get('reason')).strip()[:200]}"
+            for item in failures
+        )
+        if stderr:
+            message += f" Per-host errors: {stderr}"
+        issue = make_jarvis_issue(
+            kind=kind,
+            subject="resource graph collection",
+            message=message,
+            identity={"nodes": sorted(nodes), "failed_hosts": sorted(failed_hosts)},
+            field="resource_graph.net",
+            details={
+                "nodes": list(nodes),
+                "collected_hosts": collected,
+                "failed_hosts": failures,
+            },
+            remedy=(
+                "Check that the JARVIS install is on a filesystem every node "
+                "mounts and that ssh to each failed host works, then submit "
+                "builtin.resource_graph again"
+            ),
+        )
+        return JarvisIssueError([issue])
 
     def _save(self):
         """Save resource graph through the configured JARVIS state boundary."""

@@ -46,11 +46,44 @@ JARVIS_RESOURCE_GRAPH=/site/jarvis/resource_graph.yaml \
 
 Inside an allocation you can also run `jarvis rg build +net_only` directly.
 `+net_only` collects only interfaces and keeps the stored storage view. A
-full `jarvis rg build` collects both. Each node runs
-`jarvis_resource_graph +net_only` over SSH and reports its hostname, its
+full `jarvis rg build` collects both. Each node reports its hostname, its
 hostname addresses (`control_addrs`), and per IPv4 interface: `name`, `addr`,
 `cidr`, `state`, `speed_mbps`, `kind`, `rdma_device`, `rdma_port_state` and
 `ucx_device`.
+
+### How the collector runs on each node
+
+JARVIS runs the collector locally on its own host and over SSH on every
+other host, with the absolute interpreter of the running install:
+
+```bash
+env PYTHONPATH=<site-packages that holds jarvis_cd> <abs sys.executable> \
+  -m jarvis_cd.core.rg_collector +net_only
+```
+
+It does not depend on `PATH`, so a venv, pipx or module install that is called
+by path works, even though SSH forwards no environment. The install has to be
+on a filesystem every node mounts at the same path. `jarvis_resource_graph`
+is a thin wrapper around the same module and can still be run by hand.
+
+### Collection failures
+
+`jarvis rg build` and `builtin.resource_graph` fail when any host returns no
+data. They never save a graph built from some of the nodes, because a partial
+`net` view could steer MPI onto a network the other nodes don't reach. The
+previous graph stays active. The failure is a `jarvis.issue.v1` (exit 5 for
+`rg build +json`). For a submitted package, it is in the failed execution
+record's `metadata.issues` (`jarvis execution get <id> +json`):
+
+| `kind` | When |
+| --- | --- |
+| `resource_graph_collect_failed` | no host returned data |
+| `resource_graph_collect_partial` | some hosts returned data and others did not |
+
+Both use `field: resource_graph.net`. `details.collected_hosts` lists the
+hosts that answered. Each entry of `details.failed_hosts` has `host`, `via`
+(`local` or `ssh`), `reason`, `exit_code`, the tail of `stderr`, and the
+`command` that was run.
 
 ## The `net` section (`jarvis.resource-graph.net.v1`)
 

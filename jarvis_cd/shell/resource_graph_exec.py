@@ -24,30 +24,14 @@ class ResourceGraphExec(CoreExec):
         self.exec_info = exec_info
         self.benchmark = benchmark
         self.duration = duration
-        
-        # Find the resource graph script
-        # Look for it in the bin directory relative to this module
-        current_dir = Path(__file__).parent
-        project_root = current_dir.parent.parent
-        self.script_path = project_root / 'bin' / 'jarvis_resource_graph'
-        
-        if not self.script_path.exists():
-            raise FileNotFoundError(f"Resource graph script not found at {self.script_path}")
-            
         # Build command
         self._build_command()
         
     def _build_command(self):
         """Build the command to execute."""
-        cmd_parts = [str(self.script_path)]
-        
-        if not self.benchmark:
-            cmd_parts.append('--no-benchmark')
-            
-        if self.duration != 25:
-            cmd_parts.extend(['--duration', str(self.duration)])
-            
-        self.cmd = ' '.join(cmd_parts)
+        from jarvis_cd.core.rg_collector import collector_command
+
+        self.cmd = collector_command(benchmark=self.benchmark, duration=self.duration)
         
     def get_cmd(self) -> str:
         """Get the command string."""

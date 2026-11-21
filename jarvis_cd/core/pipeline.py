@@ -3595,11 +3595,25 @@ class Pipeline:
     def _launch_failure_issues(
         execution_root: Path, error: BaseException
     ) -> Optional[Dict[str, Any]]:
-        """Classify a failed run's MPI network signature as a typed issue.
+        """Collect the typed issues of a failed run for its execution record.
 
-        Reads the error and the tail of the execution's logs; the issue names
-        ``resource_graph.net.override`` as the field to change.
+        A ``JarvisIssueError`` raised by a package (anywhere in the cause
+        chain) contributes its issues as-is. Otherwise the error and the tail
+        of the execution's logs are classified for an MPI network signature;
+        that issue names ``resource_graph.net.override`` as the field to change.
         """
+        from jarvis_cd.core.issues import JarvisIssueError
+
+        raised: List[Dict[str, Any]] = []
+        seen: set = set()
+        current: Optional[BaseException] = error
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            if isinstance(current, JarvisIssueError):
+                raised.extend(dict(issue) for issue in current.issues)
+            current = current.__cause__ or current.__context__
+        if raised:
+            return {"issues": raised}
         try:
             from jarvis_cd.util.network import classify_mpi_network_failure
 

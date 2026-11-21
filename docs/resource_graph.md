@@ -81,12 +81,12 @@ localhost
 
 ### Collection Process
 
-1. **Parallel Collection**: Resource data is collected from all nodes simultaneously
+1. **Parallel Collection**: Resource data is collected from all nodes simultaneously. Each node runs `<python> -m jarvis_cd.core.rg_collector`, where `<python>` is the absolute interpreter of the running JARVIS, so the collector doesn't have to be on `PATH` (see [How the collector runs on each node](resource-graph-network.md#how-the-collector-runs-on-each-node))
 2. **Storage Discovery**: Identifies mounted filesystems accessible to the current user
 3. **Device Analysis**: Determines device type, model, and capacity
 4. **Performance Benchmarking**: Measures I/O performance (optional)
 5. **Common Storage Analysis**: Identifies shared mount points across nodes
-6. **Persistent Storage**: Saves results to `~/.ppi-jarvis/resource_graph.yaml`, or to `$JARVIS_RESOURCE_GRAPH` when it is set
+6. **Persistent Storage**: Saves results to `~/.ppi-jarvis/resource_graph.yaml`, or to `$JARVIS_RESOURCE_GRAPH` when it is set. If any node returns no data, nothing is saved and the build fails with a typed issue (`resource_graph_collect_failed` or `resource_graph_collect_partial`, see [Collection failures](resource-graph-network.md#collection-failures))
 
 ## Querying Storage Devices
 

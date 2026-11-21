@@ -349,6 +349,10 @@ def _jarvis_section() -> Dict[str, Any]:
     except Exception:
         jarvis_version = None
     command = shutil.which("jarvis")
+    if command is None:
+        # A venv or pipx install called by path has its bin dir off PATH.
+        sibling = Path(os.path.abspath(sys.executable)).parent / "jarvis"
+        command = str(sibling) if sibling.is_file() else None
     return {
         "version": jarvis_version,
         "package": os.path.realpath(str(Path(__file__).resolve().parents[1])),
