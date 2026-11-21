@@ -31,6 +31,7 @@ import posixpath
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -41,6 +42,8 @@ from pathlib import Path
 from typing import IO, Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 import yaml
+
+from jarvis_cd.core.issues import JarvisIssueError
 
 
 ISSUE_SCHEMA = "jarvis.install-issue.v1"
@@ -186,6 +189,41 @@ class BuildOutsideAllocation(RuntimeError):
             "exit_code": self.exit_code,
             "message": str(self),
         }
+
+
+#: exit status of ``jarvis`` when an install ran and Spack failed. The typed
+#: failure (``compiler_unavailable``, ``fetch_failed``, ``build_failed``, …)
+#: is in ``issues.jsonl`` and the report's ``issues[]``.
+INSTALL_FAILED_EXIT_CODE = 6
+
+
+class InstallFailed(JarvisIssueError):
+    """``spack install`` (or the env concretize) failed; ``issues`` say why."""
+
+    def __init__(
+        self,
+        issues: Sequence[Mapping[str, Any]],
+        issues_path: Path,
+        report: Optional[Mapping[str, Any]] = None,
+    ):
+        super().__init__(issues, exit_code=INSTALL_FAILED_EXIT_CODE)
+        self.issues_path = Path(issues_path)
+        self.report = dict(report) if report is not None else None
+
+    def to_dict(self) -> Dict[str, Any]:
+        document: Dict[str, Any] = dict(self.report or {})
+        document.setdefault("schema_version", REPORT_SCHEMA)
+        document["satisfied"] = False
+        issues = list(document.get("issues") or self.issues)
+        document.update(
+            failed=True,
+            exit_code=self.exit_code,
+            failures=[issue.get("issue_id") for issue in self.issues],
+            issues=issues,
+            open_issues=[issue.get("issue_id") for issue in issues],
+            issues_path=str(self.issues_path),
+        )
+        return document
 
 
 # ---------------------------------------------------------------------------
@@ -702,6 +740,611 @@ def _error_excerpt(output: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Typed install failures
+# ---------------------------------------------------------------------------
+
+_COMPILER_ACCESS = re.compile(
+    r"CompilerAccessError: Compiler '(?P<spec>[^']+)' has executables that are "
+    r"missing or are not executable: \[(?P<paths>[^\]]*)\]"
+)
+_INSTALLING = re.compile(r"==> Installing (?P<node>\S+)")
+_BUILD_LOG = re.compile(r"See build log for details:\s*\n\s*(?P<path>/\S+)")
+_FETCH_FAILURE = re.compile(
+    r"FetchError|All fetchers failed|Failed to fetch|Manual download is required|"
+    r"ChecksumError|NoDigestError|Could not resolve host",
+    re.IGNORECASE,
+)
+_BUILD_FAILURE = re.compile(
+    r"ProcessError|InstallError|BuildError|Command exited with status|"
+    r"failed to install|build failed",
+    re.IGNORECASE,
+)
+
+
+def _log_tail(text: str, lines: int = 40) -> str:
+    return _bounded("\n".join(text.splitlines()[-lines:]), 4096)
+
+
+def compiler_question_candidates(
+    usable: Sequence[Mapping[str, Any]],
+) -> List[Dict[str, Any]]:
+    """``compiler_unavailable`` candidates: the build host's usable compilers,
+    full toolchains (cc, cxx and fc) first."""
+    ordered = sorted(usable, key=lambda item: not item.get("full"))
+    return [
+        {
+            "id": f"compiler-{index + 1}",
+            "constraint": item["spec"],
+            "full": bool(item.get("full")),
+            **{lang: (item.get("paths") or {}).get(lang) for lang in ("cc", "cxx", "fc")},
+        }
+        for index, item in enumerate(ordered)
+    ]
+
+
+def compiler_unavailable_issue(
+    compiler: str,
+    missing: Sequence[str],
+    *,
+    host: str,
+    usable: Sequence[Mapping[str, Any]],
+    origin: str,
+    evidence: Sequence[str] = (),
+) -> Dict[str, Any]:
+    """The ``compiler_unavailable`` question (site scope, ``subject: compiler``).
+
+    Its ``issue_id`` digests only the usable candidate set, so the answer (a
+    usable compiler, applied as a binding ``require``) is replayed while the
+    build hosts offer the same compilers.
+    """
+    candidates = compiler_question_candidates(usable)
+    missing_text = ", ".join(missing) or "not configured"
+    issue = make_issue(
+        kind="compiler_unavailable",
+        package="*",
+        subject="compiler",
+        scope="site",
+        question=(
+            f"Compiler {compiler} cannot run on the build host {host} "
+            f"(missing or not executable: {missing_text}). Which compiler "
+            "should builds use?"
+        ),
+        candidates=candidates,
+        detail=f"{compiler}: {missing_text}",
+        evidence=list(evidence),
+        answerable=bool(candidates),
+        hint=(
+            "answer with one of the candidates; it becomes a binding "
+            "packages:all:require for every build"
+            if candidates
+            else "make a compiler available on the build nodes (module or "
+            "path) and re-run `jarvis spack prepare` inside a job"
+        ),
+    )
+    issue.update(
+        message=issue["question"],
+        compiler=compiler,
+        host=host,
+        missing_executables=list(missing),
+        usable_compilers=[item["constraint"] for item in candidates],
+        origin=origin,
+        field="compiler",
+        remedy=(
+            "answer this issue with a usable compiler (answers.json), or run "
+            "`jarvis spack prepare --compiler <spec>` with a compiler the build "
+            "nodes have"
+        ),
+    )
+    return issue
+
+
+def classify_install_failure(
+    output: str,
+    *,
+    stage: str,
+    packages: Sequence[str],
+    usable_compilers: Sequence[Mapping[str, Any]] = (),
+    log_path: Optional[Path] = None,
+    command: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Map a failed ``spack install``/``concretize`` to one typed issue.
+
+    ``compiler_unavailable`` (``CompilerAccessError``), ``fetch_failed``,
+    ``build_failed``, a concretize kind (``variant_conflict``, ``no_recipe``,
+    ``concretize_failed``) for ``stage='concretize'``, else
+    ``install_failed``. Every one carries ``host``, ``stage``,
+    ``failed_node`` (the last ``==> Installing`` line), ``log`` and
+    ``log_tail``.
+    """
+    host = socket.gethostname()
+    node = None
+    for match in _INSTALLING.finditer(output):
+        node = match.group("node")
+    package = packages[0] if len(packages) == 1 else "*"
+    excerpt = _error_excerpt(output)
+    evidence = [item for item in (command, f"log: {log_path}" if log_path else None) if item]
+    access = _COMPILER_ACCESS.search(output)
+    if access is not None:
+        compiler = access.group("spec").replace("@=", "@")
+        missing = re.findall(r"'([^']+)'", access.group("paths"))
+        # Spack could not run it here, whatever the earlier check found.
+        usable = [item for item in usable_compilers
+                  if not _same_compiler(str(item.get("spec")), compiler)]
+        issue = compiler_unavailable_issue(
+            compiler, missing, host=host, usable=usable,
+            origin=f"spack {stage}", evidence=evidence,
+        )
+    else:
+        if stage == "concretize":
+            kind = classify_concretize_failure(output)
+            question = f"Spack could not concretize the environment for {', '.join(packages)}."
+            remedy = "answer with a spec constraint, or change install_query"
+        elif _FETCH_FAILURE.search(output):
+            kind = "fetch_failed"
+            question = f"Spack could not download sources while installing {', '.join(packages)}."
+            remedy = ("check the build node's network/proxy, or put the source in a "
+                      "Spack mirror and re-run")
+        elif _BUILD_FAILURE.search(output):
+            kind = "build_failed"
+            question = f"A Spack build failed while installing {', '.join(packages)}."
+            remedy = "read build_log; change the spec (variants, versions) or fix the recipe"
+        else:
+            kind = "install_failed"
+            question = f"spack {stage} failed for {', '.join(packages)}."
+            remedy = "read log_tail and install.log"
+        issue = make_issue(
+            kind=kind,
+            package=package,
+            subject=node or ", ".join(packages),
+            scope="package",
+            question=question,
+            detail=excerpt,
+            evidence=evidence,
+            answerable=kind in ("variant_conflict", "concretize_failed"),
+        )
+        issue.update(message=question, remedy=remedy)
+    build_log = _BUILD_LOG.search(output)
+    issue.update(
+        stage=stage,
+        packages=list(packages),
+        failed_node=node,
+        log=str(log_path) if log_path else None,
+        log_tail=_log_tail(output),
+    )
+    if build_log is not None:
+        issue["build_log"] = build_log.group("path")
+    if "host" not in issue:
+        issue["host"] = host
+    return issue
+
+
+# ---------------------------------------------------------------------------
+# Compilers on the build host
+# ---------------------------------------------------------------------------
+
+BUILD_COMPILERS_SCHEMA = "jarvis.build-compilers.v1"
+BUILD_COMPILERS_NAME = "build-compilers.json"
+#: ``spack -C`` scope (under the install dir) with the compiler exclusion
+#: and the binding compiler ``require``
+COMPILER_SCOPE_NAME = "spack-compiler-scope"
+#: site-prep compiler sources that are a person's choice, hence binding
+BINDING_COMPILER_SOURCES = ("person", "answer", "person_earlier")
+_COMPILER_PACKAGES = ("gcc", "llvm", "intel-oneapi-compilers", "aocc")
+_COMPILER_LANGUAGES = ("cc", "cxx", "f77", "fc")
+
+
+def _executable_problem(path: str) -> Optional[str]:
+    text = str(path)
+    if not os.path.isabs(text):
+        return None if shutil.which(text) else "not on PATH"
+    if not os.path.exists(text):
+        return "missing"
+    if not os.path.isfile(text) or not os.access(text, os.X_OK):
+        return "not executable"
+    return None
+
+
+def configured_compilers(runner: "SpackRunner") -> List[Dict[str, Any]]:
+    """Compilers the Spack config lists: ``compilers:`` (0.x) or the compiler
+    externals in ``packages:`` (1.x), each with its raw config ``entry``."""
+    found: List[Dict[str, Any]] = []
+    completed = runner.run(["config", "get", "compilers"])
+    loaded = yaml.safe_load(completed.stdout or "") if completed.returncode == 0 else None
+    entries = loaded.get("compilers") if isinstance(loaded, Mapping) else None
+    for entry in entries or []:
+        compiler = entry.get("compiler") if isinstance(entry, Mapping) else None
+        if not isinstance(compiler, Mapping) or not compiler.get("spec"):
+            continue
+        paths = compiler.get("paths") or {}
+        found.append({
+            "spec": str(compiler["spec"]).replace("@=", "@"),
+            "paths": {lang: str(paths[lang]) for lang in _COMPILER_LANGUAGES
+                      if paths.get(lang)},
+            "modules": [str(item) for item in compiler.get("modules") or []],
+            "source": "compilers",
+            "entry": json.loads(json.dumps(entry, default=str)),
+        })
+    if found:
+        return found
+    completed = runner.run(["config", "get", "packages"])
+    loaded = yaml.safe_load(completed.stdout or "") if completed.returncode == 0 else None
+    packages = loaded.get("packages") if isinstance(loaded, Mapping) else None
+    for name in _COMPILER_PACKAGES:
+        settings = (packages or {}).get(name) or {}
+        for item in settings.get("externals") or []:
+            if not isinstance(item, Mapping) or not item.get("spec"):
+                continue
+            attributes = (item.get("extra_attributes") or {}).get("compilers") or {}
+            paths = {"cc": attributes.get("c"), "cxx": attributes.get("cxx"),
+                     "fc": attributes.get("fortran")}
+            found.append({
+                "spec": str(item["spec"]).split()[0].replace("@=", "@"),
+                "paths": {lang: str(path) for lang, path in paths.items() if path},
+                "modules": [str(module) for module in item.get("modules") or []],
+                "source": f"packages:{name}",
+                "entry": json.loads(json.dumps(item, default=str)),
+            })
+    return found
+
+
+def verify_compilers(compilers: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+    """Check every compiler's executables on this host, as Spack's
+    ``CompilerAccessError`` would (each configured path must be executable).
+
+    A compiler loaded through ``modules`` is not checked (its paths exist
+    only after the module load) and counts as usable.
+    """
+    checked: List[Dict[str, Any]] = []
+    for compiler in compilers:
+        item = dict(compiler)
+        paths = item.get("paths") or {}
+        item["full"] = all(paths.get(lang) for lang in ("cc", "cxx", "fc"))
+        if item.get("modules"):
+            item.update(verified=False, usable=True, missing=[],
+                        note="loaded by modules; not checked")
+        else:
+            problems = {path: _executable_problem(path) for path in paths.values()}
+            item["missing"] = [path for path, problem in problems.items() if problem]
+            item["problems"] = {path: problem for path, problem in problems.items()
+                                if problem}
+            item.update(verified=True, usable=not item["missing"])
+        checked.append(item)
+    return {
+        "schema_version": BUILD_COMPILERS_SCHEMA,
+        "host": socket.gethostname(),
+        "checked_at": _utc_now(),
+        "allocation": current_allocation(),
+        "compilers": checked,
+        "usable": [item["spec"] for item in checked if item["usable"]],
+        "unusable": [
+            {"spec": item["spec"], "missing": item["missing"]}
+            for item in checked if not item["usable"]
+        ],
+    }
+
+
+def find_compiler(
+    compilers: Sequence[Mapping[str, Any]], request: str
+) -> Optional[Mapping[str, Any]]:
+    """The compiler ``request`` (``gcc@11.4.0``, ``gcc@11``, ``gcc``) names;
+    a usable one first."""
+    name, _, version = request.replace("@=", "@").lstrip("%").partition("@")
+    found = [
+        item for item in compilers
+        if item["spec"].split("@")[0] == name
+        and (not version or item["spec"].partition("@")[2].startswith(version))
+    ]
+    found.sort(key=lambda item: not item.get("usable"))
+    return found[0] if found else None
+
+
+_NODE_COMPILER = re.compile(
+    r"%(?:\[[^\]]*\]\s*)?(?:[a-z]+(?:,[a-z]+)*=)?"
+    r"(?P<spec>[a-z][a-z0-9_-]*@=?[0-9][A-Za-z0-9._-]*)"
+)
+
+
+def node_compiler(spec: str) -> Optional[str]:
+    """The compiler (``gcc@12.3.0``) a ``spack spec`` node line names."""
+    match = _NODE_COMPILER.search(spec)
+    return match.group("spec").replace("@=", "@") if match else None
+
+
+def _same_compiler(found: Optional[str], spec: str) -> bool:
+    return bool(found) and (found == spec or found.startswith(spec + "."))
+
+
+def unusable_compiler_issue(
+    nodes: Sequence["SpecNode"],
+    *,
+    unusable: Sequence[Mapping[str, Any]],
+    usable: Sequence[Mapping[str, Any]],
+    host: str,
+    origin: str,
+    evidence: Sequence[str] = (),
+) -> Optional[Dict[str, Any]]:
+    """``compiler_unavailable`` when a node to build uses a compiler the
+    build host cannot run, or ``None``.
+
+    ``to_build`` lists those nodes; ``reused_specs`` lists the installed and
+    upstream nodes built with that compiler (often ``gcc-runtime`` and the
+    libraries that pulled the rest of the DAG onto it).
+    """
+    bad = {str(item["spec"]): item for item in unusable}
+
+    def hit(node: "SpecNode") -> Optional[str]:
+        found = node_compiler(node.spec)
+        return next((spec for spec in bad if _same_compiler(found, spec)), None)
+
+    to_build = [(node, hit(node)) for node in nodes if not node.present]
+    to_build = [(node, spec) for node, spec in to_build if spec]
+    if not to_build:
+        return None
+    compiler = to_build[0][1]
+    reused = [node for node in nodes if node.present and hit(node)]
+    issue = compiler_unavailable_issue(
+        compiler, list(bad[compiler].get("missing") or []), host=host,
+        usable=usable, origin=origin, evidence=evidence,
+    )
+    names = ", ".join(sorted({node.name for node in reused})) or "none"
+    issue["message"] = (
+        f"{issue['question']} {len(to_build)} node(s) would be built with "
+        f"{compiler}; reused specs built with it: {names}."
+    )
+    issue["to_build"] = [
+        {**node.to_dict(), "compiler": spec} for node, spec in to_build[:64]
+    ]
+    issue["reused_specs"] = [
+        {**node.to_dict(), "compiler": node_compiler(node.spec)} for node in reused[:64]
+    ]
+    return issue
+
+
+def reuse_filters_supported(spack_version: Optional[str]) -> bool:
+    """``concretizer:reuse:from`` with ``exclude`` exists from Spack 0.22."""
+    if not spack_version:
+        return True
+    parts = [int(part) for part in re.findall(r"\d+", spack_version)[:2]]
+    return len(parts) < 2 or tuple(parts) >= (0, 22)
+
+
+def compiler_requirement(spec: str, spack_version: Optional[str]) -> List[str]:
+    """``packages:all:require`` entries that bind every build to ``spec``."""
+    if spack_version and spack_version.split(".")[0].isdigit() and int(spack_version.split(".")[0]) >= 1:
+        return [f"%[when=%c] c={spec}", f"%[when=%cxx] cxx={spec}"]
+    return [f"%{spec}"]
+
+
+def compiler_scope_sections(
+    document: Mapping[str, Any],
+    required: Optional[str],
+    spack_version: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Config sections that keep unusable compilers out and bind ``required``.
+
+    Keys ending in ``:`` are Spack overrides (``compilers::``), so lower
+    scopes (the site's ``compilers.yaml``) cannot add the unusable compilers
+    back. Installed and upstream specs built with an unusable compiler are
+    not reused either (``concretizer:reuse:from`` excludes
+    ``%<compiler>``): reusing one (``gcc-runtime``, a library) would pull the
+    new builds of its DAG onto that compiler. They are rebuilt instead.
+    """
+    compilers = list(document.get("compilers") or [])
+    usable = [item for item in compilers if item.get("usable")]
+    unusable = [item for item in compilers if not item.get("usable")]
+    sections: Dict[str, Any] = {}
+    if unusable and reuse_filters_supported(spack_version):
+        exclude = [f"%{item['spec']}" for item in unusable]
+        sections["concretizer"] = {
+            "reuse:": {
+                "roots": True,
+                "from": [
+                    {"type": "local", "exclude": list(exclude)},
+                    {"type": "buildcache", "exclude": list(exclude)},
+                    {"type": "external"},
+                ],
+            }
+        }
+    if unusable and usable:
+        if any(item["source"] == "compilers" for item in unusable):
+            sections["compilers:"] = [
+                item["entry"] for item in usable if item["source"] == "compilers"
+            ]
+        for name in sorted({
+            item["source"].split(":", 1)[1]
+            for item in unusable if item["source"].startswith("packages:")
+        }):
+            sections.setdefault("packages", {})[name] = {
+                "externals:": [
+                    item["entry"] for item in usable
+                    if item["source"] == f"packages:{name}"
+                ]
+            }
+    if required:
+        sections.setdefault("packages", {}).setdefault("all", {})["require:"] = (
+            compiler_requirement(required, spack_version)
+        )
+    return sections
+
+
+def write_compiler_scope(scope_dir: Path, sections: Mapping[str, Any]) -> Path:
+    """A ``spack -C`` scope holding ``sections`` (``compilers.yaml``,
+    ``packages.yaml``, ``concretizer.yaml``); files for absent sections are
+    removed."""
+    scope_dir.mkdir(parents=True, exist_ok=True)
+    files = {
+        f"{name}.yaml": {key: value for key, value in sections.items()
+                         if key.rstrip(":") == name}
+        for name in ("compilers", "packages", "concretizer")
+    }
+    for name, content in files.items():
+        path = scope_dir / name
+        if content:
+            text = yaml.safe_dump(content, sort_keys=True)
+            try:
+                current = path.read_text(encoding="utf-8")
+            except OSError:
+                current = None
+            if current != text:
+                _atomic_write_text(path, text)
+        elif path.exists():
+            path.unlink()
+    return scope_dir
+
+
+def _site_build_compilers_path() -> Optional[Path]:
+    root = explicit_spack_root()
+    return Path(root) / "var" / "jarvis" / BUILD_COMPILERS_NAME if root else None
+
+
+def apply_build_compilers(
+    planner: "SpackPlanner",
+    context: "InstallContext",
+    record: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Verify the compilers where the build runs; keep unusable ones out.
+
+    In install mode the compilers are checked on this host (the build job's
+    node) and the result is written to ``<install>/build-compilers.json`` and
+    ``<JARVIS_SPACK_ROOT>/var/jarvis/build-compilers.json``. A check (on a
+    login node) reuses that last build-host result instead of trusting the
+    login node's compilers. The binding compiler is a person's choice: the
+    site prep's ``--compiler``/``ambiguous_compiler`` answer, or an answer to
+    ``compiler_unavailable``. Returns ``{"sections", "blocked"}``: ``blocked``
+    is the ``compiler_unavailable`` issue to raise if anything must be built.
+    """
+    state: Dict[str, Any] = {"sections": {}, "blocked": None}
+    document: Optional[Dict[str, Any]] = None
+    if context.mode == "install":
+        document = verify_compilers(configured_compilers(planner.runner))
+        document["source"] = "verified"
+        text = json.dumps(document, indent=2, sort_keys=True) + "\n"
+        _atomic_write_text(context.install_dir / BUILD_COMPILERS_NAME, text)
+        site_path = _site_build_compilers_path()
+        if site_path is not None:
+            try:
+                _atomic_write_text(site_path, text)
+            except OSError as error:
+                context.log(f"WARNING: could not write {site_path}: {error}\n")
+    else:
+        site_path = _site_build_compilers_path()
+        try:
+            document = json.loads(site_path.read_text(encoding="utf-8")) if site_path else None
+            document["source"] = "recorded"
+            document["path"] = str(site_path)
+        except (OSError, ValueError, TypeError):
+            document = None
+    if document is None:
+        record["build_compilers"] = {"source": None}
+        return state
+    compilers = document.get("compilers") or []
+    usable = [item for item in compilers if item.get("usable")]
+    planner.usable_compilers = [dict(item) for item in usable]
+    planner.unusable_compilers = [
+        {"spec": item["spec"], "missing": list(item.get("missing") or [])}
+        for item in compilers if not item.get("usable")
+    ]
+    planner.build_host = str(document.get("host"))
+    site = record.get("spack_site_prep") or {}
+    required: Optional[str] = None
+    required_source: Optional[str] = None
+    if site.get("compiler") and site.get("compiler_source") in BINDING_COMPILER_SOURCES:
+        required, required_source = str(site["compiler"]), f"site_prep:{site['compiler_source']}"
+    question = compiler_unavailable_issue(
+        "?", [], host=str(document.get("host")), usable=usable, origin="replay"
+    ) if usable else None
+    recorded = planner.decisions.site("compiler")
+    if recorded is not None and recorded.get("kind") != "compiler_unavailable":
+        recorded = None
+    if recorded is not None:
+        if (question is not None and recorded.get("issue_id") == question["issue_id"]
+                and find_compiler(usable, str(recorded.get("constraint")))):
+            required, required_source = str(recorded["constraint"]), "decisions_file"
+            context.note_decision(question, recorded, source="decisions_file",
+                                  path=planner.decisions.path)
+        else:
+            stale = {
+                "issue_id": recorded.get("issue_id"),
+                "subject": "compiler",
+                "scope": "site",
+                "constraint": recorded.get("constraint"),
+                "path": str(planner.decisions.path),
+                "answered_at": recorded.get("answered_at"),
+                "superseded_by": question["issue_id"] if question else None,
+                "reason": "the build host's usable compilers changed",
+            }
+            if stale not in context.stale_decisions:
+                context.stale_decisions.append(stale)
+    if question is not None:
+        answer = context.answer_for(question)
+        if answer is not None and find_compiler(usable, str(answer["constraint"])):
+            planner.decisions.record(question, answer)
+            required, required_source = str(answer["constraint"]), "answers_file"
+    if required:
+        chosen = find_compiler(compilers, required)
+        if chosen is None or not chosen.get("usable"):
+            issue = compiler_unavailable_issue(
+                required,
+                list(chosen.get("missing") or []) if chosen else [],
+                host=str(document.get("host")),
+                usable=usable,
+                origin=f"build host check ({document['source']})",
+                evidence=["spack config get compilers",
+                          str(context.install_dir / BUILD_COMPILERS_NAME)],
+            )
+            if recorded is not None and recorded.get("issue_id") == issue["issue_id"]:
+                issue["previous_answer"] = recorded.get("constraint")
+            answer = context.answer_for(issue)
+            if answer is not None:
+                planner.decisions.record(issue, answer)
+                required, required_source = str(answer["constraint"]), "answers_file"
+            else:
+                state["blocked"] = issue
+                required = None
+    root = explicit_spack_root()
+    sections = compiler_scope_sections(
+        document, required, spack_checkout_version(Path(root)) if root else None
+    )
+    scope = None
+    if sections or (context.install_dir / COMPILER_SCOPE_NAME).exists():
+        scope = write_compiler_scope(context.install_dir / COMPILER_SCOPE_NAME, sections)
+    if sections:
+        planner.runner.config_scopes.append(str(scope))
+    state["sections"] = sections
+    excluding = "compilers:" in sections or any(
+        "externals:" in value for value in sections.get("packages", {}).values()
+    )
+    record["build_compilers"] = {
+        "source": document["source"],
+        "host": document.get("host"),
+        "checked_at": document.get("checked_at"),
+        "allocation": document.get("allocation"),
+        "usable": [item["spec"] for item in usable],
+        "unusable": [
+            {"spec": item["spec"], "missing": item.get("missing") or []}
+            for item in compilers if not item.get("usable")
+        ],
+        "excluded": [item["spec"] for item in compilers if not item.get("usable")]
+        if excluding else [],
+        "reuse_excluded": next(
+            (list(entry.get("exclude") or []) for entry in
+             sections.get("concretizer", {}).get("reuse:", {}).get("from", [])
+             if entry.get("type") == "local"),
+            [],
+        ),
+        "required": {
+            "spec": required,
+            "source": required_source,
+            "require": sections["packages"]["all"]["require:"],
+        } if required else None,
+        "blocked_by": state["blocked"]["issue_id"] if state["blocked"] else None,
+        "scope": str(scope) if sections else None,
+        "path": document.get("path") or str(context.install_dir / BUILD_COMPILERS_NAME),
+    }
+    return state
+
+
+# ---------------------------------------------------------------------------
 # Issues, answers and decisions
 # ---------------------------------------------------------------------------
 
@@ -1174,6 +1817,23 @@ class SpackPlanner:
         self.runner = runner or SpackRunner(context.log_stream)
         self.decisions = Decisions(context.decisions_path)  # type: ignore[arg-type]
         self._mpi_candidates: Optional[List[Dict[str, Any]]] = None
+        #: the build host's usable compilers (``apply_build_compilers``)
+        self.usable_compilers: List[Dict[str, Any]] = []
+        #: ``[{spec, missing}]`` the build host cannot run, and that host
+        self.unusable_compilers: List[Dict[str, Any]] = []
+        self.build_host: Optional[str] = None
+
+    def compiler_guard(
+        self, nodes: Sequence[SpecNode], origin: str, evidence: Sequence[str] = ()
+    ) -> Optional[Dict[str, Any]]:
+        """``compiler_unavailable`` if a node to build uses an unusable compiler."""
+        if not self.unusable_compilers:
+            return None
+        return unusable_compiler_issue(
+            nodes, unusable=self.unusable_compilers, usable=self.usable_compilers,
+            host=self.build_host or socket.gethostname(), origin=origin,
+            evidence=evidence,
+        )
 
     # -- discovery ---------------------------------------------------------
 
@@ -1447,6 +2107,13 @@ class SpackPlanner:
         elif mpi_nodes:
             entry["mpi"] = self._mpi_entry(mpi_nodes[0], "query")
         self._fill_nodes(entry, nodes, tokens)
+        issue = self.compiler_guard(
+            nodes, origin="spack spec", evidence=[f"spack spec -I -l {shlex.join(tokens)}"]
+        )
+        if issue is not None:
+            self.context.raise_issue(issue)
+            entry["status"] = "needs_decision"
+            entry["issue_id"] = issue["issue_id"]
         return entry
 
     def _mpi_entry(self, node: SpecNode, source: str) -> Dict[str, Any]:
@@ -1710,6 +2377,17 @@ class SpackPlanner:
         if completed.returncode != 0:
             entry["status"] = "failed"
             entry["error"] = _error_excerpt(completed.stdout or "")
+            issue = classify_install_failure(
+                completed.stdout or "",
+                stage="install",
+                packages=[package],
+                usable_compilers=self.usable_compilers,
+                log_path=self.context.log_path,
+                command=self.runner.commands[-1] if self.runner.commands else None,
+            )
+            self.context.raise_issue(issue)
+            entry["issue_id"] = issue["issue_id"]
+            entry["failure_kind"] = issue["kind"]
             return entry
         verify = self._spec(tokens)
         nodes = parse_spec_tree(verify.stdout) if verify.returncode == 0 else []
@@ -1824,10 +2502,17 @@ class SpackEnvironment:
     """
 
     def __init__(self, directory: Path, runner: SpackRunner,
-                 repos: Sequence[str] = ()):
+                 repos: Sequence[str] = (),
+                 sections: Optional[Mapping[str, Any]] = None):
         self.directory = Path(directory)
         self.runner = runner
         self.repos = [str(repo) for repo in repos]
+        #: extra manifest sections (the build-host compiler scope); ``None``
+        #: means "keep whatever the manifest has" (a check reads the lock
+        #: the install job concretized, whatever compilers it excluded)
+        self.sections = (
+            json.loads(json.dumps(dict(sections))) if sections is not None else None
+        )
 
     @property
     def manifest_path(self) -> Path:
@@ -1838,7 +2523,11 @@ class SpackEnvironment:
         return self.directory / "spack.lock"
 
     @staticmethod
-    def manifest_for(specs: Sequence[str], repos: Sequence[str] = ()) -> Dict[str, Any]:
+    def manifest_for(
+        specs: Sequence[str],
+        repos: Sequence[str] = (),
+        sections: Optional[Mapping[str, Any]] = None,
+    ) -> Dict[str, Any]:
         document: Dict[str, Any] = {
             "spack": {
                 "specs": list(specs),
@@ -1848,6 +2537,15 @@ class SpackEnvironment:
         }
         if repos:
             document["spack"]["repos"] = list(repos)
+        for key, value in (sections or {}).items():
+            if key == "concretizer" and isinstance(value, Mapping):
+                merged = dict(document["spack"]["concretizer"])
+                for name, setting in value.items():
+                    merged.pop(name.rstrip(":"), None)
+                    merged[name] = setting
+                document["spack"]["concretizer"] = merged
+            else:
+                document["spack"][key] = value
         return document
 
     def _manifest(self) -> Optional[Mapping[str, Any]]:
@@ -1868,6 +2566,16 @@ class SpackEnvironment:
         repos = section.get("repos") if section is not None else None
         return [str(repo) for repo in repos] if isinstance(repos, list) else []
 
+    def _manifest_matches(self, specs: Sequence[str]) -> bool:
+        if self.manifest_specs() != list(specs) or self.manifest_repos() != self.repos:
+            return False
+        if self.sections is None:
+            return True
+        expected = self.manifest_for(specs, self.repos, self.sections)["spack"]
+        return json.loads(json.dumps(self._manifest(), default=str)) == json.loads(
+            json.dumps(expected, default=str)
+        )
+
     def lock_roots(self) -> Optional[List[Dict[str, str]]]:
         try:
             document = json.loads(self.lock_path.read_text(encoding="utf-8"))
@@ -1882,8 +2590,8 @@ class SpackEnvironment:
 
     def current_roots(self, specs: Sequence[str]) -> Optional[List[Dict[str, str]]]:
         """Lock roots when the lock was concretized from exactly ``specs``
-        (and this environment's recipe repos)."""
-        if self.manifest_specs() != list(specs) or self.manifest_repos() != self.repos:
+        (and this environment's recipe repos and compiler sections)."""
+        if not self._manifest_matches(specs):
             return None
         roots = self.lock_roots()
         if roots is None or len(roots) != len(specs):
@@ -1892,11 +2600,14 @@ class SpackEnvironment:
 
     def write_manifest(self, specs: Sequence[str]) -> None:
         self.directory.mkdir(parents=True, exist_ok=True)
-        if self.manifest_specs() != list(specs) or self.manifest_repos() != self.repos:
+        if not self._manifest_matches(specs):
+            sections = self.sections if self.sections is not None else {}
             _atomic_write_text(
                 self.manifest_path,
                 "# Generated by jarvis ppl install; edit the pipeline instead.\n"
-                + yaml.safe_dump(self.manifest_for(specs, self.repos), sort_keys=False),
+                + yaml.safe_dump(
+                    self.manifest_for(specs, self.repos, sections), sort_keys=False
+                ),
             )
 
     def concretize(self) -> subprocess.CompletedProcess[str]:
@@ -1931,6 +2642,7 @@ def _sync_spack_environment(
     record: Dict[str, Any],
     resolved: Sequence[tuple[str, Dict[str, Any]]],
     env_dir: Path,
+    sections: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """Build the missing nodes through the pipeline env; record its lock.
 
@@ -1942,7 +2654,9 @@ def _sync_spack_environment(
     a second install waits, re-verifies what the first one built and
     reuses its lock instead of building again.
     """
-    environment = SpackEnvironment(env_dir, planner.runner, record.get("spack_repos") or ())
+    environment = SpackEnvironment(
+        env_dir, planner.runner, record.get("spack_repos") or (), sections=sections
+    )
     building = context.mode == "install" and not context.issues
     if not building and not Path(env_dir).is_dir():
         record["spack_env"] = environment.describe(None)
@@ -2009,13 +2723,39 @@ def _sync_spack_environment_locked(
         )
         environment.write_manifest(specs)
         completed = environment.concretize()
+        stage = "concretize"
         if completed.returncode == 0:
+            guard = planner.compiler_guard(
+                parse_spec_tree(completed.stdout or ""), origin="spack concretize",
+                evidence=[f"spack -e {env_dir} concretize -f"],
+            )
+            if guard is not None:
+                # Nothing is built with a compiler the build host cannot run.
+                context.raise_issue(guard)
+                for _package, entry in missing or resolved:
+                    entry["status"] = "needs_decision"
+                    entry["issue_id"] = guard["issue_id"]
+                record["spack_env"] = environment.describe(None)
+                return
+            stage = "install"
             completed = environment.install()
         if completed.returncode != 0:
             error = _error_excerpt(completed.stdout or "")
-            for _package, entry in missing or resolved:
+            failing = missing or resolved
+            issue = classify_install_failure(
+                completed.stdout or "",
+                stage=stage,
+                packages=[package for package, _entry in failing],
+                usable_compilers=planner.usable_compilers,
+                log_path=context.log_path,
+                command=planner.runner.commands[-1] if planner.runner.commands else None,
+            )
+            context.raise_issue(issue)
+            for _package, entry in failing:
                 entry["status"] = "failed"
                 entry["error"] = f"spack -e {env_dir}: {error}"
+                entry["issue_id"] = issue["issue_id"]
+                entry["failure_kind"] = issue["kind"]
             record["spack_env"] = environment.describe(None)
             return
         roots = environment.current_roots(specs)
@@ -2233,6 +2973,10 @@ def run_spack_install(
     from jarvis_cd.core.spack_site import site_prep_record
 
     record["spack_site_prep"] = site_prep_record(explicit_spack_root())
+    compiler_state = apply_build_compilers(planner, context, record)
+    record["spack_config_scopes"] = spack_config_scopes(
+        planner.runner.config_scopes, env_dir
+    )
     packages = [
         (str(pkg_def.get("pkg_id") or pkg_def.get("pkg_name") or "pkg"), pkg_def)
         for pkg_def in pkg_list
@@ -2280,6 +3024,17 @@ def run_spack_install(
             packages_done=index + 1,
             missing=[item["name"] for item in entry.get("missing", [])][:32],
         )
+    blocked = compiler_state.get("blocked")
+    if blocked is not None:
+        if any(entry.get("status") == "missing" for _package, entry in resolved):
+            # Nothing is built with a compiler the build hosts cannot run.
+            context.raise_issue(blocked)
+            to_build = []
+        else:
+            record.setdefault("warnings", []).append(
+                f"binding compiler {blocked['compiler']} is not usable on "
+                f"{blocked['host']}; nothing needed building"
+            )
     try:
         if to_build and not context.issues:
             context.ensure_may_build(
@@ -2295,7 +3050,10 @@ def run_spack_install(
                 )
                 record["packages"][package] = planner.install_package(package, entry)
         if env_dir is not None and resolved:
-            _sync_spack_environment(planner, context, record, resolved, Path(env_dir))
+            _sync_spack_environment(
+                planner, context, record, resolved, Path(env_dir),
+                sections=compiler_state["sections"] if context.mode == "install" else None,
+            )
     except BuildOutsideAllocation as refused:
         record["refused"] = refused.to_dict()
         record["finished_at"] = _utc_now()

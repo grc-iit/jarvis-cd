@@ -438,8 +438,9 @@ runs `jarvis ppl install yaml <runtime>/pipeline.yaml [+check] [--answers …]
 | `packages_total` / `packages_done` / `current_package` | position in the package list |
 | `missing` | names Spack is building for the current package |
 | `log` | `<execution>/install/install.log`: append-only, stream it while the job runs |
-| `issues` | `<execution>/install/issues.jsonl`: questions, when `phase` is `needs_decision` |
-| `record` | `<execution>/install/install-record.json`: final per-package result |
+| `issues` | `<execution>/install/issues.jsonl`: questions when `phase` is `needs_decision`, typed failures when it is `failed` |
+| `open_issues`, `issue_kinds` | on `phase: failed`, the failure issues' `issue_id`s and kinds (for example `compiler_unavailable`, `build_failed`) |
+| `record` | `<execution>/install/install-record.json`: final per-package result, with `build_compilers` (the compilers verified on the job's node) |
 
 Because an install job's files live under its execution, the job also writes
 `<pipeline shared>/install/last-install.json` (`jarvis.install-pointer.v1`)
@@ -453,7 +454,15 @@ replayed by the next check.
 The job exits `3` when it needs a decision, or when `+check` finds packages
 that still need building. The record is then `failed` with `return_code: 3`
 and `metadata.install.phase: needs_decision`. Answer the questions, then
-resubmit with `--answers`. A job (or a local `+check`) on a host where
+resubmit with `--answers`. When Spack itself fails (a compiler missing on the
+node, a fetch, a build), the job exits `6`: the record is `failed` with
+`return_code: 6`, `metadata.install.phase: failed`, and the typed issue in
+`issues.jsonl` (see
+[Install failures](pipeline_tests.md#install-failures)). Before it builds,
+the job checks the registered compilers on its own node and keeps
+login-only compilers, and the upstream specs built with them, out of the
+build (see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host)).
+A job (or a local `+check`) on a host where
 JARVIS finds no Spack at all asks a `spack_missing` question whose
 `site_spacks[]` lists the Spack checkouts it found (see
 [Missing Spack](pipeline_tests.md#missing-spack-spack_missing)). To chain a

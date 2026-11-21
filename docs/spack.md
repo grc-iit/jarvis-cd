@@ -84,6 +84,19 @@ the Spack root, so a relay can run it before `jarvis init`.
    fc, built_upstream_mpi}`. Answer with `--compiler <constraint>` or with
    `--answers answers.json`.
 
+   A person's choice (`source` `person`, `answer` or `person_earlier`) is
+   binding: besides the order, prepare writes `packages:all:require`
+   (`%<compiler>`, or `%[when=%c] c=<compiler>` on Spack 1.x), so the
+   concretizer can't move a build to another compiler, even to reuse an
+   upstream spec. A compiler JARVIS picked by policy only sets the order. A
+   `require` that prepare wrote earlier is removed when the choice is no
+   longer a person's. The record's `compiler.binding_require` holds it.
+
+Prepare runs on the login node, so the compilers it registers are the
+login node's. A compiler can still be missing where builds run (for example
+`/usr/bin/g++-12` on the login node only). Each install checks this again on
+the build host; see [Compilers on the build host](#compilers-on-the-build-host).
+
 It never installs or builds. Its Spack calls are configuration writes plus
 `compiler find`, `external find`, `config get` and `find`, each with a
 timeout. If a site allows nothing but `spack find` and `spack spec` on its
@@ -107,6 +120,7 @@ The result is written to `<root>/var/jarvis/site-prep.json`
 | `installed_mpis[]` | `{name, version, hash, compiler, prefix}` from `spack find` |
 | `compiler` | `chosen`, `source`, `full_toolchain`, `order`, `toolchains[]`, `choice_needed`, `candidates` |
 | `issues[]`, `open_issues[]` | the open `ambiguous_compiler` question, if any |
+| `compiler.binding_require` | the `packages:all:require` written for a person's choice, or `null` |
 | `environment` | `{"JARVIS_SPACK_ROOT": <root>}`, to export for later runs |
 | `commands[]` | every command it ran, with its exit code |
 | `warnings[]`, `prepared_at`, `record_path` | |
@@ -136,6 +150,67 @@ and changes nothing that was valid:
 | `build_jobs_invalid` | `--build_jobs` outside 1..1024 |
 | `answer_invalid` | an answer is not one of the candidates |
 | `spack_compiler_find_failed`, `spack_external_find_failed` | Spack itself failed |
+
+### Compilers on the build host
+
+`spack prepare` registers the compilers it finds on the login node, but
+builds run on compute nodes. An install checks every compiler where it
+builds, before any `spack install`:
+
+1. **Verify.** In install mode (normally the `ppl install +submit` job on a
+   compute node), JARVIS reads `spack config get compilers` (or the compiler
+   externals in `packages:` on Spack 1.x). It checks that each configured
+   `cc`, `cxx`, `f77` and `fc` is an executable file on that host, which is
+   the same test behind Spack's `CompilerAccessError`. A compiler loaded
+   through `modules` is not checked. The result
+   (`jarvis.build-compilers.v1`) goes to `<install>/build-compilers.json`
+   and to `<JARVIS_SPACK_ROOT>/var/jarvis/build-compilers.json`. A
+   `+check` on the login node uses that last build-host result
+   (`source: recorded`) rather than the login node's compilers. With no
+   result yet, it trusts the configured compilers.
+2. **Exclude.** Every Spack call in the install gets a `spack -C` scope
+   (`<install>/spack-compiler-scope`), and the pipeline environment merges
+   the same sections:
+   - `compilers:` lists only the usable compilers.
+   - `concretizer:reuse:` excludes specs built with an unusable compiler:
+     `from: [{type: local, exclude: ["%gcc@12.3.0"]}, {type: buildcache,
+     exclude: […]}, {type: external}]`. This needs Spack 0.22 or later.
+   - `packages:all:require` binds the person's compiler, when there is one.
+   This matters because the concretizer prefers reuse over the compiler
+   order: one reused upstream spec built with gcc 12 (`gcc-runtime`,
+   `glew`, `osmesa`) pulls the rest of the DAG onto `%gcc@12.3.0`. Excluding
+   that reuse means those upstream specs are rebuilt with a usable compiler.
+   They show up in the plan's `missing` nodes, and the record lists the
+   exclusions in `reuse_excluded`.
+3. **Guard.** After `spack spec`, and again after the environment's
+   `concretize`, any node still to build with an unusable compiler stops the
+   install with a `compiler_unavailable` issue (exit `3`). No
+   `spack install` runs. The issue names the host, the compiler, its
+   `missing_executables`, the nodes `to_build`, and the `reused_specs` built
+   with that compiler that pulled the DAG there. This happens when the Spack
+   predates reuse filters, or when a requirement forces that compiler.
+4. **Bind.** A person's compiler (site prep `--compiler`, an
+   `ambiguous_compiler` answer, or an answer to `compiler_unavailable`) is a
+   `require`, not a preference. If that compiler is itself unusable on the
+   build host, the install asks again with `compiler_unavailable`
+   (`origin: build host check`), with the usable compilers as candidates.
+   An answer to `compiler_unavailable` is recorded in `decisions.yaml` and
+   becomes the binding `require`.
+
+`install-record.json` carries the outcome as `build_compilers`:
+
+| Field | Meaning |
+|-------|---------|
+| `source` | `verified` (checked on this host) or `recorded` (the last build-host check) |
+| `host`, `checked_at`, `allocation` | where and when the compilers were checked |
+| `usable`, `unusable[]` | specs; `unusable[]` is `{spec, missing}` |
+| `excluded`, `reuse_excluded` | compilers left out of the scope, and the `concretizer:reuse` excludes |
+| `required` | `{spec, source, require}` for the binding compiler, or `null` |
+| `blocked_by` | the `compiler_unavailable` `issue_id` that stopped the install, or `null` |
+| `scope`, `path` | the `-C` scope dir and the `build-compilers.json` used |
+
+A build that fails anyway is reported as a typed failure (exit `6`); see
+[Install failures](pipeline_tests.md#install-failures).
 
 ### Finding a site Spack
 

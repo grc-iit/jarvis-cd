@@ -38,10 +38,12 @@ import yaml
 
 from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
 from jarvis_cd.core.spack_install import (
+    BINDING_COMPILER_SOURCES,
     DECISION_NEEDED_EXIT_CODE,
     MPI_PROVIDERS,
     _atomic_write_text,
     _utc_now,
+    compiler_requirement,
     make_issue,
     spack_checkout_version,
     spack_subprocess_environment,
@@ -627,8 +629,29 @@ def prepare_site(
     if policy["order"] and list(everything.get("compiler") or []) != policy["order"]:
         everything["compiler"] = policy["order"]
         policy_changes.append("packages:all:compiler " + ",".join(policy["order"]))
+    # A person's choice binds every build (a require); a jarvis pick only sets
+    # the order. A require jarvis wrote earlier is dropped when the choice is
+    # no longer the person's.
+    try:
+        previous = json.loads((spack_root / SITE_PREP_RECORD).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        previous = None
+    previous_require = ((previous or {}).get("compiler") or {}).get("binding_require")
+    binding = None
+    if policy["chosen"] and policy["source"] in BINDING_COMPILER_SOURCES:
+        binding = compiler_requirement(policy["chosen"], version)
+    if binding is not None:
+        if everything.get("require") != binding:
+            everything["require"] = binding
+            policy_changes.append("packages:all:require " + ",".join(binding))
+    elif previous_require and everything.get("require") == previous_require:
+        everything.pop("require")
+        policy_changes.append("packages:all:require removed (no person choice)")
+    policy["binding_require"] = binding
     if everything:
         packages["all"] = everything
+    else:
+        packages.pop("all", None)
     if json.dumps(packages, sort_keys=True, default=str) != before:
         document["packages"] = packages
         _atomic_write_text(packages_path, yaml.safe_dump(document, sort_keys=False))
@@ -686,5 +709,7 @@ def site_prep_record(root: Optional[str]) -> Optional[Dict[str, Any]]:
         "site_spack": record.get("site_spack"),
         "upstream_install_tree": record.get("upstream_install_tree"),
         "compiler": (record.get("compiler") or {}).get("chosen"),
+        "compiler_source": (record.get("compiler") or {}).get("source"),
+        "compiler_binding": (record.get("compiler") or {}).get("binding_require"),
         "status": record.get("status"),
     }

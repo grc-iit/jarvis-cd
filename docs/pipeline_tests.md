@@ -384,6 +384,7 @@ JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
 | `variant_conflict` | the concretizer reports a conflict | yes, with a spec constraint (e.g. `~cuda`) |
 | `concretize_failed` | any other concretizer error (`detail` holds the excerpt) | yes, with a spec constraint |
 | `no_recipe` | Spack has no recipe for the package | no: add `install_repos` or change `install_query` |
+| `compiler_unavailable` | a compiler the install would use can't run on the build host (`subject: compiler`, `scope: site`): `compiler`, `host`, `missing_executables`, `usable_compilers`, `origin`, plus `to_build` and `reused_specs` when reused upstream specs pull the DAG onto it; see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host) | yes, with one usable compiler (`candidates[]`), which becomes a binding `require` |
 | `not_installed` | `+check` found nodes that still need building | no: run `jarvis ppl install` |
 
 The `issue_id` is a stable `sha256:` digest of the question's content, so it
@@ -496,6 +497,29 @@ newest install-mode
 always `<pipeline shared>/install/decisions.yaml` (or
 `JARVIS_SPACK_DECISIONS`), for checks, local installs and install jobs alike.
 Provenance reads the same record.
+
+#### Install failures
+
+When `spack concretize` or `spack install` itself fails, JARVIS doesn't
+leave a bare exit code and a log tail. It classifies the output into one
+typed issue, appends it to `issues.jsonl`, marks the package `status:
+failed` with its `issue_id`, and exits `6`:
+
+| `kind` | Matched by | `remedy` |
+|--------|------------|----------|
+| `compiler_unavailable` | `CompilerAccessError: Compiler '…' has executables that are missing…` (`origin: spack install`); `missing_executables` are the paths Spack named, and that compiler is dropped from `usable_compilers` | answer with a usable compiler, or re-run `jarvis spack prepare --compiler` inside a job |
+| `fetch_failed` | `FetchError`, `All fetchers failed`, `ChecksumError`, `Manual download is required`, … | fix the build node's network or proxy, or add a mirror |
+| `build_failed` | `ProcessError`, `InstallError`, `Command exited with status`, … | read `build_log`, then change the spec or the recipe |
+| `variant_conflict`, `no_recipe`, `concretize_failed` | a failed environment `concretize` | answer with a spec constraint |
+| `install_failed` | anything else | read `log_tail` and `install.log` |
+
+Every failure issue carries `host`, `stage` (`install` or `concretize`),
+`packages`, `failed_node` (the last `==> Installing` line), `log`,
+`log_tail` (the last 40 lines), `build_log` when Spack named one,
+`message` and `remedy`. In a `ppl install +submit` job the execution ends
+`failed` with return code `6`, and its `metadata.install` progress has
+`phase: failed`, `open_issues` and `issue_kinds`, so a caller can turn the
+issue into an ask without reading the log.
 
 #### Missing Spack (`spack_missing`)
 
@@ -688,7 +712,9 @@ The final stdout line with `+json` is a `jarvis.install-report.v1` document:
 stdout carries only the document; logs and Spack output go to stderr. The exit code is `0`
 when everything is satisfied, `3` when a decision is needed or `+check`
 found missing packages, `4` when a build was refused because it would run
-outside a scheduler allocation, and `1` on errors such as a failed build.
+outside a scheduler allocation, `6` when Spack itself failed (the report
+then has `failed: true` and `failures[]`, the typed issues' `issue_id`s; see
+[Install failures](#install-failures)), and `1` on other errors.
 Installers other than Spack report `unchecked` under `+check`.
 
 Without `+submit` or `+allow_local`, `ppl install` refuses to build, run

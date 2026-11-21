@@ -2241,6 +2241,7 @@ class JarvisCLI(ArgParse):
             REPORT_SCHEMA,
             BuildOutsideAllocation,
             InstallDecisionNeeded,
+            InstallFailed,
         )
 
         json_output = bool(self.kwargs.get("json"))
@@ -2294,6 +2295,13 @@ class JarvisCLI(ArgParse):
             exit_code = needed.exit_code
             report["exit_code"] = exit_code
             self._emit_install_report(report, json_output=json_output)
+            raise
+        except InstallFailed as failed:
+            report = failed.to_dict()
+            report.setdefault("record_path", str(install_context_for(
+                pipeline, "install").record_path))
+            self._emit_install_report(report, json_output=json_output)
+            failed.already_reported = True
             raise
         report["exit_code"] = exit_code
         self._emit_install_report(report, json_output=json_output)
@@ -3845,6 +3853,7 @@ def main():
         from jarvis_cd.core.spack_install import (
             BuildOutsideAllocation,
             InstallDecisionNeeded,
+            InstallFailed,
         )
 
         if isinstance(e, InstallDecisionNeeded):
@@ -3852,6 +3861,12 @@ def main():
             sys.exit(e.exit_code)
         if isinstance(e, BuildOutsideAllocation):
             print(f"Build refused: {e}", file=sys.stderr)
+            sys.exit(e.exit_code)
+        if isinstance(e, InstallFailed):
+            if "+json" in sys.argv[1:] and not getattr(e, "already_reported", False):
+                print(json.dumps(e.to_dict(), separators=(",", ":"), sort_keys=True,
+                                 default=str))
+            print(f"Install failed: {e}", file=sys.stderr)
             sys.exit(e.exit_code)
         if isinstance(e, JarvisIssueError):
             if "+json" in sys.argv[1:] and not getattr(e, "already_reported", False):

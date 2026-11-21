@@ -2163,6 +2163,7 @@ class Pipeline:
             PROGRESS_SCHEMA,
             BuildOutsideAllocation,
             InstallDecisionNeeded,
+            InstallFailed,
             load_answers,
         )
 
@@ -2222,6 +2223,17 @@ class Pipeline:
         except BuildOutsideAllocation as refused:
             outcome = "refused"
             publish(phase="refused", current_package=None, refused=refused.to_dict())
+            raise
+        except InstallFailed as failed:
+            outcome = "failed"
+            context.log(f"ERROR: {failed}\n")
+            publish(
+                phase="failed",
+                current_package=None,
+                error=str(failed)[:2000],
+                open_issues=[issue["issue_id"] for issue in failed.issues],
+                issue_kinds=sorted({str(issue.get("kind")) for issue in failed.issues}),
+            )
             raise
         except BaseException as exc:
             context.log(f"ERROR: {exc}\n")

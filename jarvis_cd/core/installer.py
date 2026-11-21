@@ -106,6 +106,7 @@ class Installer(ABC):
         from jarvis_cd.core.spack_install import (
             REPORT_SCHEMA,
             InstallDecisionNeeded,
+            InstallFailed,
         )
 
         if mode not in ("install", "check"):
@@ -122,6 +123,7 @@ class Installer(ABC):
             context = install_context_for(ppl, mode)
             context.open()
             owns_context = True
+        failure: Optional[InstallFailed] = None
         try:
             for method, pkg_list in grouped.items():
                 installer = Installer.for_method(method)
@@ -131,7 +133,15 @@ class Installer(ABC):
                     result = installer.check(ppl, pkg_list)
                 else:
                     print(f"Installer '{method}': installing {len(pkg_list)} pkg(s)")
-                    result = installer.install(ppl, pkg_list)
+                    try:
+                        result = installer.install(ppl, pkg_list)
+                    except InstallFailed as failed:
+                        failure = failed
+                        report["installers"][method] = {
+                            "status": "failed",
+                            "issues": [issue["issue_id"] for issue in failed.issues],
+                        }
+                        break
                 report["installers"][method] = result or {"status": "done"}
         finally:
             if owns_context:
@@ -166,6 +176,10 @@ class Installer(ABC):
             result.get("status") in ("done", "satisfied", "installed", "unchecked")
             for result in report["installers"].values()
         )
+        if failure is not None:
+            # A failed build wins over open questions: exit 6 with all issues.
+            failure.report = report
+            raise failure
         if context is not None and context.issues:
             raise InstallDecisionNeeded(context.issues, context.issues_path, report)
         return report
@@ -313,13 +327,29 @@ class SpackInstaller(Installer):
             print(line)
         failed = [name for name, status in statuses.items() if status == "failed"]
         if failed:
+            from jarvis_cd.core.spack_install import InstallFailed, classify_install_failure
+
             details = "; ".join(
                 f"{name}: {record['packages'][name].get('error', '')}" for name in failed
             )
-            raise RuntimeError(
-                f"spack install failed for {', '.join(failed)}. {details} "
+            failure_ids = []
+            for name in failed:
+                entry = record["packages"][name]
+                if not entry.get("issue_id"):
+                    issue = classify_install_failure(
+                        str(entry.get("error") or ""), stage="verify", packages=[name],
+                        log_path=context.log_path,
+                    )
+                    context.raise_issue(issue)
+                    entry["issue_id"], entry["failure_kind"] = issue["issue_id"], issue["kind"]
+                if entry["issue_id"] not in failure_ids:
+                    failure_ids.append(entry["issue_id"])
+            failures = [i for i in context.issues if i["issue_id"] in failure_ids]
+            print(
+                f"SpackInstaller: spack install failed for {', '.join(failed)}. {details} "
                 f"(log: {context.log_path})"
             )
+            raise InstallFailed(failures, context.issues_path)
         hashes = [
             "/" + (entry.get("lock_hash") or entry["root"]["hash"])
             for entry in record["packages"].values()
