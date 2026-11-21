@@ -49,13 +49,27 @@ requires = [
 ]
 
 [tool.setuptools]
-packages = ["jarvis_cd", "jarvis_cd.artifacts", "jarvis_cd.core", "jarvis_cd.progress", "jarvis_cd.service_runtime", "jarvis_cd.shell", "jarvis_cd.util", "builtin", "builtin.builtin"]
 include-package-data = true
+
+# Builtin package directories (builtin/builtin/<pkg>) mostly have no
+# __init__.py, so they are discovered as namespace packages. Every file
+# beneath builtin/ ships as package data so a non-editable install (wheel,
+# sdist or GitHub archive) carries each pkg.py, Dockerfile.deploy, patch,
+# pipeline, resource graph and input deck, including directories whose
+# names are not Python identifiers.
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["jarvis_cd", "jarvis_cd.*", "builtin", "builtin.*"]
+exclude = ["*.__pycache__", "*.__pycache__.*"]
+namespaces = true
 
 [tool.setuptools.package-data]
 jarvis_cd = ["*.yaml", "*.yml"]
 "*" = ["*.py", "*.yaml", "*.yml", "*.md", "*.txt", "*.conf", "*.xml", "*.param", "*.f", "*.input", "*.png", "*.sh"]
-builtin = ["pipelines/**/*.yaml", "pipelines/**/*.yml"]
+builtin = ["**/*"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["*.pyc", "*.pyo", "__pycache__/*"]
 
 [tool.setuptools.data-files]
 "." = ["wfcommons-schema.json"]
@@ -69,3 +83,6 @@ paraview = "jarvis_cd.progress.paraview:adapter_from_package"
 
 [tool.setuptools_scm]
 version_scheme = "no-guess-dev"
+# GitHub archive tarballs carry no .git; .git_archival.txt (export-subst)
+# gives setuptools_scm the commit, and this is the last resort.
+fallback_version = "0.0.0+unknown"

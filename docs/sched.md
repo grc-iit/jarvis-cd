@@ -79,6 +79,11 @@ The `mpi` block:
 | `scheduler_query_failed` | `jarvis.issue.v1` | the provider reported no partitions |
 | `resource_graph_net_missing` (and the other network issues) | `jarvis.issue.v1` | the resource graph has no usable `net` section, as `jarvis rg net +json` reports it |
 | `spack_missing` | `jarvis.install-issue.v1` | JARVIS has no Spack. It is the same issue, with the same `issue_id` and `site_spacks[]`, that `ppl install +check` raises (see [Missing Spack](pipeline_tests.md#missing-spack-spack_missing)) |
+| `jarvis_not_initialized` | `jarvis.issue.v1` | `JARVIS_ROOT` has no `jarvis_config.yaml`. The rest of the document is still filled in, and the command still exits 0; `field` is `JARVIS_ROOT` and `remedy` says to run `jarvis init` once on that root. Pipeline commands refuse until then |
+
+`sched info` does not need an initialized root. It reads the site graph
+named by `JARVIS_RESOURCE_GRAPH` when that is set, and otherwise
+`<JARVIS_ROOT>/resource_graph.yaml` if it exists.
 
 The `spack_missing` issue can be answered here too. Write the answer to
 `answers.json` and pass it to `ppl install --answers`, or prepare a JARVIS

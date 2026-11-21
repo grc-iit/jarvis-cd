@@ -1875,6 +1875,10 @@ class JarvisCLI(ArgParse):
             self.jarvis_config = Jarvis.get_instance()
 
         if not self.jarvis_config.is_initialized():
+            if self.kwargs.get("json") or "+json" in sys.argv[1:]:
+                from jarvis_cd.core.issues import JarvisIssueError
+
+                raise JarvisIssueError([self._not_initialized_issue()])
             print("Error: Jarvis not initialized. Run 'jarvis init' first.")
             sys.exit(1)
 
@@ -1904,6 +1908,43 @@ class JarvisCLI(ArgParse):
             except Exception:
                 # Pipeline may not exist or be corrupted, continue without it
                 self.current_pipeline = None
+
+    def _not_initialized_issue(self) -> Dict[str, Any]:
+        """The typed ``jarvis_not_initialized`` issue for this JARVIS_ROOT."""
+        from jarvis_cd.core.issues import make_jarvis_issue
+
+        root = getattr(self.jarvis_config, "jarvis_root", None)
+        return make_jarvis_issue(
+            kind="jarvis_not_initialized",
+            subject="jarvis root",
+            message=f"JARVIS_ROOT {root} is not initialized",
+            identity={"jarvis_root": str(root) if root is not None else None},
+            details={"jarvis_root": str(root) if root is not None else None,
+                     "config_file": str(getattr(self.jarvis_config, "config_file", ""))},
+            field="JARVIS_ROOT",
+            remedy="run `jarvis init` once on this root",
+        )
+
+    def _ensure_site_context(self, *, needs_graph: bool) -> None:
+        """Prepare site-level commands that do not need an initialized root.
+
+        ``sched info``, ``rg skill``, ``rg net`` and ``spack prepare`` read or
+        write site records (the site graph named by JARVIS_RESOURCE_GRAPH, the
+        jarvis Spack), so they run on a fresh root. A command that needs the
+        graph and has no site graph refuses with ``jarvis_not_initialized``.
+        """
+        if self.jarvis_config is None:
+            self.jarvis_config = Jarvis.get_instance()
+        if self.jarvis_config.is_initialized():
+            self._ensure_initialized()
+            return
+        if needs_graph and not getattr(self.jarvis_config, "resource_graph_is_site", False):
+            from jarvis_cd.core.issues import JarvisIssueError
+
+            raise JarvisIssueError([self._not_initialized_issue()])
+        self.jarvis = self.jarvis_config
+        if self.rg_manager is None:
+            self.rg_manager = ResourceGraphManager()
 
     def main_menu(self):
         """Handle main menu / help"""
@@ -3320,12 +3361,13 @@ class JarvisCLI(ArgParse):
 
     def _net_call(self, action):
         """Run an rg net action; with +json keep stdout for the document."""
+        ensure = lambda: self._ensure_site_context(needs_graph=True)  # noqa: E731
         if self.kwargs.get("json"):
             with redirect_stdout(sys.stderr):
-                self._ensure_initialized()
+                ensure()
                 report = action()
         else:
-            self._ensure_initialized()
+            ensure()
             report = action()
         self._emit_net_report(report)
 
@@ -3348,18 +3390,22 @@ class JarvisCLI(ArgParse):
         """Drop the network override."""
         self._net_call(lambda: self.rg_manager.net_clear())
 
-    def _json_call(self, action, text):
+    def _json_call(self, action, text, ensure=None):
         """Run ``action``; print its document as JSON (+json) or via ``text``."""
+        ensure = ensure or self._ensure_initialized
         if self.kwargs.get("json"):
             with redirect_stdout(sys.stderr):
-                self._ensure_initialized()
+                ensure()
                 document = action()
             print(json.dumps(document, separators=(",", ":"), sort_keys=True, default=str))
         else:
-            self._ensure_initialized()
+            ensure()
             document = action()
             text(document)
         return document
+
+    def _site_graph_context(self):
+        self._ensure_site_context(needs_graph=True)
 
     def _site_skills(self):
         from jarvis_cd.core.site_skills import SiteSkills
@@ -3377,12 +3423,14 @@ class JarvisCLI(ArgParse):
                 print(f"  {entry['name']:<24} {entry.get('updated_at') or '-':<28} "
                       f"{entry.get('description') or ''}")
 
-        self._json_call(lambda: self._site_skills().listing(), text)
+        self._json_call(lambda: self._site_skills().listing(), text,
+                        ensure=self._site_graph_context)
 
     def rg_skill_show(self):
         """Print one site skill."""
         self._json_call(lambda: self._site_skills().show(self.kwargs["name"]),
-                        lambda document: print(document["content"], end=""))
+                        lambda document: print(document["content"], end=""),
+                        ensure=self._site_graph_context)
 
     def rg_skill_set(self):
         """Create or replace one site skill."""
@@ -3405,12 +3453,14 @@ class JarvisCLI(ArgParse):
             ),
             lambda document: print(f"set {document['name']}: {document['path']} "
                                    f"({document['sha256']})"),
+            ensure=self._site_graph_context,
         )
 
     def rg_skill_rm(self):
         """Remove one site skill."""
         self._json_call(lambda: self._site_skills().remove(self.kwargs["name"]),
-                        lambda document: print(f"{document['action']}: {document['name']}"))
+                        lambda document: print(f"{document['action']}: {document['name']}"),
+                        ensure=self._site_graph_context)
 
     def sched_info(self):
         """Report scheduler partitions, limits, MPI and network facts."""
@@ -3437,9 +3487,17 @@ class JarvisCLI(ArgParse):
 
         self._json_call(
             lambda: sched_info(self.jarvis, self.kwargs.get("provider"),
-                               include_mpi=not self.kwargs.get("no_mpi")),
+                               include_mpi=not self.kwargs.get("no_mpi"),
+                               extra_issues=self._root_issues()),
             text,
+            ensure=lambda: self._ensure_site_context(needs_graph=False),
         )
+
+    def _root_issues(self):
+        """``jarvis_not_initialized`` when the root is fresh (informational)."""
+        if self.jarvis_config is not None and not self.jarvis_config.is_initialized():
+            return [self._not_initialized_issue()]
+        return []
 
     def spack_prepare(self):
         """Prepare the jarvis Spack (upstreams, compilers, externals)."""
@@ -3477,6 +3535,7 @@ class JarvisCLI(ArgParse):
                 answers=load_answers(Path(answers)) if answers else None,
             ),
             text,
+            ensure=lambda: self._ensure_site_context(needs_graph=False),
         )
         if document.get("exit_code"):
             sys.exit(int(document["exit_code"]))

@@ -13,3 +13,7 @@ recursive-include builtin/builtin/wrf *.md *.py
 include builtin/builtin/wfcommons/artifacts.py
 include builtin/builtin/xcompact3d/artifacts.py
 include wfcommons-schema.json
+graft builtin
+include .git_archival.txt
+global-exclude *.py[cod]
+prune **/__pycache__

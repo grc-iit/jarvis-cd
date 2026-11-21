@@ -31,6 +31,9 @@ jarvis spack prepare --site_spack /opt/spack +json
 | `+no_clone` | off | Refuse instead of cloning a missing root |
 | `+json` | off | Print the `jarvis.spack-site-prep.v1` record as one JSON line |
 
+`spack prepare` does not need an initialized `JARVIS_ROOT`: it works only on
+the Spack root, so a relay can run it before `jarvis init`.
+
 ### What it does
 
 1. **The checkout.** When the root has no `bin/spack`, it makes a shallow

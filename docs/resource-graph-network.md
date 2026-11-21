@@ -16,6 +16,12 @@ override keeps its provenance.
 `jarvis rg path` prints the active file. `rg build`, `rg net set` and
 `rg net clear` write to it atomically.
 
+`rg net show|set|clear` need no initialized root when
+`JARVIS_RESOURCE_GRAPH` is set. Without it, on a root that has no
+`jarvis_config.yaml`, they refuse with exit 5 and a `jarvis_not_initialized`
+issue (`field: JARVIS_ROOT`) under `+json`. Every other command that needs an
+initialized root reports the same issue under `+json`.
+
 ## Collecting the `net` section
 
 Collect the section on the compute nodes, never on a login node. A login
@@ -35,7 +41,7 @@ scheduler:
 
 ```bash
 JARVIS_RESOURCE_GRAPH=/site/jarvis/resource_graph.yaml \
-  jarvis ppl submit yaml site_net.yaml +wait +json
+  jarvis ppl submit site_net.yaml +wait +json
 ```
 
 Inside an allocation you can also run `jarvis rg build +net_only` directly.

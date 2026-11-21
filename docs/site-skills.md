@@ -72,3 +72,4 @@ A refusal exits `5` with a `jarvis.issue.v1` (`subject: site skill`):
 | `skill_not_found` | `skill name` | `show` of a skill that does not exist |
 | `skill_too_large` | `skill content` | the document is over 256 KiB |
 | `skill_content_missing` | `--file` | `set` got neither, or both, of `--file` and `--text` |
+| `jarvis_not_initialized` | `JARVIS_ROOT` | the root is not initialized and `JARVIS_RESOURCE_GRAPH` is unset, so there is no graph directory. With `JARVIS_RESOURCE_GRAPH` set, `rg skill` works on a fresh root |

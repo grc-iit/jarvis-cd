@@ -160,11 +160,12 @@ def mpi_facts(issues: List[Dict[str, Any]]) -> Dict[str, Any]:
     return document
 
 
-def sched_info(jarvis: Any, provider: Optional[str] = None, *, include_mpi: bool = True) -> Dict[str, Any]:
+def sched_info(jarvis: Any, provider: Optional[str] = None, *, include_mpi: bool = True,
+               extra_issues: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     from jarvis_cd.core.issues import make_jarvis_issue
     from jarvis_cd.core.scheduler import _SCHEDULERS
 
-    issues: List[Dict[str, Any]] = []
+    issues: List[Dict[str, Any]] = list(extra_issues or [])
     chosen = (provider or "").strip().lower() or detect_provider()
     document: Dict[str, Any] = {
         "schema_version": SCHED_INFO_SCHEMA,

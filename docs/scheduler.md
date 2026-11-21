@@ -480,9 +480,9 @@ to build is never refused:
 | `sched info` | `sinfo`, `scontrol show partition`, `spack find`: allowed |
 | `spack prepare` | config writes, `spack compiler find` / `external find`, a shallow clone when the root is missing; never a build: allowed (run it in a job where even that is too much) |
 | `ppl install +submit` (with or without `+check`) | writes the snapshot and calls `sbatch`: allowed; the build runs in the job |
-| `ppl submit yaml` with `JARVIS_INSTALL_ON_LOAD=check` | `spack spec -I` / `spack find`, then `sbatch`: allowed; exits 3 without submitting when something is missing |
+| `ppl submit <file>` with `JARVIS_INSTALL_ON_LOAD=check` | `spack spec -I` / `spack find`, then `sbatch`: allowed; exits 3 without submitting when something is missing |
 | `ppl install` (no `+submit`) | refused with exit **4** if anything must be built or the env must be concretized |
-| `ppl load` / `ppl run yaml` / `ppl submit yaml` with the default `install` policy | refused with exit **4** under the same condition, when the pipeline has a `scheduler:` block or `sbatch`/`qsub`/`bsub`/`flux` is on `PATH` |
+| `ppl load` / `ppl run yaml` / `ppl submit <file>` with the default `install` policy | refused with exit **4** under the same condition, when the pipeline has a `scheduler:` block or `sbatch`/`qsub`/`bsub`/`flux` is on `PATH` |
 
 A host is inside an allocation when `SLURM_JOB_ID`, `PBS_JOBID`, `LSB_JOBID`
 or `FLUX_JOB_ID` is set. `jarvis ppl install +allow_local`, or
