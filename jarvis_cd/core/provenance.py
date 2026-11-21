@@ -218,6 +218,7 @@ def capture_launch(launch: Any, cwd: Optional[str] = None) -> None:
             "hostfile": getattr(hostfile, "path", None),
             "binaries": binaries,
             "network": getattr(launch, "network", None),
+            "placement": getattr(launch, "placement", None),
             "rank_env": redact_environment(env),
         }
         (launch_dir / "launch.json").write_text(
@@ -404,6 +405,13 @@ def write_provenance(
             {"launch": launch["id"], **launch["network"]}
             for launch in launches
             if isinstance(launch.get("network"), dict)
+        ],
+        # Ranks per node each launch used and why (task geometry, physical
+        # cores, or the package's ppn); see jarvis_cd.util.placement.
+        "mpi_placement": [
+            {"launch": launch["id"], **launch["placement"]}
+            for launch in launches
+            if isinstance(launch.get("placement"), dict)
         ],
         "launches": launches,
         "job_env": redact_environment(job_env if job_env is not None else os.environ),

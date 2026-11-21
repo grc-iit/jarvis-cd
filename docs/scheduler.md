@@ -570,6 +570,50 @@ and its whole process tree. That stops both the paraview supervisor (which
 finalizes its service runtime as `stopped`) and the solver's `mpirun`, before
 the record is finalized.
 
+## Ranks per node inside an allocation
+
+Rank placement is the launcher's job, so packages pass their `nprocs` and
+`ppn` and need not read the scheduler. Inside an allocation (`SLURM_JOB_ID`,
+`PBS_JOBID`, `LSB_JOBID` or `FLUX_JOB_ID` set), every MPI exec (Open MPI
+`-npernode`, MPICH/Intel `-ppn`, Cray `--ppn`) bounds ranks per node by the
+scheduler's task geometry:
+
+| Scheduler | Tasks per node |
+|-----------|----------------|
+| Slurm | `SLURM_NTASKS_PER_NODE`, else `SLURM_TASKS_PER_NODE` (e.g. `8(x2),4`) paired with `SLURM_JOB_NODELIST`. Used only when the job asked for tasks (`ntasks_per_node` or `ntasks`). |
+| PBS | lines per host in `PBS_NODEFILE`, else `PBS_NUM_PPN` |
+| LSF | `LSB_MCPU_HOSTS` |
+
+When the job asked for no task geometry (Flux, or Slurm with only `nodes`),
+the bound is the physical cores the launcher may run on: its CPU affinity,
+with the hardware threads of one core counted once. With a `host_slice`, the
+bound is the smallest count among the slice's hosts.
+
+The package's `ppn` is kept when it fits the bound and places every rank
+(`ppn × hosts ≥ nprocs`), so a step can under-fill its nodes on purpose.
+Otherwise the bound wins. A package default can't halve a grant: 8 ranks in
+a 1-node, 8-task job no longer launch as `-npernode 4` (`ppr:4:node`, which
+Open MPI refuses). It can't exceed the grant either. When `nprocs` needs
+more per node than granted, `ppn = ceil(nprocs / hosts)` and the placement
+carries a `warning`. Outside an allocation the package's `ppn` is used
+unchanged, as is it when `JARVIS_MPI_PLACEMENT=off` is set in the
+environment or the package's env.
+
+An adjusted value prints `jarvis: ppn A -> B (reason)` on stderr. Each
+launch records its decision as `placement` (`jarvis.launch-placement.v1`)
+in `provenance/launch-NNN/launch.json` and `provenance.json`:
+
+```json
+{"scheduler": "slurm", "job_id": "27999", "nprocs": 8, "hosts": 1,
+ "ppn_requested": 4, "ppn": 8, "adjusted": true,
+ "source": "scheduler_geometry", "bound": 8,
+ "geometry": {"variable": "SLURM_NTASKS_PER_NODE", "value": "8", ...},
+ "reason": "package ppn 4 on 1 host(s) cannot place 8 ranks; 8 per node granted"}
+```
+
+`source` is `scheduler_geometry`, `physical_cores` (with `physical_cores`),
+or `package` when neither is known. and pipeline destruction
+
 ## Execution cleanup and pipeline destruction
 
 Scheduler execution roots are never removed by age, count, or "keep latest"

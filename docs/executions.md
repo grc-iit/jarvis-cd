@@ -159,7 +159,8 @@ provenance`, `role: provenance`), so `execution artifacts +json` lists it:
 | `mpiexec_realpaths` | `readlink -f` of each MPI launcher used |
 | `binaries` | `readlink -f` of each rank program |
 | `nodes` | `[{hostname, ranks}]` across all launches, from the ranks that actually started |
-| `launches[]` | One per MPI launch: `launcher_realpath`, `mpi_prefix`, `nprocs`, `ppn`, `hosts`, `binaries[]` with `realpath` and `ldd` (`returncode`, `lines`), `ranks[]` (`hostname`, `rank`, `pid`), `nodes`, `rank_env`, and `maps` (`hostname`, `rank`, `pid`, `exe`, `text` = one rank's `/proc/<pid>/maps`, `files` = the mapped paths) |
+| `launches[]` | One per MPI launch: `launcher_realpath`, `mpi_prefix`, `nprocs`, `ppn` (the ranks per node actually passed to the launcher), `placement` (how `ppn` was chosen; see [Ranks per node inside an allocation](scheduler.md#ranks-per-node-inside-an-allocation)), `hosts`, `binaries[]` with `realpath` and `ldd` (`returncode`, `lines`), `ranks[]` (`hostname`, `rank`, `pid`), `nodes`, `rank_env`, and `maps` (`hostname`, `rank`, `pid`, `exe`, `text` = one rank's `/proc/<pid>/maps`, `files` = the mapped paths) |
+| `mpi_placement` | `[{launch, ...placement}]` for each launch that ran inside an allocation |
 | `job_env` | The run's environment |
 | `scheduler_job` | `SLURM_JOB_ID`/`SLURM_JOB_NODELIST`, `PBS_JOBID`, `LSB_JOBID` or `FLUX_JOB_ID` |
 | `jarvis` | version, package path, Python, and `jarvis` command realpath |

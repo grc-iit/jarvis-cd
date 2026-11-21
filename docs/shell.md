@@ -195,6 +195,12 @@ executor.run()
 print(f"MPI output: {executor.stdout['localhost']}")
 ```
 
+Inside a scheduler allocation, `ppn` is bounded by the job's task geometry
+(e.g. `SLURM_NTASKS_PER_NODE`), or the physical cores when the job set
+none. A `ppn` that doesn't fit or can't place every rank is replaced, and
+the decision is recorded in the launch provenance. See
+[Ranks per node inside an allocation](scheduler.md#ranks-per-node-inside-an-allocation).
+
 ### ScpExec and PscpExec
 
 Transfer files between hosts using rsync over SSH.
