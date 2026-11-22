@@ -15,10 +15,11 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import socket
 import time
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple, Type
+from typing import Dict, List, Any, Mapping, Optional, Tuple, Type
 
 
 class Installer(ABC):
@@ -199,7 +200,7 @@ class Installer(ABC):
                         report["env_capture"] = {"error": str(exc)[:512]}
             report["answer_with"] = {
                 "format": "answers.json: {issue_id: constraint | "
-                          "{constraint, answered_by, ask_id}}",
+                          "{constraint, answered_by, ask_id, basis}}",
                 "flag": "--answers <answers.json>",
                 "env": "JARVIS_INSTALL_ANSWERS",
                 "replay": "a recorded answer applies to the same issue_id; MPI "
@@ -216,6 +217,9 @@ class Installer(ABC):
         spack_result = report["installers"].get("spack") or {}
         if spack_result.get("check"):
             report["check"] = spack_result["check"]
+        if spack_result.get("placement"):
+            # where the check/build runs on this submitting host, and why
+            report["placement"] = spack_result["placement"]
         if activation is not None or spack_result:
             final = dict(activation or {})
             ran = spack_result.get("activation") or {}
@@ -360,6 +364,184 @@ class SpackInstaller(Installer):
     install_method = "spack"
 
     def _run(self, ppl, pkg_list, mode: str) -> Dict[str, Any]:
+        context = self.context
+        owns_context = context is None
+        if owns_context:
+            context = install_context_for(ppl, mode)
+            context.open()
+        try:
+            light = light_install_host(ppl, context)
+            if light is not None:
+                return self._run_submit_host(ppl, pkg_list, mode, context, light)
+            return self._run_full(ppl, pkg_list, mode, context)
+        finally:
+            if owns_context:
+                context.close()
+
+    # -- the submitting host of a scheduled pipeline -------------------------
+
+    @staticmethod
+    def _pending_answers(document, mode: str, context) -> List[str]:
+        """Recorded blocking issues the current answers answer."""
+        from jarvis_cd.core.spack_install import match_candidate
+
+        pending = []
+        for issue in document.get("issues") or []:
+            if not isinstance(issue, dict) or not issue.get("issue_id"):
+                continue
+            if mode == "install" and issue.get("kind") == "not_installed":
+                continue
+            answer = context.answers.get(str(issue["issue_id"]))
+            if answer is None:
+                continue
+            candidates = issue.get("candidates") or []
+            if candidates and match_candidate(candidates, answer["constraint"]) is None:
+                raise ValueError(
+                    f"answer for {issue['issue_id']} must be one of the candidate "
+                    "constraints (or a candidate id or key)")
+            pending.append(str(issue["issue_id"]))
+        return pending
+
+    def _run_submit_host(self, ppl, pkg_list, mode: str, context, host_reason: str
+                         ) -> Dict[str, Any]:
+        """A check or install on the submitting host of a scheduled pipeline.
+
+        A matching ``install-check.json`` answers it with no Spack call. When
+        none does (or answers must be applied, or an install has to build),
+        the install placement decides: ``login_limited`` runs the full check
+        (and a build whose placement allows it) here under limits sized from
+        this host's load; ``compute_job`` keeps today's job path; an open
+        choice is an ``install_placement`` question (exit 3).
+        """
+        from jarvis_cd.core import install_placement as placement
+
+        document, stale = read_install_check(ppl, pkg_list)
+        capture = None
+        if document is None:
+            capture, _capture_stale = load_spack_env_capture(ppl, pkg_list)
+        resolver = placement.PlacementResolver(ppl, context)
+        note: Dict[str, Any] = {"schema_version": placement.PLACEMENT_SCHEMA,
+                                "host_reason": host_reason}
+        need_check = None
+        if document is None and capture is None:
+            need_check = stale
+        elif document is not None and self._pending_answers(document, mode, context):
+            need_check = "answers_pending: a full check applies and records the answers"
+        if need_check is not None:
+            plan = resolver.resolve("check", pkg_list)
+            note["check"] = plan
+            if plan["choice"] == placement.LOGIN_LIMITED:
+                limits = resolver.limits
+                if not limits["defer"]:
+                    return self._run_login(ppl, pkg_list, mode, context, resolver, note,
+                                           why=need_check)
+                note["fallback"] = ("login_busy: " + "; ".join(limits["defer_reasons"])
+                                    + f" ({stale or need_check})")
+            elif plan["choice"] == placement.COMPUTE_JOB:
+                names = [pkg_id for pkg_id, item in plan["packages"].items()
+                         if item.get("choice") == placement.COMPUTE_JOB]
+                note["fallback"] = (f"placement_compute_job: the check placement of "
+                                    f"{', '.join(names)} is compute_job "
+                                    f"({stale or need_check})")
+            note["evidence"] = resolver.evidence()
+        elif document is not None:
+            missing = _recorded_missing(document)
+            blocking = [issue for issue in document.get("issues") or []
+                        if isinstance(issue, dict) and issue.get("kind") != "not_installed"]
+            if missing and not blocking and not (mode == "install" and self.defer_unchecked):
+                plan = resolver.resolve(
+                    "build", [d for d in pkg_list if str(d.get("pkg_id")) in missing],
+                    missing)
+                _annotate_build_plan(plan)
+                note["build"] = plan
+                note["evidence"] = resolver.evidence()
+                if (mode == "install" and plan["choice"] == placement.LOGIN_LIMITED
+                        and not resolver.limits["defer"]):
+                    return self._run_login(ppl, pkg_list, mode, context, resolver, note,
+                                           why="build_placement: login_limited",
+                                           build_only=missing)
+        result = self._run_light(ppl, pkg_list, mode, context, host_reason, placement=note)
+        result["placement"] = note
+        return result
+
+    def _run_login(self, ppl, pkg_list, mode: str, context, resolver, note,
+                   *, why: str, build_only=None) -> Dict[str, Any]:
+        """Run the full check (and an allowed build) here, under the limits."""
+        from jarvis_cd.core import install_placement as placement
+        from jarvis_cd.core.spack_install import BuildOutsideAllocation
+
+        limits = resolver.limits
+        login = {"where": placement.LOGIN_LIMITED, "why": why, "limits": limits,
+                 "login_host": resolver.sample, "queue": resolver.queue}
+        context.login_placement = login
+        note["ran_here"] = login
+        print(f"SpackInstaller: install placement login_limited on "
+              f"{resolver.sample.get('host')}: {limits['jobs']} job(s), nice "
+              f"{limits['nice']}, memory {limits['memory_mb']} MB ({why})")
+        context.log(f"install placement: running here ({why}); limits "
+                    f"{json.dumps(limits, sort_keys=True)}\n")
+        missing = build_only
+        result: Optional[Dict[str, Any]] = None
+        if build_only is None:
+            saved_mode = context.mode
+            context.mode = "check"
+            try:
+                with placement.applied_limits(limits) as usage:
+                    result = self._run_full(ppl, pkg_list, "check", context)
+            finally:
+                context.mode = saved_mode
+            login["check_usage"] = usage
+            missing = {
+                name: [str(item.get("name")) for item in entry.get("missing") or []]
+                for name, entry in (result.get("packages") or {}).items()
+                if entry.get("status") == "missing"
+            }
+            blocking = [i for i in context.issues if i.get("kind") != "not_installed"]
+            if mode == "check" or not missing or blocking:
+                if mode == "check" and missing and not blocking:
+                    plan = resolver.resolve(
+                        "build", [d for d in pkg_list if str(d.get("pkg_id")) in missing],
+                        missing)
+                    _annotate_build_plan(plan)
+                    note["build"] = plan
+                return self._finish_login(result, note, login)
+            if self.defer_unchecked:
+                # A load: the run job builds inside the allocation.
+                context.drop_issues("not_installed")
+                result["status"] = "missing"
+                result["check"]["deferred_to"] = "allocation"
+                result["check"]["missing"] = sorted(missing)
+                return self._finish_login(result, note, login)
+            plan = resolver.resolve(
+                "build", [d for d in pkg_list if str(d.get("pkg_id")) in missing], missing)
+            _annotate_build_plan(plan)
+            note["build"] = plan
+            if plan["choice"] != placement.LOGIN_LIMITED:
+                if plan["choice"] == placement.COMPUTE_JOB:
+                    raise BuildOutsideAllocation(
+                        "build missing Spack packages (build placement compute_job: "
+                        "`jarvis ppl install yaml FILE +submit`)", sorted(missing))
+                return self._finish_login(result, note, login)
+            context.drop_issues("not_installed")
+        names = ", ".join(sorted(missing or {}))
+        context.login_build = f"install placement build=login_limited for {names}"
+        with placement.applied_limits(limits) as usage:
+            result = self._run_full(ppl, pkg_list, "install", context)
+        login["build_usage"] = usage
+        return self._finish_login(result, note, login)
+
+    @staticmethod
+    def _finish_login(result: Dict[str, Any], note, login) -> Dict[str, Any]:
+        check = result.setdefault("check", {})
+        check.update(where="login_limited", light=False, limits=login["limits"],
+                     login_host=login["login_host"],
+                     usage=login.get("build_usage") or login.get("check_usage"))
+        result["placement"] = note
+        return result
+
+    # -- the full (Spack-running) path ---------------------------------------
+
+    def _run_full(self, ppl, pkg_list, mode: str, context) -> Dict[str, Any]:
         from jarvis_cd.core.environment import EnvironmentManager
         from jarvis_cd.core.spack_install import (
             InstallFailed,
@@ -368,33 +550,18 @@ class SpackInstaller(Installer):
             spack_env_enabled,
         )
 
-        context = self.context
-        owns_context = context is None
-        if owns_context:
-            context = install_context_for(ppl, mode)
-            context.open()
-        light = light_install_host(ppl, context)
-        if light is not None:
-            try:
-                return self._run_light(ppl, pkg_list, mode, context, light)
-            finally:
-                if owns_context:
-                    context.close()
         env_dir = spack_env_dir_for(ppl) if spack_env_enabled() else None
         raw_pkg_list = pkg_list
+        pkg_list = _with_absolute_repos(ppl, pkg_list)
+        resolve_started = time.monotonic()
         try:
-            pkg_list = _with_absolute_repos(ppl, pkg_list)
-            resolve_started = time.monotonic()
-            try:
-                record = run_spack_install(pkg_list, context, env_dir=env_dir)
-            except InstallFailed as failed:
-                write_install_check(ppl, raw_pkg_list, context=context, outcome="failed",
-                                    issues=failed.issues)
-                raise
-            resolve_seconds = round(time.monotonic() - resolve_started, 3)
-        finally:
-            if owns_context:
-                context.close()
+            record = run_spack_install(pkg_list, context, env_dir=env_dir)
+        except InstallFailed as failed:
+            write_install_check(ppl, raw_pkg_list, context=context, outcome="failed",
+                                issues=failed.issues)
+            raise
+        resolve_seconds = round(time.monotonic() - resolve_started, 3)
+        _record_install_costs(raw_pkg_list, record, resolve_seconds, context)
         statuses = {
             name: entry.get("status") for name, entry in record["packages"].items()
         }
@@ -522,8 +689,8 @@ class SpackInstaller(Installer):
         }
         return result
 
-    def _run_light(self, ppl, pkg_list, mode: str, context, host_reason: str
-                   ) -> Dict[str, Any]:
+    def _run_light(self, ppl, pkg_list, mode: str, context, host_reason: str,
+                   placement: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Answer a check or install on a submitting host with no Spack calls.
 
         The result comes from the last full check's ``install-check.json``
@@ -531,13 +698,19 @@ class SpackInstaller(Installer):
         a satisfied record is satisfied, recorded open issues are raised again
         (exit 3). With no matching record a check raises ``install_unchecked``
         (exit 3), an install refuses (exit 4), and a load with
-        ``defer_unchecked`` defers the check to the allocation.
+        ``defer_unchecked`` defers the check to the allocation. Open
+        ``install_placement`` questions (already raised) replace those: the
+        person first chooses where the check or build runs.
         """
         from jarvis_cd.core.spack_install import (
             BuildOutsideAllocation,
             match_candidate,
         )
 
+        placement = placement or {}
+        asking = any((placement.get(phase) or {}).get("questions")
+                     for phase in ("check", "build"))
+        build_plan = placement.get("build") or {}
         context.light = host_reason
         names = [str(pkg_def.get("pkg_id")) for pkg_def in pkg_list]
         check: Dict[str, Any] = {
@@ -545,6 +718,8 @@ class SpackInstaller(Installer):
             "record": str(install_check_path(ppl)),
         }
         document, stale = read_install_check(ppl, pkg_list)
+        if placement.get("fallback"):
+            stale = placement["fallback"]
         capture = None
         if document is None:
             capture, _capture_stale = load_spack_env_capture(ppl, pkg_list)
@@ -576,26 +751,36 @@ class SpackInstaller(Installer):
                         f"answer for {issue['issue_id']} must be one of the candidate "
                         "constraints (or a candidate id or key)")
                 pending.append(str(issue["issue_id"]))
-            if pending:
+            if pending and not asking:
                 check["pending_answers"] = pending
                 context.raise_issue(install_unchecked_issue(
                     ppl, names, "answers_pending",
                     "the answers are applied and recorded by a check inside the "
                     "allocation: pass the same --answers to `jarvis ppl install "
                     "yaml FILE +submit` (add +check to only check)"))
+            elif pending:
+                check["pending_answers"] = pending
             for issue in blocking:
                 if str(issue["issue_id"]) not in pending:
                     context.raise_issue(issue)
             if missing:
                 result["status"] = "missing"
                 check["missing"] = [i.get("package") for i in missing]
+                if build_plan:
+                    check["build_placement"] = build_plan.get("choice")
                 if not self.defer_unchecked and not context.issues:
                     raise BuildOutsideAllocation(
-                        "build missing Spack packages", check["missing"])
+                        "build missing Spack packages"
+                        + (" (build placement compute_job: `jarvis ppl install yaml "
+                           "FILE +submit`)"
+                           if build_plan.get("choice") == "compute_job" else ""),
+                        check["missing"])
             elif blocking:
                 result["status"] = (
                     "missing" if all(i.get("kind") == "not_installed" for i in blocking)
                     else "needs_decision")
+            if asking:
+                result["status"] = "needs_decision"
         elif capture is not None:
             check.update(source="env_capture", checked_at=capture.get("captured_at"),
                          outcome="satisfied")
@@ -604,7 +789,10 @@ class SpackInstaller(Installer):
         else:
             check.update(source=None, outcome="unchecked", reason=stale)
             result["status"] = "deferred" if self.defer_unchecked else "unchecked"
-            if self.defer_unchecked:
+            if asking:
+                # The person first chooses where the check runs.
+                result["status"] = check["outcome"] = "needs_decision"
+            elif self.defer_unchecked:
                 check["deferred_to"] = "allocation"
             elif mode == "install":
                 raise BuildOutsideAllocation(
@@ -651,6 +839,65 @@ class SpackInstaller(Installer):
 
     def check(self, ppl, pkg_list):
         return self._run(ppl, pkg_list, "check")
+
+
+def _recorded_missing(document: Mapping[str, Any]) -> Dict[str, List[str]]:
+    """``{pkg_id: [missing node names]}`` from an ``install-check.json``."""
+    missing: Dict[str, List[str]] = {}
+    for name, entry in (document.get("packages") or {}).items():
+        if isinstance(entry, Mapping) and entry.get("status") == "missing":
+            missing[str(name)] = [str(item.get("name")) for item in entry.get("missing") or []
+                                  if isinstance(item, Mapping)]
+    for issue in document.get("issues") or []:
+        if isinstance(issue, Mapping) and issue.get("kind") == "not_installed" \
+                and issue.get("package"):
+            missing.setdefault(str(issue["package"]), [])
+    return missing
+
+
+def _annotate_build_plan(plan: Dict[str, Any]) -> None:
+    """Name the command that builds each package under its build placement."""
+    from jarvis_cd.core.install_placement import build_command
+
+    for item in (plan.get("packages") or {}).values():
+        item["build_command"] = build_command(item.get("choice"))
+
+
+def _record_install_costs(pkg_list, record: Mapping[str, Any], resolve_seconds: float,
+                          context) -> None:
+    """Record measured check and build times for the next placement estimate."""
+    from jarvis_cd.core import install_placement as placement
+    from jarvis_cd.core.spack_install import _utc_now
+
+    if context.decisions_path is None:
+        return
+    host = socket.gethostname()
+    now = _utc_now()
+    built_any = any(entry.get("status") == "installed"
+                    for entry in (record.get("packages") or {}).values())
+    updates: Dict[str, Dict[str, Any]] = {}
+    for pkg_def in pkg_list:
+        pkg_id = str(pkg_def.get("pkg_id"))
+        entry = (record.get("packages") or {}).get(pkg_id) or {}
+        name = placement.spec_name(pkg_def)
+        if not name:
+            continue
+        update: Dict[str, Any] = {}
+        if not built_any:
+            update.update(check_seconds=resolve_seconds, check_host=host, checked_at=now,
+                          check_packages=len(pkg_list))
+        if entry.get("status") == "installed" and entry.get("build_seconds") is not None:
+            update.update(build_seconds=entry["build_seconds"], build_host=host,
+                          built_at=now,
+                          built_nodes=len(entry.get("built") or entry.get("missing") or []))
+        if update:
+            updates[name] = update
+    if not updates:
+        return
+    try:
+        placement.record_costs(placement.costs_path(context.decisions_path), updates)
+    except OSError as error:
+        context.log(f"install costs not recorded: {error}\n")
 
 
 def _with_absolute_repos(ppl, pkg_list):
@@ -746,6 +993,12 @@ def _file_digest(path: Optional[Path]) -> Optional[str]:
         return None
 
 
+def decisions_digest_without_placement(path: Path) -> Optional[str]:
+    from jarvis_cd.core.install_placement import decisions_digest_without_placement as digest
+
+    return digest(path)
+
+
 def _capture_inputs(ppl, pkg_list) -> Dict[str, Optional[str]]:
     """Digests of everything that decides what an install loads.
 
@@ -787,7 +1040,8 @@ def _capture_inputs(ppl, pkg_list) -> Dict[str, Optional[str]]:
     return {
         "packages": "sha256:" + hashlib.sha256(
             json.dumps(packages, sort_keys=True, default=str).encode()).hexdigest(),
-        "decisions": _file_digest(decisions),
+        # placement answers decide where a check runs, not what it finds
+        "decisions": decisions_digest_without_placement(decisions),
         "spack": "sha256:" + hashlib.sha256(
             json.dumps(spack_identity, sort_keys=True).encode()).hexdigest(),
         "spack_lock": lock,
@@ -995,6 +1249,9 @@ def write_install_check(ppl, pkg_list, *, context, outcome: str, issues,
         "watched_paths": watched,
         "log": str(context.log_path) if context is not None else None,
         "record": str(context.record_path) if context is not None else None,
+        # set when the submitting host ran this check under install placement
+        # limits: the choice, measurements and limits (what the person saw)
+        "placement": getattr(context, "login_placement", None),
     }
     path = install_check_path(ppl)
     try:

@@ -600,16 +600,24 @@ class SpackRunner:
         self, arguments: Sequence[str], *, stream: bool = False
     ) -> subprocess.CompletedProcess[str]:
         """Run one Spack command; ``stream`` copies output line by line."""
+        from jarvis_cd.core import install_placement
+
         if self.config_scopes and list(arguments[:1]) != ["-e"]:
             arguments = [
                 *(token for scope in self.config_scopes for token in ("-C", scope)),
                 *arguments,
             ]
+        # On a login host under install_placement limits: -c config:build_jobs,
+        # nice/idle I/O and an address-space bound (no-ops otherwise).
+        arguments = install_placement.spack_arguments(arguments)
         command = spack_executable() + " " + shlex.join(arguments)
         self.commands.append(command)
-        script = spack_command(arguments)
+        script = install_placement.wrap_script(spack_command(arguments))
         self._log(f"[{_utc_now()}] $ {command}\n")
-        environment = spack_subprocess_environment()
+        environment = install_placement.subprocess_environment(
+            spack_subprocess_environment())
+        preexec = install_placement.preexec()
+        extra = {"preexec_fn": preexec} if preexec is not None else {}
         if stream:
             process = subprocess.Popen(
                 ["bash", "-c", script],
@@ -619,6 +627,7 @@ class SpackRunner:
                 encoding="utf-8",
                 errors="replace",
                 env=environment,
+                **extra,
             )
             lines: List[str] = []
             assert process.stdout is not None
@@ -639,6 +648,7 @@ class SpackRunner:
                 errors="replace",
                 env=environment,
                 check=False,
+                **extra,
             )
             self._log(completed.stdout)
             self._log(completed.stderr)
@@ -2080,9 +2090,12 @@ def load_answers(path: Optional[Path]) -> Dict[str, Dict[str, Any]]:
             raise ValueError(f"answers.json key {issue_id!r} is not an issue id")
         entry = dict(value) if isinstance(value, Mapping) else {"constraint": value}
         entry["constraint"] = _validated_constraint(entry.get("constraint"))
+        if entry.get("basis") is not None:
+            # why the person chose this (e.g. the site's documentation): recorded
+            entry["basis"] = _bounded(str(entry["basis"]), 2048)
         answers[issue_id] = {
             key: entry[key]
-            for key in ("constraint", "answered_by", "ask_id")
+            for key in ("constraint", "answered_by", "ask_id", "basis")
             if entry.get(key) is not None
         }
     return answers
@@ -2182,7 +2195,7 @@ class Decisions:
             "constraint": answer["constraint"],
             "answered_at": answer.get("answered_at") or _utc_now(),
         }
-        for key in ("answered_by", "ask_id"):
+        for key in ("answered_by", "ask_id", "basis"):
             if answer.get(key) is not None:
                 entry[key] = answer[key]
         for key, value in (extra or {}).items():
@@ -2359,6 +2372,9 @@ class InstallContext:
     require_allocation: bool = False
     #: the answers.json the answers came from (for decision provenance)
     answers_path: Optional[Path] = None
+    #: why builds may run on this submitting host (every package to build
+    #: resolved to the ``login_limited`` build placement), else None
+    login_build: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.mode not in {"install", "check"}:
@@ -2431,6 +2447,9 @@ class InstallContext:
         if local_build_allowed():
             self.log(f"[{_utc_now()}] {ALLOW_LOCAL_BUILD_ENV} set: {what} locally\n")
             return
+        if self.login_build:
+            self.log(f"[{_utc_now()}] {what} on this host: {self.login_build}\n")
+            return
         refused = BuildOutsideAllocation(what, packages)
         self.log(f"[{_utc_now()}] REFUSED: {refused}\n")
         self.report_progress(phase="refused", current_package=None)
@@ -2452,6 +2471,20 @@ class InstallContext:
         for issue in self.issues[keep:]:
             self.log(f"ISSUE retracted {issue['issue_id']} (re-planning)\n")
         self.issues = self.issues[:keep]
+        _atomic_write_text(self.issues_path, "".join(
+            json.dumps(issue, sort_keys=True, separators=(",", ":")) + "\n"
+            for issue in self.issues))
+
+    def drop_issues(self, kind: str) -> None:
+        """Drop every raised issue of ``kind`` (an install placement that
+        builds the missing packages here answers ``not_installed``)."""
+        kept = [issue for issue in self.issues if issue.get("kind") != kind]
+        if len(kept) == len(self.issues):
+            return
+        for issue in self.issues:
+            if issue.get("kind") == kind:
+                self.log(f"ISSUE dropped {issue['issue_id']} ({kind})\n")
+        self.issues = kept
         _atomic_write_text(self.issues_path, "".join(
             json.dumps(issue, sort_keys=True, separators=(",", ":")) + "\n"
             for issue in self.issues))
@@ -3820,12 +3853,19 @@ def run_spack_install(
                     packages_done=index,
                     missing=[item["name"] for item in entry["missing"]][:32],
                 )
+                build_started = time.monotonic()
                 record["packages"][package] = planner.install_package(package, entry)
+                # measured build time: the next placement estimate at this site
+                record["packages"][package]["build_seconds"] = round(
+                    time.monotonic() - build_started, 3)
         if env_dir is not None and resolved:
+            sync_started = time.monotonic()
             _sync_spack_environment(
                 planner, context, record, resolved, Path(env_dir),
                 sections=compiler_state["sections"] if context.mode == "install" else None,
             )
+            if any(entry.get("status") == "installed" for _p, entry in resolved):
+                record["env_build_seconds"] = round(time.monotonic() - sync_started, 3)
     except BuildOutsideAllocation as refused:
         record["refused"] = refused.to_dict()
         record["finished_at"] = _utc_now()

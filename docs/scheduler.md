@@ -520,16 +520,21 @@ therefore reports it the way an install job does.
 
 Concretizing (`spack spec -I`) can hold a login node's CPU for minutes. So
 for a pipeline with a `scheduler:` block, outside an allocation, JARVIS runs
-**no Spack command at all** in the install phase: not for `ppl install
-+check`, not for `ppl install`, and not for the install-on-load of `ppl load`
-/ `ppl submit`. It answers from the record of the last full check instead.
-Spack runs only inside an allocation (`SLURM_JOB_ID`, `PBS_JOBID`,
+**no Spack command** in the install phase unless the site's
+[install placement](#install-placement-where-checks-and-builds-run) says so:
+not for `ppl install +check`, not for `ppl install`, and not for the
+install-on-load of `ppl load` / `ppl submit`. It answers from the record of
+the last full check instead. Without a matching record, the install
+placement decides whether the full check runs here (niced and bounded) or in
+a job, and asks the person when the site has not chosen yet.
+Spack otherwise runs only inside an allocation (`SLURM_JOB_ID`, `PBS_JOBID`,
 `LSB_JOBID` or `FLUX_JOB_ID`). `+allow_local` or `JARVIS_ALLOW_LOCAL_BUILD=1`
-opts back in to a full check on the current host. A pipeline without a
-scheduler block is unchanged.
+opts back in to an unlimited full check on the current host. A pipeline
+without a scheduler block is unchanged.
 
 Every full check or install (in an install job, in a run job's
-install-on-load, or a local `+allow_local` run) ends by writing
+install-on-load, a `login_limited` check on the submitting host, or a local
+`+allow_local` run) ends by writing
 `install-check.json` (`jarvis.install-check.v1`) next to the env capture:
 `<pipeline shared>/install/install-check.json`, or
 `$JARVIS_SPACK_ENV_DIR/install-check.json` when that is set. It holds:
@@ -542,22 +547,34 @@ install-on-load, or a local `+allow_local` run) ends by writing
 - the `inputs` digests the env capture uses (packages' `install*` settings,
   `decisions.yaml`, the Spack root and config, `spack.lock`), and
   `watched_paths` (the root prefixes it saw);
-- the install `log` and `record` paths.
+- the install `log` and `record` paths, and `placement` (the
+  `login_limited` choice, host measurements, limits and usage) when the
+  submitting host ran it.
 
 A light check applies the record only while its inputs match and its watched
 paths exist. A `failed` outcome is never replayed: it counts as unchecked. An
 answer recorded in `decisions.yaml` changes the `decisions` digest, so the
-next light check is unchecked until a job checks again. The report's `check`
+next light check is unchecked until a job checks again. Install placement
+answers are left out of that digest: they decide where a check runs, not
+what it finds. The report's `check`
 block (also in `phase_timings.env_activation.check`) says what happened:
 `{where: recorded, light: true, host_reason, record, source (install_check |
 env_capture | null), outcome, checked_at, checked_where, reason, missing,
-pending_answers}`.
+pending_answers}`; after a check on the submitting host it is `{where:
+login_limited, light: false, limits, login_host, usage, record}`.
+
+The rows below are for a site whose check placement is `compute_job` (or a
+login host too busy now). With no placement chosen yet, the "no matching
+record" and `--answers` rows ask an `install_placement` question first
+(exit 3, nothing submitted). With `login_limited`, they run the full check
+here under limits instead, and continue from its outcome as in the
+"record …" rows.
 
 | Recorded state | `ppl install +check` | `ppl install` (no `+submit`) | install-on-load at `ppl load` / `ppl submit` |
 |---|---|---|---|
 | record (or fresh capture) satisfied | exit 0, `satisfied` | exit 0 | proceeds; `activation.method: deferred` |
 | record with open questions | the same issues again, exit **3** | exit **3** | exit **3** before `sbatch` (ask before submit) |
-| record with only `not_installed` | the `not_installed` issues, exit **3** | refused, exit **4** | `check`: exit **3**; `install`: proceeds, the job builds |
+| record with only `not_installed` | the `not_installed` issues (plus a build placement question while none is chosen), exit **3** | build placement `login_limited`: builds here under limits; `compute_job`: refused, exit **4**; unchosen: exit **3** | `check`: exit **3**; `install`: proceeds, the job builds |
 | no matching record | `install_unchecked`, exit **3** | refused, exit **4** | proceeds; the job checks at load |
 | `--answers` for recorded questions | `install_unchecked` with `reason: answers_pending`, exit **3** | the same | the same |
 
@@ -584,6 +601,142 @@ When `ppl submit` defers the check, it prints an advisory and records it in
 the execution's `metadata.install_on_load`: `{policy, runs_in: allocation,
 submit_host: {source, outcome, reason, record, missing}, advisory}`. The job's
 own result then appears in `metadata.install`.
+
+### Install placement: where checks and builds run
+
+Where a full check (`spack spec -I`) or a build may run is a per-cluster,
+and sometimes per-package, decision. Some sites' documentation recommends
+the login node, others compute nodes, and a 20-minute build differs from a
+4-hour one. JARVIS hard-codes no site. It offers the choice to the person as
+a typed `install_placement` question, with candidates, measured evidence and
+a recommendation, and records the answer in the site's decisions store
+(`JARVIS_SPACK_DECISIONS`, see [spack.md](spack.md)).
+
+The placement applies only on the submitting host of a scheduled pipeline
+(outside an allocation). Inside a job the check and build simply run there.
+
+**Choices** (candidate `id` = `constraint`):
+
+| Choice | What it does |
+|---|---|
+| `login_limited` | runs the full check (or the build) on the submitting host now, niced and bounded (see limits below), so questions such as the MPI come back without a queue wait |
+| `compute_job` | today's path: the run job checks at load, or `jarvis ppl install yaml FILE +check +submit`; builds go to `jarvis ppl install yaml FILE +submit` |
+| `ask_each_time` | keeps no standing choice: every time, an `…occasion` question (only `login_limited` / `compute_job`) is asked, and its answer applies to that run only |
+
+**Keys.** A site answer has the subject
+`install_placement.<phase>.<cost_class>` (`phase`: `check` or `build`;
+`cost_class`: `short` or `long`), so a site can allow short checks on the
+login node and still send long ones to a job. A package override has the
+subject `install_placement.<phase>` under the package's Spack name (`scope:
+package`). It beats the site answer for that package. Resolution order:
+package decision → package answer → site decision → site answer →
+`JARVIS_INSTALL_PLACEMENT_CHECK` / `JARVIS_INSTALL_PLACEMENT_BUILD` (a
+caller's default, `login_limited` or `compute_job`) → question. One check
+covers every package in the pipeline. So it runs here only when every
+package resolves to `login_limited`; any `compute_job` sends the check to a
+job.
+
+**Cost estimate** per package (shown in the question and its evidence):
+
+- a prior measurement at this site, from `install-costs.json`
+  (`jarvis.install-costs.v1`) next to the decisions store. Every full check
+  records `check_seconds` (with `check_host`, `checked_at`), and every build
+  records `build_seconds` (with `build_host`, `built_at`, `built_nodes`);
+- otherwise, for a build: the check's missing Spack nodes × 120 s, with
+  known-heavy nodes (`paraview`, `vtk`, `qt`, `llvm`, `gcc`, `trilinos`, …)
+  at 3600 s each;
+- otherwise a known-heavy package (600 s check, 4 h build), or a default
+  (60 s check; an unknown build counts as long).
+
+The class is `short` up to `JARVIS_PLACEMENT_SHORT_CHECK_SECONDS` (300) or
+`JARVIS_PLACEMENT_SHORT_BUILD_SECONDS` (1800), else `long`.
+
+**Recommendation:**
+
+- when the login host is busy now (see `defer` below): `compute_job`;
+- a short check: `login_limited` (it saves a queue wait);
+- a long check: `compute_job`, unless the site already answered
+  `login_limited` for checks;
+- a short build: `compute_job` until the site has answered `login_limited`
+  for builds. Login builds stay an option the person picks, because many
+  sites' admins object to compiling on login nodes;
+- a long build: `compute_job`.
+
+The reason is in `recommendation_reason`.
+
+**Evidence** in the question:
+
+- `login_host`: host, `cores` (affinity), `load` (1/5/15 min),
+  `total_mb`/`available_mb`, the person's `own_processes` (`count`,
+  `running`, `rss_mb`), and any cgroup v2 CPU/memory limit on the session
+  (`cgroup`);
+- `limits`: what a `login_limited` run would get right now;
+- `queue`: for Slurm, `sbatch --test-only --nodes=1 --time=30` with the
+  pipeline's partition/account/qos gives `start_at`/`wait` (one light
+  scheduler call). Other schedulers are reported as not measured;
+- `site_policy`: the recorded placement answers and the discovered cgroup;
+- `packages` (each with its `estimate` and `override_issue_id`) and
+  `package_overrides[]`.
+
+An agent may read the site's documentation, propose a choice and pass the
+source as the answer's `basis`. The person confirms, and JARVIS records
+`basis` with the answer.
+
+**Limits** (measured when the check runs; env knobs in brackets):
+
+- `jobs` = clamp(⌊free cores × 0.25⌋, 1, 4), where free cores = cores (or
+  the cgroup CPU limit) − the 1-minute load
+  [`JARVIS_LOGIN_CHECK_SHARE`, `JARVIS_LOGIN_CHECK_MAX_JOBS`]. It is applied
+  as `spack -c config:build_jobs:<jobs>` and as `OMP_NUM_THREADS` /
+  `OPENBLAS_NUM_THREADS` / `MKL_NUM_THREADS`.
+- Priority: `nice 19` and `ionice -c 3` (idle I/O) on every Spack process.
+- `memory_mb` = clamp(free MB × 0.25, 4096, 8192), as an address-space
+  limit (`RLIMIT_AS`) on each Spack process [`JARVIS_LOGIN_CHECK_MEM_SHARE`,
+  `JARVIS_LOGIN_CHECK_MIN_FREE_MB`, `JARVIS_LOGIN_CHECK_MAX_MEM_MB`].
+- `defer` (with `defer_reasons`): fewer than 1 free core, less than 4096 MB
+  free, or 8+ of the person's processes running
+  [`JARVIS_LOGIN_CHECK_MIN_FREE_CORES`, `JARVIS_LOGIN_CHECK_MAX_OWN_RUNNING`].
+  The work then takes the `compute_job` path for this run, and the report's
+  `placement.fallback` says `login_busy: …`.
+- No hard time limit (`time_limit: null`). The person can stop it (Ctrl-C,
+  or kill the jarvis process); the record is written only when the check
+  finishes.
+
+The report's `placement` block (`jarvis.install-placement.v1`) carries:
+
+- `check` / `build`: `{choice, packages: {pkg_id: {spec_name, estimate,
+  choice, source, build_command}}, questions}`;
+- `ran_here`: `{where: login_limited, why, limits, login_host, queue,
+  check_usage / build_usage}`. Usage is `wall_seconds`, `cpu_seconds`,
+  `cpu_share_of_one_core` and `peak_child_rss_mb`;
+- `fallback` and `evidence`.
+
+The same is recorded as `install-check.json`'s `placement`.
+
+**One concretization per submit.** A `login_limited` check writes
+`install-check.json`. The `ppl submit` load that ran it, and a later `ppl
+install +check +json` (the report after exit 3), read that record without
+another Spack call.
+
+**Contract for a caller** (e.g. CLIO relay):
+
+1. Run `jarvis ppl submit FILE +json` or `jarvis ppl install yaml FILE
+   +check +json` as before.
+2. Exit 3 with `kind: install_placement` issues in the `jarvis.install`
+   report means the person chooses first. Relay the `question`,
+   `candidates` (with `recommended` and `does`), `recommendation_reason`,
+   `evidence`, `packages` and `package_overrides`.
+3. Answer in the same answers file: `{"<issue_id>": "login_limited"}` or
+   `{"<issue_id>": {"constraint": "compute_job", "answered_by": "…",
+   "basis": "…"}}`. An override's `issue_id` comes from `package_overrides`.
+4. Re-run the same command with `--answers` (or `JARVIS_INSTALL_ANSWERS`).
+   The answer is recorded per site; later runs do not ask again, except
+   under `ask_each_time`.
+5. To change a choice: `jarvis ppl install --forget install_placement.check.short
+   +json` (a site subject, an `issue_id`, or the package name for an
+   override). The next run asks again.
+
+`JARVIS_INSTALL_ON_LOAD=check` stays the caller's setting.
 
 ### Captured load environment
 
@@ -652,12 +805,12 @@ Builds are also refused at the point where heavy work would start:
 
 | Command on the submitting host | What runs there |
 |---|---|
-| `ppl install +check` | reads `install-check.json`; no Spack call. Without a scheduler block (a workstation): `spack spec -I` / `spack find` |
+| `ppl install +check` | reads `install-check.json`; no Spack call. With no matching record and placement `login_limited`: the full check here, niced and bounded ([Install placement](#install-placement-where-checks-and-builds-run)). Without a scheduler block (a workstation): `spack spec -I` / `spack find` |
 | `sched info` | `sinfo`, `scontrol show partition`, `spack find`: allowed |
 | `spack prepare` | config writes, `spack compiler find` / `external find`, a shallow clone when the root is missing; never a build: allowed (run it in a job where even that is too much) |
 | `ppl install +submit` (with or without `+check`) | writes the snapshot and calls `sbatch`: allowed; the check and build run in the job |
-| `ppl submit <file>` with `JARVIS_INSTALL_ON_LOAD=check` | reads the record, then `sbatch`; exits 3 without submitting when the record has open questions or missing packages; with no matching record it submits and the job checks |
-| `ppl install` (no `+submit`) | exit 0 when the record is satisfied; otherwise refused with exit **4** (or exit 3 for recorded questions), before any Spack call |
+| `ppl submit <file>` with `JARVIS_INSTALL_ON_LOAD=check` | reads the record, then `sbatch`; exits 3 without submitting when the record has open questions or missing packages; with no matching record: placement `login_limited` checks here first (limited), `compute_job` submits and the job checks, unchosen asks an `install_placement` question (exit 3) |
+| `ppl install` (no `+submit`) | exit 0 when the record is satisfied; builds here only under build placement `login_limited`; otherwise refused with exit **4** (or exit 3 for recorded or placement questions), before any Spack call |
 | `ppl load` / `ppl run yaml` / `ppl submit <file>` with the default `install` policy | reads the record; exit 3 for recorded questions, otherwise proceeds and the job checks and builds. Without a scheduler block on a host with `sbatch`/`qsub`/`bsub`/`flux` on `PATH`, it resolves locally and is refused with exit **4** if anything must be built |
 
 A host is inside an allocation when `SLURM_JOB_ID`, `PBS_JOBID`, `LSB_JOBID`

@@ -1,0 +1,867 @@
+"""Where a scheduled pipeline's Spack check and build run: install placement.
+
+On the submitting host of a scheduled pipeline (usually a login node) JARVIS
+answers a check from the recorded ``install-check.json``. When no record
+matches, the full check (``spack spec -I -l``) or a build has to run
+somewhere. That is a per-site, and possibly per-package, choice the person
+makes, never a hard-coded cluster rule:
+
+* ``login_limited``: run it here now, niced (19, idle I/O class), with a few
+  build jobs and a memory bound sized from this host's cores, load, free
+  memory and the person's own processes. It is deferred to a compute job when
+  the host is busy;
+* ``compute_job``: run it in a short 1-node compute job;
+* ``ask_each_time``: record no standing choice; ask on each occasion.
+
+The choice is keyed by phase (``check`` or ``build``) and by the estimated
+cost class (``short`` or ``long``) of the package: a 20-minute build and a
+4-hour build are separate decisions at a site. A package override (keyed by
+the Spack package name) beats the site's answer. Answers are recorded in the
+decisions store (``JARVIS_SPACK_DECISIONS``), and estimates come from
+``install-costs.json`` next to it, which every full check and build updates.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import os
+import re
+import shutil
+import socket
+import subprocess
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
+
+PLACEMENT_KIND = "install_placement"
+LOGIN_LIMITED = "login_limited"
+COMPUTE_JOB = "compute_job"
+ASK_EACH_TIME = "ask_each_time"
+CHOICES = (LOGIN_LIMITED, COMPUTE_JOB, ASK_EACH_TIME)
+PHASES = ("check", "build")
+SHORT, LONG = "short", "long"
+
+COSTS_NAME = "install-costs.json"
+COSTS_SCHEMA = "jarvis.install-costs.v1"
+PLACEMENT_SCHEMA = "jarvis.install-placement.v1"
+
+#: JSON merged over the measured login-host sample (proofs and tests only)
+SAMPLE_ENV = "JARVIS_LOGIN_HOST_SAMPLE"
+#: caller default for a phase when neither a package nor a site answer exists
+DEFAULT_ENV = {"check": "JARVIS_INSTALL_PLACEMENT_CHECK",
+               "build": "JARVIS_INSTALL_PLACEMENT_BUILD"}
+
+#: packages known to have large dependency graphs or long builds anywhere
+KNOWN_HEAVY = frozenset({
+    "paraview", "vtk", "vtk-m", "qt", "qt-base", "qt-declarative", "llvm", "gcc",
+    "trilinos", "dealii", "openfoam", "openfoam-org", "py-torch", "py-tensorflow",
+    "py-jax", "jaxlib", "root", "rust", "mesa", "boost", "petsc", "visit",
+    "ecp-data-vis-sdk", "kokkos-kernels", "hipblas", "rocblas", "cuda", "nvhpc",
+})
+
+#: heuristic seconds per missing node (ordinary, known-heavy)
+NODE_BUILD_SECONDS = 120
+HEAVY_NODE_BUILD_SECONDS = 3600
+DEFAULT_CHECK_SECONDS = 60
+HEAVY_CHECK_SECONDS = 600
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "").strip() or default)
+    except ValueError:
+        return default
+
+
+def short_threshold(phase: str) -> float:
+    """Estimated seconds up to which a check or build counts as ``short``."""
+    if phase == "check":
+        return _env_float("JARVIS_PLACEMENT_SHORT_CHECK_SECONDS", 300)
+    return _env_float("JARVIS_PLACEMENT_SHORT_BUILD_SECONDS", 1800)
+
+
+def spec_name(pkg_def: Mapping[str, Any]) -> str:
+    """The Spack package a pipeline package installs (its query's root name)."""
+    config = pkg_def.get("config", {}) or {}
+    query = str(config.get("install_query") or config.get("install") or "").strip()
+    match = re.match(r"\s*([A-Za-z0-9_][A-Za-z0-9_-]*)", query)
+    return match.group(1).lower() if match else str(pkg_def.get("pkg_id") or "pkg")
+
+
+def _human(seconds: Optional[float]) -> str:
+    if seconds is None:
+        return "unknown"
+    if seconds < 90:
+        return f"~{int(round(seconds))} s"
+    if seconds < 5400:
+        return f"~{int(round(seconds / 60))} min"
+    return f"~{seconds / 3600:.1f} h"
+
+
+# ---------------------------------------------------------------------------
+# Login host measurement
+# ---------------------------------------------------------------------------
+
+
+def _meminfo() -> Dict[str, Optional[int]]:
+    found: Dict[str, Optional[int]] = {"total_mb": None, "available_mb": None}
+    try:
+        with open("/proc/meminfo", "r", encoding="ascii", errors="replace") as stream:
+            for line in stream:
+                key, _, rest = line.partition(":")
+                if key in ("MemTotal", "MemAvailable"):
+                    value = int(rest.split()[0]) // 1024
+                    found["total_mb" if key == "MemTotal" else "available_mb"] = value
+    except (OSError, ValueError, IndexError):
+        pass
+    return found
+
+
+def _own_processes(limit: int = 32768) -> Optional[Dict[str, Any]]:
+    """This user's processes here: count, running (state R) and summed RSS."""
+    if not os.path.isdir("/proc") or not hasattr(os, "getuid"):
+        return None
+    uid = str(os.getuid())
+    count = running = rss_kb = 0
+    scanned = 0
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return None
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        scanned += 1
+        if scanned > limit:
+            break
+        try:
+            with open(f"/proc/{entry}/status", "r", encoding="ascii",
+                      errors="replace") as stream:
+                fields = dict(line.split(":", 1) for line in stream if ":" in line)
+        except OSError:
+            continue
+        if (fields.get("Uid") or "").split()[:1] != [uid]:
+            continue
+        count += 1
+        if (fields.get("State") or "").strip().startswith("R"):
+            running += 1
+        try:
+            rss_kb += int((fields.get("VmRSS") or "0 kB").split()[0])
+        except (ValueError, IndexError):
+            pass
+    return {"count": count, "running": running, "rss_mb": rss_kb // 1024}
+
+
+def _cgroup_limits() -> Optional[Dict[str, Any]]:
+    """The tightest cgroup v2 CPU and memory limits over this process's cgroup."""
+    try:
+        with open("/proc/self/cgroup", "r", encoding="ascii", errors="replace") as stream:
+            lines = stream.read().splitlines()
+    except OSError:
+        return None
+    relative = next((line.split("::", 1)[1] for line in lines if line.startswith("0::")),
+                    None)
+    if relative is None:
+        return None
+    root = Path("/sys/fs/cgroup")
+    current = root / relative.lstrip("/")
+    cpu_cores: Optional[float] = None
+    memory_max: Optional[int] = None
+    memory_used: Optional[int] = None
+    where: Dict[str, str] = {}
+    while True:
+        try:
+            quota, period = (current / "cpu.max").read_text().split()[:2]
+            if quota != "max":
+                cores = int(quota) / int(period)
+                if cpu_cores is None or cores < cpu_cores:
+                    cpu_cores, where["cpu"] = cores, str(current)
+        except (OSError, ValueError):
+            pass
+        try:
+            value = (current / "memory.max").read_text().strip()
+            if value != "max":
+                limit = int(value)
+                if memory_max is None or limit < memory_max:
+                    memory_max, where["memory"] = limit, str(current)
+                    used = (current / "memory.current").read_text().strip()
+                    memory_used = int(used)
+        except (OSError, ValueError):
+            pass
+        if current == root or root not in current.parents:
+            break
+        current = current.parent
+    if cpu_cores is None and memory_max is None:
+        return {"cpu_cores": None, "memory_max_mb": None, "path": relative}
+    return {
+        "cpu_cores": round(cpu_cores, 2) if cpu_cores is not None else None,
+        "memory_max_mb": memory_max // 2**20 if memory_max is not None else None,
+        "memory_used_mb": memory_used // 2**20 if memory_used is not None else None,
+        "path": relative,
+        "limited_at": where,
+    }
+
+
+def measure_login_host() -> Dict[str, Any]:
+    """Cores, load, free memory, the person's processes and cgroup limits here."""
+    try:
+        cores = len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        cores = os.cpu_count() or 1
+    try:
+        load: Optional[List[float]] = [round(value, 2) for value in os.getloadavg()]
+    except (AttributeError, OSError):
+        load = None
+    sample: Dict[str, Any] = {
+        "host": socket.gethostname(),
+        "measured_at": _utc_now(),
+        "cores": cores,
+        "load": load,
+        **_meminfo(),
+        "own_processes": _own_processes(),
+        "cgroup": _cgroup_limits(),
+    }
+    override = os.environ.get(SAMPLE_ENV, "").strip()
+    if override:
+        try:
+            values = json.loads(override)
+        except ValueError:
+            values = {}
+        if isinstance(values, dict):
+            sample.update(values)
+            sample["overridden"] = sorted(values)
+    return sample
+
+
+def limits_for(sample: Mapping[str, Any]) -> Dict[str, Any]:
+    """The concurrency, priority and memory bound for work on this host now.
+
+    ``jobs`` is a share of the cores free right now (cores, or the cgroup's
+    CPU limit, minus the 1-minute load), at least 1 and at most a modest
+    ceiling; the memory bound is a share of the free memory. ``defer`` is set
+    (with reasons) when the host is too busy: then the work goes to a job.
+    """
+    share = _env_float("JARVIS_LOGIN_CHECK_SHARE", 0.25)
+    ceiling = max(1, int(_env_float("JARVIS_LOGIN_CHECK_MAX_JOBS", 4)))
+    min_free = _env_float("JARVIS_LOGIN_CHECK_MIN_FREE_CORES", 1.0)
+    min_mem = _env_float("JARVIS_LOGIN_CHECK_MIN_FREE_MB", 4096)
+    mem_share = _env_float("JARVIS_LOGIN_CHECK_MEM_SHARE", 0.25)
+    mem_ceiling = _env_float("JARVIS_LOGIN_CHECK_MAX_MEM_MB", 8192)
+    max_running = int(_env_float("JARVIS_LOGIN_CHECK_MAX_OWN_RUNNING", 8))
+    cores = float(sample.get("cores") or 1)
+    cgroup = sample.get("cgroup") or {}
+    if cgroup.get("cpu_cores"):
+        cores = min(cores, float(cgroup["cpu_cores"]))
+    load = sample.get("load") or []
+    load1 = float(load[0]) if load else 0.0
+    free = max(0.0, cores - load1)
+    available = sample.get("available_mb")
+    if cgroup.get("memory_max_mb") is not None:
+        room = int(cgroup["memory_max_mb"]) - int(cgroup.get("memory_used_mb") or 0)
+        available = room if available is None else min(int(available), room)
+    own = sample.get("own_processes") or {}
+    reasons: List[str] = []
+    if free < min_free:
+        reasons.append(f"{free:.1f} free cores (load {load1:g} on {cores:g}) is below "
+                       f"{min_free:g}")
+    if available is not None and available < min_mem:
+        reasons.append(f"{available} MB free memory is below {min_mem:g} MB")
+    if own.get("running") is not None and int(own["running"]) >= max_running:
+        reasons.append(f"{own['running']} of your processes are running here "
+                       f"(limit {max_running})")
+    jobs = max(1, min(ceiling, int(free * share)))
+    if available is None:
+        memory_mb = int(mem_ceiling)
+    else:
+        memory_mb = int(max(min(mem_ceiling, available * mem_share),
+                            min(min_mem, available)))
+    return {
+        "defer": bool(reasons),
+        "defer_reasons": reasons,
+        "jobs": jobs,
+        "nice": 19,
+        "ionice": "idle (class 3)",
+        "memory_mb": memory_mb,
+        "effective_cores": round(cores, 2),
+        "free_cores": round(free, 2),
+        "available_mb": available,
+        "rule": (f"jobs = clamp(floor(free_cores x {share:g}), 1, {ceiling}); "
+                 f"memory = clamp(free_mb x {mem_share:g}, {min_mem:g}, "
+                 f"{mem_ceiling:g}) MB (address-space limit on each Spack process); "
+                 f"defer when free cores < {min_free:g}, free memory < {min_mem:g} MB "
+                 f"or {max_running}+ of your processes are running"),
+        "time_limit": None,
+        "stop": "no hard time limit; stop it with Ctrl-C or by killing the jarvis "
+                "process (the record is only written when the check finishes)",
+    }
+
+
+# ---------------------------------------------------------------------------
+# Applying the limits to Spack subprocesses
+# ---------------------------------------------------------------------------
+
+_ACTIVE: List[Dict[str, Any]] = []
+
+
+def active_limits() -> Optional[Dict[str, Any]]:
+    """The limits the current login-host work runs under, if any."""
+    return _ACTIVE[-1] if _ACTIVE else None
+
+
+def spack_arguments(arguments: Sequence[str]) -> List[str]:
+    """Prefix ``-c config:build_jobs:N`` while limits are active."""
+    limits = active_limits()
+    if limits is None:
+        return list(arguments)
+    return ["-c", f"config:build_jobs:{int(limits['jobs'])}", *arguments]
+
+
+def wrap_script(script: str) -> str:
+    """Put the shell (and so Spack) in the idle I/O class while limits are active."""
+    if active_limits() is None or os.name != "posix":
+        return script
+    return "{ command -v ionice >/dev/null 2>&1 && ionice -c 3 -p $$; } " \
+           ">/dev/null 2>&1; " + script
+
+
+def subprocess_environment(environment: Dict[str, str]) -> Dict[str, str]:
+    limits = active_limits()
+    if limits is None:
+        return environment
+    jobs = str(int(limits["jobs"]))
+    for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
+        environment[name] = jobs
+    return environment
+
+
+def preexec():
+    """``preexec_fn`` that lowers priority and bounds memory, or ``None``."""
+    limits = active_limits()
+    if limits is None or os.name != "posix":
+        return None
+    nice = int(limits.get("nice") or 19)
+    memory = int(limits.get("memory_mb") or 0) * 2**20
+
+    def apply() -> None:
+        try:
+            os.nice(nice)
+        except OSError:
+            pass
+        if memory > 0:
+            try:
+                import resource
+
+                soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+                bound = memory if hard == resource.RLIM_INFINITY else min(memory, hard)
+                resource.setrlimit(resource.RLIMIT_AS, (bound, hard))
+            except (ImportError, OSError, ValueError):
+                pass
+
+    return apply
+
+
+def _children_usage() -> Tuple[float, int]:
+    try:
+        import resource
+
+        usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+        return usage.ru_utime + usage.ru_stime, int(usage.ru_maxrss)
+    except (ImportError, OSError):
+        return 0.0, 0
+
+
+@contextlib.contextmanager
+def applied_limits(limits: Dict[str, Any]) -> Iterator[Dict[str, Any]]:
+    """Run Spack under ``limits``; fills ``usage`` (CPU, peak RSS, wall)."""
+    usage: Dict[str, Any] = {}
+    cpu_before, _rss = _children_usage()
+    started = time.monotonic()
+    _ACTIVE.append(dict(limits))
+    try:
+        yield usage
+    finally:
+        _ACTIVE.pop()
+        cpu_after, rss_kb = _children_usage()
+        wall = time.monotonic() - started
+        usage.update(
+            wall_seconds=round(wall, 3),
+            cpu_seconds=round(cpu_after - cpu_before, 3),
+            cpu_share_of_one_core=round((cpu_after - cpu_before) / wall, 3) if wall else None,
+            peak_child_rss_mb=rss_kb // 1024 if rss_kb else None,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Cost estimates
+# ---------------------------------------------------------------------------
+
+
+def costs_path(decisions_path: Path) -> Path:
+    """``install-costs.json`` next to the (per-site) decisions store."""
+    return Path(decisions_path).with_name(COSTS_NAME)
+
+
+def read_costs(path: Path) -> Dict[str, Dict[str, Any]]:
+    try:
+        document = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    packages = document.get("packages") if isinstance(document, dict) else None
+    return {str(k): dict(v) for k, v in (packages or {}).items() if isinstance(v, dict)}
+
+
+def record_costs(path: Path, updates: Mapping[str, Mapping[str, Any]]) -> None:
+    """Merge measured seconds per Spack package into ``install-costs.json``."""
+    if not updates:
+        return
+    from jarvis_cd.core.spack_install import _atomic_write_text, _file_lock
+
+    path = Path(path)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _file_lock(path.with_name(f".{path.name}.lock"), exclusive=True):
+            packages = read_costs(path)
+            for name, fields in updates.items():
+                entry = packages.setdefault(str(name), {})
+                entry.update({k: v for k, v in fields.items() if v is not None})
+            _atomic_write_text(path, json.dumps(
+                {"schema_version": COSTS_SCHEMA, "packages": packages},
+                indent=2, sort_keys=True) + "\n")
+    except OSError as exc:
+        print(f"install placement: costs not recorded ({exc})")
+
+
+def estimate(phase: str, name: str, costs: Mapping[str, Mapping[str, Any]],
+             missing: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+    """Estimated seconds and cost class of one package's check or build."""
+    prior = costs.get(name) or {}
+    seconds: Optional[float]
+    if phase == "check":
+        if prior.get("check_seconds") is not None:
+            seconds = float(prior["check_seconds"])
+            basis = (f"prior check of {name} at this site ({prior.get('check_host')}, "
+                     f"{prior.get('checked_at')})")
+        elif name in KNOWN_HEAVY:
+            seconds, basis = HEAVY_CHECK_SECONDS, \
+                f"{name} is a known-heavy package (large dependency graph)"
+        else:
+            seconds, basis = DEFAULT_CHECK_SECONDS, \
+                "default for a package never checked at this site"
+    else:
+        if prior.get("build_seconds") is not None:
+            seconds = float(prior["build_seconds"])
+            basis = (f"prior build of {name} at this site ({prior.get('build_host')}, "
+                     f"{prior.get('built_at')}, {prior.get('built_nodes')} nodes)")
+        elif missing is not None:
+            heavy = sorted({node for node in missing if node in KNOWN_HEAVY})
+            light = len(missing) - sum(1 for node in missing if node in KNOWN_HEAVY)
+            seconds = light * NODE_BUILD_SECONDS + \
+                (len(missing) - light) * HEAVY_NODE_BUILD_SECONDS
+            basis = (f"{len(missing)} missing Spack node(s) x {NODE_BUILD_SECONDS} s"
+                     + (f", known-heavy {', '.join(heavy)} x "
+                        f"{HEAVY_NODE_BUILD_SECONDS} s" if heavy else ""))
+        elif name in KNOWN_HEAVY:
+            seconds, basis = 4 * HEAVY_NODE_BUILD_SECONDS, \
+                f"{name} is a known-heavy package"
+        else:
+            seconds, basis = None, "unknown: no prior build and no check of it here"
+    threshold = short_threshold(phase)
+    return {
+        "seconds": None if seconds is None else round(seconds, 1),
+        "human": _human(seconds),
+        "class": SHORT if seconds is not None and seconds <= threshold else LONG,
+        "short_up_to_seconds": threshold,
+        "basis": basis,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Queue evidence
+# ---------------------------------------------------------------------------
+
+
+def queue_evidence(scheduler: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+    """When a short 1-node job would start (``sbatch --test-only``; light)."""
+    spec = dict(scheduler or {})
+    provider = str(spec.get("name") or "").strip().lower() or None
+    if provider != "slurm":
+        return {"provider": provider, "measured": False,
+                "why": "start estimate is only measured for Slurm (sbatch --test-only)"}
+    if shutil.which("sbatch") is None:
+        return {"provider": provider, "measured": False, "why": "sbatch not on PATH"}
+    argv = ["sbatch", "--test-only", "--nodes=1", "--time=30", "--job-name=jarvis-probe"]
+    for key in ("partition", "account", "qos", "reservation", "constraint"):
+        if spec.get(key):
+            argv.append(f"--{key}={spec[key]}")
+    argv += ["--wrap", "true"]
+    try:
+        completed = subprocess.run(argv, capture_output=True, text=True, timeout=15,
+                                   check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"provider": provider, "measured": False, "command": argv,
+                "why": str(exc)[:256]}
+    text = (completed.stderr or "") + (completed.stdout or "")
+    match = re.search(r"to start at (\S+)", text)
+    evidence: Dict[str, Any] = {"provider": provider, "command": argv,
+                                "measured": match is not None,
+                                "output": text.strip()[:512]}
+    if match:
+        evidence["start_at"] = match.group(1)
+        try:
+            start = datetime.fromisoformat(match.group(1))
+            evidence["wait_seconds"] = max(0, int((start - datetime.now()).total_seconds()))
+            evidence["wait"] = _human(evidence["wait_seconds"])
+        except ValueError:
+            pass
+    return evidence
+
+
+# ---------------------------------------------------------------------------
+# Questions and resolution
+# ---------------------------------------------------------------------------
+
+
+def _does(phase: str, choice: str) -> str:
+    if choice == LOGIN_LIMITED:
+        return (f"run the {phase} on this submitting host now, niced and bounded "
+                "(see limits), so questions come back without a queue wait")
+    if choice == COMPUTE_JOB:
+        return ("check in a short 1-node job: the run job checks at load, or "
+                "`jarvis ppl install yaml FILE +check +submit`" if phase == "check"
+                else "build in a 1-node job: `jarvis ppl install yaml FILE +submit`")
+    return f"keep no standing choice: ask before each {phase} of this kind"
+
+
+def _candidates(phase: str, recommended: Optional[str], *, once: bool = False
+                ) -> List[Dict[str, Any]]:
+    choices = (LOGIN_LIMITED, COMPUTE_JOB) if once else CHOICES
+    return [{"id": choice, "constraint": choice, "does": _does(phase, choice),
+             "recommended": choice == recommended} for choice in choices]
+
+
+def recommend(phase: str, cost_class: str, limits: Mapping[str, Any],
+              site_entries: Mapping[str, Mapping[str, Any]],
+              est: Mapping[str, Any]) -> Tuple[str, str]:
+    """The recommended choice and why, from cost, load and the site's answers."""
+    if limits.get("defer"):
+        return COMPUTE_JOB, "the login host is busy now: " + "; ".join(limits["defer_reasons"])
+    login_ok = [subject for subject, entry in site_entries.items()
+                if subject.startswith(f"install_placement.{phase}.")
+                and entry.get("constraint") == LOGIN_LIMITED]
+    if phase == "check":
+        if cost_class == SHORT:
+            return LOGIN_LIMITED, (
+                f"estimated {est.get('human')} concretization and {limits.get('free_cores')} "
+                "free cores here: checking now saves a queue wait")
+        if login_ok:
+            return LOGIN_LIMITED, (
+                f"estimated {est.get('human')}, and this site's recorded answer "
+                f"({', '.join(login_ok)}) allows checks on the login host")
+        return COMPUTE_JOB, (
+            f"estimated {est.get('human')} concretization: a short compute job keeps "
+            "the login host light")
+    if cost_class == SHORT and login_ok:
+        return LOGIN_LIMITED, (
+            f"estimated {est.get('human')} build, and this site's recorded answer "
+            f"({', '.join(login_ok)}) allows builds on the login host")
+    if cost_class == SHORT:
+        return COMPUTE_JOB, (
+            f"estimated {est.get('human')} build: builds go to a compute job until the "
+            "person confirms (from the site's guidance or its admins) that login "
+            "builds are fine here; login_limited stays an option")
+    return COMPUTE_JOB, (
+        f"estimated {est.get('human')} build would hold a shared login host for that "
+        "long: a compute job")
+
+
+class PlacementResolver:
+    """Resolve each package's placement for one phase on the submitting host."""
+
+    def __init__(self, ppl, context):
+        from jarvis_cd.core.spack_install import Decisions
+
+        self.ppl = ppl
+        self.context = context
+        self.decisions = Decisions(context.decisions_path)
+        self.costs_file = costs_path(context.decisions_path)
+        self.costs = read_costs(self.costs_file)
+        self._sample: Optional[Dict[str, Any]] = None
+        self._limits: Optional[Dict[str, Any]] = None
+        self._queue: Optional[Dict[str, Any]] = None
+
+    @property
+    def sample(self) -> Dict[str, Any]:
+        if self._sample is None:
+            self._sample = measure_login_host()
+        return self._sample
+
+    @property
+    def limits(self) -> Dict[str, Any]:
+        if self._limits is None:
+            self._limits = limits_for(self.sample)
+        return self._limits
+
+    @property
+    def queue(self) -> Dict[str, Any]:
+        if self._queue is None:
+            self._queue = queue_evidence(getattr(self.ppl, "scheduler", None))
+        return self._queue
+
+    def site_entries(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            str(subject): dict(entry)
+            for subject, entry in (self.decisions.data.get("site") or {}).items()
+            if str(subject).startswith("install_placement.") and isinstance(entry, Mapping)
+        }
+
+    # -- issues ------------------------------------------------------------
+
+    def override_issue(self, phase: str, name: str) -> Dict[str, Any]:
+        from jarvis_cd.core.spack_install import make_issue
+
+        return make_issue(
+            kind=PLACEMENT_KIND, package=name, subject=f"install_placement.{phase}",
+            scope="package",
+            question=f"Where should JARVIS run the Spack {phase} of {name} at this site?",
+            candidates=_candidates(phase, None), answerable=True,
+            hint="a package override: beats the site's answer for its cost class",
+        )
+
+    def site_issue(self, phase: str, cost_class: str, packages: List[Dict[str, Any]],
+                   *, once: bool = False) -> Dict[str, Any]:
+        from jarvis_cd.core.spack_install import make_issue
+
+        limits = self.limits
+        worst = max(packages, key=lambda item: item["estimate"].get("seconds") or 1e12)
+        choice, reason = recommend(phase, cost_class, limits, self.site_entries(),
+                                   worst["estimate"])
+        names = ", ".join(f"{item['spec_name']} ({item['estimate']['human']})"
+                          for item in packages)
+        subject = f"install_placement.{phase}.{cost_class}" + (".occasion" if once else "")
+        verb = "this time" if once else "at this site"
+        issue = make_issue(
+            kind=PLACEMENT_KIND, package=str(getattr(self.ppl, "name", "") or ""),
+            subject=subject, scope="site",
+            question=(f"Where should JARVIS run the Spack {phase} of {cost_class} "
+                      f"packages {verb}: {names}? Recommended: {choice} ({reason})."),
+            candidates=_candidates(phase, choice, once=once),
+            evidence=self._evidence_lines(phase, packages),
+            answerable=True,
+            hint=("answers.json: {issue_id: '<candidate id>'} or {issue_id: "
+                  "{constraint, answered_by, basis}}; `basis` records why (e.g. the "
+                  "site's documentation an agent found); answer a package_overrides "
+                  "issue_id to choose for one package"),
+        )
+        sample = self.sample
+        issue.update(
+            schema_placement=PLACEMENT_SCHEMA,
+            phase=phase, cost_class=cost_class, once=once,
+            recommended=choice, recommendation_reason=reason,
+            packages=packages,
+            login_host=sample,
+            limits=limits,
+            queue=self.queue,
+            site_policy={
+                "recorded": self.site_entries(),
+                "discovered": {"cgroup": sample.get("cgroup")},
+                "how_to_supply": ("an agent may read the site's documentation, propose a "
+                                  "choice and give the source as the answer's `basis`; "
+                                  "the person confirms; JARVIS records it per site"),
+            },
+            decisions_path=str(self.context.decisions_path),
+            costs_path=str(self.costs_file),
+        )
+        if not once:
+            issue["package_overrides"] = [
+                {"package": item["spec_name"], "phase": phase,
+                 "issue_id": item["override_issue_id"],
+                 "subject": f"install_placement.{phase}"}
+                for item in packages
+            ]
+        return issue
+
+    def _evidence_lines(self, phase: str, packages: List[Dict[str, Any]]) -> List[str]:
+        sample, limits, queue = self.sample, self.limits, self.queue
+        own = sample.get("own_processes") or {}
+        lines = [
+            f"login host {sample.get('host')}: {sample.get('cores')} cores, load "
+            f"{sample.get('load')}, {sample.get('available_mb')} MB free of "
+            f"{sample.get('total_mb')} MB, your processes {own.get('count')} "
+            f"({own.get('running')} running, {own.get('rss_mb')} MB RSS)",
+            f"limits here now: {limits['jobs']} job(s), nice {limits['nice']}, I/O "
+            f"{limits['ionice']}, memory {limits['memory_mb']} MB"
+            + (f"; deferred: {'; '.join(limits['defer_reasons'])}" if limits["defer"] else ""),
+        ]
+        cgroup = sample.get("cgroup") or {}
+        if cgroup.get("cpu_cores") or cgroup.get("memory_max_mb"):
+            lines.append(f"site cgroup limit: {cgroup.get('cpu_cores')} cores, "
+                         f"{cgroup.get('memory_max_mb')} MB")
+        if queue.get("measured"):
+            lines.append(f"a 1-node job would start in {queue.get('wait')} "
+                         f"({queue.get('start_at')})")
+        else:
+            lines.append(f"queue wait not measured: {queue.get('why') or queue.get('output')}")
+        for item in packages:
+            lines.append(f"{item['spec_name']} {phase}: {item['estimate']['human']} "
+                         f"({item['estimate']['basis']})")
+        return lines
+
+    # -- resolution --------------------------------------------------------
+
+    def _answer(self, issue: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
+        answer = self.context.answer_for(issue)
+        if answer is not None and answer["constraint"] not in CHOICES:
+            raise ValueError(f"answer for {issue['issue_id']} must be one of {CHOICES}")
+        return answer
+
+    def _record(self, issue: Mapping[str, Any], answer: Mapping[str, Any],
+                extra: Mapping[str, Any]) -> None:
+        self.decisions.record(issue, answer, extra={**extra, "basis": answer.get("basis")})
+
+    def resolve(self, phase: str, pkg_defs: Sequence[Mapping[str, Any]],
+                missing: Optional[Mapping[str, Sequence[str]]] = None,
+                *, raise_questions: bool = True) -> Dict[str, Any]:
+        """``{packages: {pkg_id: {...choice}}, choice, questions}`` for ``phase``.
+
+        ``choice`` is ``login_limited`` only when every package resolved to
+        it (one concretization covers them all), ``compute_job`` when any
+        resolved to that, else ``None`` (questions are open).
+        """
+        with self.decisions.locked():
+            pass  # re-read the store fresh
+        site = self.site_entries()
+        resolved: Dict[str, Dict[str, Any]] = {}
+        pending: Dict[Tuple[str, bool], List[Dict[str, Any]]] = {}
+        for pkg_def in pkg_defs:
+            pkg_id = str(pkg_def.get("pkg_id"))
+            name = spec_name(pkg_def)
+            est = estimate(phase, name, self.costs,
+                           None if missing is None else missing.get(pkg_id))
+            override = self.override_issue(phase, name)
+            item = {"pkg_id": pkg_id, "spec_name": name, "estimate": est,
+                    "override_issue_id": override["issue_id"]}
+            entry = next((e for e in self.decisions.package_entries(name)
+                          if e.get("subject") == f"install_placement.{phase}"), None)
+            choice = source = None
+            if entry is not None:
+                choice, source = entry["constraint"], "package_decision"
+                self.context.note_decision(override, entry, source="decisions_file",
+                                           path=self.decisions.path, package=name)
+            else:
+                answer = self._answer(override)
+                if answer is not None:
+                    self._record(override, answer, {"phase": phase})
+                    choice, source = answer["constraint"], "package_answer"
+            subject = f"install_placement.{phase}.{est['class']}"
+            if choice is None and subject in site:
+                choice, source = site[subject]["constraint"], "site_decision"
+                self.context.note_decision(
+                    {"issue_id": site[subject].get("issue_id"), "kind": PLACEMENT_KIND,
+                     "subject": subject, "scope": "site"}, site[subject],
+                    source="decisions_file", path=self.decisions.path)
+            if choice is None:
+                probe = self.site_issue(phase, est["class"], [item])
+                answer = self._answer(probe)
+                if answer is not None:
+                    self._record(probe, answer, {"phase": phase, "cost_class": est["class"]})
+                    site = self.site_entries_after_record(site, subject, answer)
+                    choice, source = answer["constraint"], "site_answer"
+            if choice is None:
+                default = os.environ.get(DEFAULT_ENV[phase], "").strip().lower()
+                if default in (LOGIN_LIMITED, COMPUTE_JOB):
+                    choice, source = default, f"environment ({DEFAULT_ENV[phase]})"
+            if choice == ASK_EACH_TIME:
+                once = self.site_issue(phase, est["class"], [item], once=True)
+                answer = self._answer(once)
+                if answer is not None:
+                    choice, source = answer["constraint"], f"{source} -> this time"
+                else:
+                    pending.setdefault((est["class"], True), []).append(item)
+                    choice = None
+            elif choice is None:
+                pending.setdefault((est["class"], False), []).append(item)
+            item.update(choice=choice, source=source)
+            resolved[pkg_id] = item
+        questions: List[Dict[str, Any]] = []
+        for (cost_class, once), items in sorted(pending.items()):
+            question = self.site_issue(phase, cost_class, items, once=once)
+            questions.append(question)
+            if raise_questions:
+                self.context.raise_issue(question)
+        choices = {item.get("choice") for item in resolved.values()}
+        if questions:
+            overall = None
+        elif COMPUTE_JOB in choices:
+            overall = COMPUTE_JOB
+        else:
+            overall = LOGIN_LIMITED if resolved else None
+        return {
+            "schema_version": PLACEMENT_SCHEMA,
+            "phase": phase,
+            "choice": overall,
+            "packages": resolved,
+            "questions": [q["issue_id"] for q in questions],
+        }
+
+    @staticmethod
+    def site_entries_after_record(site: Dict[str, Dict[str, Any]], subject: str,
+                                  answer: Mapping[str, Any]) -> Dict[str, Dict[str, Any]]:
+        updated = dict(site)
+        updated[subject] = {"constraint": answer["constraint"], "subject": subject}
+        return updated
+
+    def evidence(self) -> Dict[str, Any]:
+        """What the placement saw: the host sample, limits and queue estimate."""
+        return {"login_host": self.sample, "limits": self.limits, "queue": self.queue}
+
+
+def build_command(choice: Optional[str]) -> Optional[str]:
+    """The command that builds a package under its build placement."""
+    if choice == LOGIN_LIMITED:
+        return "jarvis ppl install yaml FILE"
+    if choice == COMPUTE_JOB:
+        return "jarvis ppl install yaml FILE +submit"
+    return None
+
+
+def decisions_digest_without_placement(path: Path) -> Optional[str]:
+    """The decisions digest that install records key on, placement excluded.
+
+    Placement answers decide where a check runs, not what it finds, so
+    recording one must not make ``install-check.json`` stale: the digest is
+    over the store's other entries (canonical JSON), and a store with none
+    digests like an absent one (None).
+    """
+    import hashlib
+
+    import yaml
+
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        return None
+    try:
+        data = yaml.safe_load(raw) or {}
+    except yaml.YAMLError:
+        return "sha256:" + hashlib.sha256(raw).hexdigest()
+    if not isinstance(data, dict):
+        return "sha256:" + hashlib.sha256(raw).hexdigest()
+    site = {k: v for k, v in (data.get("site") or {}).items()
+            if not str(k).startswith("install_placement.")}
+    packages = {}
+    for name, entries in (data.get("packages") or {}).items():
+        kept = [e for e in entries or []
+                if not (isinstance(e, dict) and e.get("kind") == PLACEMENT_KIND)]
+        if kept:
+            packages[name] = kept
+    if not site and not packages:
+        return None
+    canonical = json.dumps({"site": site, "packages": packages}, sort_keys=True,
+                           default=str)
+    return "sha256:" + hashlib.sha256(canonical.encode()).hexdigest()
