@@ -728,6 +728,10 @@ jarvis ppl install +allow_local +json           # build on this host outside an 
 jarvis ppl install --forget mpi +json           # forget a recorded answer, then ask again
 ```
 
+With `+json`, stdout carries exactly one JSON document: the install report,
+or with `+submit` the `jarvis.execution.handle.v1` handle. Submit progress
+lines (script path, hostfile, the `sbatch` command) go to stderr.
+
 `--forget <selector>` removes recorded answers from `decisions.yaml` and
 prints a `jarvis.install-forget.v1` document with `decisions_path`,
 `forgotten[]` (each with `selector` and `forgotten_at`) and `remaining[]`.

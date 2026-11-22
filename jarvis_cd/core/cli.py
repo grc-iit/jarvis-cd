@@ -2244,11 +2244,12 @@ class JarvisCLI(ArgParse):
             raise ValueError(
                 "No pipeline to submit. Pass a YAML path or load a pipeline first."
             ) from exc
-        handle = pipeline.submit(
-            submit=submit,
-            wait=wait,
-            execution_id=execution_id,
-        )
+        with redirect_stdout(sys.stderr) if json_output else nullcontext():
+            handle = pipeline.submit(
+                submit=submit,
+                wait=wait,
+                execution_id=execution_id,
+            )
         self._emit_execution_handle(handle, json_output=json_output)
 
     def execution_get(self) -> None:
@@ -2427,13 +2428,15 @@ class JarvisCLI(ArgParse):
             self._emit_install_report(report, json_output=json_output)
 
         if self.kwargs.get("submit"):
-            handle = pipeline.submit(
-                submit=True,
-                execution_id=self.kwargs.get("execution_id"),
-                action="install",
-                install_check=check,
-                install_answers=answers,
-            )
+            # +json keeps stdout for the one handle document
+            with redirect_stdout(sys.stderr) if json_output else nullcontext():
+                handle = pipeline.submit(
+                    submit=True,
+                    execution_id=self.kwargs.get("execution_id"),
+                    action="install",
+                    install_check=check,
+                    install_answers=answers,
+                )
             self._emit_execution_handle(handle, json_output=json_output)
             return
         try:
