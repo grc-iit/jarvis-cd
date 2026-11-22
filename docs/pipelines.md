@@ -983,8 +983,10 @@ the next step starts. On TERM, `ppl stop` stops both, in reverse order (see
 A pipeline can declare how its packages exchange data, so a check, a
 [submit plan](scheduler.md#planning-a-submission-plan) or a job card can
 show it. Every package also takes a common `label` option: a person-facing
-name shown instead of the package id (otherwise the package's own label,
-for example "ParaView server (pvserver)", or the id).
+name shown instead of the package id. Without one, the package class's own
+label is used (for example "ParaView server (pvserver)"), and otherwise the
+package's name, the last part of its `pkg_type` (`gray_scott` for
+`builtin.gray_scott`). A caller's `pkg_name` is never shown as the label.
 
 ```yaml
 pkgs:

@@ -18,6 +18,8 @@ import hashlib
 import json
 from typing import Any, Dict, List, Mapping, Optional
 
+from jarvis_cd.core.pipeline_check import package_name
+
 PLAN_SCHEMA = "jarvis.submit-plan.v1"
 
 #: directives a job card shows, in order
@@ -81,7 +83,8 @@ def _components(ppl: Any, check: Optional[Mapping[str, Any]], *, action: str,
         components.append({
             "id": step.get("pkg_id"),
             "package": step.get("pkg_type"),
-            "label": step.get("label") or step.get("pkg_id"),
+            "label": step.get("label") or package_name(step.get("pkg_type"),
+                                                       step.get("pkg_id")),
             "role": step.get("role"),
             "starts": step.get("starts"),
             "after_steps": str(config.get("after_steps") or "auto"),

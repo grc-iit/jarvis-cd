@@ -108,6 +108,27 @@ with `rg facts answer` covers the next launch.
 A reason whose roles are all covered by a person's `rg net set` override is
 listed under `resolved_by_override` rather than asked.
 
+### Transport fallback (UCX → TCP) is a proposal, not an ask
+
+When UCX can't be used on the data network (`rdma_not_active`,
+`ucx_device_unusable`, `device_unverified`), JARVIS withholds
+`UCX_NET_DEVICES`, and for Open MPI also UCX (`OMPI_MCA_pml` and
+`OMPI_MCA_osc` set to `^ucx`), so the run uses TCP. TCP is correct but
+slower, so this is advisory and never exits 3:
+
+- before submit, the issue goes to the check's `warnings[]` and the record's
+  `metadata.site_facts`;
+- at launch, inside the allocation, it goes to `launch.json` `advisories`,
+  because nobody is there to answer.
+
+It is still a proposed decision that the person sees. The issue's
+`details.pick` holds JARVIS's choice and `consequence_if_wrong`, and
+`reason_codes` names the cause. The person can confirm the proposal with
+`rg facts answer <issue_id> --value accept`, which silences it while the
+evidence is unchanged. Or they can choose otherwise: `rg net set` an
+override, or re-collect the facts where the ranks run
+(`details.probes`).
+
 Each question is evaluated only for launches over more than one node. With
 no net section, the only check-time question is `net_not_collected`. Cray
 MPICH and `JARVIS_MPI_NETWORK=off` (in the environment or the pipeline's

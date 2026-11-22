@@ -94,8 +94,17 @@ def _profile(contract: Any, config: Dict[str, Any]) -> Optional[Any]:
 COUPLING_KINDS = ("stream", "file", "service", "interceptor", "control", "other")
 
 
-def _label(instance: Any, config: Dict[str, Any], pkg_id: str) -> str:
-    """A person-facing name: the ``label`` option, the package's, or the id."""
+def package_name(pkg_type: Any, pkg_id: Any = None) -> str:
+    """The package's own name: the last part of ``pkg_type`` (``builtin.gray_scott``
+    -> ``gray_scott``), else the id."""
+    name = str(pkg_type or "").strip().rsplit(".", 1)[-1]
+    return name or str(pkg_id)
+
+
+def _label(instance: Any, config: Dict[str, Any], pkg_id: str,
+           pkg_type: Any = None) -> str:
+    """A person-facing name: the ``label`` option, the package class's
+    ``component_label()``, or the package's own name (never a caller's id)."""
     label = config.get("label")
     if isinstance(label, str) and label.strip():
         return label.strip()[:120]
@@ -106,7 +115,7 @@ def _label(instance: Any, config: Dict[str, Any], pkg_id: str) -> str:
             return text.strip()[:120]
     except Exception:
         pass
-    return pkg_id
+    return package_name(pkg_type, pkg_id)
 
 
 def _ranks(config: Dict[str, Any]) -> Optional[int]:
@@ -280,7 +289,7 @@ def check_pipeline(ppl: Any) -> Dict[str, Any]:
         if step["nodes"] is not None:
             step["node_count"] = step["nodes"]["end"] - step["nodes"]["first"]
         step["ports"] = _ports(config)
-        step["label"] = _label(instance, config, pkg_id)
+        step["label"] = _label(instance, config, pkg_id, pkg_def.get("pkg_type"))
         step["ranks"] = _ranks(config)
         step["interceptors"] = [str(item) for item in config.get("interceptors") or []
                                 if isinstance(item, (str, int))]
