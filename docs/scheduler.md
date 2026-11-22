@@ -376,7 +376,15 @@ would delay it until the child exits. On TERM, the trap does this, in order:
    `<runtime>/stopped-packages.json`, and the pipeline child's own stop (a
    `ppl run` stops its packages once `start` returns) skips those, logging
    `already stopped by this execution's stop request`, so no package's
-   `stop()` runs twice.
+   `stop()` runs twice. The stops can also overlap: once the trap stops a
+   service, the service's `start()` returns and the child begins its own
+   teardown while the trap's `stop()` is still running. So before calling a
+   package's `stop()`, every stop in the execution (the trap's `ppl stop`,
+   the child's stop and the after_steps stop) claims the package
+   with an exclusive create of `<runtime>/stop-claims/<pkg_id>`. A stop that
+   finds the claim taken skips the package, logging `already being stopped by
+   another stop in this execution`. A failed `stop()` keeps its claim and is
+   reported through `ppl stop`'s return code; it is not retried.
 3. TERMs the pipeline child and its descendants, waits up to `stop_grace`,
    KILLs whatever is left, then `wait`s on the child to reap it.
 4. Records `stopped_at`, `stop_return_code` and `child_reaped`, then exits:

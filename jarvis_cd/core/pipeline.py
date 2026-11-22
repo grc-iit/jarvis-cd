@@ -3382,7 +3382,11 @@ class Pipeline:
                 stop_started = time.monotonic()
                 self._bind_package_execution_environment(handle["pkg_def"])
                 instance = handle["instance"]
-                if hasattr(instance, "stop"):
+                if not self._claim_package_stop(str(handle["pkg_id"])):
+                    entry["stopped_by"] = "stop_request"
+                    logger.info(f"[{handle['pkg_def']['pkg_type']}] [STOP] being "
+                                "stopped by this execution's stop request")
+                elif hasattr(instance, "stop"):
                     instance.stop()
                 # stop() ends the service; give its start() a bounded join.
                 timeout = 120.0
@@ -3918,9 +3922,14 @@ class Pipeline:
                     logger.info(f"[{pkg_def['pkg_type']}] [STOP] already stopped "
                                 "after the last step")
                     continue
-                if str(pkg_def["pkg_id"]) in by_request:
+                if (str(pkg_def["pkg_id"]) in by_request
+                        or str(pkg_def["pkg_id"]) in self._read_stopped_by_request()):
                     logger.info(f"[{pkg_def['pkg_type']}] [STOP] already stopped "
                                 "by this execution's stop request")
+                    continue
+                if not self._claim_package_stop(str(pkg_def["pkg_id"])):
+                    logger.info(f"[{pkg_def['pkg_type']}] [STOP] already being "
+                                "stopped by another stop in this execution")
                     continue
                 try:
                     # Print BEGIN message
@@ -3974,6 +3983,32 @@ class Pipeline:
         if not isinstance(data, dict) or data.get("pipeline") != self.name:
             return set()
         return {str(item) for item in data.get("packages") or []}
+
+    def _claim_package_stop(self, package_id: str) -> bool:
+        """Atomically claim one package's stop() within a scheduler execution.
+
+        The batch shell's TERM-trap ``ppl stop``, the waited ``ppl run``
+        child's own stop, and the after_steps stop can overlap (a service's
+        start() returns as soon as the trap stops it, so the child tears
+        down too). ``stopped-packages.json`` only records finished stops, so
+        an O_EXCL claim file makes exactly one of them call stop(). Outside a
+        scheduler execution there is no shared snapshot and every stop runs.
+        """
+        path = self._stopped_marker_path()
+        if path is None:
+            return True
+        claims = path.parent / "stop-claims"
+        name = re.sub(r"[^A-Za-z0-9._-]", "_", package_id) or "_"
+        try:
+            claims.mkdir(exist_ok=True)
+            fd = os.open(claims / name, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+        except FileExistsError:
+            return False
+        except OSError:
+            return True
+        with os.fdopen(fd, "w") as handle:
+            handle.write(f"{socket.gethostname()} {os.getpid()}\n")
+        return True
 
     def _record_stopped_by_request(self, package_id: str) -> None:
         path = self._stopped_marker_path()
