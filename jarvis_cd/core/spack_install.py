@@ -791,15 +791,24 @@ def compiler_unavailable_issue(
     usable: Sequence[Mapping[str, Any]],
     origin: str,
     evidence: Sequence[str] = (),
+    failures: Optional[Mapping[str, str]] = None,
 ) -> Dict[str, Any]:
     """The ``compiler_unavailable`` question (site scope, ``subject: compiler``).
 
     Its ``issue_id`` digests only the usable candidate set, so the answer (a
     usable compiler, applied as a binding ``require``) is replayed while the
-    build hosts offer the same compilers.
+    build hosts offer the same compilers. ``failures`` (language -> reason)
+    is for a compiler whose executables exist but cannot build a test
+    program there.
     """
     candidates = compiler_question_candidates(usable)
     missing_text = ", ".join(missing) or "not configured"
+    if failures:
+        lang, reason = next(iter(failures.items()))
+        first = (reason.strip().splitlines() or [""])[0][:200]
+        problem = f"cannot build a test program ({lang}: {first})"
+    else:
+        problem = f"missing or not executable: {missing_text}"
     issue = make_issue(
         kind="compiler_unavailable",
         package="*",
@@ -807,11 +816,10 @@ def compiler_unavailable_issue(
         scope="site",
         question=(
             f"Compiler {compiler} cannot run on the build host {host} "
-            f"(missing or not executable: {missing_text}). Which compiler "
-            "should builds use?"
+            f"({problem}). Which compiler should builds use?"
         ),
         candidates=candidates,
-        detail=f"{compiler}: {missing_text}",
+        detail=f"{compiler}: {problem}",
         evidence=list(evidence),
         answerable=bool(candidates),
         hint=(
@@ -836,7 +844,44 @@ def compiler_unavailable_issue(
             "nodes have"
         ),
     )
+    if failures:
+        issue["probe_failures"] = {lang: _bounded(str(text), 1024)
+                                   for lang, text in failures.items()}
     return issue
+
+
+#: what a build prints when the compiler exists but cannot build a test
+#: program (autoconf, CMake, meson)
+_COMPILER_BROKEN = re.compile(
+    r"(?P<a>C\+\+|C|Fortran 77|Fortran) compiler cannot create executables"
+    r"|The (?P<b>CXX|C|Fortran) compiler\s+\"[^\"]*\"\s+is not able to compile a simple test program"
+    r"|no acceptable (?P<c>C|C\+\+) compiler found"
+    r"|(?P<d>C|C\+\+|Fortran) compiler for the host machine: .* failed to compile"
+    r"|cannot run (?P<e>C|C\+\+) compiled programs",
+    re.IGNORECASE,
+)
+_LANGUAGE = {"c": "cc", "c++": "cxx", "cxx": "cxx", "fortran": "fc", "fortran 77": "f77"}
+
+
+def _node_field(node: Any, name: str) -> Optional[str]:
+    value = node.get(name) if isinstance(node, Mapping) else getattr(node, name, None)
+    return str(value) if value else None
+
+
+def failed_node_compiler(
+    installing: Optional[str], nodes: Sequence[Any]
+) -> Optional[str]:
+    """The compiler of the node ``==> Installing <name>-<version>-<hash>``
+    names, looked up by hash in the concretized ``nodes``."""
+    if not installing:
+        return None
+    tail = installing.rsplit("-", 1)[-1]
+    for node in nodes:
+        node_hash = _node_field(node, "hash")
+        if node_hash and (tail.startswith(node_hash) or node_hash.startswith(tail)):
+            spec = _node_field(node, "spec")
+            return node_compiler(spec) if spec else None
+    return None
 
 
 def classify_install_failure(
@@ -847,10 +892,12 @@ def classify_install_failure(
     usable_compilers: Sequence[Mapping[str, Any]] = (),
     log_path: Optional[Path] = None,
     command: Optional[str] = None,
+    nodes: Sequence[Any] = (),
 ) -> Dict[str, Any]:
     """Map a failed ``spack install``/``concretize`` to one typed issue.
 
-    ``compiler_unavailable`` (``CompilerAccessError``), ``fetch_failed``,
+    ``compiler_unavailable`` (``CompilerAccessError``, or a compiler that
+    cannot create executables in a configure/CMake check), ``fetch_failed``,
     ``build_failed``, a concretize kind (``variant_conflict``, ``no_recipe``,
     ``concretize_failed``) for ``stage='concretize'``, else
     ``install_failed``. Every one carries ``host``, ``stage``,
@@ -865,6 +912,18 @@ def classify_install_failure(
     excerpt = _error_excerpt(output)
     evidence = [item for item in (command, f"log: {log_path}" if log_path else None) if item]
     access = _COMPILER_ACCESS.search(output)
+    broken = None if access is not None or stage == "concretize" else _COMPILER_BROKEN.search(output)
+    build_log = _BUILD_LOG.search(output)
+    if access is None and broken is None and stage != "concretize" and build_log is not None:
+        # Spack prints only the build log's error lines; the configure check
+        # message can be further up the log.
+        try:
+            with open(build_log.group("path"), "rb") as stream:
+                stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, stream.tell() - 262144))
+                broken = _COMPILER_BROKEN.search(stream.read().decode("utf-8", "replace"))
+        except OSError:
+            broken = None
     if access is not None:
         compiler = access.group("spec").replace("@=", "@")
         missing = re.findall(r"'([^']+)'", access.group("paths"))
@@ -875,6 +934,21 @@ def classify_install_failure(
             compiler, missing, host=host, usable=usable,
             origin=f"spack {stage}", evidence=evidence,
         )
+    elif broken is not None:
+        # The compiler exists but cannot build a test program here: the same
+        # question as the build-host probe, never a generic build_failed.
+        word = next(value for value in broken.groups() if value)
+        language = _LANGUAGE.get(word.lower(), word)
+        compiler = failed_node_compiler(node, nodes)
+        usable = [item for item in usable_compilers
+                  if not (compiler and _same_compiler(str(item.get("spec")), compiler))]
+        issue = compiler_unavailable_issue(
+            compiler or "(the failed node's compiler)", [], host=host, usable=usable,
+            origin=f"spack {stage}", evidence=evidence,
+            failures={language: broken.group(0)},
+        )
+        issue["compiler_identified"] = compiler is not None
+        issue["build_failure"] = broken.group(0)
     else:
         if stage == "concretize":
             kind = classify_concretize_failure(output)
@@ -904,7 +978,6 @@ def classify_install_failure(
             answerable=kind in ("variant_conflict", "concretize_failed"),
         )
         issue.update(message=question, remedy=remedy)
-    build_log = _BUILD_LOG.search(output)
     issue.update(
         stage=stage,
         packages=list(packages),
@@ -988,13 +1061,103 @@ def configured_compilers(runner: "SpackRunner") -> List[Dict[str, Any]]:
     return found
 
 
-def verify_compilers(compilers: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
+_PROBE_SOURCES = {
+    "cc": ("probe.c", "int main(void) { return 0; }\n"),
+    "cxx": ("probe.cpp", "#include <cstdio>\nint main() { std::puts(\"ok\"); return 0; }\n"),
+    "fc": ("probe.f90", "program probe\nend program probe\n"),
+}
+#: languages a compiler must build with to count as usable; Fortran only
+#: marks it not ``full``
+_PROBE_REQUIRED = ("cc", "cxx")
+PROBE_TIMEOUT = 120
+
+
+def compiler_probe_enabled() -> bool:
+    return os.environ.get("JARVIS_COMPILER_PROBE", "on").strip().lower() not in (
+        "0", "off", "false", "no")
+
+
+def _compiler_environment(entry: Mapping[str, Any]) -> Dict[str, str]:
+    """The process env with a Spack compiler entry's ``environment`` applied
+    (``compiler.environment`` in 0.x, ``extra_attributes.environment`` in 1.x)."""
+    env = dict(os.environ)
+    body = entry.get("compiler") if isinstance(entry.get("compiler"), Mapping) else None
+    settings = (body or {}).get("environment") or (
+        (entry.get("extra_attributes") or {}).get("environment") or {})
+    if not isinstance(settings, Mapping):
+        return env
+    for name, value in (settings.get("set") or {}).items():
+        env[str(name)] = str(value)
+    for name in settings.get("unset") or []:
+        env.pop(str(name), None)
+    for name, value in (settings.get("prepend_path") or {}).items():
+        env[str(name)] = os.pathsep.join(item for item in (str(value), env.get(str(name))) if item)
+    for name, value in (settings.get("append_path") or {}).items():
+        env[str(name)] = os.pathsep.join(item for item in (env.get(str(name)), str(value)) if item)
+    return env
+
+
+def probe_compiler(paths: Mapping[str, str], entry: Mapping[str, Any]) -> Dict[str, Any]:
+    """Build and run a trivial program with each of ``cc``/``cxx``/``fc``,
+    as a configure or CMake check would. Returns ``{lang: "ok" | reason}``.
+
+    Finding the executables is not enough: a driver over an incomplete
+    toolchain (no crt files, no libstdc++, a missing assembler) exists and
+    still "cannot create executables".
+    """
+    env = _compiler_environment(entry)
+    results: Dict[str, Any] = {}
+    with tempfile.TemporaryDirectory(prefix="jarvis-compiler-probe-") as tmp:
+        for lang, (name, text) in _PROBE_SOURCES.items():
+            compiler = paths.get(lang)
+            if not compiler:
+                continue
+            source = Path(tmp) / name
+            source.write_text(text)
+            # Windows has no a.out to run; the stub compilers the local proof
+            # uses write a .cmd, so the run step is exercised there too.
+            output = Path(tmp) / (f"probe-{lang}.cmd" if os.name == "nt" else f"probe-{lang}")
+            steps = (
+                ("compile", [str(compiler), str(source), "-o", str(output)]),
+                ("run", [str(output)]),
+            )
+            for step, command in steps:
+                try:
+                    done = subprocess.run(
+                        command, cwd=tmp, env=env, capture_output=True, text=True,
+                        timeout=PROBE_TIMEOUT,
+                    )
+                    failed = done.returncode != 0
+                    detail = (done.stderr or done.stdout or "").strip()
+                    reason = f"{step} exited {done.returncode}: {detail[-400:]}" if failed else None
+                except subprocess.TimeoutExpired:
+                    reason = f"{step} timed out after {PROBE_TIMEOUT}s"
+                except OSError as exc:
+                    reason = f"{step} could not start: {exc}"
+                if reason:
+                    results[lang] = reason
+                    break
+            else:
+                results[lang] = "ok"
+    return results
+
+
+def verify_compilers(
+    compilers: Sequence[Mapping[str, Any]], *, probe: bool = False
+) -> Dict[str, Any]:
     """Check every compiler's executables on this host, as Spack's
     ``CompilerAccessError`` would (each configured path must be executable).
+
+    With ``probe`` (the build job, before the first build; off with
+    ``JARVIS_COMPILER_PROBE=off``) each compiler whose executables exist
+    must also compile, link and run a C and a C++ test program here
+    (``probe``); one that cannot is unusable, with the reason per language
+    in ``failures``. A Fortran failure only clears ``full``.
 
     A compiler loaded through ``modules`` is not checked (its paths exist
     only after the module load) and counts as usable.
     """
+    probe = probe and compiler_probe_enabled()
     checked: List[Dict[str, Any]] = []
     for compiler in compilers:
         item = dict(compiler)
@@ -1009,16 +1172,28 @@ def verify_compilers(compilers: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
             item["problems"] = {path: problem for path, problem in problems.items()
                                 if problem}
             item.update(verified=True, usable=not item["missing"])
+            if probe and item["usable"]:
+                results = probe_compiler(paths, item.get("entry") or {})
+                item["probe"] = results
+                failures = {lang: reason for lang, reason in results.items() if reason != "ok"}
+                if failures:
+                    item["failures"] = failures
+                if any(lang in failures for lang in _PROBE_REQUIRED):
+                    item["usable"] = False
+                elif "fc" in failures:
+                    item["full"] = False
         checked.append(item)
     return {
         "schema_version": BUILD_COMPILERS_SCHEMA,
         "host": socket.gethostname(),
         "checked_at": _utc_now(),
         "allocation": current_allocation(),
+        "probed": probe,
         "compilers": checked,
         "usable": [item["spec"] for item in checked if item["usable"]],
         "unusable": [
-            {"spec": item["spec"], "missing": item["missing"]}
+            {"spec": item["spec"], "missing": item["missing"],
+             **({"failures": item["failures"]} if item.get("failures") else {})}
             for item in checked if not item["usable"]
         ],
     }
@@ -1086,6 +1261,7 @@ def unusable_compiler_issue(
     issue = compiler_unavailable_issue(
         compiler, list(bad[compiler].get("missing") or []), host=host,
         usable=usable, origin=origin, evidence=evidence,
+        failures=bad[compiler].get("failures"),
     )
     names = ", ".join(sorted({node.name for node in reused})) or "none"
     issue["message"] = (
@@ -1217,7 +1393,7 @@ def apply_build_compilers(
     state: Dict[str, Any] = {"sections": {}, "blocked": None}
     document: Optional[Dict[str, Any]] = None
     if context.mode == "install":
-        document = verify_compilers(configured_compilers(planner.runner))
+        document = verify_compilers(configured_compilers(planner.runner), probe=True)
         document["source"] = "verified"
         text = json.dumps(document, indent=2, sort_keys=True) + "\n"
         _atomic_write_text(context.install_dir / BUILD_COMPILERS_NAME, text)
@@ -1240,9 +1416,37 @@ def apply_build_compilers(
         return state
     compilers = document.get("compilers") or []
     usable = [item for item in compilers if item.get("usable")]
+    recorded = planner.decisions.site("compiler")
+    if recorded is not None and recorded.get("kind") != "compiler_unavailable":
+        recorded = None
+    # A build that failed with "cannot create executables" asked over the
+    # usable compilers minus the failed node's one (classify_install_failure).
+    # If the probe here passed that compiler anyway, its answer must still
+    # replay, and the compiler stays out: else every round re-asks.
+    demoted: Optional[Dict[str, Any]] = None
+    for item in usable if len(usable) > 1 else []:
+        rest = [other for other in usable if other is not item]
+        variant = compiler_unavailable_issue(
+            str(item["spec"]), [], host=str(document.get("host")), usable=rest, origin="replay"
+        )
+        answer, source = context.answer_for(variant), "answers_file"
+        if answer is None and recorded is not None and recorded.get("issue_id") == variant["issue_id"]:
+            answer, source = recorded, "decisions_file"
+        if answer is not None and find_compiler(rest, str(answer["constraint"])):
+            demoted = {"compiler": item, "issue": variant, "answer": answer, "source": source}
+            break
+    if demoted is not None:
+        item = demoted["compiler"]
+        item["usable"] = False
+        item.setdefault("failures", {})["build"] = (
+            "an earlier build could not create executables with it "
+            f"(answered issue {demoted['issue']['issue_id']})"
+        )
+        usable = [other for other in usable if other is not item]
     planner.usable_compilers = [dict(item) for item in usable]
     planner.unusable_compilers = [
-        {"spec": item["spec"], "missing": list(item.get("missing") or [])}
+        {"spec": item["spec"], "missing": list(item.get("missing") or []),
+         **({"failures": dict(item["failures"])} if item.get("failures") else {})}
         for item in compilers if not item.get("usable")
     ]
     planner.build_host = str(document.get("host"))
@@ -1254,8 +1458,13 @@ def apply_build_compilers(
     question = compiler_unavailable_issue(
         "?", [], host=str(document.get("host")), usable=usable, origin="replay"
     ) if usable else None
-    recorded = planner.decisions.site("compiler")
-    if recorded is not None and recorded.get("kind") != "compiler_unavailable":
+    if demoted is not None:
+        if demoted["source"] == "answers_file":
+            planner.decisions.record(demoted["issue"], demoted["answer"])
+        else:
+            context.note_decision(demoted["issue"], demoted["answer"], source="decisions_file",
+                                  path=planner.decisions.path)
+        required, required_source = str(demoted["answer"]["constraint"]), demoted["source"]
         recorded = None
     if recorded is not None:
         if (question is not None and recorded.get("issue_id") == question["issue_id"]
@@ -1321,10 +1530,17 @@ def apply_build_compilers(
         "checked_at": document.get("checked_at"),
         "allocation": document.get("allocation"),
         "usable": [item["spec"] for item in usable],
+        "probed": bool(document.get("probed")),
         "unusable": [
-            {"spec": item["spec"], "missing": item.get("missing") or []}
+            {"spec": item["spec"], "missing": item.get("missing") or [],
+             **({"failures": item["failures"]} if item.get("failures") else {})}
             for item in compilers if not item.get("usable")
         ],
+        "demoted": {
+            "spec": demoted["compiler"]["spec"],
+            "issue_id": demoted["issue"]["issue_id"],
+            "source": demoted["source"],
+        } if demoted else None,
         "excluded": [item["spec"] for item in compilers if not item.get("usable")]
         if excluding else [],
         "reuse_excluded": next(
@@ -2550,6 +2766,7 @@ class SpackPlanner:
                 usable_compilers=self.usable_compilers,
                 log_path=self.context.log_path,
                 command=self.runner.commands[-1] if self.runner.commands else None,
+                nodes=entry.get("missing") or [],
             )
             self.context.raise_issue(issue)
             entry["issue_id"] = issue["issue_id"]
@@ -2902,9 +3119,11 @@ def _sync_spack_environment_locked(
         environment.write_manifest(specs)
         completed = environment.concretize()
         stage = "concretize"
+        concretized: List[SpecNode] = []
         if completed.returncode == 0:
+            concretized = parse_spec_tree(completed.stdout or "")
             guard = planner.compiler_guard(
-                parse_spec_tree(completed.stdout or ""), origin="spack concretize",
+                concretized, origin="spack concretize",
                 evidence=[f"spack -e {env_dir} concretize -f"],
             )
             if guard is not None:
@@ -2927,6 +3146,7 @@ def _sync_spack_environment_locked(
                 usable_compilers=planner.usable_compilers,
                 log_path=context.log_path,
                 command=planner.runner.commands[-1] if planner.runner.commands else None,
+                nodes=concretized or [item for _p, e in failing for item in e.get("missing") or []],
             )
             context.raise_issue(issue)
             for _package, entry in failing:

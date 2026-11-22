@@ -386,7 +386,7 @@ JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
 | `variant_conflict` | the concretizer reports a conflict | yes, with a spec constraint (e.g. `~cuda`) |
 | `concretize_failed` | any other concretizer error (`detail` holds the excerpt) | yes, with a spec constraint |
 | `no_recipe` | Spack has no recipe for the package | no: add `install_repos` or change `install_query` |
-| `compiler_unavailable` | a compiler the install would use can't run on the build host (`subject: compiler`, `scope: site`): `compiler`, `host`, `missing_executables`, `usable_compilers`, `origin`, plus `to_build` and `reused_specs` when reused upstream specs pull the DAG onto it; see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host) | yes, with one usable compiler (`candidates[]`), which becomes a binding `require` |
+| `compiler_unavailable` | a compiler the install would use can't run on the build host (`subject: compiler`, `scope: site`): `compiler`, `host`, `missing_executables` (or `probe_failures` when it exists but can't build a test program), `usable_compilers`, `origin`, plus `to_build` and `reused_specs` when reused upstream specs pull the DAG onto it; see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host) | yes, with one usable compiler (`candidates[]`), which becomes a binding `require` |
 | `not_installed` | `+check` found nodes that still need building | no: run `jarvis ppl install` |
 
 The `issue_id` is a stable `sha256:` digest of the question's content, so it
@@ -529,6 +529,7 @@ failed` with its `issue_id`, and exits `6`:
 | `kind` | Matched by | `remedy` |
 |--------|------------|----------|
 | `compiler_unavailable` | `CompilerAccessError: Compiler '…' has executables that are missing…` (`origin: spack install`); `missing_executables` are the paths Spack named, and that compiler is dropped from `usable_compilers` | answer with a usable compiler, or re-run `jarvis spack prepare --compiler` inside a job |
+| `compiler_unavailable` | a compiler that exists but can't build: `C compiler cannot create executables` (autoconf), `The C compiler "…" is not able to compile a simple test program` (CMake), `no acceptable C compiler found`, `cannot run C compiled programs`, in Spack's output or its build log. `compiler` is the failed node's compiler (from the concretized spec, `compiler_identified: true`); `build_failure` and `probe_failures` quote the line; `candidates` are the usable compilers minus that one. Checked before `build_failed`, so this never surfaces as a generic build failure | answer with a usable compiler; the next run takes the failed one out and binds the answer (see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host)) |
 | `fetch_failed` | `FetchError`, `All fetchers failed`, `ChecksumError`, `Manual download is required`, … | fix the build node's network or proxy, or add a mirror |
 | `build_failed` | `ProcessError`, `InstallError`, `Command exited with status`, … | read `build_log`, then change the spec or the recipe |
 | `variant_conflict`, `no_recipe`, `concretize_failed` | a failed environment `concretize` | answer with a spec constraint |

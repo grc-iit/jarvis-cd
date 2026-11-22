@@ -161,9 +161,18 @@ builds, before any `spack install`:
    compute node), JARVIS reads `spack config get compilers` (or the compiler
    externals in `packages:` on Spack 1.x). It checks that each configured
    `cc`, `cxx`, `f77` and `fc` is an executable file on that host, which is
-   the same test behind Spack's `CompilerAccessError`. A compiler loaded
-   through `modules` is not checked. The result
-   (`jarvis.build-compilers.v1`) goes to `<install>/build-compilers.json`
+   the same test behind Spack's `CompilerAccessError`. Then it **probes**
+   each compiler that passed: in a temp dir it compiles, links and runs a
+   trivial C program with `cc` and a C++ one with `cxx`, with the compiler
+   entry's `environment` applied. This is the check a configure or CMake
+   step makes. A driver that exists over an incomplete toolchain (no crt
+   files, no `cc1`, no libstdc++, a missing assembler) fails it, and that
+   compiler is unusable on this host, with the reason per language in
+   `failures`. A Fortran failure only marks the compiler not `full`. A
+   compiler loaded through `modules` is not checked. Set
+   `JARVIS_COMPILER_PROBE=off` to keep only the existence check. The result
+   (`jarvis.build-compilers.v1`, with `probed`, and `probe`/`failures` per
+   compiler) goes to `<install>/build-compilers.json`
    and to `<JARVIS_SPACK_ROOT>/var/jarvis/build-compilers.json`. A
    `+check` on the login node uses that last build-host result
    (`source: recorded`) rather than the login node's compilers. With no
@@ -186,7 +195,9 @@ builds, before any `spack install`:
    `concretize`, any node still to build with an unusable compiler stops the
    install with a `compiler_unavailable` issue (exit `3`). No
    `spack install` runs. The issue names the host, the compiler, its
-   `missing_executables`, the nodes `to_build`, and the `reused_specs` built
+   `missing_executables` (or, for a compiler that failed the probe,
+   `probe_failures` per language), the nodes `to_build`, and the
+   `reused_specs` built
    with that compiler that pulled the DAG there. This happens when the Spack
    predates reuse filters, or when a requirement forces that compiler.
 4. **Bind.** A person's compiler (site prep `--compiler`, an
@@ -196,6 +207,16 @@ builds, before any `spack install`:
    (`origin: build host check`), with the usable compilers as candidates.
    An answer to `compiler_unavailable` is recorded in `decisions.yaml` and
    becomes the binding `require`.
+5. **Learn from a failed build.** If a build still fails because a compiler
+   "cannot create executables" (the probe was off, or the failure depends on
+   flags the probe doesn't use), the failure is `compiler_unavailable`, not
+   `build_failed` (see [Install failures](pipeline_tests.md#install-failures)).
+   Its candidates are the usable compilers minus the failed node's one. On
+   the next run, the answer to that issue (from `answers.json` or
+   `decisions.yaml`) is applied even if the probe passes that compiler
+   again: the compiler is marked unusable (`demoted`, with
+   `failures.build`) and stays out of the scope, so the install doesn't
+   ask the same question every round.
 
 `install-record.json` carries the outcome as `build_compilers`:
 
@@ -203,7 +224,9 @@ builds, before any `spack install`:
 |-------|---------|
 | `source` | `verified` (checked on this host) or `recorded` (the last build-host check) |
 | `host`, `checked_at`, `allocation` | where and when the compilers were checked |
-| `usable`, `unusable[]` | specs; `unusable[]` is `{spec, missing}` |
+| `probed` | whether the build-test probe ran (`false` with `JARVIS_COMPILER_PROBE=off`, or for a recorded check from before the probe) |
+| `usable`, `unusable[]` | specs; `unusable[]` is `{spec, missing, failures?}`, where `failures` maps a language (`cc`, `cxx`, `fc`, or `build`) to why it failed |
+| `demoted` | `{spec, issue_id, source}` when an answer to a failed-build `compiler_unavailable` took a compiler out, or `null` |
 | `excluded`, `reuse_excluded` | compilers left out of the scope, and the `concretizer:reuse` excludes |
 | `required` | `{spec, source, require}` for the binding compiler, or `null` |
 | `blocked_by` | the `compiler_unavailable` `issue_id` that stopped the install, or `null` |
