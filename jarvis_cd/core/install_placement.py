@@ -545,6 +545,22 @@ def _candidates(phase: str, recommended: Optional[str], *, once: bool = False
              "recommended": choice == recommended} for choice in choices]
 
 
+def site_subject(phase: str, *, once: bool = False) -> str:
+    """The site subject for ``phase``: one decision covers every package."""
+    return f"install_placement.{phase}" + (".occasion" if once else "")
+
+
+def legacy_site_subject(phase: str, cost_class: str, *, once: bool = False) -> str:
+    """The per-cost-class site subject jarvis-cd 58cd5b1a and earlier recorded."""
+    return f"install_placement.{phase}.{cost_class}" + (".occasion" if once else "")
+
+
+def is_site_subject(subject: str, phase: str) -> bool:
+    """Whether ``subject`` is a site placement subject for ``phase``, legacy included."""
+    base = site_subject(phase)
+    return subject == base or subject.startswith(base + ".")
+
+
 def recommend(phase: str, cost_class: str, limits: Mapping[str, Any],
               site_entries: Mapping[str, Mapping[str, Any]],
               est: Mapping[str, Any]) -> Tuple[str, str]:
@@ -552,7 +568,7 @@ def recommend(phase: str, cost_class: str, limits: Mapping[str, Any],
     if limits.get("defer"):
         return COMPUTE_JOB, "the login host is busy now: " + "; ".join(limits["defer_reasons"])
     login_ok = [subject for subject, entry in site_entries.items()
-                if subject.startswith(f"install_placement.{phase}.")
+                if is_site_subject(subject, phase) and not subject.endswith(".occasion")
                 and entry.get("constraint") == LOGIN_LIMITED]
     if phase == "check":
         if cost_class == SHORT:
@@ -630,26 +646,47 @@ class PlacementResolver:
             scope="package",
             question=f"Where should JARVIS run the Spack {phase} of {name} at this site?",
             candidates=_candidates(phase, None), answerable=True,
-            hint="a package override: beats the site's answer for its cost class",
+            hint="a package override: beats the site's answer for this package",
         )
 
-    def site_issue(self, phase: str, cost_class: str, packages: List[Dict[str, Any]],
+    def legacy_site_issue(self, phase: str, cost_class: str, *, once: bool = False
+                          ) -> Dict[str, Any]:
+        """The per-cost-class question 58cd5b1a asked: its id still takes answers."""
+        from jarvis_cd.core.spack_install import make_issue
+
+        return make_issue(
+            kind=PLACEMENT_KIND, package=str(getattr(self.ppl, "name", "") or ""),
+            subject=legacy_site_subject(phase, cost_class, once=once), scope="site",
+            question=f"(legacy) Spack {phase} placement of {cost_class} packages",
+            candidates=_candidates(phase, None, once=once), answerable=True,
+        )
+
+    def site_issue(self, phase: str, packages: List[Dict[str, Any]],
                    *, once: bool = False) -> Dict[str, Any]:
         from jarvis_cd.core.spack_install import make_issue
 
         limits = self.limits
         worst = max(packages, key=lambda item: item["estimate"].get("seconds") or 1e12)
+        cost_class = worst["estimate"]["class"]
         choice, reason = recommend(phase, cost_class, limits, self.site_entries(),
                                    worst["estimate"])
+        if len(packages) > 1:
+            reason = f"costliest here is {worst['spec_name']}: {reason}"
         names = ", ".join(f"{item['spec_name']} ({item['estimate']['human']})"
                           for item in packages)
-        subject = f"install_placement.{phase}.{cost_class}" + (".occasion" if once else "")
-        verb = "this time" if once else "at this site"
+        subject = site_subject(phase, once=once)
+        if once:
+            question = (f"Where should JARVIS run the Spack {phase} this time: {names}? "
+                        f"Recommended: {choice} ({reason}).")
+        else:
+            question = (f"Where should JARVIS run Spack {phase}s at this site? The answer "
+                        f"covers every package, these and later ones: {names}; a package "
+                        f"override places one package otherwise. Recommended: {choice} "
+                        f"({reason}).")
         issue = make_issue(
             kind=PLACEMENT_KIND, package=str(getattr(self.ppl, "name", "") or ""),
             subject=subject, scope="site",
-            question=(f"Where should JARVIS run the Spack {phase} of {cost_class} "
-                      f"packages {verb}: {names}? Recommended: {choice} ({reason})."),
+            question=question,
             candidates=_candidates(phase, choice, once=once),
             evidence=self._evidence_lines(phase, packages),
             answerable=True,
@@ -662,6 +699,8 @@ class PlacementResolver:
         issue.update(
             schema_placement=PLACEMENT_SCHEMA,
             phase=phase, cost_class=cost_class, once=once,
+            cost_classes=sorted({item["estimate"]["class"] for item in packages}),
+            covers="every package at this site" if not once else "this run",
             recommended=choice, recommendation_reason=reason,
             packages=packages,
             login_host=sample,
@@ -737,7 +776,7 @@ class PlacementResolver:
             pass  # re-read the store fresh
         site = self.site_entries()
         resolved: Dict[str, Dict[str, Any]] = {}
-        pending: Dict[Tuple[str, bool], List[Dict[str, Any]]] = {}
+        pending: Dict[bool, List[Dict[str, Any]]] = {}
         for pkg_def in pkg_defs:
             pkg_id = str(pkg_def.get("pkg_id"))
             name = spec_name(pkg_def)
@@ -758,39 +797,49 @@ class PlacementResolver:
                 if answer is not None:
                     self._record(override, answer, {"phase": phase})
                     choice, source = answer["constraint"], "package_answer"
-            subject = f"install_placement.{phase}.{est['class']}"
-            if choice is None and subject in site:
-                choice, source = site[subject]["constraint"], "site_decision"
-                self.context.note_decision(
-                    {"issue_id": site[subject].get("issue_id"), "kind": PLACEMENT_KIND,
-                     "subject": subject, "scope": "site"}, site[subject],
-                    source="decisions_file", path=self.decisions.path)
+            subject = site_subject(phase)
             if choice is None:
-                probe = self.site_issue(phase, est["class"], [item])
+                choice, source = self._site_choice(phase, est["class"], site)
+            if choice is None:
+                probe = self.site_issue(phase, [item])
                 answer = self._answer(probe)
                 if answer is not None:
-                    self._record(probe, answer, {"phase": phase, "cost_class": est["class"]})
+                    self._record(probe, answer, {"phase": phase})
                     site = self.site_entries_after_record(site, subject, answer)
                     choice, source = answer["constraint"], "site_answer"
+                else:
+                    site = self._legacy_answers(phase, site)
+                    choice, source = self._site_choice(phase, est["class"], site)
             if choice is None:
                 default = os.environ.get(DEFAULT_ENV[phase], "").strip().lower()
                 if default in (LOGIN_LIMITED, COMPUTE_JOB):
                     choice, source = default, f"environment ({DEFAULT_ENV[phase]})"
             if choice == ASK_EACH_TIME:
-                once = self.site_issue(phase, est["class"], [item], once=True)
-                answer = self._answer(once)
+                once = self.site_issue(phase, [item], once=True)
+                answer = (self._answer(once)
+                          or self._answer(self.legacy_site_issue(phase, est["class"],
+                                                                 once=True)))
                 if answer is not None:
                     choice, source = answer["constraint"], f"{source} -> this time"
                 else:
-                    pending.setdefault((est["class"], True), []).append(item)
+                    pending.setdefault(True, []).append(item)
                     choice = None
             elif choice is None:
-                pending.setdefault((est["class"], False), []).append(item)
+                pending.setdefault(False, []).append(item)
+            if (phase == "build" and choice == LOGIN_LIMITED and est["class"] == LONG
+                    and str(source).startswith(("site", "environment"))):
+                item["note"] = (
+                    f"the site's login_limited build answer covers {name} "
+                    f"({est['human']}, long); answer its package override "
+                    f"{override['issue_id']} with compute_job to build it in a job")
+                log = getattr(self.context, "log", None)
+                if callable(log):
+                    log(f"install placement: {item['note']}\n")
             item.update(choice=choice, source=source)
             resolved[pkg_id] = item
         questions: List[Dict[str, Any]] = []
-        for (cost_class, once), items in sorted(pending.items()):
-            question = self.site_issue(phase, cost_class, items, once=once)
+        for once, items in sorted(pending.items()):
+            question = self.site_issue(phase, items, once=once)
             questions.append(question)
             if raise_questions:
                 self.context.raise_issue(question)
@@ -808,6 +857,80 @@ class PlacementResolver:
             "packages": resolved,
             "questions": [q["issue_id"] for q in questions],
         }
+
+    def _site_choice(self, phase: str, cost_class: str,
+                     site: Mapping[str, Mapping[str, Any]]
+                     ) -> Tuple[Optional[str], Optional[str]]:
+        """The site's recorded choice for ``phase``, and where it came from.
+
+        The per-phase subject covers every package. Entries 58cd5b1a recorded
+        per cost class still count: when they agree they cover every package
+        too; when they differ, each still covers its own class.
+        """
+        subject = site_subject(phase)
+        found: Optional[Tuple[str, Mapping[str, Any]]] = None
+        source = "site_decision"
+        if subject in site:
+            found = (subject, site[subject])
+        else:
+            legacy = {cls: site[legacy_site_subject(phase, cls)] for cls in (SHORT, LONG)
+                      if legacy_site_subject(phase, cls) in site}
+            constraints = {str(entry.get("constraint")) for entry in legacy.values()}
+            if len(constraints) == 1:
+                cls = SHORT if SHORT in legacy else LONG
+                found = (legacy_site_subject(phase, cls), legacy[cls])
+                source = (f"site_decision (legacy "
+                          f"{', '.join(legacy_site_subject(phase, c) for c in sorted(legacy))}"
+                          ", covers every package)")
+            elif cost_class in legacy:
+                found = (legacy_site_subject(phase, cost_class), legacy[cost_class])
+                source = f"site_decision (legacy {found[0]})"
+        if found is None:
+            return None, None
+        key, entry = found
+        if entry.get("issue_id"):
+            self.context.note_decision(
+                {"issue_id": entry.get("issue_id"), "kind": PLACEMENT_KIND,
+                 "subject": key, "scope": "site"}, entry,
+                source="decisions_file", path=self.decisions.path)
+        return str(entry["constraint"]), source
+
+    def _legacy_answers(self, phase: str, site: Dict[str, Dict[str, Any]]
+                        ) -> Dict[str, Dict[str, Any]]:
+        """Apply answers keyed by 58cd5b1a's per-class question ids.
+
+        Agreeing answers are recorded under the per-phase subject (with
+        ``rekeyed_from``); differing ones keep their per-class subjects.
+        """
+        answered = []
+        for cls in (SHORT, LONG):
+            issue = self.legacy_site_issue(phase, cls)
+            answer = self._answer(issue)
+            if answer is not None:
+                answered.append((issue, answer))
+        if not answered:
+            return site
+        if len({answer["constraint"] for _, answer in answered}) == 1:
+            issue, answer = answered[0]
+            current = self.site_issue_identity(phase)
+            self._record(current, answer, {"phase": phase,
+                                           "rekeyed_from": issue["issue_id"]})
+            return self.site_entries_after_record(site, site_subject(phase), answer)
+        for issue, answer in answered:
+            self._record(issue, answer, {"phase": phase})
+            site = self.site_entries_after_record(site, issue["subject"], answer)
+        return site
+
+    def site_issue_identity(self, phase: str) -> Dict[str, Any]:
+        """The per-phase site question's identity (its id), without evidence."""
+        from jarvis_cd.core.spack_install import make_issue
+
+        return make_issue(
+            kind=PLACEMENT_KIND, package=str(getattr(self.ppl, "name", "") or ""),
+            subject=site_subject(phase), scope="site",
+            question=f"Spack {phase} placement at this site",
+            candidates=_candidates(phase, None), answerable=True,
+        )
 
     @staticmethod
     def site_entries_after_record(site: Dict[str, Dict[str, Any]], subject: str,

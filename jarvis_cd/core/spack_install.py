@@ -2242,6 +2242,10 @@ class Decisions:
                   entry.get("candidate_key"), entry.get("answered_constraint")]
         if entry.get("scope") == "site":
             values.append(entry.get("subject"))
+            subject = str(entry.get("subject") or "")
+            # `install_placement.check` also forgets 58cd5b1a's per-class entries
+            if selector.startswith("install_placement.") and subject.startswith(selector + "."):
+                return True
         else:
             values.append(entry.get("package"))
         return selector in [str(value) for value in values if value is not None]

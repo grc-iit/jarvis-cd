@@ -389,7 +389,7 @@ JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
 | `compiler_unavailable` | a compiler the install would use can't run on the build host (`subject: compiler`, `scope: site`): `compiler`, `host`, `missing_executables` (or `probe_failures` when it exists but can't build a test program), `usable_compilers`, `origin`, plus `to_build` and `reused_specs` when reused upstream specs pull the DAG onto it. With `compiler: null` and `missing_languages`/`needed_languages`, no usable compiler on the build host has every language (`c`, `cxx`, `fortran`) the nodes to build need; see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host) | yes, with one usable compiler (`candidates[]`), which becomes a binding `require`; the language form has no candidates (add a compiler, or pin the install job's nodes) |
 | `not_installed` | `+check` found nodes that still need building | no: run `jarvis ppl install` |
 | `install_unchecked` | a scheduled pipeline's check on its submitting host found no matching `install-check.json` (JARVIS runs no Spack there); `packages`, `reason`, `record`, `remedy[]`; see [scheduler.md → Light checks](scheduler.md#light-checks-on-the-submitting-host) | no: check in a job, `jarvis ppl install +check +submit` (or `+submit` to also build) |
-| `install_placement` | where a scheduled pipeline's full check or build runs at this site is not chosen yet (or the site chose `ask_each_time`); `phase`, `cost_class`, `once`, `recommended`, `recommendation_reason`, `packages[]` (with `estimate`), `login_host`, `limits`, `queue`, `site_policy`, `package_overrides[]`; see [scheduler.md → Install placement](scheduler.md#install-placement-where-checks-and-builds-run) | yes: `login_limited`, `compute_job` or `ask_each_time` (an `…occasion` question: the first two, this run only); recorded per site, or per package for an override; `basis` records why |
+| `install_placement` | where a scheduled pipeline's full check or build runs at this site is not chosen yet (or the site chose `ask_each_time`). One site question per phase (`install_placement.check` / `install_placement.build`) covers every package; `phase`, `cost_class` (the costliest package's), `cost_classes`, `covers`, `once`, `recommended`, `recommendation_reason`, `packages[]` (with `estimate`), `login_host`, `limits`, `queue`, `site_policy`, `package_overrides[]`; see [scheduler.md → Install placement](scheduler.md#install-placement-where-checks-and-builds-run) | yes: `login_limited`, `compute_job` or `ask_each_time` (an `install_placement.<phase>.occasion` question: the first two, this run only); recorded per site, or per package for an override; `basis` records why |
 
 The `issue_id` is a stable `sha256:` digest of the question's content, so it
 stays the same across re-runs. Answer by writing `answers.json`:
@@ -742,7 +742,8 @@ report carries the forget document as `forgotten`. The selector is one of:
 - an `issue_id`, or a prefix of at least 8 hex digits (`rekeyed_from`
   matches too);
 - a site subject: `mpi`, `compiler`, `spack`, or an install placement
-  subject such as `install_placement.check.short` (see
+  subject such as `install_placement.check` (which also forgets the older
+  per-class `install_placement.check.short` / `.long` entries; see
   [scheduler.md → Install placement](scheduler.md#install-placement-where-checks-and-builds-run));
 - a package name;
 - a recorded `constraint`, `candidate_id` or `candidate_key`.

@@ -623,18 +623,41 @@ The placement applies only on the submitting host of a scheduled pipeline
 | `compute_job` | today's path: the run job checks at load, or `jarvis ppl install yaml FILE +check +submit`; builds go to `jarvis ppl install yaml FILE +submit` |
 | `ask_each_time` | keeps no standing choice: every time, an `…occasion` question (only `login_limited` / `compute_job`) is asked, and its answer applies to that run only |
 
-**Keys.** A site answer has the subject
-`install_placement.<phase>.<cost_class>` (`phase`: `check` or `build`;
-`cost_class`: `short` or `long`), so a site can allow short checks on the
-login node and still send long ones to a job. A package override has the
-subject `install_placement.<phase>` under the package's Spack name (`scope:
-package`). It beats the site answer for that package. Resolution order:
+**Keys.** A site answer has the subject `install_placement.<phase>`
+(`phase`: `check` or `build`). It is one decision per site and phase, and it
+covers every package, including packages of later pipelines. So one exit-3
+round asks at most one check question and one build question per site, and
+the question lists every pending package with its estimate. The cost class
+(`short` / `long`) and the per-package estimates shape the recommendation and
+the evidence (`cost_class` is the costliest package's class, `cost_classes`
+all of them), not the key. To place one package otherwise, answer its
+`package_overrides` issue: a package override has the subject
+`install_placement.<phase>` under the package's Spack name (`scope:
+package`), and it beats the site answer for that package. Resolution order:
 package decision → package answer → site decision → site answer →
 `JARVIS_INSTALL_PLACEMENT_CHECK` / `JARVIS_INSTALL_PLACEMENT_BUILD` (a
 caller's default, `login_limited` or `compute_job`) → question. One check
 covers every package in the pipeline. So it runs here only when every
 package resolves to `login_limited`; any `compute_job` sends the check to a
-job.
+job. Under `ask_each_time` the per-run question is
+`install_placement.<phase>.occasion`.
+
+When a site's `login_limited` build answer covers a `long` build, the
+package's placement carries a `note` (also logged) naming its override
+issue, so the person can send that one build to a job.
+
+**Answers recorded before the per-phase key.** jarvis-cd 58cd5b1a and
+earlier recorded one site answer per cost class
+(`install_placement.<phase>.short` / `.long`). They still count:
+
+- when they agree (or only one exists), they cover every package, the same
+  as a per-phase answer;
+- when they differ, each still covers its own class, so nothing the person
+  answered is asked again;
+- an answers file keyed by the old per-class `issue_id`s still applies.
+  Agreeing answers are recorded under `install_placement.<phase>` with
+  `rekeyed_from` (the old id);
+- `--forget install_placement.<phase>` also forgets the per-class entries.
 
 **Cost estimate** per package (shown in the question and its evidence):
 
@@ -651,7 +674,8 @@ job.
 The class is `short` up to `JARVIS_PLACEMENT_SHORT_CHECK_SECONDS` (300) or
 `JARVIS_PLACEMENT_SHORT_BUILD_SECONDS` (1800), else `long`.
 
-**Recommendation:**
+**Recommendation** (for the costliest pending package, which
+`recommendation_reason` names when there are several):
 
 - when the login host is busy now (see `defer` below): `compute_job`;
 - a short check: `login_limited` (it saves a queue wait);
@@ -732,7 +756,7 @@ another Spack call.
 4. Re-run the same command with `--answers` (or `JARVIS_INSTALL_ANSWERS`).
    The answer is recorded per site; later runs do not ask again, except
    under `ask_each_time`.
-5. To change a choice: `jarvis ppl install --forget install_placement.check.short
+5. To change a choice: `jarvis ppl install --forget install_placement.check
    +json` (a site subject, an `issue_id`, or the package name for an
    override). The next run asks again.
 
