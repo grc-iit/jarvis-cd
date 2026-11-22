@@ -777,6 +777,8 @@ def compiler_question_candidates(
             "id": f"compiler-{index + 1}",
             "constraint": item["spec"],
             "full": bool(item.get("full")),
+            "languages": list(item.get("languages")
+                              or compiler_languages(item.get("paths") or {}, item.get("probe"))),
             **{lang: (item.get("paths") or {}).get(lang) for lang in ("cc", "cxx", "fc")},
         }
         for index, item in enumerate(ordered)
@@ -1066,9 +1068,22 @@ _PROBE_SOURCES = {
     "cxx": ("probe.cpp", "#include <cstdio>\nint main() { std::puts(\"ok\"); return 0; }\n"),
     "fc": ("probe.f90", "program probe\nend program probe\n"),
 }
-#: languages a compiler must build with to count as usable; Fortran only
-#: marks it not ``full``
-_PROBE_REQUIRED = ("cc", "cxx")
+#: languages a compiler must build with to count as usable at all; a C++
+#: or Fortran failure only drops that language from its ``languages`` (a
+#: build that needs it then skips the compiler, see :func:`narrow_by_language`)
+_PROBE_REQUIRED = ("cc",)
+#: Spack's language virtuals (``depends_on("cxx")``) by compiler path key
+LANGUAGE_PATHS = {"c": "cc", "cxx": "cxx", "fortran": "fc"}
+FULL_LANGUAGES = ("c", "cxx", "fortran")
+
+
+def compiler_languages(paths: Mapping[str, Any], probe: Optional[Mapping[str, Any]] = None) -> List[str]:
+    """The languages (``c``/``cxx``/``fortran``) a compiler can build: a
+    path is configured and, when probed, its test program built and ran."""
+    return [
+        lang for lang, key in LANGUAGE_PATHS.items()
+        if paths.get(key) and (probe is None or key not in probe or probe[key] == "ok")
+    ]
 PROBE_TIMEOUT = 120
 
 
@@ -1150,9 +1165,10 @@ def verify_compilers(
 
     With ``probe`` (the build job, before the first build; off with
     ``JARVIS_COMPILER_PROBE=off``) each compiler whose executables exist
-    must also compile, link and run a C and a C++ test program here
-    (``probe``); one that cannot is unusable, with the reason per language
-    in ``failures``. A Fortran failure only clears ``full``.
+    must also compile, link and run a test program per language here
+    (``probe``). One whose C test fails is unusable; a C++ or Fortran
+    failure removes that language from ``languages`` (and clears ``full``),
+    with the reason per language in ``failures``.
 
     A compiler loaded through ``modules`` is not checked (its paths exist
     only after the module load) and counts as usable.
@@ -1162,7 +1178,6 @@ def verify_compilers(
     for compiler in compilers:
         item = dict(compiler)
         paths = item.get("paths") or {}
-        item["full"] = all(paths.get(lang) for lang in ("cc", "cxx", "fc"))
         if item.get("modules"):
             item.update(verified=False, usable=True, missing=[],
                         note="loaded by modules; not checked")
@@ -1180,8 +1195,8 @@ def verify_compilers(
                     item["failures"] = failures
                 if any(lang in failures for lang in _PROBE_REQUIRED):
                     item["usable"] = False
-                elif "fc" in failures:
-                    item["full"] = False
+        item["languages"] = compiler_languages(paths, item.get("probe"))
+        item["full"] = all(lang in item["languages"] for lang in FULL_LANGUAGES)
         checked.append(item)
     return {
         "schema_version": BUILD_COMPILERS_SCHEMA,
@@ -1307,8 +1322,13 @@ def compiler_scope_sections(
     new builds of its DAG onto that compiler. They are rebuilt instead.
     """
     compilers = list(document.get("compilers") or [])
-    usable = [item for item in compilers if item.get("usable")]
+    usable = [item for item in compilers
+              if item.get("usable") and not item.get("language_excluded")]
     unusable = [item for item in compilers if not item.get("usable")]
+    # Usable here but missing a language this build needs: kept out of new
+    # builds, while specs already built with it stay reusable.
+    dropped = [item for item in compilers
+               if item.get("usable") and item.get("language_excluded")]
     sections: Dict[str, Any] = {}
     if unusable and reuse_filters_supported(spack_version):
         exclude = [f"%{item['spec']}" for item in unusable]
@@ -1322,14 +1342,15 @@ def compiler_scope_sections(
                 ],
             }
         }
-    if unusable and usable:
-        if any(item["source"] == "compilers" for item in unusable):
+    left_out = unusable + dropped
+    if left_out and usable:
+        if any(item["source"] == "compilers" for item in left_out):
             sections["compilers:"] = [
                 item["entry"] for item in usable if item["source"] == "compilers"
             ]
         for name in sorted({
             item["source"].split(":", 1)[1]
-            for item in unusable if item["source"].startswith("packages:")
+            for item in left_out if item["source"].startswith("packages:")
         }):
             sections.setdefault("packages", {})[name] = {
                 "externals:": [
@@ -1412,7 +1433,12 @@ def apply_build_compilers(
         except (OSError, ValueError, TypeError):
             document = None
     if document is None:
-        record["build_compilers"] = {"source": None}
+        record["build_compilers"] = {
+            "source": None,
+            "per_node": "no build-host compiler check is recorded yet; compiler "
+                        "usability is per node, and each install job checks its own "
+                        "node before building",
+        }
         return state
     compilers = document.get("compilers") or []
     usable = [item for item in compilers if item.get("usable")]
@@ -1521,6 +1547,8 @@ def apply_build_compilers(
     if sections:
         planner.runner.config_scopes.append(str(scope))
     state["sections"] = sections
+    state.update(document=document, required=required, required_source=required_source,
+                 scope_dir=context.install_dir / COMPILER_SCOPE_NAME)
     excluding = "compilers:" in sections or any(
         "externals:" in value for value in sections.get("packages", {}).values()
     )
@@ -1557,8 +1585,320 @@ def apply_build_compilers(
         "blocked_by": state["blocked"]["issue_id"] if state["blocked"] else None,
         "scope": str(scope) if sections else None,
         "path": document.get("path") or str(context.install_dir / BUILD_COMPILERS_NAME),
+        "languages": {
+            item["spec"]: list(item.get("languages")
+                               or compiler_languages(item.get("paths") or {}, item.get("probe")))
+            for item in compilers
+        },
+        "per_node": per_node_note(document),
     }
     return state
+
+
+#: ``spack python`` script: the language virtuals (``depends_on("c")``,
+#: ``"cxx"``, ``"fortran"``) each node to build declares, with ``when``
+#: conditions evaluated against the node's concretized spec text
+LANGUAGE_SCRIPT = r'''
+import json, sys
+LANGS = ("c", "cxx", "fortran")
+import spack.repo
+import spack.spec
+nodes = json.load(open(sys.argv[1]))
+try:
+    virtuals = any(spack.repo.PATH.is_virtual(lang) for lang in LANGS)
+except Exception:
+    virtuals = False
+
+def matches(spec, when):
+    if spec is None or when is None:
+        return True
+    try:
+        when = when if isinstance(when, spack.spec.Spec) else spack.spec.Spec(str(when))
+        test = getattr(spec, "intersects", None) or spec.satisfies
+        return bool(test(when))
+    except Exception:
+        return True
+
+out = {}
+for node in nodes:
+    key = node.get("hash") or node["name"]
+    try:
+        cls = spack.repo.PATH.get_pkg_class(node["name"])
+        deps = cls.dependencies
+    except Exception:
+        out[key] = None
+        continue
+    try:
+        spec = spack.spec.Spec(node.get("spec") or node["name"])
+    except Exception:
+        spec = None
+    found = set()
+    try:
+        for first, second in deps.items():
+            if isinstance(first, str):
+                # Spack < 0.22: {dependency: {when: Dependency}}
+                if first in LANGS and any(matches(spec, when) for when in second):
+                    found.add(first)
+            else:
+                # Spack >= 0.22: {when: {dependency: Dependency}}
+                for name in second:
+                    if name in LANGS and matches(spec, first):
+                        found.add(name)
+    except Exception:
+        out[key] = None
+        continue
+    out[key] = sorted(found) if (found or virtuals) else None
+print("JARVIS_LANGUAGES " + json.dumps({"language_virtuals": virtuals, "nodes": out}))
+'''
+
+
+def build_languages(
+    runner: "SpackRunner", install_dir: Path, nodes: Sequence[Mapping[str, Any]]
+) -> Dict[str, Any]:
+    """The languages each node to build needs, from Spack's own language
+    virtuals. ``{"nodes": {hash: [langs] | None}, "method", "error"}``;
+    ``None`` (unknown) when the package has no language deps in a Spack
+    without language virtuals, or when Spack cannot tell."""
+    script = install_dir / "spack-languages.py"
+    request = install_dir / "spack-languages-in.json"
+    _atomic_write_text(script, LANGUAGE_SCRIPT)
+    _atomic_write_text(request, json.dumps(
+        [{"name": node.get("name"), "hash": node.get("hash"), "spec": node.get("spec")}
+         for node in nodes]))
+    result: Dict[str, Any] = {"method": "spack python", "nodes": {}, "error": None}
+    try:
+        completed = runner.run(["python", str(script), str(request)])
+    except RuntimeError as error:
+        result["error"] = str(error)[:512]
+        return result
+    lines = [line for line in (completed.stdout or "").splitlines()
+             if line.startswith("JARVIS_LANGUAGES ")]
+    if completed.returncode != 0 or not lines:
+        result["error"] = _bounded(
+            f"spack python exited {completed.returncode}: "
+            + ((completed.stderr or completed.stdout or "").strip()[-400:]), 512)
+        return result
+    try:
+        document = json.loads(lines[-1].split(" ", 1)[1])
+        result["nodes"] = dict(document.get("nodes") or {})
+        result["language_virtuals"] = bool(document.get("language_virtuals"))
+    except (ValueError, AttributeError) as error:
+        result["error"] = f"unreadable spack python output: {error}"
+    return result
+
+
+def _languages_of(item: Mapping[str, Any]) -> set:
+    return set(item.get("languages")
+               or compiler_languages(item.get("paths") or {}, item.get("probe")))
+
+
+def no_language_compiler_issue(
+    *, host: str, needs: Mapping[str, Sequence[str]],
+    usable: Sequence[Mapping[str, Any]], origin: str,
+) -> Dict[str, Any]:
+    """``compiler_unavailable`` when no usable compiler on ``host`` has every
+    language the build needs (nothing to choose: a person must add one)."""
+    needed = sorted(needs)
+    have: set = set()
+    for item in usable:
+        have |= _languages_of(item)
+    absent = [lang for lang in needed if lang not in have]
+    users = sorted({name for lang in (absent or needed) for name in needs[lang]})
+    if absent:
+        problem = ", ".join(f"no {lang} compiler on {host}" for lang in absent)
+    else:
+        problem = (f"no single compiler on {host} has all of {', '.join(needed)} "
+                   "(a build uses one compiler)")
+    issue = make_issue(
+        kind="compiler_unavailable",
+        package="*",
+        subject="compiler",
+        scope="site",
+        question=(f"{problem[:1].upper()}{problem[1:]}, which "
+                  f"{', '.join(users[:8]) or 'the build'} need(s). How should this "
+                  "build get a compiler for it?"),
+        candidates=[],
+        detail=f"languages {','.join(needed)} on {host}: {problem}",
+        evidence=[f"spack python (language virtuals); {origin}"],
+        answerable=False,
+        hint=("register a compiler with those languages on the build nodes "
+              "(`jarvis spack prepare` inside a job), or pin the install job to "
+              "nodes that have one (pipeline `scheduler.install.nodelist` or "
+              "`constraint`)"),
+    )
+    issue.update(
+        message=issue["question"],
+        compiler=None,
+        host=host,
+        missing_languages=absent or needed,
+        needed_languages={lang: sorted(set(names))[:32] for lang, names in needs.items()},
+        usable_compilers=[
+            {"spec": item["spec"], "languages": sorted(_languages_of(item))}
+            for item in usable
+        ],
+        origin=origin,
+        field=None,
+        remedy=issue["hint"],
+    )
+    return issue
+
+
+def apply_language_rule(
+    planner: "SpackPlanner",
+    context: "InstallContext",
+    record: Dict[str, Any],
+    state: Dict[str, Any],
+    resolved: Sequence[tuple],
+) -> bool:
+    """Keep compilers missing a language this build needs out of it.
+
+    A compiler is usable for a build only if it has every language the
+    nodes to build need (Spack's ``c``/``cxx``/``fortran`` virtuals). When
+    any node's languages are unknown, compilers with C, C++ and Fortran are
+    preferred if there is one. Excluded compilers leave the ``compilers:``
+    of the build's scope (their installed specs stay reusable). Returns
+    True when the packages must be re-planned (a node to build had been
+    concretized onto an excluded compiler, or the binding one changed).
+    """
+    document = state.get("document")
+    if context.mode != "install" or not document:
+        return False
+    missing: Dict[str, Dict[str, Any]] = {}
+    for package, entry in resolved:
+        for node in entry.get("missing") or []:
+            key = node.get("hash") or node.get("name")
+            missing.setdefault(key, {"node": node, "packages": []})["packages"].append(package)
+    if not missing:
+        return False
+    host = str(document.get("host") or socket.gethostname())
+    compilers = list(document.get("compilers") or [])
+    usable = [item for item in compilers if item.get("usable")]
+    if not usable:
+        return False
+    found = build_languages(planner.runner, context.install_dir,
+                            [item["node"] for item in missing.values()])
+    needs: Dict[str, List[str]] = {}
+    unknown: List[str] = []
+    for key, item in missing.items():
+        langs = found["nodes"].get(key) if not found.get("error") else None
+        if langs is None:
+            unknown.append(item["node"]["name"])
+        for lang in langs or []:
+            needs.setdefault(lang, []).append(item["node"]["name"])
+    needed = set(needs)
+    allowed = [item for item in usable if needed <= _languages_of(item)]
+    prefer_full = bool(unknown) and any(
+        set(FULL_LANGUAGES) <= _languages_of(item) for item in allowed)
+    if prefer_full:
+        allowed = [item for item in allowed if set(FULL_LANGUAGES) <= _languages_of(item)]
+    dropped = [item for item in usable if item not in allowed]
+    summary: Dict[str, Any] = {
+        "method": found["method"],
+        "error": found.get("error"),
+        "needed": {lang: sorted(set(names))[:32] for lang, names in sorted(needs.items())},
+        "unknown": sorted(set(unknown))[:32],
+        "prefer_full": prefer_full,
+        "allowed": [item["spec"] for item in allowed],
+        "excluded": [],
+    }
+    build = record.setdefault("build_compilers", {})
+    build["build_languages"] = summary
+    if not allowed:
+        issue = no_language_compiler_issue(
+            host=host, needs=needs, usable=usable,
+            origin=f"build host check ({document.get('source')})")
+        if state.get("blocked") is None:
+            state["blocked"] = issue
+        build["blocked_by"] = issue["issue_id"]
+        return False
+    if not dropped:
+        return False
+    wanted = sorted(needed) if not prefer_full else list(FULL_LANGUAGES)
+    for item in dropped:
+        lacks = [lang for lang in wanted if lang not in _languages_of(item)]
+        item["language_excluded"] = lacks
+        users = sorted({name for lang in lacks for name in needs.get(lang, [])}) or sorted(set(unknown))
+        reason = ", ".join(f"no {lang} compiler on {host}" for lang in lacks)
+        summary["excluded"].append({
+            "spec": item["spec"],
+            "missing_languages": lacks,
+            "reason": f"{item['spec']}: {reason}",
+            "needed_by": users[:16],
+            **({"note": "languages of some nodes are unknown; a compiler with "
+                        "c, cxx and fortran is preferred"} if prefer_full and not
+               (set(lacks) & needed) else {}),
+        })
+    previous_required = state.get("required")
+    required = previous_required
+    required_source = state.get("required_source")
+    if required and find_compiler(dropped, required) and not find_compiler(allowed, required):
+        issue = compiler_unavailable_issue(
+            required, [], host=host, usable=allowed, origin="language check",
+            failures={lang: f"no {lang} compiler on {host}"
+                      for lang in find_compiler(dropped, required)["language_excluded"]},
+            evidence=[str(context.install_dir / BUILD_COMPILERS_NAME)],
+        )
+        recorded = planner.decisions.site("compiler")
+        answer, source = context.answer_for(issue), "answers_file"
+        if answer is None and recorded is not None and recorded.get("issue_id") == issue["issue_id"]:
+            answer, source = recorded, "decisions_file"
+            context.note_decision(issue, recorded, source=source, path=planner.decisions.path)
+            context.stale_decisions[:] = [
+                stale for stale in context.stale_decisions
+                if stale.get("issue_id") != issue["issue_id"]]
+        if answer is not None and find_compiler(allowed, str(answer["constraint"])):
+            if source == "answers_file":
+                planner.decisions.record(issue, answer)
+            required, required_source = str(answer["constraint"]), source
+        else:
+            if state.get("blocked") is None:
+                state["blocked"] = issue
+            build["blocked_by"] = issue["issue_id"]
+            required = None
+    root = explicit_spack_root()
+    sections = compiler_scope_sections(
+        document, required, spack_checkout_version(Path(root)) if root else None
+    )
+    scope = write_compiler_scope(Path(state["scope_dir"]), sections)
+    if sections and str(scope) not in planner.runner.config_scopes:
+        planner.runner.config_scopes.append(str(scope))
+    state.update(sections=sections, required=required, required_source=required_source)
+    planner.usable_compilers = [dict(item) for item in allowed]
+    build["language_excluded"] = summary["excluded"]
+    build["excluded"] = sorted(set(build.get("excluded") or []) | {
+        item["spec"] for item in dropped})
+    build["scope"] = str(scope)
+    build["required"] = {
+        "spec": required, "source": required_source,
+        "require": sections["packages"]["all"]["require:"],
+    } if required else None
+    for excluded in summary["excluded"]:
+        context.log(f"COMPILER {excluded['reason']} (needed by "
+                    f"{', '.join(excluded['needed_by']) or '?'}); left out of this build\n")
+    dropped_specs = [item["spec"] for item in dropped]
+    rebuilt_on_dropped = any(
+        any(_same_compiler(node_compiler(str(item["node"].get("spec") or "")), spec)
+            for spec in dropped_specs)
+        for item in missing.values()
+    )
+    return rebuilt_on_dropped or required != previous_required
+
+
+def per_node_note(document: Mapping[str, Any]) -> str:
+    """Why a compiler's usability is not a promise for other nodes."""
+    host = document.get("host") or "?"
+    if document.get("source") == "recorded":
+        return (
+            f"compiler usability is per node: this reuses the result recorded on "
+            f"{host} at {document.get('checked_at') or '?'}, not a check of this "
+            "host or a promise for the node an install job lands on; each install "
+            "job re-checks its own node before building"
+        )
+    return (
+        f"compiler usability is per node: checked on {host}"
+        f"{' (probed)' if document.get('probed') else ''}; other nodes may "
+        "differ, and each install job re-checks its own node"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2102,6 +2442,18 @@ class InstallContext:
             stream.write(json.dumps(issue, sort_keys=True, separators=(",", ":")) + "\n")
         self.log(f"ISSUE {issue['kind']} {issue['issue_id']}: {issue['question']}\n")
 
+    def retract_issues(self, keep: int) -> None:
+        """Drop the questions raised after the first ``keep`` (a plan that is
+        being redone), from ``issues`` and ``issues.jsonl``."""
+        if len(self.issues) <= keep:
+            return
+        for issue in self.issues[keep:]:
+            self.log(f"ISSUE retracted {issue['issue_id']} (re-planning)\n")
+        self.issues = self.issues[:keep]
+        _atomic_write_text(self.issues_path, "".join(
+            json.dumps(issue, sort_keys=True, separators=(",", ":")) + "\n"
+            for issue in self.issues))
+
     def answer_for(self, issue: Mapping[str, Any]) -> Optional[Dict[str, Any]]:
         """The answers-file answer for ``issue``, or ``None``.
 
@@ -2128,7 +2480,8 @@ class InstallContext:
             for field_name, key in (("candidate_key", "key"), ("candidate_id", "id")):
                 if chosen.get(key) is not None:
                     answer[field_name] = chosen[key]
-        self.used_answers.append(str(issue["issue_id"]))
+        if str(issue["issue_id"]) not in self.used_answers:
+            self.used_answers.append(str(issue["issue_id"]))
         self.note_decision(
             issue,
             answer,
@@ -3380,48 +3733,67 @@ def run_spack_install(
         for pkg_def in pkg_list
     ]
     total = len(packages)
-    resolved: List[tuple[str, Dict[str, Any]]] = []
-    to_build: List[tuple[int, str, Dict[str, Any]]] = []
-    for index, (package, pkg_def) in enumerate(packages):
-        query = _package_query(pkg_def)
-        context.report_progress(
-            phase="resolving", current_package=package, packages_done=index
-        )
-        if not query:
-            record["packages"][package] = {"status": "no_query"}
-            continue
-        entry = planner.plan_package(package, query)
-        if entry["status"] == "missing":
-            if context.mode == "check":
-                context.raise_issue(
-                    make_issue(
-                        kind="not_installed",
-                        package=package,
-                        subject=entry["spec"],
-                        scope="package",
-                        question=(
-                            f"{package} needs {len(entry['missing'])} Spack "
-                            "package(s) built before it can run."
-                        ),
-                        candidates=[],
-                        detail=", ".join(
-                            f"{item['name']}/{item['hash']}" for item in entry["missing"]
-                        ),
-                        answerable=False,
-                        hint="run `jarvis ppl install` (e.g. as a 1-node +submit job)",
+
+    def resolve_all() -> tuple:
+        resolved: List[tuple[str, Dict[str, Any]]] = []
+        to_build: List[tuple[int, str, Dict[str, Any]]] = []
+        for index, (package, pkg_def) in enumerate(packages):
+            query = _package_query(pkg_def)
+            context.report_progress(
+                phase="resolving", current_package=package, packages_done=index
+            )
+            if not query:
+                record["packages"][package] = {"status": "no_query"}
+                continue
+            entry = planner.plan_package(package, query)
+            if entry["status"] == "missing":
+                if context.mode == "check":
+                    context.raise_issue(
+                        make_issue(
+                            kind="not_installed",
+                            package=package,
+                            subject=entry["spec"],
+                            scope="package",
+                            question=(
+                                f"{package} needs {len(entry['missing'])} Spack "
+                                "package(s) built before it can run."
+                            ),
+                            candidates=[],
+                            detail=", ".join(
+                                f"{item['name']}/{item['hash']}" for item in entry["missing"]
+                            ),
+                            answerable=False,
+                            hint="run `jarvis ppl install` (e.g. as a 1-node +submit job)",
+                        )
                     )
-                )
-            elif env_dir is None:
-                to_build.append((index, package, entry))
-        if entry["status"] in ("satisfied", "missing"):
-            resolved.append((package, entry))
-        record["packages"][package] = entry
-        context.report_progress(
-            phase="resolving",
-            current_package=None,
-            packages_done=index + 1,
-            missing=[item["name"] for item in entry.get("missing", [])][:32],
-        )
+                elif env_dir is None:
+                    to_build.append((index, package, entry))
+            if entry["status"] in ("satisfied", "missing"):
+                resolved.append((package, entry))
+            record["packages"][package] = entry
+            context.report_progress(
+                phase="resolving",
+                current_package=None,
+                packages_done=index + 1,
+                missing=[item["name"] for item in entry.get("missing", [])][:32],
+            )
+        return resolved, to_build
+
+    issues_before = len(context.issues)
+    resolved, to_build = resolve_all()
+    if apply_language_rule(planner, context, record, compiler_state, resolved):
+        # The plan concretized nodes onto a compiler this build cannot use
+        # (``spack install`` would re-concretize with the narrowed scope
+        # anyway): plan again, and drop the first pass's questions.
+        context.log("COMPILER re-planning with the compilers that have every "
+                    "language this build needs\n")
+        context.retract_issues(issues_before)
+        record["packages"] = {}
+        resolved, to_build = resolve_all()
+        record["build_compilers"]["replanned"] = True
+    record["spack_config_scopes"] = spack_config_scopes(
+        planner.runner.config_scopes, env_dir
+    )
     blocked = compiler_state.get("blocked")
     if blocked is not None:
         if any(entry.get("status") == "missing" for _package, entry in resolved):

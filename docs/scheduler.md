@@ -434,6 +434,13 @@ scheduler:
     mem: 0
 ```
 
+Compilers can differ between compute nodes, and an install checks only
+the node its job lands on (see
+[spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host)).
+To build on nodes known to have the compiler a build needs, pin the job
+with `scheduler.install.nodelist` (or `constraint`), and add
+`exclusive: false` if those nodes are shared.
+
 The record's `metadata.install_job` shows the shape JARVIS submitted:
 `nodes`, `ntasks`, `cpus_per_task`, `mem`, `exclusive`, `time`,
 `partition`, `account`, `qos` (when set), and `overrides`, the keys taken

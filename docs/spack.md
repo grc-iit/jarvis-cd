@@ -163,20 +163,29 @@ builds, before any `spack install`:
    `cc`, `cxx`, `f77` and `fc` is an executable file on that host, which is
    the same test behind Spack's `CompilerAccessError`. Then it **probes**
    each compiler that passed: in a temp dir it compiles, links and runs a
-   trivial C program with `cc` and a C++ one with `cxx`, with the compiler
-   entry's `environment` applied. This is the check a configure or CMake
-   step makes. A driver that exists over an incomplete toolchain (no crt
-   files, no `cc1`, no libstdc++, a missing assembler) fails it, and that
-   compiler is unusable on this host, with the reason per language in
-   `failures`. A Fortran failure only marks the compiler not `full`. A
-   compiler loaded through `modules` is not checked. Set
+   trivial program per language (C with `cc`, C++ with `cxx`, Fortran with
+   `fc`), with the compiler entry's `environment` applied. This is the
+   check a configure or CMake step makes. A driver that exists over an
+   incomplete toolchain (no crt files, no `cc1`, no libstdc++, a missing
+   assembler) fails it, with the reason per language in `failures`. A
+   compiler whose C test fails is unusable on this host. A C++ or Fortran
+   failure only removes that language from the compiler's `languages`
+   (see step 3). A compiler's `languages` are those with a configured path
+   that, when probed, passed. A compiler loaded through `modules` is not
+   checked. Set
    `JARVIS_COMPILER_PROBE=off` to keep only the existence check. The result
-   (`jarvis.build-compilers.v1`, with `probed`, and `probe`/`failures` per
-   compiler) goes to `<install>/build-compilers.json`
+   (`jarvis.build-compilers.v1`, with `probed`, and `probe`/`failures`/
+   `languages` per compiler) goes to `<install>/build-compilers.json`
    and to `<JARVIS_SPACK_ROOT>/var/jarvis/build-compilers.json`. A
    `+check` on the login node uses that last build-host result
    (`source: recorded`) rather than the login node's compilers. With no
-   result yet, it trusts the configured compilers.
+   result yet, it trusts the configured compilers. Compiler usability is
+   **per node**: compute nodes of one cluster can differ (one has `g++-12`,
+   the next only the `gcc-12` C driver). So a check's result is not a
+   promise for the node an install job lands on. Every install job
+   re-checks its own node, and `build_compilers.per_node` (also printed by
+   `+check` and returned in its `+json` installer result) says which host
+   and time the shown result comes from.
 2. **Exclude.** Every Spack call in the install gets a `spack -C` scope
    (`<install>/spack-compiler-scope`), and the pipeline environment merges
    the same sections:
@@ -191,7 +200,33 @@ builds, before any `spack install`:
    that reuse means those upstream specs are rebuilt with a usable compiler.
    They show up in the plan's `missing` nodes, and the record lists the
    exclusions in `reuse_excluded`.
-3. **Guard.** After `spack spec`, and again after the environment's
+3. **Languages.** A compiler is usable for a build only if it has every
+   language the build needs. After the first plan, the install asks Spack
+   which language virtuals (`depends_on("c")`, `"cxx"`, `"fortran"`) each
+   node to build declares. It runs one `spack python` script
+   (`<install>/spack-languages.py`), which evaluates each dependency's
+   `when` against the node's concretized spec. The build needs the union:
+   for example xcompact3d needs Fortran, and ParaView needs C++. A usable
+   compiler without one of those languages is left out of this build's
+   `compilers:` with the reason `no <lang> compiler on <host>`. Specs
+   already built with it stay reusable, because a language gap doesn't
+   break reuse. When a node's languages are unknown (a Spack without
+   language virtuals and a package that declares none, a package Spack
+   can't load, or the script failed), JARVIS prefers compilers that have
+   `cc`, `cxx` and `fc` if there is one. If the first plan had put a node
+   to build on a compiler that was left out, the packages are planned
+   again with the narrowed scope, and the first pass's questions are
+   withdrawn (`replanned: true`). If no usable compiler has every needed
+   language (or none has them all at once), the install stops before any
+   `spack install` with `compiler_unavailable`. That issue carries
+   `missing_languages`, `needed_languages` (language to nodes) and
+   `usable_compilers` with their `languages`. It is not answerable (no
+   candidate exists): register a compiler with that language on the build
+   nodes, or pin the install job to nodes that have one
+   ([`scheduler.install`](scheduler.md) `nodelist` or `constraint`). If
+   the binding compiler (step 5) lacks a needed language, the install
+   asks `compiler_unavailable` over the compilers that have them all.
+4. **Guard.** After `spack spec`, and again after the environment's
    `concretize`, any node still to build with an unusable compiler stops the
    install with a `compiler_unavailable` issue (exit `3`). No
    `spack install` runs. The issue names the host, the compiler, its
@@ -200,14 +235,14 @@ builds, before any `spack install`:
    `reused_specs` built
    with that compiler that pulled the DAG there. This happens when the Spack
    predates reuse filters, or when a requirement forces that compiler.
-4. **Bind.** A person's compiler (site prep `--compiler`, an
+5. **Bind.** A person's compiler (site prep `--compiler`, an
    `ambiguous_compiler` answer, or an answer to `compiler_unavailable`) is a
    `require`, not a preference. If that compiler is itself unusable on the
    build host, the install asks again with `compiler_unavailable`
    (`origin: build host check`), with the usable compilers as candidates.
    An answer to `compiler_unavailable` is recorded in `decisions.yaml` and
    becomes the binding `require`.
-5. **Learn from a failed build.** If a build still fails because a compiler
+6. **Learn from a failed build.** If a build still fails because a compiler
    "cannot create executables" (the probe was off, or the failure depends on
    flags the probe doesn't use), the failure is `compiler_unavailable`, not
    `build_failed` (see [Install failures](pipeline_tests.md#install-failures)).
@@ -227,7 +262,12 @@ builds, before any `spack install`:
 | `probed` | whether the build-test probe ran (`false` with `JARVIS_COMPILER_PROBE=off`, or for a recorded check from before the probe) |
 | `usable`, `unusable[]` | specs; `unusable[]` is `{spec, missing, failures?}`, where `failures` maps a language (`cc`, `cxx`, `fc`, or `build`) to why it failed |
 | `demoted` | `{spec, issue_id, source}` when an answer to a failed-build `compiler_unavailable` took a compiler out, or `null` |
-| `excluded`, `reuse_excluded` | compilers left out of the scope, and the `concretizer:reuse` excludes |
+| `excluded`, `reuse_excluded` | compilers left out of the scope (unusable ones, and those missing a language this build needs), and the `concretizer:reuse` excludes |
+| `languages` | each compiler's languages (`c`, `cxx`, `fortran`) on the checked host |
+| `build_languages` | `{method, error, needed: {lang: [nodes]}, unknown: [nodes], prefer_full, allowed, excluded}` from the language step (install mode, when something is missing) |
+| `language_excluded[]` | `{spec, missing_languages, reason, needed_by, note?}`; `reason` is `<spec>: no <lang> compiler on <host>` |
+| `replanned` | `true` when the language step re-planned the packages |
+| `per_node` | why the shown usability holds for one node (`host`, `checked_at`), not as a promise for others |
 | `required` | `{spec, source, require}` for the binding compiler, or `null` |
 | `blocked_by` | the `compiler_unavailable` `issue_id` that stopped the install, or `null` |
 | `scope`, `path` | the `-C` scope dir and the `build-compilers.json` used |

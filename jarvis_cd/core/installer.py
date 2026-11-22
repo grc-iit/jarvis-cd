@@ -379,6 +379,11 @@ class SpackInstaller(Installer):
                 line += f" (missing {len(entry['missing'])})"
             print(line)
         failed = [name for name, status in statuses.items() if status == "failed"]
+        compilers = record.get("build_compilers") or {}
+        if mode == "check" and compilers.get("per_node"):
+            print(f"SpackInstaller: compilers: {compilers['per_node']}")
+        for excluded in compilers.get("language_excluded") or []:
+            print(f"SpackInstaller: compiler {excluded['reason']}; left out of this build")
         if failed:
             from jarvis_cd.core.spack_install import InstallFailed, classify_install_failure
 
@@ -440,6 +445,13 @@ class SpackInstaller(Installer):
             "resolve_seconds": resolve_seconds,
             "spack_env": record.get("spack_env"),
             "mpi_env": mpi_env or None,
+            "build_compilers": {
+                key: compilers.get(key)
+                for key in ("source", "host", "checked_at", "usable", "languages",
+                            "language_excluded", "build_languages", "blocked_by",
+                            "per_node")
+                if compilers.get(key) is not None
+            } or None,
             "packages": {
                 name: {
                     key: entry.get(key)
