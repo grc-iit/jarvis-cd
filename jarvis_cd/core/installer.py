@@ -1203,7 +1203,8 @@ def light_install_host(ppl, context) -> Optional[str]:
     if current_allocation() is not None or local_build_allowed():
         return None
     return ("scheduled pipeline on its submitting host (outside an allocation); "
-            "Spack runs inside the allocation")
+            "Spack runs here only under a login_limited install placement, "
+            "otherwise inside the allocation")
 
 
 def install_check_path(ppl) -> Path:
