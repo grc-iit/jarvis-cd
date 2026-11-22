@@ -35,6 +35,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1529,12 +1530,26 @@ def load_answers(path: Optional[Path]) -> Dict[str, Dict[str, Any]]:
     return answers
 
 
+#: per-process re-entrancy for the decision store's file lock: path -> [RLock, depth]
+_DECISION_LOCKS: Dict[str, List[Any]] = {}
+_DECISION_LOCKS_GUARD = threading.Lock()
+
+
 class Decisions:
-    """Recorded answers, keyed by scope: ``site`` subjects and per package."""
+    """Recorded answers, keyed by scope: ``site`` subjects and per package.
+
+    Writers (:meth:`record`, :meth:`forget`) hold an exclusive lock on
+    ``.<name>.lock`` next to the file and re-read it before changing it, so
+    concurrent answers from several processes or threads all land.
+    """
 
     def __init__(self, path: Path):
         self.path = Path(path)
-        self.data: Dict[str, Any] = {
+        self.data: Dict[str, Any] = {}
+        self._load()
+
+    def _load(self) -> None:
+        self.data = {
             "schema_version": DECISIONS_SCHEMA,
             "site": {},
             "packages": {},
@@ -1549,6 +1564,33 @@ class Decisions:
                 str(name): list(entries or [])
                 for name, entries in (loaded.get("packages") or {}).items()
             }
+
+    @property
+    def lock_path(self) -> Path:
+        return self.path.with_name(f".{self.path.name}.lock")
+
+    @contextlib.contextmanager
+    def locked(self):
+        """Hold the store's exclusive lock with ``data`` freshly re-read.
+
+        Re-entrant within a process; other threads and processes wait.
+        """
+        key = os.path.abspath(str(self.path))
+        with _DECISION_LOCKS_GUARD:
+            slot = _DECISION_LOCKS.setdefault(key, [threading.RLock(), 0])
+        with slot[0]:
+            slot[1] += 1
+            try:
+                if slot[1] == 1:
+                    self.path.parent.mkdir(parents=True, exist_ok=True)
+                    with _file_lock(self.lock_path, exclusive=True):
+                        self._load()
+                        yield self
+                else:
+                    self._load()
+                    yield self
+            finally:
+                slot[1] -= 1
 
     def site(self, subject: str) -> Optional[Dict[str, Any]]:
         value = self.data["site"].get(subject)
@@ -1588,19 +1630,21 @@ class Decisions:
         for key, value in (extra or {}).items():
             if value is not None:
                 entry[key] = value
-        if issue["scope"] == "site":
-            self.data["site"][issue["subject"]] = entry
-        else:
-            entries = [
-                existing
-                for existing in self.data["packages"].get(issue["package"], [])
-                if existing.get("issue_id") != issue["issue_id"]
-            ]
-            entries.append(entry)
-            self.data["packages"][issue["package"]] = entries
-        self.save()
+        with self.locked():
+            if issue["scope"] == "site":
+                self.data["site"][issue["subject"]] = entry
+            else:
+                entries = [
+                    existing
+                    for existing in self.data["packages"].get(issue["package"], [])
+                    if existing.get("issue_id") != issue["issue_id"]
+                ]
+                entries.append(entry)
+                self.data["packages"][issue["package"]] = entries
+            self.save()
 
     def save(self) -> None:
+        """Write ``data`` atomically; callers mutate and save under :meth:`locked`."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         _atomic_write_text(self.path, yaml.safe_dump(self.data, sort_keys=True))
 
@@ -1641,27 +1685,28 @@ class Decisions:
         """
         selector = str(selector).strip()
         removed: List[Dict[str, Any]] = []
-        for subject in list(self.data["site"]):
-            entry = self.data["site"][subject]
-            view = {**dict(entry or {}), "scope": "site",
-                    "subject": (entry or {}).get("subject", subject)}
-            if self._matches(view, selector):
-                removed.append(view)
-                del self.data["site"][subject]
-        for package in list(self.data["packages"]):
-            kept = []
-            for entry in self.data["packages"][package] or []:
-                view = {**dict(entry or {}), "scope": "package", "package": package}
+        with self.locked():
+            for subject in list(self.data["site"]):
+                entry = self.data["site"][subject]
+                view = {**dict(entry or {}), "scope": "site",
+                        "subject": (entry or {}).get("subject", subject)}
                 if self._matches(view, selector):
                     removed.append(view)
+                    del self.data["site"][subject]
+            for package in list(self.data["packages"]):
+                kept = []
+                for entry in self.data["packages"][package] or []:
+                    view = {**dict(entry or {}), "scope": "package", "package": package}
+                    if self._matches(view, selector):
+                        removed.append(view)
+                    else:
+                        kept.append(entry)
+                if kept:
+                    self.data["packages"][package] = kept
                 else:
-                    kept.append(entry)
-            if kept:
-                self.data["packages"][package] = kept
-            else:
-                del self.data["packages"][package]
-        if removed:
-            self.save()
+                    del self.data["packages"][package]
+            if removed:
+                self.save()
         return removed
 
 
@@ -1675,6 +1720,13 @@ def forget_decisions(decisions_path: Path, selectors: Sequence[str]) -> Dict[str
     selector matches nothing, before anything is removed.
     """
     decisions = Decisions(Path(decisions_path))
+    with decisions.locked():
+        return _forget_locked(decisions, decisions_path, selectors)
+
+
+def _forget_locked(
+    decisions: "Decisions", decisions_path: Path, selectors: Sequence[str]
+) -> Dict[str, Any]:
     before = decisions.entries()
     unmatched = [
         selector for selector in selectors
@@ -2556,7 +2608,19 @@ def spack_env_lock(
     """Hold ``<directory>/.jarvis-env.lock``; ``on_wait`` runs once if blocked."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(directory / ENV_LOCK_NAME, os.O_RDWR | os.O_CREAT, 0o664)
+    with _file_lock(directory / ENV_LOCK_NAME, exclusive=exclusive, on_wait=on_wait):
+        yield
+
+
+@contextlib.contextmanager
+def _file_lock(
+    lock_path: Path,
+    *,
+    exclusive: bool,
+    on_wait: Optional[Callable[[], None]] = None,
+):
+    """``flock`` (``msvcrt.locking`` on Windows) on ``lock_path``, created if absent."""
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o664)
     try:
         if os.name == "nt":
             import msvcrt

@@ -410,6 +410,14 @@ that pipeline. That is how the chosen MPI reaches a run (see
 [MPI selection](#mpi-selection)). Set `JARVIS_SPACK_DECISIONS` to share one
 decisions file across pipelines on a site.
 
+Writes to `decisions.yaml` (recording an answer, re-keying one, `--forget`)
+hold an exclusive lock on `.decisions.yaml.lock` beside it. They re-read the
+file under that lock before changing it and replace it atomically. So
+answers that land at the same time, from several jobs, pipelines sharing
+`JARVIS_SPACK_DECISIONS`, or threads, all keep their entries, and none is
+lost and re-asked. The lock is `flock` (on Windows, `msvcrt.locking`), so on a
+shared filesystem it needs working `flock`, the same as the Spack env lock.
+
 #### Decision provenance
 
 A recorded answer is replayed only for the `issue_id` it answered. Each
