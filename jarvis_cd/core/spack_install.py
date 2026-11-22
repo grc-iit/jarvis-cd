@@ -165,8 +165,10 @@ class BuildOutsideAllocation(RuntimeError):
     """A build, ``spack install`` or env concretize was refused on this host.
 
     Site login nodes may only do light work (submit, read records,
-    ``spack find``, ``spack spec``). Run the install as a job with
-    ``jarvis ppl install ... +submit``, or opt in with
+    ``spack find``). For a scheduled pipeline JARVIS runs no Spack at all on
+    the submitting host: checks read ``install-check.json`` (see
+    ``jarvis_cd.core.installer.light_install_host``). Run the install as a
+    job with ``jarvis ppl install ... +submit``, or opt in with
     ``jarvis ppl install +allow_local`` / ``JARVIS_ALLOW_LOCAL_BUILD=1``.
     The CLI exits with :data:`BUILD_REFUSED_EXIT_CODE`.
     """

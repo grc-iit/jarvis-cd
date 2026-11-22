@@ -178,7 +178,10 @@ builds, before any `spack install`:
    `languages` per compiler) goes to `<install>/build-compilers.json`
    and to `<JARVIS_SPACK_ROOT>/var/jarvis/build-compilers.json`. A
    `+check` on the login node uses that last build-host result
-   (`source: recorded`) rather than the login node's compilers. With no
+   (`source: recorded`) rather than the login node's compilers. For a
+   scheduled pipeline it runs no Spack at all and reports the compilers
+   from the last full check's `install-check.json` (see
+   [scheduler.md → Light checks](scheduler.md#light-checks-on-the-submitting-host)). With no
    result yet, it trusts the configured compilers. Compiler usability is
    **per node**: compute nodes of one cluster can differ (one has `g++-12`,
    the next only the `gcc-12` C driver). So a check's result is not a

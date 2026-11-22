@@ -1244,6 +1244,33 @@ class Pipeline:
             # broken before anything reaches the scheduler. A blocking
             # site-fact question refuses with exit 3; advisories are recorded.
             site_facts_report = enforce_pipeline_check(self).get("site_facts")
+        install_on_load_meta = None
+        sealed_install_policy = None
+        if action == "run":
+            configured_policy = os.environ.get("JARVIS_INSTALL_ON_LOAD", "").strip().lower()
+            if configured_policy in ("install", "check", "skip"):
+                sealed_install_policy = configured_policy
+            activation = getattr(self, "_install_activation", None) or {}
+            if activation.get("method") == "deferred":
+                check = dict(activation.get("check") or {})
+                install_on_load_meta = {
+                    "policy": activation.get("policy"),
+                    "runs_in": "allocation",
+                    "submit_host": {
+                        key: check.get(key)
+                        for key in ("source", "outcome", "reason", "checked_at",
+                                    "checked_where", "record", "missing")
+                        if check.get(key) is not None
+                    },
+                    "advisory": (
+                        "install-on-load runs inside the allocation: no Spack ran on "
+                        "the submitting host"
+                        + (f" ({check.get('reason')})" if check.get("reason") else "")
+                        + "; the job reports install questions or failures in "
+                          "metadata.install"
+                    ),
+                }
+                print(f"Advisory: {install_on_load_meta['advisory']}", file=sys.stderr)
 
         from jarvis_cd.core.scheduler import make_scheduler, resolve_scheduler_name
 
@@ -1269,11 +1296,16 @@ class Pipeline:
             recorded_facts = record_site_facts(
                 site_facts_report,
                 full_in=str(store.executions_dir / resolved_execution_id / SITE_FACTS_FILE))
+        create_metadata: Dict[str, Any] = {}
+        if recorded_facts:
+            create_metadata["site_facts"] = recorded_facts
+        if install_on_load_meta:
+            create_metadata["install_on_load"] = install_on_load_meta
         store.create(
             resolved_execution_id,
             mode="scheduler",
             scheduler_provider=scheduler_provider,
-            **({"metadata": {"site_facts": recorded_facts}} if recorded_facts else {}),
+            **({"metadata": create_metadata} if create_metadata else {}),
         )
         execution_root = store.executions_dir / resolved_execution_id
         if recorded_facts:
@@ -1423,6 +1455,7 @@ class Pipeline:
                 jarvis_root=getattr(self.jarvis, "jarvis_root", None),
                 pipeline_action=action,
                 pipeline_action_args=action_args,
+                install_on_load=sealed_install_policy,
             )
             script_path = sched.write_script()
             try:
@@ -4840,6 +4873,46 @@ class Pipeline:
 
         self._validate_interceptor_links()
 
+    def _load_install_publisher(self, policy: str, snapshot_marker):
+        """Progress callback for a load's install phase inside a scheduler job.
+
+        Mirrors the phase into the execution record's ``metadata.install``
+        (``trigger: install_on_load``), so a run job that stopped on an
+        install question (exit 3) or failure (exit 6) says so where an
+        install job would. Outside a job it is a no-op.
+        """
+        execution_id = getattr(self, "_execution_id", None)
+        if snapshot_marker is None or not execution_id:
+            self._install_progress = None
+            return lambda **_fields: None
+        from jarvis_cd.core.installer import install_check_path, install_context_for
+        from jarvis_cd.core.spack_install import PROGRESS_SCHEMA
+
+        store = self._execution_store()
+        paths = install_context_for(self, policy)
+        progress: Dict[str, Any] = {
+            "schema_version": PROGRESS_SCHEMA,
+            "trigger": "install_on_load",
+            "mode": policy,
+            "phase": "starting",
+            "log": str(paths.log_path),
+            "issues": str(paths.issues_path),
+            "record": str(paths.record_path),
+            "check_record": str(install_check_path(self)),
+        }
+
+        def publish(**fields: Any) -> None:
+            progress.update({k: v for k, v in fields.items() if v is not None})
+            progress["updated_at"] = _utc_timestamp()
+            try:
+                store.update(execution_id, metadata={"install": dict(progress)})
+            except Exception as exc:  # progress must never break the load
+                print(f"WARNING: could not update execution install progress: {exc}")
+
+        self._install_progress = publish
+        publish()
+        return publish
+
     def _load_from_file(self, load_type: str, pipeline_file: str):
         """Load pipeline from a file"""
         if load_type != "yaml":
@@ -5112,6 +5185,7 @@ class Pipeline:
             )
         pending_decision: Optional[RuntimeError] = None
         self._install_activation = None
+        self._install_policy = install_policy
         if install_policy == "skip":
             self._install_activation = {
                 "method": "none", "policy": "skip",
@@ -5119,21 +5193,45 @@ class Pipeline:
                                   "or a command that runs its own phase)",
             }
         else:
+            from jarvis_cd.core.spack_install import InstallFailed
+
+            publish = self._load_install_publisher(install_policy, snapshot_marker)
             install_started = time.monotonic()
             try:
                 install_report = Installer.install_all(
-                    self, mode=install_policy, use_capture=True)
+                    self, mode=install_policy, use_capture=True, defer_unchecked=True)
                 activation = dict(install_report.get("activation") or {})
                 activation.setdefault("method", "none")
                 if activation["method"] == "none":
                     activation.setdefault("why_not_loaded", "no installer loaded an env")
                 activation["policy"] = install_policy
                 activation["seconds"] = round(time.monotonic() - install_started, 3)
+                if install_report.get("check"):
+                    activation["check"] = install_report["check"]
                 self._install_activation = activation
+                publish(phase="done", satisfied=bool(install_report.get("satisfied")),
+                        activation=activation.get("method"))
             except (InstallDecisionNeeded, BuildOutsideAllocation) as needed:
                 # Keep the loaded pipeline so the caller can answer, or submit
                 # ``jarvis ppl install +submit``, then report why it stopped.
                 pending_decision = needed
+                issues = list(getattr(needed, "issues", None) or [])
+                publish(
+                    phase="needs_decision" if issues else "refused",
+                    issue_count=len(issues),
+                    open_issues=[issue.get("issue_id") for issue in issues],
+                    issue_kinds=sorted({str(issue.get("kind")) for issue in issues}),
+                    error=str(needed)[:2000],
+                )
+            except InstallFailed as failed:
+                publish(
+                    phase="failed", error=str(failed)[:2000],
+                    open_issues=[issue.get("issue_id") for issue in failed.issues],
+                    issue_kinds=sorted({str(issue.get("kind")) for issue in failed.issues}),
+                )
+                raise
+            finally:
+                self._install_progress = None
 
         # Save pipeline configuration and environment
         self.save()

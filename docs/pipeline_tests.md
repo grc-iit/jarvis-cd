@@ -388,6 +388,7 @@ JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
 | `no_recipe` | Spack has no recipe for the package | no: add `install_repos` or change `install_query` |
 | `compiler_unavailable` | a compiler the install would use can't run on the build host (`subject: compiler`, `scope: site`): `compiler`, `host`, `missing_executables` (or `probe_failures` when it exists but can't build a test program), `usable_compilers`, `origin`, plus `to_build` and `reused_specs` when reused upstream specs pull the DAG onto it. With `compiler: null` and `missing_languages`/`needed_languages`, no usable compiler on the build host has every language (`c`, `cxx`, `fortran`) the nodes to build need; see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host) | yes, with one usable compiler (`candidates[]`), which becomes a binding `require`; the language form has no candidates (add a compiler, or pin the install job's nodes) |
 | `not_installed` | `+check` found nodes that still need building | no: run `jarvis ppl install` |
+| `install_unchecked` | a scheduled pipeline's check on its submitting host found no matching `install-check.json` (JARVIS runs no Spack there); `packages`, `reason`, `record`, `remedy[]`; see [scheduler.md → Light checks](scheduler.md#light-checks-on-the-submitting-host) | no: check in a job, `jarvis ppl install +check +submit` (or `+submit` to also build) |
 
 The `issue_id` is a stable `sha256:` digest of the question's content, so it
 stays the same across re-runs. Answer by writing `answers.json`:
@@ -761,15 +762,22 @@ Without `+submit` or `+allow_local`, `ppl install` refuses to build, run
 `spack install` or concretize the Spack environment unless it already runs
 inside an allocation (`SLURM_JOB_ID`, `PBS_JOBID`, `LSB_JOBID` or
 `FLUX_JOB_ID`). This keeps builds off site login nodes. Nothing is refused
-when everything is already installed. See
+when everything is already installed. For a pipeline with a `scheduler:`
+block, `ppl install` and `ppl install +check` outside an allocation run no
+Spack command at all: they answer from the last full check's
+`install-check.json`, or raise `install_unchecked` (exit 3) / refuse (exit 4)
+when there is none. See
+[scheduler.md → Light checks](scheduler.md#light-checks-on-the-submitting-host) and
 [scheduler.md → Login nodes](scheduler.md#login-nodes-no-builds-outside-an-allocation).
 
 `ppl load` and `ppl run yaml` still run the install phase on load. Set
 `JARVIS_INSTALL_ON_LOAD` to `install` (default), `check` (verify, exit 3 when
 something is missing) or `skip`. With `install`, the same refusal (exit 4)
-applies when the pipeline has a `scheduler:` block or a scheduler client
-(`sbatch`, `qsub`, `bsub`, `flux`) is on `PATH`. Set
-`JARVIS_ALLOW_LOCAL_BUILD=1` to opt in.
+applies when a scheduler client (`sbatch`, `qsub`, `bsub`, `flux`) is on
+`PATH`. A scheduled pipeline's load outside an allocation instead defers the
+check to the job (`activation.method: deferred`), and exits 3 only for
+questions the record already holds. Set `JARVIS_ALLOW_LOCAL_BUILD=1` to opt
+in to local Spack work.
 
 ## Example Files
 

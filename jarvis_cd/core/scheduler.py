@@ -198,6 +198,7 @@ def make_scheduler(
     jarvis_root: Optional[Path] = None,
     pipeline_action: str = "run",
     pipeline_action_args: Optional[List[str]] = None,
+    install_on_load: Optional[str] = None,
 ) -> "Scheduler":
     """Factory: build a Scheduler from a parsed YAML dict.
 
@@ -216,6 +217,9 @@ def make_scheduler(
     :param pipeline_action: the ``jarvis ppl`` command the allocation runs on
         the snapshot: ``run`` (default) or ``install``.
     :param pipeline_action_args: extra trusted arguments for that command.
+    :param install_on_load: ``JARVIS_INSTALL_ON_LOAD`` sealed into the run
+        command, so the job's load applies the submitter's policy even when
+        the scheduler does not export the environment.
     """
     name = resolve_scheduler_name(spec)
     cls = _SCHEDULERS[name]
@@ -230,6 +234,7 @@ def make_scheduler(
         jarvis_root=jarvis_root,
         pipeline_action=pipeline_action,
         pipeline_action_args=pipeline_action_args,
+        install_on_load=install_on_load,
     )
 
 
@@ -253,8 +258,12 @@ class Scheduler:
         jarvis_root: Optional[Path] = None,
         pipeline_action: str = "run",
         pipeline_action_args: Optional[List[str]] = None,
+        install_on_load: Optional[str] = None,
     ):
         self.spec = dict(spec or {})
+        if install_on_load is not None and install_on_load not in ("install", "check", "skip"):
+            raise ValueError("install_on_load must be 'install', 'check' or 'skip'")
+        self.install_on_load = install_on_load
         self.shared_dir = Path(pipeline_shared_dir)
         self.pipeline_yaml = pipeline_yaml
         self.pipeline_name = pipeline_name
@@ -475,6 +484,8 @@ class Scheduler:
         ]
         if self.jarvis_root is not None:
             environment.append("JARVIS_ROOT=" + shlex.quote(str(self.jarvis_root)))
+        if self.install_on_load is not None and self.pipeline_action == "run":
+            environment.append("JARVIS_INSTALL_ON_LOAD=" + self.install_on_load)
         return " ".join(environment)
 
     def _pipeline_invocation(self) -> str:

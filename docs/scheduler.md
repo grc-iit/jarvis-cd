@@ -493,6 +493,85 @@ JARVIS Spack to the site's upstreams, compilers and externals first, run
 `JARVIS_INSTALL_ON_LOAD=check` on the submitting process, or in the
 scheduler's `pre_cmds`, to make a run job verify instead of building. It then
 fails fast with exit 3 when something is missing. `skip` disables the phase.
+`ppl submit` seals the submitter's `JARVIS_INSTALL_ON_LOAD` into the run
+command (`env JARVIS_PIPELINE_SNAPSHOT_DIR=… JARVIS_INSTALL_ON_LOAD=check …
+ppl run yaml …`), so the job applies the same policy even where the scheduler
+exports no environment. For a scheduled pipeline the phase does its Spack work
+only inside the job; on the submitting host it reads the recorded check (see
+[Light checks on the submitting host](#light-checks-on-the-submitting-host)).
+
+Inside a run job the load's install phase mirrors its progress into the
+execution record's `metadata.install` (`jarvis.install.progress.v1`, with
+`trigger: install_on_load`, `mode` = the policy, `phase` `starting` →
+`resolving`/… → `done`, `needs_decision`, `refused` or `failed`, plus
+`open_issues`, `issue_kinds`, `log`, `issues` and `check_record`). A run job
+that stops on an install question (exit 3) or a Spack failure (exit 6)
+therefore reports it the way an install job does.
+
+### Light checks on the submitting host
+
+Concretizing (`spack spec -I`) can hold a login node's CPU for minutes. So
+for a pipeline with a `scheduler:` block, outside an allocation, JARVIS runs
+**no Spack command at all** in the install phase: not for `ppl install
++check`, not for `ppl install`, and not for the install-on-load of `ppl load`
+/ `ppl submit`. It answers from the record of the last full check instead.
+Spack runs only inside an allocation (`SLURM_JOB_ID`, `PBS_JOBID`,
+`LSB_JOBID` or `FLUX_JOB_ID`). `+allow_local` or `JARVIS_ALLOW_LOCAL_BUILD=1`
+opts back in to a full check on the current host. A pipeline without a
+scheduler block is unchanged.
+
+Every full check or install (in an install job, in a run job's
+install-on-load, or a local `+allow_local` run) ends by writing
+`install-check.json` (`jarvis.install-check.v1`) next to the env capture:
+`<pipeline shared>/install/install-check.json`, or
+`$JARVIS_SPACK_ENV_DIR/install-check.json` when that is set. It holds:
+
+- `checked_at` and `where` (`host`, `allocation`, `execution_id`);
+- `mode` and `outcome` (`satisfied`, `missing`, `needs_decision` or
+  `failed`);
+- the full `issues[]` and `issue_kinds`, and the per-package summary
+  (`status`, `spec`, `root`, `missing`, `mpi`) with `mpi_env`;
+- the `inputs` digests the env capture uses (packages' `install*` settings,
+  `decisions.yaml`, the Spack root and config, `spack.lock`), and
+  `watched_paths` (the root prefixes it saw);
+- the install `log` and `record` paths.
+
+A light check applies the record only while its inputs match and its watched
+paths exist. A `failed` outcome is never replayed: it counts as unchecked. An
+answer recorded in `decisions.yaml` changes the `decisions` digest, so the
+next light check is unchecked until a job checks again. The report's `check`
+block (also in `phase_timings.env_activation.check`) says what happened:
+`{where: recorded, light: true, host_reason, record, source (install_check |
+env_capture | null), outcome, checked_at, checked_where, reason, missing,
+pending_answers}`.
+
+| Recorded state | `ppl install +check` | `ppl install` (no `+submit`) | install-on-load at `ppl load` / `ppl submit` |
+|---|---|---|---|
+| record (or fresh capture) satisfied | exit 0, `satisfied` | exit 0 | proceeds; `activation.method: deferred` |
+| record with open questions | the same issues again, exit **3** | exit **3** | exit **3** before `sbatch` (ask before submit) |
+| record with only `not_installed` | the `not_installed` issues, exit **3** | refused, exit **4** | `check`: exit **3**; `install`: proceeds, the job builds |
+| no matching record | `install_unchecked`, exit **3** | refused, exit **4** | proceeds; the job checks at load |
+| `--answers` for recorded questions | `install_unchecked` with `reason: answers_pending`, exit **3** | the same | the same |
+
+`install_unchecked` (`scope: site`, `subject: install_check`, not answerable)
+carries `packages`, `reason` (`no_record`, `inputs_changed`,
+`installed_path_gone`, `last_check_failed`, `unreadable_record` or
+`answers_pending`), `record`, and `remedy[]`:
+
+- `jarvis ppl install yaml FILE +check +submit`: a full check in a 1-node job,
+  which writes the record;
+- `jarvis ppl install yaml FILE +submit`: check and build what is missing;
+- `jarvis ppl submit yaml FILE`: the run job checks (and under `install`
+  builds) at load.
+
+Answers are validated against the recorded candidates on the submitting host
+but applied and recorded only by a check that runs Spack, so pass them to the
+job: `jarvis ppl install yaml FILE +check +submit --answers answers.json`.
+
+When `ppl submit` defers the check, it prints an advisory and records it in
+the execution's `metadata.install_on_load`: `{policy, runs_in: allocation,
+submit_host: {source, outcome, reason, record, missing}, advisory}`. The job's
+own result then appears in `metadata.install`.
 
 ### Captured load environment
 
@@ -551,21 +630,23 @@ Each run job writes `<execution>/provenance.json` before it finalizes (see
 
 ### Login nodes: no builds outside an allocation
 
-A site login node may only do light, short work: submit, read records,
-`spack find` and `spack spec`. Every `spack install`, environment concretize
-and build has to run inside a JARVIS-submitted job. JARVIS enforces this at
-the point where it would start heavy work, so a find-first run with nothing
-to build is never refused:
+A site login node may only do light, short work: submit, read records and
+light scheduler queries. Every `spack spec`, `spack install`, environment
+concretize and build has to run inside a JARVIS-submitted job. For a
+scheduled pipeline the install phase makes no Spack call outside an
+allocation (see
+[Light checks on the submitting host](#light-checks-on-the-submitting-host)).
+Builds are also refused at the point where heavy work would start:
 
 | Command on the submitting host | What runs there |
 |---|---|
-| `ppl install +check` | `spack spec -I` / `spack find` only: allowed |
+| `ppl install +check` | reads `install-check.json`; no Spack call. Without a scheduler block (a workstation): `spack spec -I` / `spack find` |
 | `sched info` | `sinfo`, `scontrol show partition`, `spack find`: allowed |
 | `spack prepare` | config writes, `spack compiler find` / `external find`, a shallow clone when the root is missing; never a build: allowed (run it in a job where even that is too much) |
-| `ppl install +submit` (with or without `+check`) | writes the snapshot and calls `sbatch`: allowed; the build runs in the job |
-| `ppl submit <file>` with `JARVIS_INSTALL_ON_LOAD=check` | `spack spec -I` / `spack find`, then `sbatch`: allowed; exits 3 without submitting when something is missing |
-| `ppl install` (no `+submit`) | refused with exit **4** if anything must be built or the env must be concretized |
-| `ppl load` / `ppl run yaml` / `ppl submit <file>` with the default `install` policy | refused with exit **4** under the same condition, when the pipeline has a `scheduler:` block or `sbatch`/`qsub`/`bsub`/`flux` is on `PATH` |
+| `ppl install +submit` (with or without `+check`) | writes the snapshot and calls `sbatch`: allowed; the check and build run in the job |
+| `ppl submit <file>` with `JARVIS_INSTALL_ON_LOAD=check` | reads the record, then `sbatch`; exits 3 without submitting when the record has open questions or missing packages; with no matching record it submits and the job checks |
+| `ppl install` (no `+submit`) | exit 0 when the record is satisfied; otherwise refused with exit **4** (or exit 3 for recorded questions), before any Spack call |
+| `ppl load` / `ppl run yaml` / `ppl submit <file>` with the default `install` policy | reads the record; exit 3 for recorded questions, otherwise proceeds and the job checks and builds. Without a scheduler block on a host with `sbatch`/`qsub`/`bsub`/`flux` on `PATH`, it resolves locally and is refused with exit **4** if anything must be built |
 
 A host is inside an allocation when `SLURM_JOB_ID`, `PBS_JOBID`, `LSB_JOBID`
 or `FLUX_JOB_ID` is set. `jarvis ppl install +allow_local`, or
