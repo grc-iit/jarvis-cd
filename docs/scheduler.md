@@ -553,6 +553,10 @@ pending_answers}`.
 | no matching record | `install_unchecked`, exit **3** | refused, exit **4** | proceeds; the job checks at load |
 | `--answers` for recorded questions | `install_unchecked` with `reason: answers_pending`, exit **3** | the same | the same |
 
+When the install phase stops `ppl submit <file> +json` before `sbatch` (exit 3
+or 4), stdout carries the same `jarvis.install` report that `ppl install
++check +json` prints, with `submitted: false`; load logs go to stderr.
+
 `install_unchecked` (`scope: site`, `subject: install_check`, not answerable)
 carries `packages`, `reason` (`no_record`, `inputs_changed`,
 `installed_path_gone`, `last_check_failed`, `unreadable_record` or

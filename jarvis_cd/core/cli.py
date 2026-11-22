@@ -2193,15 +2193,44 @@ class JarvisCLI(ArgParse):
         json_output = bool(self.kwargs.get("json", False))
 
         if pipeline_file:
-            is_test, obj = load_yaml_auto(pipeline_file)
+            from jarvis_cd.core.spack_install import (
+                REPORT_SCHEMA,
+                BuildOutsideAllocation,
+                InstallDecisionNeeded,
+            )
+
+            try:
+                # +json keeps stdout for the one document; load logs go to stderr
+                with redirect_stdout(sys.stderr) if json_output else nullcontext():
+                    is_test, obj = load_yaml_auto(pipeline_file)
+            except InstallDecisionNeeded as needed:
+                # The load's install phase stopped before submitting: emit the
+                # same jarvis.install report `ppl install +check +json` gives.
+                if json_output:
+                    report = dict(needed.report or {})
+                    report.setdefault("issues_path", str(needed.issues_path))
+                    report.setdefault("issues", needed.issues)
+                    report["exit_code"] = needed.exit_code
+                    report["submitted"] = False
+                    self._emit_install_report(report, json_output=True)
+                raise
+            except BuildOutsideAllocation as refused:
+                if json_output:
+                    self._emit_install_report({
+                        "schema_version": REPORT_SCHEMA, "mode": "install",
+                        "satisfied": False, "submitted": False,
+                        "refused": refused.to_dict(), "exit_code": refused.exit_code,
+                    }, json_output=True)
+                raise
             if is_test:
                 obj.submit(submit=submit)
                 return
-            handle = obj.submit(
-                submit=submit,
-                wait=wait,
-                execution_id=execution_id,
-            )
+            with redirect_stdout(sys.stderr) if json_output else nullcontext():
+                handle = obj.submit(
+                    submit=submit,
+                    wait=wait,
+                    execution_id=execution_id,
+                )
             self._emit_execution_handle(handle, json_output=json_output)
             return
 
