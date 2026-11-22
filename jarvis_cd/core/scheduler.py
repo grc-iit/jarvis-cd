@@ -1575,6 +1575,96 @@ def _slurm_control_exit_code(native_id: str) -> Optional[int]:
     return _parse_slurm_exit_code(match.group(1)) if match else None
 
 
+def _iso_utc(moment: datetime) -> str:
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _epoch_iso(text: str) -> Optional[str]:
+    text = (text or "").strip()
+    if not text.isdigit() or int(text) <= 0:
+        return None
+    return _iso_utc(datetime.fromtimestamp(int(text), tz=timezone.utc))
+
+
+def _local_iso(text: str, fmt: str) -> Optional[str]:
+    """A scheduler's local wall-clock time (no zone) as ISO-8601 UTC."""
+    try:
+        return _iso_utc(datetime.strptime(text.strip(), fmt).astimezone())
+    except ValueError:
+        return None
+
+
+def _slurm_query_start(job_id: str) -> tuple[Optional[str], Optional[str]]:
+    shown, _ = _run_scheduler_query(["scontrol", "show", "job", "--oneliner", job_id])
+    if shown is not None and shown.returncode == 0:
+        match = re.search(r"(?:^|\s)StartTime=(\S+)", shown.stdout or "")
+        started = _local_iso(match.group(1), "%Y-%m-%dT%H:%M:%S") if match else None
+        if started:
+            return started, "scontrol"
+    listed, _ = _run_scheduler_query(
+        ["sacct", "-j", job_id, "-X", "-n", "-P", "-o", "Start"])
+    if listed is not None and listed.returncode == 0:
+        for line in (listed.stdout or "").splitlines():
+            started = _local_iso(line, "%Y-%m-%dT%H:%M:%S")
+            if started:
+                return started, "sacct"
+    return None, None
+
+
+def _pbs_query_start(job_id: str) -> tuple[Optional[str], Optional[str]]:
+    shown, _ = _run_scheduler_query(["qstat", "-f", job_id])
+    if shown is None or shown.returncode != 0:
+        return None, None
+    text = shown.stdout or ""
+    match = re.search(r"^\s*stime\s*=\s*(.+?)\s*$", text, re.MULTILINE)
+    if match:
+        started = _local_iso(match.group(1), "%a %b %d %H:%M:%S %Y")
+        if started:
+            return started, "qstat"
+    match = re.search(r"^\s*start_time\s*=\s*(\d+)\s*$", text, re.MULTILINE)
+    if match:
+        started = _epoch_iso(match.group(1))
+        if started:
+            return started, "qstat"
+    return None, None
+
+
+def scheduler_job_start(
+    environ: Optional[Dict[str, str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """When the allocation this process runs in really started.
+
+    ``None`` outside an allocation. Otherwise ``{provider, job_id, started_at,
+    source}``: ``started_at`` is ISO-8601 UTC, from the scheduler's own start
+    (``SLURM_JOB_START_TIME``, then ``scontrol``/``sacct``; ``qstat`` for PBS)
+    and, when none of those answers, this moment with ``source: run_start``.
+    Each query is one bounded call.
+    """
+    env = os.environ if environ is None else environ
+    started: Optional[str] = None
+    source: Optional[str] = None
+    if env.get("SLURM_JOB_ID"):
+        provider, job_id = "slurm", str(env["SLURM_JOB_ID"])
+        started = _epoch_iso(env.get("SLURM_JOB_START_TIME", ""))
+        if started:
+            source = "SLURM_JOB_START_TIME"
+        else:
+            started, source = _slurm_query_start(job_id)
+    elif env.get("PBS_JOBID"):
+        provider, job_id = "pbs", str(env["PBS_JOBID"])
+        started, source = _pbs_query_start(job_id)
+    elif env.get("LSB_JOBID"):
+        provider, job_id = "lsf", str(env["LSB_JOBID"])
+    elif env.get("FLUX_JOB_ID"):
+        provider, job_id = "flux", str(env["FLUX_JOB_ID"])
+    else:
+        return None
+    if not started:
+        started, source = _iso_utc(datetime.now(timezone.utc)), "run_start"
+    return {"provider": provider, "job_id": job_id,
+            "started_at": started, "source": source}
+
+
 def _parse_slurm_duration(value: str) -> Optional[int]:
     """Seconds for a Slurm time limit; ``None`` for unlimited or unknown."""
     text = value.strip()

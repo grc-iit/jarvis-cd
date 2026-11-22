@@ -142,6 +142,16 @@ These commands record their work in the execution's `metadata`:
   (`stop_request`, `cancel_request` or `scheduler` for a time limit or an
   external `scancel`), `signal`, `received_at`, `stopped_at`,
   `stop_return_code` and `child_reaped`.
+- `scheduler_job`: when the allocation really started, written once by the
+  run (or install job) inside it, at the point every component is written
+  `waiting` with hosts: `{provider, job_id, started_at, source}`.
+  `started_at` is ISO-8601 UTC, and `source` says where it came from. For
+  Slurm that is `SLURM_JOB_START_TIME`, then `scontrol` (`StartTime`), then
+  `sacct` (`Start`); for PBS, `qstat` (`stime` or `start_time`). When none of
+  them answers, including on LSF and Flux, it is the moment the run started
+  (`run_start`). Each query is one bounded call. A caller showing a job's
+  start uses this field rather than its own first `RUNNING` observation,
+  which may belong to an earlier job of the same operation.
 
 Install jobs (`jarvis ppl install +submit`) add `action: install` and a live
 `install` progress document. See

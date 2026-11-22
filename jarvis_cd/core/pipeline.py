@@ -2477,6 +2477,7 @@ class Pipeline:
         if store is not None:
             from jarvis_cd.core.component_states import append_component_state
 
+            self._record_scheduler_job(store, execution_id)
             append_component_state(self._execution_root, "install", "running",
                                    package="jarvis.install",
                                    hosts=[socket.gethostname()],
@@ -3820,6 +3821,20 @@ class Pipeline:
             return
         self._component_state(pkg_def, state, reason=reason)
 
+    def _record_scheduler_job(self, store: Any, execution_id: str) -> None:
+        """Record the allocation's real start once (``metadata.scheduler_job``)."""
+        try:
+            from jarvis_cd.core.scheduler import scheduler_job_start
+
+            current = store.get(execution_id).metadata.get("scheduler_job")
+            job = scheduler_job_start()
+            if job is None or (isinstance(current, dict)
+                               and current.get("job_id") == job["job_id"]):
+                return
+            store.update(execution_id, metadata={"scheduler_job": job})
+        except Exception as exc:  # a start time must never break the run
+            logger.warning(f"could not record the scheduler job start: {exc}")
+
     def _components_waiting(self, execution_root: Any, *, action: str = "run",
                             hosts_known: bool = True) -> None:
         """Every component ``waiting``: at submit (hosts unknown) and at run start."""
@@ -4555,6 +4570,7 @@ class Pipeline:
                 raise
         try:
             self._begin_phase_timings(store, resolved_execution_id)
+            self._record_scheduler_job(store, resolved_execution_id)
             self._components_waiting(self._execution_root)
             store.update(resolved_execution_id,
                          metadata={"component_states": _component_states_metadata()})
