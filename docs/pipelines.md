@@ -900,7 +900,13 @@ jarvis ppl submit path/to/pipeline.yaml
 
 # Only write the script, do not submit
 jarvis ppl submit +no_submit
+
+# Show what would be submitted (no submit, no Spack), then submit exactly that
+jarvis ppl submit path/to/pipeline.yaml --execution-id E +plan +json
+jarvis ppl submit path/to/pipeline.yaml --execution-id E --plan_sha256 <plan_sha256> +json
 ```
+
+See [scheduler.md → Planning a submission](scheduler.md#planning-a-submission-plan).
 
 #### Coupling and configuration checks (`ppl check`)
 
@@ -941,6 +947,7 @@ The document holds:
 | `configuration_rule_violated` | error | a package's `configuration_rules` requirement is unmet; `field` names the parameter, `details` holds the rule, the unmet condition and the value |
 | `service_port_conflict` | error | two services listen on the same port on overlapping nodes |
 | `package_unloadable` | error | the package cannot be loaded |
+| `coupling_invalid` | error | a [`couplings:`](#couplings-between-packages) entry names an unknown id or kind |
 | `service_after_batch` | warning | a service starts only after a foreground batch step has finished |
 | `service_blocks_pipeline` | warning | a service starts in the foreground before batch steps |
 | `host_slice_overlap` | warning | a sliced service shares nodes with a batch step |
@@ -970,6 +977,39 @@ scheduler:
 Each `ppl run` and submit job waits for the service to become ready before
 the next step starts. On TERM, `ppl stop` stops both, in reverse order (see
 [scheduler.md → Cancelling and stopping](scheduler.md#cancelling-and-stopping-executions)).
+
+#### Couplings between packages
+
+A pipeline can declare how its packages exchange data, so a check, a
+[submit plan](scheduler.md#planning-a-submission-plan) or a job card can
+show it. Every package also takes a common `label` option: a person-facing
+name shown instead of the package id (otherwise the package's own label,
+for example "ParaView server (pvserver)", or the id).
+
+```yaml
+pkgs:
+  - pkg_type: builtin.paraview
+    pkg_name: viz
+    mode: service
+    label: "ParaView server"
+  - pkg_type: builtin.xcompact3d
+    pkg_name: sim
+couplings:
+  - {from: sim, to: viz, kind: stream, label: "ADIOS2 BP"}
+```
+
+| Key | Meaning |
+|-----|---------|
+| `from`, `to` | package or interceptor ids; they must differ |
+| `kind` | `stream`, `file`, `service`, `interceptor`, `control` or `other` (default) |
+| `label` | free text; defaults to the kind |
+
+`ppl check` reports `couplings[]` (`{from, to, kind, label, source}`) with
+the declared edges (`source: pipeline`), plus one `interceptor` edge per
+interceptor applied to a package (`source: derived`). A coupling with an
+unknown id or kind is a `coupling_invalid` error (exit 5). Each `steps[]`
+entry also carries `label`, `ranks` (from `nprocs`, `ntasks` or `ranks`) and
+`interceptors`.
 
 ### Pipeline Information and Status
 

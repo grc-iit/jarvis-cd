@@ -147,6 +147,48 @@ Install jobs (`jarvis ppl install +submit`) add `action: install` and a live
 `install` progress document. See
 [scheduler.md → Install jobs](scheduler.md#install-jobs).
 
+## Component states (`components.jsonl`)
+
+Each scheduler and owned execution appends one `jarvis.job.v1` line per
+component transition to `<execution_root>/components.jsonl`, so a caller can
+tail it like `progress/*.jsonl` and show each package's state beside the
+scheduler's. `metadata.component_states` in the record says where it is
+(`{schema_version, path: "components.jsonl", states}`), and a
+[submit plan](scheduler.md#planning-a-submission-plan) gives its absolute
+path as `component_states`.
+
+```json
+{"schema_version":"jarvis.job.v1","component":"viz","package":"builtin.paraview","state":"running","hosts":["comp-13","comp-14","comp-15","comp-16"],"at":"2026-11-22T20:07:39.510460Z","reason":"service ready"}
+```
+
+| Field | Content |
+|-------|---------|
+| `component` | the package id (`pkg_id`), or `install` for an install job |
+| `package` | the package type, e.g. `builtin.paraview`, or `jarvis.install` |
+| `state` | `waiting`, `starting`, `running`, `done`, `failed` or `cancelled` |
+| `hosts` | the nodes the component got: the allocation hostfile narrowed by its `host_slice`. `null` while the job is queued |
+| `at` | UTC timestamp |
+| `reason` | why, when there is one: `queued`, `service ready`, `returned`, `stopped`, `stopped after the last step (after_steps)`, `not started`, the exception text, or `execution <state>: <error>` |
+
+The transitions:
+
+| When | Lines |
+|------|-------|
+| `ppl submit` | every component `waiting` (reason `queued`, hosts `null`); an install job has the one component `install` |
+| the run starts inside the allocation | every component `waiting` again, now with its hosts |
+| a package's `start()` begins | `starting` |
+| a background package is ready, or a foreground step starts | `running` |
+| a foreground step's `start()` returns | `done` (`returned`); a foreground non-step stays `running` (`started`) until stopped |
+| `start()` raises | `failed`, or `cancelled` if a stop or cancel was requested |
+| `ppl stop`, or the `after_steps` stop | `done`, or `failed` (`stop failed: ...`); a component that never started is `cancelled` (`not started`) |
+| an install job starts its install | `install` `running` with the node's hostname |
+| the record reaches a terminal state | each component still open is closed: `completed` → `done`, `canceled` → `cancelled`, `failed` → `failed` (a component still `waiting` → `cancelled`, `not started`) |
+
+The first terminal line for a component wins; later lines for it are not
+written. Writes are single appends and never fail the run. The scheduler's
+own state (queued, running, ended, the allocated nodes) stays in the
+execution record.
+
 ## Phase timings
 
 An owned run records where its time goes before and during its steps in

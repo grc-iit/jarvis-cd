@@ -262,6 +262,62 @@ def _validated_execution_id(value: Optional[str]) -> str:
     return validate_execution_id(value)
 
 
+def _couplings_from(value: Any) -> List[Dict[str, Any]]:
+    """Normalize a pipeline's ``couplings:`` list (validated by ``ppl check``)."""
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise ValueError("couplings must be a list of {from, to, kind, label} mappings")
+    couplings = []
+    for index, item in enumerate(value):
+        if not isinstance(item, Mapping):
+            raise ValueError(f"couplings[{index}] must be a mapping")
+        couplings.append({
+            key: (str(item[key]) if item[key] is not None else None)
+            for key in ("from", "to", "kind", "label")
+            if key in item
+        })
+    return couplings
+
+
+def _component_states_metadata() -> Dict[str, Any]:
+    from jarvis_cd.core.component_states import (
+        COMPONENT_STATES,
+        COMPONENT_STATES_FILE,
+        COMPONENT_STATES_SCHEMA,
+    )
+
+    return {"schema_version": COMPONENT_STATES_SCHEMA,
+            "path": COMPONENT_STATES_FILE, "states": list(COMPONENT_STATES)}
+
+
+def _require_bound_plan(
+    rendered: Mapping[str, Any], expected: str, execution_id: str,
+) -> None:
+    """Refuse (``submission_plan_changed``, exit 5) a submit off its plan."""
+    expected_hex = str(expected).strip().lower()
+    if expected_hex.startswith("sha256:"):
+        expected_hex = expected_hex[len("sha256:"):]
+    if rendered.get("plan_sha256") == expected_hex:
+        return
+    from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
+
+    raise JarvisIssueError([make_jarvis_issue(
+        kind="submission_plan_changed",
+        subject=f"execution {execution_id}",
+        message=(
+            "this submission no longer matches the plan that was approved: "
+            "run `jarvis ppl submit ... +plan +json` again and ask again"),
+        identity={"execution_id": execution_id, "expected": expected_hex,
+                  "rendered": rendered.get("plan_sha256")},
+        details={"expected_plan_sha256": expected_hex,
+                 "plan_sha256": rendered.get("plan_sha256"),
+                 "script_sha256": rendered.get("script_sha256"),
+                 "input_sha256": rendered.get("input_sha256")},
+        remedy="re-plan with the same --execution-id and submit with the new plan_sha256",
+    )])
+
+
 def _read_execution_marker(
     execution_root: Path,
     *,
@@ -1150,6 +1206,10 @@ class Pipeline:
         # builds the hostfile from the allocation and runs the pipeline.
         self.scheduler = None
 
+        # Declared data/control edges between packages (``couplings:``), for
+        # plans and job cards; see docs/pipelines.md.
+        self.couplings: List[Dict[str, Any]] = []
+
         # Load existing pipeline if name is provided
         if validated_name:
             self.load()
@@ -1198,6 +1258,175 @@ class Pipeline:
         except FileNotFoundError:
             self.hostfile = Hostfile(path=path, load_path=False, find_ips=False)
 
+    def _submission_scheduler_spec(
+        self, execution_root: Path, action: str, install_check: bool,
+    ) -> tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        """The scheduler directives one submission renders (no side effects)."""
+        scheduler_spec = dict(self.scheduler)
+        install_job_shape = None
+        if action == "install":
+            # An install job builds on one node: keep the site's account,
+            # partition and time, drop the workload's task/GPU shape.
+            for workload_key in (
+                "ntasks",
+                "ntasks_per_node",
+                "gpus",
+                "gpus_per_node",
+                "gres",
+                "array",
+            ):
+                scheduler_spec.pop(workload_key, None)
+            scheduler_spec["nodes"] = 1
+            scheduler_spec["ntasks"] = 1
+            if not install_check:
+                # A build uses every core of its node (spack -j defaults to
+                # the node's cores); a check is a light single task.
+                scheduler_spec.setdefault("exclusive", True)
+            overrides = scheduler_spec.pop("install", None) or {}
+            if not isinstance(overrides, dict):
+                raise ValueError("scheduler.install must be a mapping of directives")
+            if "nodes" in overrides and int(overrides["nodes"]) != 1:
+                raise ValueError("scheduler.install.nodes must be 1")
+            scheduler_spec.update(overrides)
+            install_job_shape = {
+                key: scheduler_spec.get(key)
+                for key in ("nodes", "ntasks", "cpus_per_task", "mem",
+                            "exclusive", "time", "partition", "account", "qos")
+                if scheduler_spec.get(key) is not None
+            }
+            install_job_shape["overrides"] = sorted(overrides)
+        else:
+            scheduler_spec.pop("install", None)
+        scheduler_spec["hostfile"] = str(execution_root / "hostfile.txt")
+        scheduler_spec.setdefault("output", str(execution_root / "stdout.log"))
+        scheduler_spec.setdefault("error", str(execution_root / "stderr.log"))
+        for scheduler_key in ("output", "error"):
+            scheduler_spec[scheduler_key] = _absolute_scheduler_log_path(
+                scheduler_spec[scheduler_key]
+            )
+        # Directive order must not depend on how the pipeline was loaded (a
+        # YAML keeps its order, the saved config is sorted): +plan binds to it.
+        return dict(sorted(scheduler_spec.items())), install_job_shape
+
+    @staticmethod
+    def _submission_action_args(
+        action: str, install_check: bool, has_answers: bool, input_dir: Path,
+    ) -> List[str]:
+        """Trusted arguments of the ``jarvis ppl`` command the job runs."""
+        action_args: List[str] = []
+        if action == "install":
+            if install_check:
+                action_args.append("+check")
+            if has_answers:
+                action_args += ["--answers", str(input_dir / "answers.json")]
+            action_args.append("+json")
+        return action_args
+
+    @staticmethod
+    def _sealed_install_policy(action: str) -> Optional[str]:
+        if action != "run":
+            return None
+        configured = os.environ.get("JARVIS_INSTALL_ON_LOAD", "").strip().lower()
+        return configured if configured in ("install", "check", "skip") else None
+
+    def _render_submission(
+        self,
+        execution_id: str,
+        *,
+        action: str = "run",
+        install_check: bool = False,
+        answers_bytes: Optional[bytes] = None,
+    ) -> Dict[str, Any]:
+        """Render exactly what ``submit`` would write, without writing it.
+
+        Returns the scheduler spec, the Scheduler, the script text and the
+        digests that bind a plan to the later submission: ``script_sha256``
+        (the batch script bytes) and ``input_sha256`` (the sealed snapshot
+        input, the same digest the record keeps as
+        ``pipeline_snapshot_sha256``).
+        """
+        from jarvis_cd.core.scheduler import make_scheduler
+        from jarvis_cd.core.submit_plan import submission_plan_sha256
+
+        execution_root = self._execution_store().executions_dir / execution_id
+        scheduler_spec, install_job_shape = self._submission_scheduler_spec(
+            execution_root, action, install_check)
+        input_dir = execution_root / "input"
+        sched = make_scheduler(
+            scheduler_spec,
+            execution_root,
+            pipeline_name=self.name,
+            pipeline_snapshot_dir=execution_root / "runtime",
+            jarvis_root=getattr(self.jarvis, "jarvis_root", None),
+            pipeline_action=action,
+            pipeline_action_args=self._submission_action_args(
+                action, install_check, answers_bytes is not None, input_dir),
+            install_on_load=self._sealed_install_policy(action),
+        )
+        text = sched.render()
+        script_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        input_sha256 = self._execution_snapshot_digest(
+            scheduler_spec,
+            {"answers.json": answers_bytes} if answers_bytes is not None else None,
+        )
+        return {
+            "execution_root": execution_root,
+            "scheduler_spec": scheduler_spec,
+            "install_job_shape": install_job_shape,
+            "scheduler": sched,
+            "script_text": text,
+            "script_sha256": script_sha256,
+            "input_sha256": input_sha256,
+            "plan_sha256": submission_plan_sha256(script_sha256, input_sha256),
+        }
+
+    def plan_submission(
+        self,
+        execution_id: Optional[str] = None,
+        *,
+        action: str = "run",
+        install_check: bool = False,
+        install_answers: Optional[str] = None,
+        install_outcome: Optional[Dict[str, Any]] = None,
+        pipeline_file: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Resolve one submission without submitting it (``+plan``).
+
+        Returns a ``jarvis.submit-plan.v1`` document: the scheduler, its
+        directives, the total nodes, the components and couplings, the exact
+        batch script with its sha256, and any issues that refuse the submit.
+        Nothing is written to the execution store, no Spack and no scheduler
+        command runs. ``jarvis ppl submit ... --execution-id ID --plan_sha256
+        SHA`` then submits only if it renders the same script and input.
+        """
+        from jarvis_cd.core.submit_plan import build_submit_plan
+
+        if action not in ("run", "install"):
+            raise ValueError("submit action must be 'run' or 'install'")
+        if not self.scheduler:
+            raise ValueError(
+                "Pipeline has no scheduler block. Add `scheduler:` to the "
+                "pipeline YAML before planning a submission."
+            )
+        if not self.name:
+            raise ValueError("Pipeline name not set; cannot plan a submission.")
+        answers_bytes = None
+        if install_answers:
+            from jarvis_cd.core.spack_install import load_answers
+
+            answers_file = Path(install_answers).expanduser()
+            load_answers(answers_file)
+            answers_bytes = answers_file.read_bytes()
+        return build_submit_plan(
+            self,
+            _validated_execution_id(execution_id),
+            action=action,
+            install_check=install_check,
+            answers_bytes=answers_bytes,
+            install_outcome=install_outcome,
+            pipeline_file=pipeline_file,
+        )
+
     def submit(
         self,
         submit: bool = True,
@@ -1206,6 +1435,7 @@ class Pipeline:
         action: str = "run",
         install_check: bool = False,
         install_answers: Optional[str] = None,
+        expect_plan_sha256: Optional[str] = None,
     ) -> ExecutionHandle:
         """Write the scheduler job script and (optionally) submit it.
 
@@ -1289,6 +1519,15 @@ class Pipeline:
         shared_dir.mkdir(parents=True, exist_ok=True)
         resolved_execution_id = _validated_execution_id(execution_id)
         store = self._execution_store()
+        bound_plan = None
+        if expect_plan_sha256 is not None:
+            # The person's yes binds to one plan: refuse before anything is
+            # recorded or submitted when this submission renders differently.
+            self.save()
+            bound_plan = self._render_submission(
+                resolved_execution_id, action=action, install_check=install_check,
+                answers_bytes=answers_bytes)
+            _require_bound_plan(bound_plan, expect_plan_sha256, resolved_execution_id)
         recorded_facts = None
         if site_facts_report and "issues" in site_facts_report:
             from jarvis_cd.core.site_facts import SITE_FACTS_FILE, record_site_facts
@@ -1370,47 +1609,8 @@ class Pipeline:
             # The caller holds the per-pipeline MCP lock, so this cannot
             # overwrite a cooperating writer with stale state.
             self.save()
-            scheduler_spec = dict(self.scheduler)
-            if action == "install":
-                # An install job builds on one node: keep the site's account,
-                # partition and time, drop the workload's task/GPU shape.
-                for workload_key in (
-                    "ntasks",
-                    "ntasks_per_node",
-                    "gpus",
-                    "gpus_per_node",
-                    "gres",
-                    "array",
-                ):
-                    scheduler_spec.pop(workload_key, None)
-                scheduler_spec["nodes"] = 1
-                scheduler_spec["ntasks"] = 1
-                if not install_check:
-                    # A build uses every core of its node (spack -j defaults to
-                    # the node's cores); a check is a light single task.
-                    scheduler_spec.setdefault("exclusive", True)
-                overrides = scheduler_spec.pop("install", None) or {}
-                if not isinstance(overrides, dict):
-                    raise ValueError("scheduler.install must be a mapping of directives")
-                if "nodes" in overrides and int(overrides["nodes"]) != 1:
-                    raise ValueError("scheduler.install.nodes must be 1")
-                scheduler_spec.update(overrides)
-                install_job_shape = {
-                    key: scheduler_spec.get(key)
-                    for key in ("nodes", "ntasks", "cpus_per_task", "mem",
-                                "exclusive", "time", "partition", "account", "qos")
-                    if scheduler_spec.get(key) is not None
-                }
-                install_job_shape["overrides"] = sorted(overrides)
-            else:
-                scheduler_spec.pop("install", None)
-            scheduler_spec["hostfile"] = str(execution_root / "hostfile.txt")
-            scheduler_spec.setdefault("output", str(execution_root / "stdout.log"))
-            scheduler_spec.setdefault("error", str(execution_root / "stderr.log"))
-            for scheduler_key in ("output", "error"):
-                scheduler_spec[scheduler_key] = _absolute_scheduler_log_path(
-                    scheduler_spec[scheduler_key]
-                )
+            scheduler_spec, install_job_shape = self._submission_scheduler_spec(
+                execution_root, action, install_check)
             _prepare_scheduler_log_parents(scheduler_spec)
             snapshot_dir, input_dir, snapshot_sha256 = self._write_execution_snapshot(
                 execution_root,
@@ -1423,13 +1623,9 @@ class Pipeline:
                 store,
                 resolved_execution_id,
             )
-            action_args: List[str] = []
+            action_args = self._submission_action_args(
+                action, install_check, answers_bytes is not None, input_dir)
             if action == "install":
-                if install_check:
-                    action_args.append("+check")
-                if answers_bytes is not None:
-                    action_args += ["--answers", str(input_dir / "answers.json")]
-                action_args.append("+json")
                 install_dir = execution_root / "install"
                 store.update(
                     resolved_execution_id,
@@ -1458,6 +1654,29 @@ class Pipeline:
                 install_on_load=sealed_install_policy,
             )
             script_path = sched.write_script()
+            from jarvis_cd.core.submit_plan import submission_plan_sha256
+
+            written_script_sha256 = hashlib.sha256(script_path.read_bytes()).hexdigest()
+            submission_plan = {
+                "schema_version": "jarvis.submit-plan.binding.v1",
+                "script_sha256": written_script_sha256,
+                "input_sha256": snapshot_sha256,
+                "plan_sha256": submission_plan_sha256(
+                    written_script_sha256, snapshot_sha256),
+                "bound": expect_plan_sha256 is not None,
+            }
+            if expect_plan_sha256 is not None:
+                submission_plan["expected_plan_sha256"] = expect_plan_sha256
+            store.update(resolved_execution_id,
+                         metadata={"submission_plan": submission_plan,
+                                   "component_states": _component_states_metadata()})
+            if expect_plan_sha256 is not None:
+                _require_bound_plan(
+                    {"plan_sha256": submission_plan["plan_sha256"],
+                     "script_sha256": written_script_sha256,
+                     "input_sha256": snapshot_sha256},
+                    expect_plan_sha256, resolved_execution_id)
+            self._components_waiting(execution_root, action=action, hosts_known=False)
             try:
                 script_relative_path = script_path.relative_to(
                     execution_root
@@ -2255,6 +2474,13 @@ class Pipeline:
         context.progress = publish
         context.open()
         publish()
+        if store is not None:
+            from jarvis_cd.core.component_states import append_component_state
+
+            append_component_state(self._execution_root, "install", "running",
+                                   package="jarvis.install",
+                                   hosts=[socket.gethostname()],
+                                   reason=f"install {mode}")
         outcome = "failed"
         try:
             report = Installer.install_all(self, mode=mode, context=context)
@@ -2865,17 +3091,10 @@ class Pipeline:
             if executions_descriptor is not None:
                 os.close(executions_descriptor)
 
-    def _write_execution_snapshot(
-        self,
-        execution_root: Path,
-        scheduler_spec: Dict[str, Any],
-        extra_inputs: Optional[Dict[str, bytes]] = None,
-    ) -> tuple[Path, Path, str]:
-        """Seal immutable input and create an isolated scheduler working copy.
-
-        ``extra_inputs`` are additional sealed files (e.g. install answers)
-        written into ``input/`` and covered by the snapshot digest.
-        """
+    def _execution_snapshot_payload(
+        self, scheduler_spec: Dict[str, Any],
+    ) -> tuple[Dict[str, Any], Dict[str, Any]]:
+        """The ``pipeline.yaml`` and ``environment.yaml`` one snapshot seals."""
         source_dir = self._pipeline_storage_dir()
         if getattr(self, "_execution_snapshot_dir", None) is not None:
             raise RuntimeError(
@@ -2895,6 +3114,46 @@ class Pipeline:
         pipeline_config["scheduler"] = dict(scheduler_spec)
         pipeline_config.pop("last_loaded_file", None)
         pipeline_config.pop("last_submission", None)
+        return pipeline_config, dict(self.env)
+
+    @staticmethod
+    def _sealed_inputs_digest(paths: List[Path]) -> str:
+        digest = hashlib.sha256()
+        for path in paths:
+            data = path.read_bytes()
+            digest.update(len(data).to_bytes(8, "big"))
+            digest.update(data)
+        return digest.hexdigest()
+
+    def _execution_snapshot_digest(
+        self,
+        scheduler_spec: Dict[str, Any],
+        extra_inputs: Optional[Dict[str, bytes]] = None,
+    ) -> str:
+        """The snapshot digest ``_write_execution_snapshot`` would record."""
+        pipeline_config, environment = self._execution_snapshot_payload(scheduler_spec)
+        with tempfile.TemporaryDirectory(prefix="jarvis-plan-") as scratch:
+            scratch_dir = Path(scratch)
+            _atomic_yaml_dump(scratch_dir / "pipeline.yaml", pipeline_config)
+            _atomic_yaml_dump(scratch_dir / "environment.yaml", environment)
+            sealed = [scratch_dir / "pipeline.yaml", scratch_dir / "environment.yaml"]
+            for name, data in sorted((extra_inputs or {}).items()):
+                (scratch_dir / name).write_bytes(data)
+                sealed.append(scratch_dir / name)
+            return self._sealed_inputs_digest(sealed)
+
+    def _write_execution_snapshot(
+        self,
+        execution_root: Path,
+        scheduler_spec: Dict[str, Any],
+        extra_inputs: Optional[Dict[str, bytes]] = None,
+    ) -> tuple[Path, Path, str]:
+        """Seal immutable input and create an isolated scheduler working copy.
+
+        ``extra_inputs`` are additional sealed files (e.g. install answers)
+        written into ``input/`` and covered by the snapshot digest.
+        """
+        pipeline_config, environment = self._execution_snapshot_payload(scheduler_spec)
 
         input_dir = execution_root / "input"
         runtime_dir = execution_root / "runtime"
@@ -2906,7 +3165,7 @@ class Pipeline:
         private_dir.mkdir(mode=0o700)
         for directory in (input_dir, runtime_dir):
             _atomic_yaml_dump(directory / "pipeline.yaml", pipeline_config)
-            _atomic_yaml_dump(directory / "environment.yaml", dict(self.env))
+            _atomic_yaml_dump(directory / "environment.yaml", environment)
         sealed = [input_dir / "pipeline.yaml", input_dir / "environment.yaml"]
         for name, data in sorted((extra_inputs or {}).items()):
             if "/" in name or "\\" in name or name.startswith("."):
@@ -2914,11 +3173,8 @@ class Pipeline:
             (input_dir / name).write_bytes(data)
             sealed.append(input_dir / name)
 
-        digest = hashlib.sha256()
+        snapshot_sha256 = self._sealed_inputs_digest(sealed)
         for path in sealed:
-            data = path.read_bytes()
-            digest.update(len(data).to_bytes(8, "big"))
-            digest.update(data)
             if os.name != "nt":
                 path.chmod(0o400)
         if os.name != "nt":
@@ -2931,7 +3187,7 @@ class Pipeline:
         _fsync_directory(shared_dir)
         _fsync_directory(private_dir)
         _fsync_directory(execution_root)
-        return runtime_dir, input_dir, digest.hexdigest()
+        return runtime_dir, input_dir, snapshot_sha256
 
     def _hostfile_is_local_only(self, hf) -> bool:
         """True when every host in the hostfile is this machine (or hostfile
@@ -3118,6 +3374,8 @@ class Pipeline:
         # Persist scheduler block so reloads (and ``ppl print``) round-trip
         if self.scheduler:
             pipeline_config["scheduler"] = self.scheduler
+        if getattr(self, "couplings", None):
+            pipeline_config["couplings"] = [dict(item) for item in self.couplings]
 
         # Add hostfile parameter. The effective hostfile (pipeline override
         # if set, else the global jarvis hostfile) is always persisted to
@@ -3280,6 +3538,8 @@ class Pipeline:
                 try:
                     # Print BEGIN message
                     logger.success(f"[{pkg_def['pkg_type']}] [START] BEGIN")
+                    self._component_state(pkg_def, "starting",
+                                          hosts=self._component_hosts(pkg_def))
 
                     self._bind_package_execution_environment(pkg_def)
                     pkg_instance = self._load_package_instance(pkg_def, self.env)
@@ -3291,6 +3551,7 @@ class Pipeline:
                         logger.warning(
                             f"Package {pkg_def['pkg_id']} has no start method"
                         )
+                        self._component_state(pkg_def, "done", reason="no start method")
                     elif self._package_starts_in_background(pkg_instance):
                         phase_started = time.monotonic()
                         self._time_package_phase(pkg_def, pkg_instance, "started",
@@ -3301,15 +3562,24 @@ class Pipeline:
                         self._time_package_phase(
                             pkg_def, pkg_instance,
                             handle.get("start_outcome") or "ready", phase_started)
+                        self._component_state(
+                            pkg_def, "running",
+                            reason=f"service {handle.get('start_outcome') or 'ready'}")
                     else:
                         phase_started = time.monotonic()
                         self._time_package_phase(pkg_def, pkg_instance, "started",
                                                  phase_started, start_mode="foreground")
+                        is_step = self._is_step_package(pkg_instance)
+                        if is_step:
+                            self._component_state(pkg_def, "running")
                         pkg_instance.start()
                         self._time_package_phase(pkg_def, pkg_instance, "returned",
                                                  phase_started)
-                        if self._is_step_package(pkg_instance):
+                        if is_step:
                             last_step_index = index
+                            self._component_state(pkg_def, "done", reason="returned")
+                        else:
+                            self._component_state(pkg_def, "running", reason="started")
 
                     # Propagate environment changes to next packages
                     self.env.update(pkg_instance.env)
@@ -3322,6 +3592,11 @@ class Pipeline:
 
                 except Exception as e:
                     logger.error(f"Error starting package {pkg_def['pkg_id']}: {e}")
+                    if self._stop_was_requested():
+                        self._component_state(pkg_def, "cancelled",
+                                              reason=f"stopped by request: {e}")
+                    else:
+                        self._component_state(pkg_def, "failed", reason=str(e))
                     raise RuntimeError(
                         f"Pipeline startup failed at package '{pkg_def['pkg_id']}': {e}"
                     ) from e
@@ -3401,6 +3676,8 @@ class Pipeline:
                     entry["start_error_after_stop"] = str(handle["error"])[:512]
                 handle["stopped_after_steps"] = True
                 self._stopped_after_steps.add(str(handle["pkg_id"]))
+                self._component_state(handle["pkg_def"], "done",
+                                      reason="stopped after the last step (after_steps)")
             decisions.append(entry)
         timings = getattr(self, "_phase_timings", None)
         if timings is not None and decisions:
@@ -3498,6 +3775,86 @@ class Pipeline:
         entry.update(fields)
         self._publish_phase_timings()
 
+    def _component_hosts(self, pkg_def: Dict[str, Any]) -> Optional[List[str]]:
+        """The hosts one package runs on (its hostfile, narrowed by host_slice)."""
+        try:
+            config = pkg_def.get("config") or {}
+            path = config.get("hostfile")
+            base = Hostfile(path=str(path)) if path else self.get_hostfile()
+            hosts = [str(host) for host in base.hosts]
+            host_slice = str(config.get("host_slice") or "").strip()
+            match = re.fullmatch(r"(-?\d*):(-?\d*)", host_slice) if host_slice else None
+            if match is not None:
+                start = int(match.group(1)) if match.group(1) else None
+                end = int(match.group(2)) if match.group(2) else None
+                hosts = hosts[start:end]
+            return hosts
+        except Exception:
+            return None
+
+    def _component_state(self, pkg_def: Dict[str, Any], state: str, *,
+                         hosts: Optional[List[str]] = None,
+                         reason: Optional[str] = None) -> None:
+        """Append one ``jarvis.job.v1`` line for a package of this execution."""
+        root = getattr(self, "_execution_root", None)
+        if root is None:
+            return
+        from jarvis_cd.core.component_states import append_component_state
+
+        append_component_state(
+            root, str(pkg_def.get("pkg_id")), state,
+            package=str(pkg_def.get("pkg_type") or pkg_def.get("pkg_id")),
+            hosts=hosts, reason=reason)
+
+    def _component_stopped(self, pkg_def: Dict[str, Any], state: str,
+                           reason: str) -> None:
+        """Record a stop; a component that never started is ``cancelled``."""
+        root = getattr(self, "_execution_root", None)
+        if root is None:
+            return
+        from jarvis_cd.core.component_states import latest_component_states
+
+        latest = latest_component_states(root).get(str(pkg_def.get("pkg_id")))
+        if latest is None or latest.get("state") == "waiting":
+            self._component_state(pkg_def, "cancelled", reason="not started")
+            return
+        self._component_state(pkg_def, state, reason=reason)
+
+    def _components_waiting(self, execution_root: Any, *, action: str = "run",
+                            hosts_known: bool = True) -> None:
+        """Every component ``waiting``: at submit (hosts unknown) and at run start."""
+        from jarvis_cd.core.component_states import append_component_state
+
+        if action == "install":
+            append_component_state(execution_root, "install", "waiting",
+                                   package="jarvis.install",
+                                   reason="queued" if not hosts_known else None)
+            return
+        for pkg_def in self.packages:
+            append_component_state(
+                execution_root, str(pkg_def.get("pkg_id")), "waiting",
+                package=str(pkg_def.get("pkg_type") or pkg_def.get("pkg_id")),
+                hosts=self._component_hosts(pkg_def) if hosts_known else None,
+                reason="queued" if not hosts_known else None)
+
+    def _stop_was_requested(self) -> bool:
+        """A cancel/stop of this execution is under way (its stop claims or record)."""
+        marker = self._stopped_marker_path()
+        if marker is not None:
+            claims = marker.parent / "stop-claims"
+            if marker.is_file() or (claims.is_dir() and any(claims.iterdir())):
+                return True
+        execution_id = getattr(self, "_execution_id", None)
+        if getattr(self, "_execution_root", None) is None or not execution_id:
+            return False
+        try:
+            metadata = self._execution_store().get(execution_id).metadata
+        except Exception:
+            return False
+        return any(isinstance(metadata.get(key), dict)
+                   and metadata[key].get("status") != "failed"
+                   for key in ("cancel_request", "stop_request"))
+
     def _start_package_in_background(
         self, pkg_instance: Any, pkg_def: Dict[str, Any]
     ) -> Dict[str, Any]:
@@ -3567,6 +3924,11 @@ class Pipeline:
         for handle in background:
             while handle["thread"].is_alive():
                 handle["thread"].join(1.0)
+        for handle in background:
+            if handle["error"] is not None:
+                state = "cancelled" if self._stop_was_requested() else "failed"
+                self._component_state(handle["pkg_def"], state,
+                                      reason=str(handle["error"]))
         for handle in background:
             if handle["error"] is not None:
                 raise RuntimeError(
@@ -3951,9 +4313,11 @@ class Pipeline:
                     # Print END message
                     logger.success(f"[{pkg_def['pkg_type']}] [STOP] END")
                     self._record_stopped_by_request(package_id)
+                    self._component_stopped(pkg_def, "done", "stopped")
 
                 except Exception as e:
                     logger.error(f"Error stopping package {pkg_def['pkg_id']}: {e}")
+                    self._component_stopped(pkg_def, "failed", f"stop failed: {e}")
                     failures.append(e)
             if failures:
                 raise ExceptionGroup("pipeline package stop failed", failures)
@@ -4191,6 +4555,9 @@ class Pipeline:
                 raise
         try:
             self._begin_phase_timings(store, resolved_execution_id)
+            self._components_waiting(self._execution_root)
+            store.update(resolved_execution_id,
+                         metadata={"component_states": _component_states_metadata()})
             # Configure all packages before starting.
             # This runs _configure() on each package, which sets up
             # environment variables (e.g., CHI_SERVER_CONF) needed by start().
@@ -4872,6 +5239,7 @@ class Pipeline:
             self._apply_scheduler_hostfile()
         else:
             self.scheduler = None
+        self.couplings = _couplings_from(pipeline_config.get("couplings"))
 
         # Initialize packages and interceptors
         self.packages = []
@@ -5097,6 +5465,7 @@ class Pipeline:
         self.last_loaded_file = str(pipeline_file.absolute())
         self.packages = []
         self.interceptors = {}  # Store pipeline-level interceptors by name
+        self.couplings = _couplings_from(pipeline_def.get("couplings"))
 
         # Load container parameters
         self.container_image = pipeline_def.get("container_image", "")
@@ -5244,6 +5613,7 @@ class Pipeline:
                 if install_report.get("check"):
                     activation["check"] = install_report["check"]
                 self._install_activation = activation
+                self._install_load_report = install_report
                 publish(phase="done", satisfied=bool(install_report.get("satisfied")),
                         activation=activation.get("method"))
             except (InstallDecisionNeeded, BuildOutsideAllocation) as needed:

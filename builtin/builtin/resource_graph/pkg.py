@@ -16,6 +16,12 @@ class ResourceGraph(Application):
     def _init(self):
         pass
 
+    def component_label(self):
+        """Name shown for this component in plans and job cards."""
+        if self.config.get('net_only', True):
+            return 'resource graph collection (network)'
+        return 'resource graph collection'
+
     def _configure_menu(self):
         return [
             {

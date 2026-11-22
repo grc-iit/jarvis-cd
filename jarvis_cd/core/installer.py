@@ -18,6 +18,7 @@ import os
 import socket
 import time
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Any, Mapping, Optional, Tuple, Type
 
@@ -371,6 +372,8 @@ class SpackInstaller(Installer):
             context.open()
         try:
             light = light_install_host(ppl, context)
+            if light is None and plan_only_active():
+                light = "plan_only: `ppl submit +plan` runs no Spack"
             if light is not None:
                 return self._run_submit_host(ppl, pkg_list, mode, context, light)
             return self._run_full(ppl, pkg_list, mode, context)
@@ -432,11 +435,22 @@ class SpackInstaller(Installer):
             note["check"] = plan
             if plan["choice"] == placement.LOGIN_LIMITED:
                 limits = resolver.limits
-                if not limits["defer"]:
+                if not limits["defer"] and plan_only_active():
+                    # ``ppl submit +plan`` never runs Spack: say what the real
+                    # submit will do and answer from the records.
+                    note["plan_only"] = {
+                        "at_submit": "login_limited_check",
+                        "limits": limits,
+                        "why": stale or need_check,
+                    }
+                    note["fallback"] = ("plan_only: the submit runs the full check on "
+                                        f"this host under limits ({stale or need_check})")
+                elif not limits["defer"]:
                     return self._run_login(ppl, pkg_list, mode, context, resolver, note,
                                            why=need_check)
-                note["fallback"] = ("login_busy: " + "; ".join(limits["defer_reasons"])
-                                    + f" ({stale or need_check})")
+                else:
+                    note["fallback"] = ("login_busy: " + "; ".join(limits["defer_reasons"])
+                                        + f" ({stale or need_check})")
             elif plan["choice"] == placement.COMPUTE_JOB:
                 names = [pkg_id for pkg_id, item in plan["packages"].items()
                          if item.get("choice") == placement.COMPUTE_JOB]
@@ -457,9 +471,14 @@ class SpackInstaller(Installer):
                 note["evidence"] = resolver.evidence()
                 if (mode == "install" and plan["choice"] == placement.LOGIN_LIMITED
                         and not resolver.limits["defer"]):
-                    return self._run_login(ppl, pkg_list, mode, context, resolver, note,
-                                           why="build_placement: login_limited",
-                                           build_only=missing)
+                    if plan_only_active():
+                        note["plan_only"] = {"at_submit": "login_limited_build",
+                                             "limits": resolver.limits,
+                                             "missing": sorted(missing)}
+                    else:
+                        return self._run_login(ppl, pkg_list, mode, context, resolver,
+                                               note, why="build_placement: login_limited",
+                                               build_only=missing)
         result = self._run_light(ppl, pkg_list, mode, context, host_reason, placement=note)
         result["placement"] = note
         return result
@@ -1182,6 +1201,31 @@ def load_spack_env_capture(ppl, pkg_list) -> Tuple[Optional[Dict[str, Any]], Opt
 
 INSTALL_CHECK_NAME = "install-check.json"
 INSTALL_CHECK_SCHEMA = "jarvis.install-check.v1"
+
+
+_PLAN_ONLY_DEPTH = 0
+
+
+def plan_only_active() -> bool:
+    """True inside :func:`plan_only` (``jarvis ppl submit +plan``)."""
+    return _PLAN_ONLY_DEPTH > 0
+
+
+@contextmanager
+def plan_only():
+    """Resolve installs from records only: never run Spack, even when allowed.
+
+    ``ppl submit +plan`` loads the pipeline under this. The Spack group
+    answers on the light path (records, env capture, placement questions)
+    and a placement that would run the full check on this host at submit is
+    reported as ``placement.plan_only.at_submit`` instead of running.
+    """
+    global _PLAN_ONLY_DEPTH
+    _PLAN_ONLY_DEPTH += 1
+    try:
+        yield
+    finally:
+        _PLAN_ONLY_DEPTH -= 1
 
 
 def light_install_host(ppl, context) -> Optional[str]:

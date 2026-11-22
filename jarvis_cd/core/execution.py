@@ -2277,6 +2277,13 @@ class ExecutionStore:
                     validated_id,
                     failed=updated.state == "failed",
                 )
+                from jarvis_cd.core.component_states import close_component_states
+
+                close_component_states(
+                    execution_root, updated.state,
+                    reason=(f"execution {updated.state}: {updated.error}"
+                            if updated.error else None),
+                )
             _atomic_write_record(execution_root / RECORD_NAME, updated)
             return updated
 

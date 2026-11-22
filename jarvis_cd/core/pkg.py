@@ -989,6 +989,12 @@ class Pkg:
                 "choices": ["auto", "stop", "keep"],
                 "default": "auto",
             },
+            {
+                "name": "label",
+                "msg": "Person-facing name of this component in plans and job cards",
+                "type": str,
+                "default": "",
+            },
         ]
 
         # These controls remain part of the CLI and persisted package config,

@@ -90,6 +90,92 @@ def _profile(contract: Any, config: Dict[str, Any]) -> Optional[Any]:
     return None
 
 
+#: kinds a declared ``couplings:`` edge may have
+COUPLING_KINDS = ("stream", "file", "service", "interceptor", "control", "other")
+
+
+def _label(instance: Any, config: Dict[str, Any], pkg_id: str) -> str:
+    """A person-facing name: the ``label`` option, the package's, or the id."""
+    label = config.get("label")
+    if isinstance(label, str) and label.strip():
+        return label.strip()[:120]
+    try:
+        hook = getattr(instance, "component_label", None)
+        text = hook() if callable(hook) else None
+        if isinstance(text, str) and text.strip():
+            return text.strip()[:120]
+    except Exception:
+        pass
+    return pkg_id
+
+
+def _ranks(config: Dict[str, Any]) -> Optional[int]:
+    for key in ("nprocs", "ntasks", "ranks"):
+        value = config.get(key)
+        if isinstance(value, bool):
+            continue
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            return number
+    return None
+
+
+def _declared_couplings(
+    ppl: Any, steps: Sequence[Dict[str, Any]], errors: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """The pipeline's ``couplings:`` (validated) plus derived interceptor edges.
+
+    A declared edge names two package or interceptor ids, a ``kind`` from
+    :data:`COUPLING_KINDS` and an optional ``label`` (for example
+    ``{from: xcompact3d, to: pvserver, kind: stream, label: ADIOS2 BP}``).
+    Bad ids or kinds are ``coupling_invalid`` errors (exit 5).
+    """
+    known = {str(step["pkg_id"]) for step in steps}
+    interceptors = {str(key) for key in (getattr(ppl, "interceptors", None) or {})}
+    edges: List[Dict[str, Any]] = []
+    for index, item in enumerate(getattr(ppl, "couplings", None) or []):
+        field = f"couplings[{index}]"
+        problems = []
+        for end in ("from", "to"):
+            value = item.get(end)
+            if not value:
+                problems.append(f"{end} is required")
+            elif value not in known | interceptors:
+                problems.append(f"{end} {value!r} is not a package or interceptor id")
+        kind = item.get("kind") or "other"
+        if kind not in COUPLING_KINDS:
+            problems.append(f"kind {kind!r} must be one of {', '.join(COUPLING_KINDS)}")
+        if item.get("from") and item.get("from") == item.get("to"):
+            problems.append("from and to must differ")
+        if problems:
+            errors.append(make_jarvis_issue(
+                kind="coupling_invalid",
+                subject=f"{item.get('from')}->{item.get('to')}",
+                message=f"{field}: " + "; ".join(problems),
+                identity={"index": index, "coupling": dict(item)},
+                field=field,
+                candidates=[{"value": value} for value in sorted(known)],
+            ))
+            continue
+        edge = {"from": item["from"], "to": item["to"], "kind": kind,
+                "label": item.get("label") or kind, "source": "pipeline"}
+        if edge not in edges:
+            edges.append(edge)
+    declared = {(edge["from"], edge["to"]) for edge in edges}
+    for step in steps:
+        for interceptor in step.get("interceptors") or []:
+            if (interceptor, step["pkg_id"]) in declared:
+                continue
+            definition = (getattr(ppl, "interceptors", None) or {}).get(interceptor) or {}
+            edges.append({"from": interceptor, "to": step["pkg_id"], "kind": "interceptor",
+                          "label": str(definition.get("pkg_type") or interceptor),
+                          "source": "derived"})
+    return edges
+
+
 def check_pipeline(ppl: Any) -> Dict[str, Any]:
     """Return a ``jarvis.pipeline-check.v1`` document for ``ppl``."""
     from jarvis_cd.core.pkg import Service
@@ -194,6 +280,10 @@ def check_pipeline(ppl: Any) -> Dict[str, Any]:
         if step["nodes"] is not None:
             step["node_count"] = step["nodes"]["end"] - step["nodes"]["first"]
         step["ports"] = _ports(config)
+        step["label"] = _label(instance, config, pkg_id)
+        step["ranks"] = _ranks(config)
+        step["interceptors"] = [str(item) for item in config.get("interceptors") or []
+                                if isinstance(item, (str, int))]
 
         for rule in getattr(contract, "configuration_rules", ()) or ():
             for unmet in rule.violations(config):
@@ -220,6 +310,7 @@ def check_pipeline(ppl: Any) -> Dict[str, Any]:
         steps.append(step)
 
     _coupling(steps, errors, warnings)
+    couplings = _declared_couplings(ppl, steps, errors)
     site_facts = None
     questions: List[Dict[str, Any]] = []
     try:
@@ -246,6 +337,7 @@ def check_pipeline(ppl: Any) -> Dict[str, Any]:
         "allocation": {"nodes": size, "source": size_source},
         "steps": steps,
         "services": services,
+        "couplings": couplings,
         "errors": errors,
         "questions": questions,
         "warnings": warnings,

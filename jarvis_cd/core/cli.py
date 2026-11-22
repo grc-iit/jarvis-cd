@@ -321,6 +321,22 @@ class JarvisCLI(ArgParse):
                     "default": False,
                     "prefix": "+",
                 },
+                {
+                    "name": "plan",
+                    "msg": "Resolve the submission (scheduler, components, couplings, "
+                    "script and its sha256, issues) without submitting or running Spack",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+                {
+                    "name": "plan_sha256",
+                    "aliases": ["plan-sha256"],
+                    "msg": "Submit only if the rendered plan still has this plan_sha256 "
+                    "(from +plan); otherwise refuse with exit 5",
+                    "type": str,
+                    "required": False,
+                },
             ]
         )
 
@@ -372,6 +388,22 @@ class JarvisCLI(ArgParse):
                     "type": bool,
                     "default": False,
                     "prefix": "+",
+                },
+                {
+                    "name": "plan",
+                    "msg": "With +submit: resolve the install job (scheduler, script and "
+                    "its sha256) without submitting or running Spack",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                },
+                {
+                    "name": "plan_sha256",
+                    "aliases": ["plan-sha256"],
+                    "msg": "With +submit: submit only if the rendered plan still has this "
+                    "plan_sha256 (from +plan); otherwise refuse with exit 5",
+                    "type": str,
+                    "required": False,
                 },
                 {
                     "name": "allow_local",
@@ -2191,6 +2223,10 @@ class JarvisCLI(ArgParse):
         wait = bool(self.kwargs.get("wait", False))
         execution_id = self.kwargs.get("execution_id")
         json_output = bool(self.kwargs.get("json", False))
+        plan_sha256 = self.kwargs.get("plan_sha256") or None
+        if self.kwargs.get("plan", False):
+            self._ppl_submit_plan(pipeline_file, execution_id, json_output)
+            return
 
         if pipeline_file:
             from jarvis_cd.core.spack_install import (
@@ -2223,6 +2259,8 @@ class JarvisCLI(ArgParse):
                     }, json_output=True)
                 raise
             if is_test:
+                if plan_sha256:
+                    raise ValueError("--plan_sha256 applies to a pipeline, not a test")
                 obj.submit(submit=submit)
                 return
             with redirect_stdout(sys.stderr) if json_output else nullcontext():
@@ -2230,11 +2268,14 @@ class JarvisCLI(ArgParse):
                     submit=submit,
                     wait=wait,
                     execution_id=execution_id,
+                    expect_plan_sha256=plan_sha256,
                 )
             self._emit_execution_handle(handle, json_output=json_output)
             return
 
         if getattr(self, "_current_test", None) is not None:
+            if plan_sha256:
+                raise ValueError("--plan_sha256 applies to a pipeline, not a test")
             self._current_test.submit(submit=submit)
             return
 
@@ -2249,8 +2290,71 @@ class JarvisCLI(ArgParse):
                 submit=submit,
                 wait=wait,
                 execution_id=execution_id,
+                expect_plan_sha256=plan_sha256,
             )
         self._emit_execution_handle(handle, json_output=json_output)
+
+    def _ppl_submit_plan(self, pipeline_file, execution_id, json_output: bool) -> None:
+        """``ppl submit +plan``: one jarvis.submit-plan.v1 document, no submit.
+
+        The load runs under :func:`installer.plan_only` (no Spack, even where a
+        login_limited check would run at submit). An install decision the load
+        raises is folded into the plan (``issues``, ``exit_code``); the command
+        then exits with the code the submit would (0, 3, 4 or 5).
+        """
+        from jarvis_cd.core.installer import plan_only
+        from jarvis_cd.core.spack_install import (
+            BuildOutsideAllocation,
+            InstallDecisionNeeded,
+        )
+
+        outcome = None
+        pipeline = None
+        with redirect_stdout(sys.stderr), plan_only():
+            if pipeline_file:
+                try:
+                    is_test, pipeline = load_yaml_auto(pipeline_file)
+                except InstallDecisionNeeded as needed:
+                    outcome = {"exit_code": needed.exit_code, "issues": needed.issues,
+                               "report": dict(needed.report or {})}
+                except BuildOutsideAllocation as refused:
+                    outcome = {"exit_code": refused.exit_code, "issues": [],
+                               "refused": refused.to_dict()}
+                else:
+                    if is_test:
+                        raise ValueError("+plan applies to a pipeline, not a pipeline test")
+                if pipeline is None:
+                    # The load saved the pipeline and made it current before
+                    # raising; reopen it (no install phase on a named open).
+                    pipeline = Pipeline(self.jarvis_config.get_current_pipeline())
+            else:
+                pipeline = self._require_current_pipeline()
+            document = pipeline.plan_submission(
+                execution_id, install_outcome=outcome, pipeline_file=pipeline_file)
+        self._print_submit_plan(document, json_output)
+
+    def _print_submit_plan(self, document: dict, json_output: bool) -> None:
+        """Print a jarvis.submit-plan.v1 document and exit with its exit_code."""
+        if json_output:
+            print(json.dumps(document, separators=(",", ":"), sort_keys=True, default=str))
+        else:
+            print(f"Plan {document['plan_sha256']} for {document['pipeline_id']} "
+                  f"(execution {document['execution_id']}): {document['scheduler']} "
+                  f"{document['nodes']} node(s), partition {document['partition']}, "
+                  f"time {document['time']}")
+            for component in document["components"]:
+                print(f"  {component['id']} ({component['package']}): "
+                      f"{component['nodes']} node(s), ranks {component['ranks']}, "
+                      f"{component.get('role')}/{component.get('starts')}")
+            for edge in document["couplings"]:
+                print(f"  {edge['from']} -> {edge['to']} [{edge['kind']}] {edge['label']}")
+            print(f"  script {document['script']['path']} sha256 "
+                  f"{document['script']['sha256']}")
+            for issue in document["issues"]:
+                print(f"  issue {issue.get('kind')}: {issue.get('message')}")
+            print("  submit with: " + " ".join(document["submit_with"]))
+        if document["exit_code"]:
+            sys.exit(int(document["exit_code"]))
 
     def execution_get(self) -> None:
         """Print one durable record for a named or current pipeline."""
@@ -2428,6 +2532,15 @@ class JarvisCLI(ArgParse):
             self._emit_install_report(report, json_output=json_output)
 
         if self.kwargs.get("submit"):
+            if self.kwargs.get("plan"):
+                from jarvis_cd.core.installer import plan_only
+
+                with redirect_stdout(sys.stderr), plan_only():
+                    document = pipeline.plan_submission(
+                        self.kwargs.get("execution_id"), action="install",
+                        install_check=check, install_answers=answers)
+                self._print_submit_plan(document, json_output)
+                return
             # +json keeps stdout for the one handle document
             with redirect_stdout(sys.stderr) if json_output else nullcontext():
                 handle = pipeline.submit(
@@ -2436,6 +2549,7 @@ class JarvisCLI(ArgParse):
                     action="install",
                     install_check=check,
                     install_answers=answers,
+                    expect_plan_sha256=self.kwargs.get("plan_sha256") or None,
                 )
             self._emit_execution_handle(handle, json_output=json_output)
             return

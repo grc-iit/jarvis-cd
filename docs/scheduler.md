@@ -233,6 +233,58 @@ The generated script is written to
 execution ID is generated for every CLI submission; API callers may provide a
 bounded path-safe ID for end-to-end correlation.
 
+### Planning a submission (`+plan`)
+
+```bash
+jarvis ppl submit pipeline.yaml --execution-id E +plan +json   # one jarvis.submit-plan.v1 document
+jarvis ppl submit pipeline.yaml --execution-id E --plan_sha256 <plan_sha256> +json
+jarvis ppl install [+check] +submit --execution-id E +plan +json   # the install job
+jarvis ppl install [+check] +submit --execution-id E --plan_sha256 <plan_sha256> +json
+```
+
+`+plan` resolves everything a real `+submit` would and prints it, without
+submitting. It writes no execution record or script, makes no scheduler call,
+and runs no Spack, even where a consented `login_limited` check would run at
+submit (the plan's `install.at_submit` says so instead). That keeps it light
+enough for a login node, so a caller can show the job and ask before
+submitting. A resource-graph collection job is a pipeline with
+`builtin.resource_graph`, so it plans the same way.
+
+| Field | Content |
+|-------|---------|
+| `schema_version` | `jarvis.submit-plan.v1` |
+| `pipeline_id`, `execution_id`, `action` | `action` is `run`, `install` or `install_check` |
+| `scheduler`, `partition`, `account`, `qos`, `time`, `time_limit_s`, `job_name`, `nodes` | the directives the script carries, and the total nodes |
+| `sources` | where each directive came from: `pipeline.scheduler`, `pipeline.scheduler.install` (an install job's override), `jarvis` (set by JARVIS, such as an install job's `nodes: 1`), or `unset`. JARVIS has no site-level directive defaults, so these come only from the pipeline's `scheduler:` block |
+| `components[]` | one per package: `id`, `package`, `label`, `nodes`, `ranks`, `host_slice`, `node_range` `{first, end}`, `role` (`service`/`batch`), `starts` (`background`/`foreground`), `after_steps`, `ports`, `readiness`. An install job has one component `install` (package `jarvis.install`, 1 node, `packages[]`) |
+| `couplings[]` | `{from, to, kind, label, source}`: the pipeline's [`couplings:`](pipelines.md#couplings-between-packages) (`source: pipeline`) plus interceptor edges (`source: derived`) |
+| `script` | `{path, text, sha256}`: the exact batch script the submit will send |
+| `input_sha256` | the digest of the sealed execution input (the pipeline snapshot, environment and install answers) |
+| `plan_sha256` | sha256 of `{schema, script_sha256, input_sha256}`; the value to submit with |
+| `issues`, `exit_code`, `would_submit` | what the submit would refuse with: `ppl check` errors (5), blocking site-fact questions (3), install decisions such as a placement question (3), or a build outside an allocation (4) |
+| `install` | `policy`, `runs_in`, `status`, the recorded `check` (when one matched), `placement`, and `at_submit`/`at_submit_limits` for a consented login check |
+| `install_job` | for an install job, the 1-node shape (`nodes`, `ntasks`, `exclusive`, `partition`, `account`, `time`, `overrides`) |
+| `execution_root`, `hostfile`, `component_states` | where the record, the hostfile and [`components.jsonl`](executions.md#component-states-componentsjsonl) will be |
+| `warnings` | the `ppl check` warnings |
+| `submit_with`, `binding` | the bound submit command line, and how the binding works |
+
+The command exits with `exit_code`, so a caller handles a plan's exit 3 the
+way it handles a submit's.
+
+**Binding.** A submit with `--plan_sha256` re-renders the submission and
+refuses with exit **5** (`jarvis.refusal.v1`, issue kind
+`submission_plan_changed`, with the expected and actual shas in `details`)
+unless the script and the sealed input match. It checks before it creates
+the execution record, and again once the script is written. Then it records
+`metadata.submission_plan` (`jarvis.submit-plan.binding.v1`: `script_sha256`,
+`input_sha256`, `plan_sha256`, `expected_plan_sha256`, `bound`). Plan and
+submit with the same `--execution-id` and from the same working directory,
+since the sealed input records it. The submit can name the YAML or use the
+current pipeline: directive order is canonical (sorted), so it doesn't depend
+on how the pipeline was loaded. A changed pipeline, time limit, answers file
+or environment between the plan and the submit refuses, so a person's yes
+covers only the job they were shown.
+
 For a submitted nonterminal record, `Pipeline.get_execution()` (and so
 `jarvis execution get|status +json`) also asks the selected scheduler
 provider for current state. The SLURM provider runs `squeue --states=all`,
