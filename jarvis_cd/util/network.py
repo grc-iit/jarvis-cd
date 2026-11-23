@@ -46,20 +46,36 @@ _ARPHRD_INFINIBAND = 32
 #: interface kinds that carry real node-to-node traffic
 _DIRECT_KINDS = ("physical", "bond", "vlan", "ipoib")
 
-#: launch-failure signatures that point at the MPI network choice
-MPI_NETWORK_FAILURE_SIGNATURES = (
-    "received unexpected process identifier",
-    "btl_tcp_endpoint",
-    "btl_tcp: connect",
+#: signatures of the launcher failing to start or wire up its daemons: they
+#: count only while some rank never started, since a job tearing down after
+#: the application failed prints them too
+MPI_LAUNCH_STAGE_SIGNATURES = (
     "unable to reliably start",
     "lost communication with a remote daemon",
     "has lost communication",
     "no route to host",
-    "the tcp btl failed",
-    "unable to connect to the peer",
     "oob_tcp",
     "hydra_sock_connect",
     "control_cb (pm/pmiserv",
+)
+#: signatures of ranks failing to connect to their peers over the MPI network
+MPI_RANK_STAGE_SIGNATURES = (
+    "received unexpected process identifier",
+    "btl_tcp_endpoint",
+    "btl_tcp: connect",
+    "the tcp btl failed",
+    "unable to connect to the peer",
+)
+#: launch-failure signatures that point at the MPI network choice
+MPI_NETWORK_FAILURE_SIGNATURES = MPI_LAUNCH_STAGE_SIGNATURES + MPI_RANK_STAGE_SIGNATURES
+
+#: MPI settings named in a launch's own description or environment (such as
+#: ``OMPI_MCA_oob_tcp_if_include``), which are never a failure signature
+_MPI_SETTING_NAME = re.compile(
+    r"\b(?:OMPI|PRTE|PMIX)_MCA_\w+"
+    r"|(?<!\S)--?(?:g?mca|prtemca|pmixmca)\s+\S+"
+    r"|\b\w+_tcp_if_(?:include|exclude)\b",
+    re.IGNORECASE,
 )
 
 
@@ -1047,18 +1063,36 @@ def load_net_section() -> Optional[Dict[str, Any]]:
 
 
 def classify_mpi_network_failure(
-    text: str, *, launch_network: Optional[Dict[str, Any]] = None
+    text: str,
+    *,
+    launch_network: Optional[Dict[str, Any]] = None,
+    ranks_started: Optional[bool] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Turn a launch failure that matches a network signature into an issue."""
+    """Turn a launch failure that matches a network signature into an issue.
+
+    MPI setting names in the text (a launch printing its own environment) are
+    not signatures. ``ranks_started`` is whether every launch started all its
+    ranks (:func:`launch_ranks_started`): then the launch delivered the
+    application, the failure is the application's own, and the launcher-stage
+    signatures (:data:`MPI_LAUNCH_STAGE_SIGNATURES`) are its teardown; only a
+    rank failing to reach its peers (:data:`MPI_RANK_STAGE_SIGNATURES`) still
+    points at the network. ``None`` means it is not known.
+    """
     from jarvis_cd.core.issues import make_jarvis_issue
 
-    lowered = (text or "").lower()
-    matched = [s for s in MPI_NETWORK_FAILURE_SIGNATURES if s in lowered]
+    signatures = (
+        MPI_RANK_STAGE_SIGNATURES if ranks_started else MPI_NETWORK_FAILURE_SIGNATURES
+    )
+    lines = [
+        (line, _MPI_SETTING_NAME.sub(" ", line).lower())
+        for line in (text or "").splitlines()
+    ]
+    matched = [s for s in signatures if any(s in masked for _line, masked in lines)]
     if not matched:
         return None
     excerpt = ""
-    for line in (text or "").splitlines():
-        if any(signature in line.lower() for signature in matched):
+    for line, masked in lines:
+        if any(signature in masked for signature in matched):
             excerpt = line.strip()[:400]
             break
     choice = launch_network or {}
@@ -1082,6 +1116,42 @@ def classify_mpi_network_failure(
             "excerpt": excerpt,
             "launch_network": choice or None,
             "selected_field": "resource_graph.net.selected",
+            "ranks_started": ranks_started,
         },
         remedy="jarvis rg net set --data <cidr|iface> --control <cidr|iface> --reason <why>",
     )
+
+
+def launch_ranks_started(provenance_dir: Path) -> Optional[bool]:
+    """Whether every launch under ``provenance_dir`` started all its ranks.
+
+    Each ``launch-*/launch.json`` names its ``nprocs``, and the provenance
+    rank wrapper writes ``ranks/<host>-<rank>-<pid>.txt`` just before it
+    execs the program, so a launch whose rank files cover ``nprocs`` ranks
+    had its application started on every node. ``None`` when no launch
+    recorded both, so nothing is known.
+    """
+    import json
+
+    known = False
+    for launch in sorted(provenance_dir.glob("launch-*")):
+        try:
+            document = json.loads((launch / "launch.json").read_text(encoding="utf-8"))
+            nprocs = int(document.get("nprocs"))
+        except (OSError, ValueError, TypeError):
+            continue
+        ranks_dir = launch / "ranks"
+        if not ranks_dir.is_dir():
+            continue
+        ranks = set()
+        for entry in ranks_dir.glob("*.txt"):
+            try:
+                fields = entry.read_text(encoding="utf-8").split()
+            except OSError:
+                continue
+            if len(fields) >= 2:
+                ranks.add(fields[1])
+        if len(ranks) < nprocs:
+            return False
+        known = True
+    return True if known else None

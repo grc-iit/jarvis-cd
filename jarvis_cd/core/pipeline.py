@@ -4233,6 +4233,9 @@ class Pipeline:
         chain) contributes its issues as-is. Otherwise the error and the tail
         of the execution's logs are classified for an MPI network signature;
         that issue names ``resource_graph.net.override`` as the field to change.
+        When every launch started all its ranks, the application ran and the
+        failure is its own, so only a rank failing to reach its peers counts
+        (``launch_ranks_started``).
         """
         from jarvis_cd.core.issues import JarvisIssueError
 
@@ -4247,7 +4250,10 @@ class Pipeline:
         if raised:
             return {"issues": raised}
         try:
-            from jarvis_cd.util.network import classify_mpi_network_failure
+            from jarvis_cd.util.network import (
+                classify_mpi_network_failure,
+                launch_ranks_started,
+            )
 
             texts = [str(error)]
             for name in ("stdout.log", "stderr.log"):
@@ -4266,7 +4272,9 @@ class Pipeline:
                     continue
                 launch_network = document.get("network") or launch_network
             issue = classify_mpi_network_failure(
-                "\n".join(texts), launch_network=launch_network
+                "\n".join(texts),
+                launch_network=launch_network,
+                ranks_started=launch_ranks_started(execution_root / "provenance"),
             )
         except Exception:
             return None
