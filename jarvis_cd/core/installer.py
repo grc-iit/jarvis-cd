@@ -1025,7 +1025,12 @@ def _capture_inputs(ppl, pkg_list) -> Dict[str, Optional[str]]:
     an install are recorded there, so an answers file is not an input), the
     Spack that runs, and (with a Spack env) its ``spack.lock``.
     """
-    from jarvis_cd.core.spack_install import _resolved_spack_root, spack_env_enabled
+    from jarvis_cd.core.spack_install import (
+        Decisions,
+        _resolved_spack_root,
+        recorded_spack_root,
+        spack_env_enabled,
+    )
 
     packages = sorted(
         (
@@ -1048,9 +1053,18 @@ def _capture_inputs(ppl, pkg_list) -> Dict[str, Optional[str]]:
         root = _resolved_spack_root()
     except Exception:
         root = None
+    explicit = os.environ.get("JARVIS_SPACK_ROOT")
+    try:
+        # a job sets JARVIS_SPACK_ROOT from the recorded site answer; the
+        # submitting host resolves the same answer so both see one identity
+        replayed = recorded_spack_root(Decisions(decisions))
+    except (OSError, ValueError):
+        replayed = None
+    if replayed is not None:
+        root, explicit = replayed, str(replayed)
     spack_identity = {
         "root": str(root) if root else None,
-        "JARVIS_SPACK_ROOT": os.environ.get("JARVIS_SPACK_ROOT"),
+        "JARVIS_SPACK_ROOT": explicit,
         "JARVIS_SPACK_CONFIG": os.environ.get("JARVIS_SPACK_CONFIG"),
     }
     lock = None

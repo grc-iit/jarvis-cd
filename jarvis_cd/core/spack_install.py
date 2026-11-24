@@ -618,6 +618,26 @@ def ensure_spack_available(context: "InstallContext", decisions: "Decisions") ->
     return None
 
 
+def recorded_spack_root(decisions: "Decisions") -> Optional[Path]:
+    """The Spack root :func:`ensure_spack_available` would set from the record.
+
+    None when the environment already names a usable Spack, or when no
+    recorded answer applies to the current question. Light: file checks
+    only, nothing is prepared or run, so a submitting host that never runs
+    Spack identifies the same root a job did when it replayed the answer.
+    """
+    reason = spack_unavailable_reason()
+    if reason is None:
+        return None
+    recorded = decisions.site("spack")
+    if recorded is None or not recorded.get("constraint"):
+        return None
+    if recorded.get("issue_id") != spack_missing_issue(reason, discover_site_spacks())["issue_id"]:
+        return None
+    chosen = Path(str(recorded["constraint"])).expanduser().resolve()
+    return chosen if spack_root_writable(chosen) else chained_spack_root(chosen)
+
+
 def spack_root_writable(root: Path) -> bool:
     """Whether this user can write the Spack root's config scope and install tree.
 
