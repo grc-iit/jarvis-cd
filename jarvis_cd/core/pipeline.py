@@ -31,7 +31,11 @@ from jarvis_cd.artifacts import (
     ArtifactState,
     ArtifactStructure,
 )
-from jarvis_cd.core.config import load_class, Jarvis
+from jarvis_cd.core.config import (
+    load_class,
+    Jarvis,
+    builtin_repository_disabled_message,
+)
 from jarvis_cd.core.execution import (
     LEGACY_RECORD_SCHEMA,
     RECORD_NAME,
@@ -5710,7 +5714,13 @@ class Pipeline:
 
         # Load class
         if repo_name == "builtin":
-            repo_path = str(self.jarvis.get_builtin_repo_path())
+            builtin_repo_path = self.jarvis.get_builtin_repo_path()
+            if builtin_repo_path is None:
+                raise ValueError(
+                    f"Package not found: {pkg_type}: "
+                    f"{builtin_repository_disabled_message()}"
+                )
+            repo_path = str(builtin_repo_path)
         else:
             # Find repo path in registered repos
             repo_path = None

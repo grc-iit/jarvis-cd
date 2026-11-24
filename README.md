@@ -23,6 +23,10 @@ jarvis init [CONFIG_DIR] [PRIVATE_DIR] [SHARED_DIR]
 
 On a personal machine, these can point to the same directory.
 
+`jarvis init +no_builtin` (or `JARVIS_NO_BUILTIN=1`) leaves the shipped
+`builtin` package repository out completely; see
+[Getting Started](docs/getting_started.md#leaving-the-builtin-package-repository-out).
+
 ## Pipeline Tests
 
 A pipeline test is a YAML file with a `config:` section (the pipeline of

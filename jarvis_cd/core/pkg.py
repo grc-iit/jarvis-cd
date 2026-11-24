@@ -371,7 +371,11 @@ class Pkg:
         :param package_spec: Package specification (repo.pkg or just pkg)
         :return: Package instance
         """
-        from jarvis_cd.core.config import load_class, Jarvis
+        from jarvis_cd.core.config import (
+            load_class,
+            Jarvis,
+            builtin_repository_disabled_message,
+        )
 
         jarvis = Jarvis.get_instance()
 
@@ -397,7 +401,13 @@ class Pkg:
 
         # Load class
         if repo_name == "builtin":
-            repo_path = str(jarvis.get_builtin_repo_path())
+            builtin_repo_path = jarvis.get_builtin_repo_path()
+            if builtin_repo_path is None:
+                raise ValueError(
+                    f"Package not found: {package_spec}: "
+                    f"{builtin_repository_disabled_message()}"
+                )
+            repo_path = str(builtin_repo_path)
         else:
             # Find repo path in registered repos
             repo_path = None

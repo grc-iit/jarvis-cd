@@ -98,6 +98,15 @@ class JarvisCLI(ArgParse):
                     "type": bool,
                     "default": False,
                 },
+                {
+                    "name": "no_builtin",
+                    "msg": (
+                        "Leave the builtin package repository out of this root "
+                        "(records no_builtin in jarvis_config.yaml; unset keeps "
+                        "JARVIS_NO_BUILTIN, else the root's current setting)"
+                    ),
+                    "type": bool,
+                },
             ]
         )
 
@@ -2105,9 +2114,12 @@ class JarvisCLI(ArgParse):
         private_dir = os.path.expanduser(self.kwargs["private_dir"])
         shared_dir = os.path.expanduser(self.kwargs["shared_dir"])
         force = self.kwargs.get("force", False)
+        no_builtin = self.kwargs.get("no_builtin")
 
         jarvis = Jarvis.get_instance()
-        jarvis.initialize(config_dir, private_dir, shared_dir, force=force)
+        jarvis.initialize(
+            config_dir, private_dir, shared_dir, force=force, no_builtin=no_builtin
+        )
 
         # Save jarvis instance to self so subsequent commands use the same instance
         self.jarvis_config = jarvis

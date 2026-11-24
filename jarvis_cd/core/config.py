@@ -11,8 +11,44 @@ from jarvis_cd.util.hostfile import Hostfile
 _JARVIS_ROOT_ENVIRONMENT = "JARVIS_ROOT"
 #: one site-level resource graph shared by every JARVIS root on a site
 RESOURCE_GRAPH_ENVIRONMENT = "JARVIS_RESOURCE_GRAPH"
+#: leave the builtin package repository out of this process entirely
+NO_BUILTIN_ENVIRONMENT = "JARVIS_NO_BUILTIN"
+#: ``jarvis_config.yaml`` key recording that a root leaves builtin out
+NO_BUILTIN_CONFIG_KEY = "no_builtin"
+BUILTIN_REPOSITORY_NAME = "builtin"
 _STATE_ROOT_FIELDS = ("config_dir", "private_dir", "shared_dir")
 MAX_BUILTIN_RESOURCE_GRAPH_PROFILES = 128
+_TRUE_FLAG_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_FLAG_VALUES = frozenset({"0", "false", "no", "off"})
+
+
+def _parse_flag(value: Any, source: str) -> bool:
+    """Parse one boolean switch from the environment or config, or fail closed."""
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in _TRUE_FLAG_VALUES:
+        return True
+    if text in _FALSE_FLAG_VALUES:
+        return False
+    raise ValueError(f"{source} must be one of 1/true/yes/on or 0/false/no/off")
+
+
+def _no_builtin_from_environment() -> Optional[bool]:
+    """``JARVIS_NO_BUILTIN`` when set to a non-empty value, else ``None``."""
+    value = os.environ.get(NO_BUILTIN_ENVIRONMENT, "").strip()
+    if not value:
+        return None
+    return _parse_flag(value, NO_BUILTIN_ENVIRONMENT)
+
+
+def builtin_repository_disabled_message() -> str:
+    """Explain why a ``builtin.*`` package cannot resolve."""
+    return (
+        f"the {BUILTIN_REPOSITORY_NAME} package repository is left out "
+        f"({NO_BUILTIN_ENVIRONMENT} or {NO_BUILTIN_CONFIG_KEY}: true in "
+        "jarvis_config.yaml); register a repository that provides the package"
+    )
 
 
 class BuiltinResourceGraphUnavailable(FileNotFoundError):
@@ -194,7 +230,12 @@ class Jarvis:
         return cls._instance
 
     def initialize(
-        self, config_dir: str, private_dir: str, shared_dir: str, force: bool = False
+        self,
+        config_dir: str,
+        private_dir: str,
+        shared_dir: str,
+        force: bool = False,
+        no_builtin: Optional[bool] = None,
     ):
         """
         Initialize Jarvis configuration directories and files.
@@ -203,8 +244,19 @@ class Jarvis:
         :param private_dir: Machine-local data directory
         :param shared_dir: Shared data directory across all machines
         :param force: Force override of existing repos and resource_graph files
+        :param no_builtin: Leave the builtin package repository out of this
+            root. ``None`` keeps ``JARVIS_NO_BUILTIN`` when set, else the
+            root's existing ``no_builtin`` setting, else includes builtin.
         """
         from jarvis_cd.util import logger
+
+        if no_builtin is None:
+            no_builtin = _no_builtin_from_environment()
+        if no_builtin is None and self.config_file.exists():
+            no_builtin = _parse_flag(
+                self.load_config().get(NO_BUILTIN_CONFIG_KEY) or False,
+                f"{NO_BUILTIN_CONFIG_KEY} in {self.config_file}",
+            )
 
         # Create jarvis root directory
         self.jarvis_root.mkdir(parents=True, exist_ok=True)
@@ -227,9 +279,12 @@ class Jarvis:
             "current_pipeline": None,
             "hostfile": None,
         }
+        if no_builtin:
+            default_config[NO_BUILTIN_CONFIG_KEY] = True
 
         # Save configuration
         self.save_config(default_config)
+        self._repos = None
 
         # Update instance attributes
         self.config_dir = default_config["config_dir"]
@@ -242,24 +297,14 @@ class Jarvis:
             logger.warning(
                 "Existing repos.yaml detected - preserving (use +force to override)"
             )
-        elif repos_exists and force:
-            logger.warning("Existing repos.yaml detected - overriding due to +force")
-            builtin_repo_path = self.get_builtin_repo_path()
-            if builtin_repo_path.exists():
-                builtin_repo_path_str = str(builtin_repo_path.absolute())
-            else:
-                builtin_repo_path_str = str((self.jarvis_root / "builtin").absolute())
-            default_repos = {"repos": [builtin_repo_path_str]}
-            self.save_repos(default_repos)
+            if self.builtin_disabled:
+                self._drop_persisted_builtin_repositories()
         else:
-            # File doesn't exist, create it
-            builtin_repo_path = self.get_builtin_repo_path()
-            if builtin_repo_path.exists():
-                builtin_repo_path_str = str(builtin_repo_path.absolute())
-            else:
-                builtin_repo_path_str = str((self.jarvis_root / "builtin").absolute())
-            default_repos = {"repos": [builtin_repo_path_str]}
-            self.save_repos(default_repos)
+            if repos_exists:
+                logger.warning(
+                    "Existing repos.yaml detected - overriding due to +force"
+                )
+            self.save_repos({"repos": self._default_repository_entries()})
 
         # Handle resource_graph.yaml
         resource_graph_exists = self.resource_graph_file.exists()
@@ -287,6 +332,52 @@ class Jarvis:
         print(f"Config directory: {config_dir}")
         print(f"Private directory: {private_dir}")
         print(f"Shared directory: {shared_dir}")
+        if self.builtin_disabled:
+            print("Builtin package repository: left out")
+
+    @property
+    def builtin_disabled(self) -> bool:
+        """Whether this process leaves the builtin package repository out.
+
+        ``JARVIS_NO_BUILTIN`` wins when set; otherwise the root's
+        ``no_builtin`` config key decides. The default includes builtin.
+        """
+        from_environment = _no_builtin_from_environment()
+        if from_environment is not None:
+            return from_environment
+        if not self.is_initialized():
+            return False
+        return _parse_flag(
+            self.config.get(NO_BUILTIN_CONFIG_KEY) or False,
+            f"{NO_BUILTIN_CONFIG_KEY} in {self.config_file}",
+        )
+
+    def _default_repository_entries(self) -> list[str]:
+        """The repository list a fresh ``jarvis init`` records."""
+        if self.builtin_disabled:
+            return []
+        builtin_repo_path = self.get_builtin_repo_path()
+        if builtin_repo_path is not None and builtin_repo_path.exists():
+            return [str(builtin_repo_path.absolute())]
+        return [str((self.jarvis_root / BUILTIN_REPOSITORY_NAME).absolute())]
+
+    def _drop_persisted_builtin_repositories(self) -> None:
+        """Remove every ``builtin`` entry from repos.yaml itself."""
+        if not self.repos_file.exists():
+            return
+        with open(self.repos_file, "r") as f:
+            persisted = yaml.safe_load(f) or {"repos": []}
+        entries = persisted.get("repos") if isinstance(persisted, dict) else None
+        if not isinstance(entries, list):
+            return
+        kept = [entry for entry in entries if not self._is_builtin_entry(entry)]
+        if len(kept) != len(entries):
+            self.save_repos({**persisted, "repos": kept})
+
+    @staticmethod
+    def _is_builtin_entry(entry: Any) -> bool:
+        """Whether one repos.yaml entry names a ``builtin`` repository."""
+        return isinstance(entry, str) and Path(entry).name == BUILTIN_REPOSITORY_NAME
 
     @property
     def config(self) -> Dict[str, Any]:
@@ -348,7 +439,7 @@ class Jarvis:
             repositories = yaml.safe_load(f) or {"repos": []}
         if not isinstance(repositories, dict):
             return repositories
-        return self._bind_distribution_builtin_repository(repositories)
+        return self._effective_repositories(repositories)
 
     def load_resource_graph(self) -> Dict[str, Any]:
         """Load resource graph from file"""
@@ -371,7 +462,19 @@ class Jarvis:
         self.jarvis_root.mkdir(parents=True, exist_ok=True)
         with open(self.repos_file, "w") as f:
             yaml.dump(repos, f, default_flow_style=False)
-        self._repos = self._bind_distribution_builtin_repository(repos)
+        self._repos = self._effective_repositories(repos)
+
+    def _effective_repositories(self, repositories: Dict[str, Any]) -> Dict[str, Any]:
+        """The in-memory repository view: builtin rebound, or left out."""
+        if not self.builtin_disabled:
+            return self._bind_distribution_builtin_repository(repositories)
+        entries = repositories.get("repos")
+        if not isinstance(entries, list):
+            return repositories
+        return {
+            **repositories,
+            "repos": [entry for entry in entries if not self._is_builtin_entry(entry)],
+        }
 
     def save_resource_graph(self, resource_graph: Dict[str, Any]):
         """Atomically save the active graph (the site graph when configured)."""
@@ -401,6 +504,10 @@ class Jarvis:
     def add_repo(self, repo_path: str, force: bool = False):
         """Add a repository to the repos configuration"""
         repo_path = str(Path(repo_path).absolute())
+        if self.builtin_disabled and self._is_builtin_entry(repo_path):
+            raise ValueError(
+                f"cannot add {repo_path}: {builtin_repository_disabled_message()}"
+            )
         repos = self.repos.copy()
 
         # Check for existing repository with same name (not just same path)
@@ -612,8 +719,15 @@ class Jarvis:
         config_dir = Path(self.config["config_dir"])
         return config_dir / "pipelines"
 
-    def get_builtin_repo_path(self) -> Path:
-        """Get the active builtin repository for this JARVIS installation."""
+    def get_builtin_repo_path(self) -> Optional[Path]:
+        """Get the active builtin repository for this JARVIS installation.
+
+        ``None`` when builtin is left out (``JARVIS_NO_BUILTIN`` or the
+        ``no_builtin`` config key): no registered, distribution, legacy or
+        site-packages copy is consulted.
+        """
+        if self.builtin_disabled:
+            return None
         # First check if builtin repo is registered in repos
         for repo_path_str in self.repos["repos"]:
             repo_path = Path(repo_path_str)
@@ -687,7 +801,10 @@ class Jarvis:
 
     def list_builtin_resource_graphs(self) -> Dict[str, Path]:
         """Return the exact resource-graph profiles owned by the active builtin repo."""
-        graph_root = self.get_builtin_repo_path() / "resource_graph"
+        builtin_repo_path = self.get_builtin_repo_path()
+        if builtin_repo_path is None:
+            return {}
+        graph_root = builtin_repo_path / "resource_graph"
         if not graph_root.is_dir():
             return {}
         profiles: Dict[str, Path] = {}

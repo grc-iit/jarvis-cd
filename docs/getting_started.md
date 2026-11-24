@@ -18,6 +18,37 @@ jarvis init ~/.jarvis/config ~/.jarvis/private ~/.jarvis/shared
 
 On a personal machine all three directories can be the same. On a cluster, `shared` should be on a shared filesystem visible to all nodes.
 
+### Leaving the builtin package repository out
+
+By default JARVIS includes the `builtin` package repository it ships with.
+A deployment that must not use those packages (for example an automated
+relay that brings its own repositories) can leave builtin out completely:
+
+```bash
+jarvis init ~/.jarvis/config ~/.jarvis/private ~/.jarvis/shared +no_builtin
+# or, for every root a process touches:
+export JARVIS_NO_BUILTIN=1
+```
+
+| Switch | Where | Effect |
+|---|---|---|
+| `JARVIS_NO_BUILTIN=1` (`true`/`yes`/`on`; `0`/`false`/`no`/`off` forces builtin back on) | environment | Wins over the config key for this process. |
+| `no_builtin: true` | `<JARVIS_ROOT>/jarvis_config.yaml` | Recorded by `jarvis init +no_builtin`, or by `jarvis init` while `JARVIS_NO_BUILTIN` is truthy. A later `jarvis init` keeps the root's setting unless `+no_builtin`/`-no_builtin` is given. |
+
+With builtin left out:
+
+- `jarvis init` registers no repositories, and strips `builtin` entries from
+  an existing `repos.yaml` it preserves.
+- The repository list (`jarvis repo list`, package search and resolution)
+  ignores every repository named `builtin`, and `jarvis repo add` refuses one.
+- No builtin copy is located: not the distribution's `builtin`, the legacy
+  `<JARVIS_ROOT>/builtin`, nor a `builtin` package in site-packages.
+  `builtin.<pkg>` package types fail with an error naming the switch.
+- `jarvis rg builtins` lists no profiles, and `jarvis rg load-builtin` finds
+  none, because those profiles live in the builtin repository.
+
+The default (neither switch set) is unchanged.
+
 ## Your First Pipeline
 
 The only prerequisite is a container engine (Docker, Podman, or Apptainer). Jarvis builds all scientific software from source inside the container.

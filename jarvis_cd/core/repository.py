@@ -100,7 +100,7 @@ class RepositoryManager:
         
         repos = self.jarvis_config.repos['repos']
         builtin_path = self.jarvis_config.get_builtin_repo_path()
-        builtin_path_str = str(builtin_path)
+        builtin_path_str = str(builtin_path) if builtin_path is not None else None
         
         print("Registered repositories:")
         if not repos:
@@ -119,7 +119,9 @@ class RepositoryManager:
                 repo_count += 1
                 
         # Only show separate builtin entry if it's not in the registered repos
-        if builtin_path_str not in repos:
+        if builtin_path is None:
+            print("  Built-in: builtin left out (JARVIS_NO_BUILTIN / no_builtin)")
+        elif builtin_path_str not in repos:
             builtin_exists = "✓" if builtin_path.exists() else "✗"
             print(f"  Built-in: builtin ({builtin_path}) {builtin_exists}")
         
@@ -572,7 +574,7 @@ class {class_name}(Interceptor):
         
         # Check builtin repository
         builtin_path = self.jarvis_config.get_builtin_repo_path()
-        if builtin_path.exists():
+        if builtin_path is not None and builtin_path.exists():
             packages = self.list_packages_in_repo(str(builtin_path))
             if packages:
                 all_packages['builtin'] = packages
