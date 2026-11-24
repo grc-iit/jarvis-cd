@@ -303,7 +303,7 @@ class TestSpackInstaller(unittest.TestCase):
         self.assertTrue(report['satisfied'])
         self.assertFalse(any(c[0] == 'install' for c in fake.calls))
         em.return_value.capture_spack_environment.assert_called_once_with(
-            ['/aaaaaaa'])
+            ['/aaaaaaa'], config_scopes=())
         self.assertEqual(ppl.env['V'], '1')
 
     def test_installs_only_missing_spec(self):
@@ -449,7 +449,11 @@ class TestInstallAll(_BaseRunMock):
         # pip runs its install; spack only resolves (everything is present)
         self.assertEqual(self.mock_run.call_count, 1)
         self.assertIn('pip install', self.mock_run.call_args[0][0])
-        self.assertEqual(spack_calls, [['spec', '-I', '-l', 'ior']])
+        # spack only reads its config and resolves (everything is present)
+        self.assertTrue(all(c[:2] == ['config', 'get']
+                            for c in spack_calls if c[0] == 'config'))
+        self.assertEqual([c for c in spack_calls if c[0] != 'config'],
+                         [['spec', '-I', '-l', 'ior']])
         self.assertEqual(report['installers']['spack']['status'], 'satisfied')
 
 
