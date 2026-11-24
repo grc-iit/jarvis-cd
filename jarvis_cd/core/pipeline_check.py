@@ -316,6 +316,27 @@ def check_pipeline(ppl: Any) -> Dict[str, Any]:
                         },
                     )
                 )
+        try:
+            instance.check_config(dict(config))
+        except ValueError as exc:
+            errors.append(
+                make_jarvis_issue(
+                    kind="configuration_invalid",
+                    subject=pkg_id,
+                    message=f"{pkg_id}: {str(exc)[:500]}",
+                    identity={"pkg_type": pkg_def.get("pkg_type")},
+                    field=field,
+                )
+            )
+        except Exception as exc:  # a broken hook must not break the check
+            warnings.append(
+                make_jarvis_issue(
+                    kind="configuration_check_failed",
+                    subject=pkg_id,
+                    message=f"{pkg_id}: configuration check failed: {str(exc)[:500]}",
+                    field=field,
+                )
+            )
         steps.append(step)
 
     _coupling(steps, errors, warnings)

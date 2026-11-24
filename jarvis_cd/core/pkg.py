@@ -827,6 +827,16 @@ class Pkg:
             )
         return contract
 
+    def check_config(self, config: Dict[str, Any]) -> None:
+        """Refuse a configuration this package cannot run, before any job is spent.
+
+        ``jarvis ppl check`` (and so every plan and submit) calls it on the
+        submitting host with the pipeline's values over the menu defaults. Raise
+        ``ValueError`` naming what is wrong; it becomes a ``configuration_invalid``
+        check error. It must not touch the file system or read the host: the
+        package runs elsewhere. The default accepts everything.
+        """
+
     def describe_deployment(self) -> Optional[Dict[str, Any]]:
         """Serialize package deployment/readiness metadata for generic clients.
 
