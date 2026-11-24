@@ -943,6 +943,7 @@ def _pipeline_double(tmp_path: Path) -> Pipeline:
         get_pipeline_shared_dir=lambda _name: tmp_path / "shared" / "example"
     )
     pipeline.env = {"KEEP": "value"}
+    pipeline.packages = []
     pipeline.container_image = ""
     pipeline._execution_root = None
     pipeline._execution_id = None

@@ -36,6 +36,7 @@ from jarvis_cd.core.scheduler import SlurmScheduler
 
 def _prepare_snapshot_submission(pipeline: Pipeline, tmp_path: Path) -> None:
     """Give a low-level Pipeline test double an isolated snapshot result."""
+    pipeline.packages = []
     pipeline.last_submission = None
     pipeline._execution_snapshot_dir = None
     pipeline._write_execution_snapshot = Mock(
@@ -832,6 +833,8 @@ def test_pipeline_reconciles_terminal_scheduler_state_on_query(
         return_code=0,
         provider_state="COMPLETED",
         diagnostic=None,
+        basis=None,
+        accounting=None,
     )
     with patch(
         "jarvis_cd.core.scheduler.query_scheduler_execution",
@@ -870,6 +873,8 @@ def test_pipeline_terminalizes_scheduler_job_missing_after_grace(
         return_code=None,
         provider_state=None,
         diagnostic="SLURM accounting has no record for the accepted job",
+        basis=None,
+        accounting=None,
     )
     with (
         patch(
@@ -881,11 +886,15 @@ def test_pipeline_terminalizes_scheduler_job_missing_after_grace(
     ):
         record = pipeline.get_execution("scheduler-never-activated")
 
-    assert record.state == "failed"
+    assert record.state == "canceled"
     assert record.terminal is True
-    assert record.return_code == 1
-    assert "never activated" in (record.error or "")
+    assert record.return_code == 143
+    assert "left the queue before it started" in (record.error or "")
     assert record.metadata["scheduler_observation"]["state"] == "missing"
+    assert (
+        record.metadata["scheduler_observation"]["reconciliation"]["basis"]
+        == "vanished_pending"
+    )
 
 
 def test_slurm_query_uses_accounting_for_completed_job() -> None:
@@ -1444,6 +1453,7 @@ def test_accepted_identity_survives_submitter_persistence_failure(
 
 def test_pipeline_never_accepts_unstructured_submission_stdout(tmp_path: Path) -> None:
     script_path = tmp_path / "submit.slurm"
+    script_path.write_text("#!/bin/bash\n", encoding="utf-8")
     scheduler = SimpleNamespace(
         NAME="slurm",
         array_requested=False,
@@ -1480,6 +1490,7 @@ def test_pipeline_preserves_waited_job_identity_when_workload_fails(
     tmp_path: Path,
 ) -> None:
     script_path = tmp_path / "submit.slurm"
+    script_path.write_text("#!/bin/bash\n", encoding="utf-8")
     scheduler = SimpleNamespace(
         NAME="slurm",
         array_requested=False,
@@ -1532,6 +1543,7 @@ def test_pipeline_records_true_submission_failure_without_job_identity(
     tmp_path: Path,
 ) -> None:
     script_path = tmp_path / "submit.slurm"
+    script_path.write_text("#!/bin/bash\n", encoding="utf-8")
     scheduler = SimpleNamespace(
         NAME="slurm",
         array_requested=False,

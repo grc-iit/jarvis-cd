@@ -186,7 +186,27 @@ def _declared_couplings(
 
 
 def check_pipeline(ppl: Any) -> Dict[str, Any]:
-    """Return a ``jarvis.pipeline-check.v1`` document for ``ppl``."""
+    """Return a ``jarvis.pipeline-check.v1`` document for ``ppl``.
+
+    A check never writes the pipeline's package directories: the package
+    instances it loads get their paths, but the directories are created only
+    when a package is loaded outside a check.
+    """
+    previous = getattr(ppl, "_package_dirs_readonly", False) is True
+    try:
+        ppl._package_dirs_readonly = True
+    except Exception:
+        pass
+    try:
+        return _check_pipeline(ppl)
+    finally:
+        try:
+            ppl._package_dirs_readonly = previous
+        except Exception:
+            pass
+
+
+def _check_pipeline(ppl: Any) -> Dict[str, Any]:
     from jarvis_cd.core.pkg import Service
 
     size, size_source = _allocation_size(ppl)

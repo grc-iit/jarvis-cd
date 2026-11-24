@@ -23,6 +23,16 @@ from jarvis_cd.core.installer import (
 )
 
 
+class FakeJarvis:
+    """The Jarvis lookups the installers make: the pipeline's shared dir."""
+
+    def __init__(self, root):
+        self.root = root
+
+    def get_pipeline_shared_dir(self, name):
+        return os.path.join(self.root, 'shared', name)
+
+
 class FakePipeline:
     """Minimal stand-in for Pipeline that the installers actually touch."""
 
@@ -156,16 +166,20 @@ class _BaseRunMock(unittest.TestCase):
     concrete installers can be exercised without invoking real tools."""
 
     def setUp(self):
+        import tempfile
         patcher = mock.patch('jarvis_cd.core.installer._run_local',
                              return_value=0)
         self.addCleanup(patcher.stop)
         self.mock_run = patcher.start()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.jarvis = FakeJarvis(tmp.name)
 
 
 class TestPipInstaller(_BaseRunMock):
 
     def test_runs_aggregated_pip_install(self):
-        ppl = FakePipeline()
+        ppl = FakePipeline(jarvis=self.jarvis)
         pkgs = [pkg('pip', 'numpy', 'a'), pkg('pip', 'pandas==2.1', 'b')]
         PipInstaller().install(ppl, pkgs)
         self.mock_run.assert_called_once()
@@ -175,13 +189,13 @@ class TestPipInstaller(_BaseRunMock):
         self.assertIn('pandas==2.1', cmd)
 
     def test_no_queries_is_noop(self):
-        ppl = FakePipeline()
+        ppl = FakePipeline(jarvis=self.jarvis)
         PipInstaller().install(ppl, [])
         self.mock_run.assert_not_called()
 
     def test_failure_raises(self):
         self.mock_run.return_value = 1
-        ppl = FakePipeline()
+        ppl = FakePipeline(jarvis=self.jarvis)
         with self.assertRaises(RuntimeError):
             PipInstaller().install(ppl, [pkg('pip', 'numpy')])
 
@@ -189,7 +203,7 @@ class TestPipInstaller(_BaseRunMock):
 class TestCondaInstaller(_BaseRunMock):
 
     def test_runs_aggregated_conda_install(self):
-        ppl = FakePipeline()
+        ppl = FakePipeline(jarvis=self.jarvis)
         CondaInstaller().install(
             ppl, [pkg('conda', 'numpy'), pkg('conda', 'scipy')]
         )
@@ -245,10 +259,14 @@ class _FakeSpack:
 
 
 class TestSpackInstaller(unittest.TestCase):
+    """The per-package ``spack install`` path (``JARVIS_SPACK_ENV=off``)."""
 
     def setUp(self):
         import tempfile
         from jarvis_cd.core.spack_install import InstallContext
+        env = mock.patch.dict(os.environ, {'JARVIS_SPACK_ENV': 'off'})
+        env.start()
+        self.addCleanup(env.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.context = InstallContext(
             install_dir=self.tmp.name,
@@ -262,8 +280,7 @@ class TestSpackInstaller(unittest.TestCase):
     def _run(self, fake, packages, mode='install'):
         from jarvis_cd.core.spack_install import InstallDecisionNeeded
         self.context.mode = mode
-        ppl = FakePipeline(packages=packages)
-        ppl.jarvis = object()
+        ppl = FakePipeline(packages=packages, jarvis=FakeJarvis(self.tmp.name))
         with mock.patch('jarvis_cd.core.spack_install.SpackRunner.run',
                         autospec=True, side_effect=fake), \
                 mock.patch('jarvis_cd.core.environment.EnvironmentManager') as em:
@@ -393,9 +410,9 @@ class TestInstallAll(_BaseRunMock):
         import tempfile
         from jarvis_cd.core.spack_install import InstallContext
         ppl = FakePipeline(
-            packages=[pkg('pip', 'numpy'), pkg('spack', 'ior')]
+            packages=[pkg('pip', 'numpy'), pkg('spack', 'ior')],
+            jarvis=self.jarvis,
         )
-        ppl.jarvis = object()
         spack_calls = []
 
         def fake_spack(runner, arguments, stream=False):
@@ -403,7 +420,9 @@ class TestInstallAll(_BaseRunMock):
             out = _SPEC_ALL_PRESENT if arguments[0] == 'spec' else ''
             return subprocess.CompletedProcess(arguments, 0, out, '')
 
-        with tempfile.TemporaryDirectory() as tmp, mock.patch(
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
+            os.environ, {'JARVIS_SPACK_ENV': 'off'}
+        ), mock.patch(
             'jarvis_cd.core.environment.EnvironmentManager'
         ) as MockEM, mock.patch(
             'jarvis_cd.core.spack_install.SpackRunner.run',

@@ -1180,7 +1180,13 @@ class Pkg:
         - config_dir: pipelines/pipeline_name/packages/pkg_id
         - shared_dir: pipeline_name/pkg_id
         - private_dir: pipeline_name/pkg_id
+
+        While the pipeline is being checked (``_package_dirs_readonly``), the
+        paths are set but not created; a later call creates them.
         """
+        read_only = getattr(self.pipeline, "_package_dirs_readonly", False) is True
+        if getattr(self, "_package_dirs_pending", False) and not read_only:
+            self._create_package_directories()
         if not self.config_dir or not self.shared_dir or not self.private_dir:
             pkg_id = getattr(self, "pkg_id", None) or self.__class__.__name__.lower()
 
@@ -1220,13 +1226,20 @@ class Pkg:
             if not self.private_dir:
                 self.private_dir = str(pipeline_private_dir / pkg_id)
 
-            # Create directories if they don't exist
-            for dir_path in [self.config_dir, self.shared_dir, self.private_dir]:
-                if dir_path and not Path(dir_path).exists():
-                    Path(dir_path).mkdir(parents=True, exist_ok=True)
+            if read_only:
+                self._package_dirs_pending = True
+            else:
+                self._create_package_directories()
 
             # Call user-defined initialization
             self._init()
+
+    def _create_package_directories(self):
+        """Create this package's config, shared and private directories."""
+        for dir_path in [self.config_dir, self.shared_dir, self.private_dir]:
+            if dir_path and not Path(dir_path).exists():
+                Path(dir_path).mkdir(parents=True, exist_ok=True)
+        self._package_dirs_pending = False
 
     def _detect_pkg_dir(self):
         """

@@ -8,9 +8,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from jarvis_cd.shell.core_exec import MpiVersion
 from jarvis_cd.shell.exec_factory import Exec as MpiExec
-from jarvis_cd.shell.mpi_exec import OpenMpiExec, MpichExec, CrayMpichExec, IntelMpiExec
+from jarvis_cd.shell.mpi_exec import (
+    OpenMpiExec, MpichExec, CrayMpichExec, IntelMpiExec, LocalMpiExec,
+)
 from jarvis_cd.shell.exec_info import MpiExecInfo, ExecType
 from jarvis_cd.util.hostfile import Hostfile
+
+
+def _no_launch_net_collection():
+    """Stub the resource-graph net collector a multi-host launch runs.
+
+    The hosts in these tests do not exist; collecting their net facts would
+    ssh to them. The stub reports the graph as covering the launch.
+    """
+    return patch.object(LocalMpiExec, "_collect_launch_net", return_value=None)
 
 
 class TestMpiExec(unittest.TestCase):
@@ -250,7 +261,9 @@ class TestMpiExec(unittest.TestCase):
         multi_host = Hostfile(hosts=["host1", "host2", "host3"], find_ips=False)
         exec_info = MpiExecInfo(nprocs=6, hostfile=multi_host, dry_run=True)
 
-        mpi_exec = OpenMpiExec("./myapp", exec_info)
+        with _no_launch_net_collection() as collect:
+            mpi_exec = OpenMpiExec("./myapp", exec_info)
+        collect.assert_called_once()
         cmd = mpi_exec.get_cmd()
 
         # Verify hostfile or host option is included
@@ -494,7 +507,8 @@ class TestOpenMpiMultiCommand(unittest.TestCase):
             hostfile = Hostfile(path=hostfile_path)
             exec_info = MpiExecInfo(nprocs=4, ppn=2, hostfile=hostfile, env={})
 
-            mpi_exec = OpenMpiExec("./myapp", exec_info)
+            with _no_launch_net_collection():
+                mpi_exec = OpenMpiExec("./myapp", exec_info)
             cmd = mpi_exec.get_cmd()
 
             # Should include hostfile path
@@ -571,7 +585,8 @@ class TestMpichMultiCommand(unittest.TestCase):
             hostfile = Hostfile(path=hostfile_path)
             exec_info = MpiExecInfo(nprocs=4, hostfile=hostfile, env={})
 
-            mpi_exec = MpichExec("./myapp", exec_info)
+            with _no_launch_net_collection():
+                mpi_exec = MpichExec("./myapp", exec_info)
             cmd = mpi_exec.get_cmd()
 
             # Should include hostfile path
