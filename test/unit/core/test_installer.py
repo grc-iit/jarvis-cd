@@ -267,6 +267,12 @@ class TestSpackInstaller(unittest.TestCase):
         env = mock.patch.dict(os.environ, {'JARVIS_SPACK_ENV': 'off'})
         env.start()
         self.addCleanup(env.stop)
+        # SpackRunner.run is faked, so the faked Spack counts as available.
+        available = mock.patch(
+            'jarvis_cd.core.spack_install.spack_unavailable_reason',
+            return_value=None)
+        available.start()
+        self.addCleanup(available.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.context = InstallContext(
             install_dir=self.tmp.name,
@@ -422,6 +428,9 @@ class TestInstallAll(_BaseRunMock):
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
             os.environ, {'JARVIS_SPACK_ENV': 'off'}
+        ), mock.patch(
+            'jarvis_cd.core.spack_install.spack_unavailable_reason',
+            return_value=None,
         ), mock.patch(
             'jarvis_cd.core.environment.EnvironmentManager'
         ) as MockEM, mock.patch(
