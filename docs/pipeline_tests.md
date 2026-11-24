@@ -563,10 +563,13 @@ must have `bin/spack`:
 1. `JARVIS_SITE_SPACKS`, an `os.pathsep`-separated list a site sets;
 2. `<dir of JARVIS_RESOURCE_GRAPH>/spack`, a Spack kept next to the site
    resource graph;
-3. the well-known locations `/opt/spack`, `/usr/local/spack`,
+3. the Spack behind each Spack module tree (`<root>/share/spack/lmod` or
+   `<root>/share/spack/modules`) on the login `MODULEPATH`, which is how a
+   site publishes the software it built with Spack;
+4. the well-known locations `/opt/spack`, `/usr/local/spack`,
    `/opt/apps/spack`, `/apps/spack`, `/sw/spack`, `/shared/spack` and
    `~/spack`;
-4. a `spack` next to a broken `JARVIS_SPACK_ROOT` or `SPACK_ROOT`.
+5. a `spack` next to a broken `JARVIS_SPACK_ROOT` or `SPACK_ROOT`.
 
 | Field of a `site_spacks` entry | Meaning |
 |--------------------------------|---------|
@@ -574,7 +577,7 @@ must have `bin/spack`:
 | `root`, `constraint` | the checkout's absolute path (the value to answer with) |
 | `version` | the release read from `lib/spack/spack/__init__.py` (nothing is run), or `null` |
 | `executable` | `<root>/bin/spack` |
-| `source` | `JARVIS_SITE_SPACKS`, `resource_graph_site`, `well_known`, `JARVIS_SPACK_ROOT_sibling` or `SPACK_ROOT_sibling` |
+| `source` | `JARVIS_SITE_SPACKS`, `resource_graph_site`, `site_modules`, `well_known`, `JARVIS_SPACK_ROOT_sibling` or `SPACK_ROOT_sibling` |
 | `use` | the environment setting that selects it (`JARVIS_SPACK_ROOT=<root>`) |
 | `prepare` | the command that makes a JARVIS Spack chained to it (`jarvis spack prepare --site_spack <root>`, see [spack.md](spack.md)) |
 

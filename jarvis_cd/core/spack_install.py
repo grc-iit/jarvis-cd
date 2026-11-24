@@ -449,13 +449,30 @@ def spack_checkout_version(root: Path) -> Optional[str]:
     return None
 
 
+def module_tree_spacks(module_path: str) -> List[str]:
+    """Spack roots whose module trees (``<root>/share/spack/...``) are on ``module_path``.
+
+    A site that publishes its software as Spack-generated modules puts those
+    trees on the login ``MODULEPATH``; the Spack behind them is the site's.
+    """
+    roots: List[str] = []
+    marker = "/share/spack/"
+    for entry in module_path.split(":"):
+        entry = entry.strip()
+        index = (entry.rstrip("/") + "/").find(marker)
+        if index > 0 and entry[:index] not in roots:
+            roots.append(entry[:index])
+    return roots
+
+
 def discover_site_spacks() -> List[Dict[str, Any]]:
     """Spack checkouts this host offers, as ``spack_missing`` candidates.
 
     Sources, in order: ``JARVIS_SITE_SPACKS``, the resource graph's site dir
-    (``<dir of JARVIS_RESOURCE_GRAPH>/spack``), well-known locations, and
-    the parent of a broken ``JARVIS_SPACK_ROOT``/``SPACK_ROOT``. Each one
-    must have ``bin/spack``; its release is read from the source tree.
+    (``<dir of JARVIS_RESOURCE_GRAPH>/spack``), the Spacks whose module trees
+    the login ``MODULEPATH`` lists (the site's published software), well-known
+    locations, and the parent of a broken ``JARVIS_SPACK_ROOT``/``SPACK_ROOT``.
+    Each one must have ``bin/spack``; its release is read from the source tree.
     """
     probes: List[tuple[str, str]] = []
     for item in os.environ.get(SITE_SPACKS_ENV, "").split(os.pathsep):
@@ -464,6 +481,13 @@ def discover_site_spacks() -> List[Dict[str, Any]]:
     graph = os.environ.get("JARVIS_RESOURCE_GRAPH", "").strip()
     if graph:
         probes.append((str(Path(graph).expanduser().parent / "spack"), "resource_graph_site"))
+    module_path = os.environ.get("MODULEPATH", "")
+    if "/share/spack/" not in module_path:
+        from jarvis_cd.core.spack_site import login_module_path
+
+        module_path = login_module_path()
+    for item in module_tree_spacks(module_path):
+        probes.append((item, "site_modules"))
     for item in _WELL_KNOWN_SPACKS:
         probes.append((item, "well_known"))
     for name in ("JARVIS_SPACK_ROOT", "SPACK_ROOT"):
@@ -516,6 +540,7 @@ def spack_missing_issue(reason: str, site_spacks: Sequence[Mapping[str, Any]]) -
         evidence=[
             "JARVIS_SPACK_ROOT, SPACK_ROOT, `command -v spack`",
             f"{SITE_SPACKS_ENV}, <resource graph dir>/spack, "
+            "the Spack roots of the login MODULEPATH's share/spack module trees, "
             + ", ".join(_WELL_KNOWN_SPACKS),
         ],
         answerable=True,
