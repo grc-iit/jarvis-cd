@@ -161,31 +161,41 @@ def resolve_scheduler_name(spec: Optional[Dict[str, Any]]) -> str:
 
         name = detect_provider() or ""
         if not name:
-            raise JarvisIssueError([make_jarvis_issue(
-                kind="scheduler_missing",
-                subject="scheduler",
-                message=(
-                    f"scheduler.name is {repr(requested) if requested else 'unset'} (auto) but no "
-                    "scheduler client ("
-                    + ", ".join(client for client, _provider in _CLIENTS)
-                    + ") is on PATH"
-                ),
-                field="scheduler.name",
-                details={"requested": requested,
-                         "clients": [client for client, _provider in _CLIENTS]},
-                remedy="submit from a host with the site's scheduler client, or "
-                "name the scheduler in scheduler.name",
-            )])
+            raise JarvisIssueError(
+                [
+                    make_jarvis_issue(
+                        kind="scheduler_missing",
+                        subject="scheduler",
+                        message=(
+                            f"scheduler.name is {repr(requested) if requested else 'unset'} (auto) but no "
+                            "scheduler client ("
+                            + ", ".join(client for client, _provider in _CLIENTS)
+                            + ") is on PATH"
+                        ),
+                        field="scheduler.name",
+                        details={
+                            "requested": requested,
+                            "clients": [client for client, _provider in _CLIENTS],
+                        },
+                        remedy="submit from a host with the site's scheduler client, or "
+                        "name the scheduler in scheduler.name",
+                    )
+                ]
+            )
     if name not in _SCHEDULERS:
-        raise JarvisIssueError([make_jarvis_issue(
-            kind="scheduler_unsupported",
-            subject="scheduler",
-            message=f"JARVIS has no {name} scheduler provider yet",
-            identity={"provider": name},
-            field="scheduler.name",
-            details={"requested": requested, "supported": sorted(_SCHEDULERS)},
-            remedy="use a supported scheduler",
-        )])
+        raise JarvisIssueError(
+            [
+                make_jarvis_issue(
+                    kind="scheduler_unsupported",
+                    subject="scheduler",
+                    message=f"JARVIS has no {name} scheduler provider yet",
+                    identity={"provider": name},
+                    field="scheduler.name",
+                    details={"requested": requested, "supported": sorted(_SCHEDULERS)},
+                    remedy="use a supported scheduler",
+                )
+            ]
+        )
     return name
 
 
@@ -261,7 +271,11 @@ class Scheduler:
         install_on_load: Optional[str] = None,
     ):
         self.spec = dict(spec or {})
-        if install_on_load is not None and install_on_load not in ("install", "check", "skip"):
+        if install_on_load is not None and install_on_load not in (
+            "install",
+            "check",
+            "skip",
+        ):
             raise ValueError("install_on_load must be 'install', 'check' or 'skip'")
         self.install_on_load = install_on_load
         self.shared_dir = Path(pipeline_shared_dir)
@@ -561,9 +575,7 @@ class Scheduler:
         """
         stop_invocation = self._pipeline_stop_invocation()
         if stop_invocation is None:
-            stop_block = (
-                '        echo "JARVIS: no ppl stop for this job action"\n'
-            )
+            stop_block = '        echo "JARVIS: no ppl stop for this job action"\n'
         else:
             stop_block = (
                 '        echo "JARVIS: ppl stop BEGIN"\n'
@@ -1130,7 +1142,9 @@ class SlurmScheduler(Scheduler):
             reason_kind = "job_hold"
         elif any(lowered.startswith(prefix) for prefix in cls._LIMIT_REASONS):
             reason_kind = "limit"
-        elif lowered.startswith(("resources", "priority", "reqnodenotavail", "reservation")):
+        elif lowered.startswith(
+            ("resources", "priority", "reqnodenotavail", "reservation")
+        ):
             reason_kind = "resources"
         else:
             reason_kind = "other"
@@ -1183,6 +1197,7 @@ class SlurmScheduler(Scheduler):
             if current is None or new is None:
                 return new if current is None else current
             return min(current, new)
+
         if listing is None or listing.returncode != 0:
             return []
         merged: Dict[str, Dict[str, Any]] = {}
@@ -1228,8 +1243,10 @@ class SlurmScheduler(Scheduler):
             # One sinfo line per node configuration. A partition with several
             # reports the smallest node, so sizing from it fits every node.
             if len(fields) >= 7:
-                line = {"cpus_per_node": count(fields[4]),
-                        "memory_mb_per_node": count(fields[5])}
+                line = {
+                    "cpus_per_node": count(fields[4]),
+                    "memory_mb_per_node": count(fields[5]),
+                }
                 if len(fields) >= 10:
                     line["sockets_per_node"] = count(fields[7])
                     line["cores_per_socket"] = count(fields[8])
@@ -1602,7 +1619,8 @@ def _slurm_query_start(job_id: str) -> tuple[Optional[str], Optional[str]]:
         if started:
             return started, "scontrol"
     listed, _ = _run_scheduler_query(
-        ["sacct", "-j", job_id, "-X", "-n", "-P", "-o", "Start"])
+        ["sacct", "-j", job_id, "-X", "-n", "-P", "-o", "Start"]
+    )
     if listed is not None and listed.returncode == 0:
         for line in (listed.stdout or "").splitlines():
             started = _local_iso(line, "%Y-%m-%dT%H:%M:%S")
@@ -1661,8 +1679,12 @@ def scheduler_job_start(
         return None
     if not started:
         started, source = _iso_utc(datetime.now(timezone.utc)), "run_start"
-    return {"provider": provider, "job_id": job_id,
-            "started_at": started, "source": source}
+    return {
+        "provider": provider,
+        "job_id": job_id,
+        "started_at": started,
+        "source": source,
+    }
 
 
 def _parse_slurm_duration(value: str) -> Optional[int]:
