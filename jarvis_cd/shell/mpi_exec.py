@@ -449,15 +449,67 @@ class OpenMpiExec(LocalMpiExec):
         """
         import os
         import shutil
-        if self.ssh_port or not os.environ.get('SLURM_JOB_ID') \
-                or not shutil.which('srun'):
+        import sys
+        if not os.environ.get('SLURM_JOB_ID') or not shutil.which('srun'):
             return None
-        script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                              'srun_ssh_agent.sh')
-        # The agent string is split on spaces and colons.
-        if not os.path.isfile(script) or any(c in script for c in ' :'):
+        # ExecInfo gives every launch port 22 when none is named, so only
+        # another port is the pipeline's choice of ssh.
+        if self.ssh_port and self.ssh_port != 22:
+            _say_once(f'JARVIS: Open MPI starts its remote daemons over ssh '
+                      f'on port {self.ssh_port}, as the pipeline names')
             return None
+        script = _srun_agent_script()
+        if script is None:
+            print('JARVIS: Open MPI starts its remote daemons over ssh: the '
+                  'srun agent has no path without a space or colon, which '
+                  'Open MPI splits an agent on; every node then needs a known '
+                  'host key', file=sys.stderr, flush=True)
+            return None
+        _say_once(f'JARVIS: Open MPI starts its remote daemons through srun '
+                  f'({script})')
         return f'/bin/sh {script}'
+
+
+_SAID = set()
+
+
+def _say_once(text):
+    if text not in _SAID:
+        _SAID.add(text)
+        print(text, flush=True)
+
+
+def _srun_agent_script():
+    """The srun agent at a path Open MPI can name, or None.
+
+    Open MPI splits ``plm_rsh_agent`` on spaces and colons, so a package
+    path holding either is copied once into a per-user folder that holds
+    neither.
+    """
+    import os
+    import shutil
+    import tempfile
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          'srun_ssh_agent.sh')
+    if not os.path.isfile(script):
+        return None
+    if not any(c in script for c in ' :'):
+        return script
+    uid = os.getuid() if hasattr(os, 'getuid') else 'user'
+    for root in (tempfile.gettempdir(), '/tmp', os.path.expanduser('~')):
+        folder = os.path.join(root, f'.jarvis-agent-{uid}')
+        if any(c in folder for c in ' :'):
+            continue
+        target = os.path.join(folder, 'srun_ssh_agent.sh')
+        try:
+            os.makedirs(folder, mode=0o700, exist_ok=True)
+            partial = f'{target}.{os.getpid()}'
+            shutil.copyfile(script, partial)
+            os.replace(partial, target)
+        except OSError:
+            continue
+        return target
+    return None
 
 
 class MpichExec(LocalMpiExec):
