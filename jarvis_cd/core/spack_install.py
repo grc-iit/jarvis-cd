@@ -546,9 +546,10 @@ def spack_missing_issue(reason: str, site_spacks: Sequence[Mapping[str, Any]]) -
         answerable=True,
         hint=(
             "answer with a site_spacks root (recorded as the site decision `spack` "
-            "and used as JARVIS_SPACK_ROOT), or set JARVIS_SPACK_ROOT; "
-            "`jarvis spack prepare --site_spack <root>` makes a jarvis Spack "
-            "chained to a site one"
+            "and used as JARVIS_SPACK_ROOT; a root this user cannot write becomes the "
+            "upstream of a jarvis Spack prepared beside the site record), or set "
+            "JARVIS_SPACK_ROOT; `jarvis spack prepare --site_spack <root>` makes a "
+            "jarvis Spack chained to a site one"
         ),
     )
     issue["site_spacks"] = [dict(item) for item in site_spacks]
@@ -600,9 +601,91 @@ def ensure_spack_available(context: "InstallContext", decisions: "Decisions") ->
     if answer is None:
         context.raise_issue(issue)
         return issue
-    root = str(Path(str(answer["constraint"])).expanduser().resolve())
+    chosen = Path(str(answer["constraint"])).expanduser().resolve()
+    root = str(chosen)
+    if not spack_root_writable(chosen):
+        chained = chained_spack_root(chosen)
+        context.log(
+            f"[{_utc_now()}] spack_missing answered with {chosen}, which this user cannot "
+            f"write: jarvis uses its own Spack {chained} with it as an upstream\n"
+        )
+        opened = prepare_chained_spack(context, chosen, chained)
+        if opened is not None:
+            return opened
+        root = str(chained)
     os.environ["JARVIS_SPACK_ROOT"] = root
     context.log(f"[{_utc_now()}] spack_missing answered: JARVIS_SPACK_ROOT={root}\n")
+    return None
+
+
+def spack_root_writable(root: Path) -> bool:
+    """Whether this user can write the Spack root's config scope and install tree.
+
+    Jarvis isolates Spack to the root's site scope (``etc/spack``), where
+    ``compiler find`` and site preparation write, and installs go under
+    ``opt/spack``. A shared site Spack usually allows neither.
+    """
+    for path in (root / "etc" / "spack", root / "opt" / "spack"):
+        probe = path
+        while not probe.exists() and probe != probe.parent:
+            probe = probe.parent
+        if not os.access(probe, os.W_OK):
+            return False
+    return True
+
+
+def chained_spack_root(site_root: Path) -> Path:
+    """Where jarvis keeps its own Spack chained to the read-only ``site_root``.
+
+    It lives with the site record (the directory of ``JARVIS_RESOURCE_GRAPH``,
+    else ``JARVIS_ROOT``, else ``~/.ppi-jarvis``), one per site root and
+    release, outside the locations probed for Spack candidates.
+    """
+    graph = os.environ.get("JARVIS_RESOURCE_GRAPH", "").strip()
+    if graph:
+        home = Path(graph).expanduser().resolve().parent
+    else:
+        home = Path(os.environ.get("JARVIS_ROOT", "").strip() or "~/.ppi-jarvis").expanduser()
+    version = spack_checkout_version(site_root) or "unknown"
+    digest = hashlib.sha256(str(site_root).encode("utf-8")).hexdigest()[:12]
+    return home / "spacks" / f"{version}-{digest}"
+
+
+def prepare_chained_spack(
+    context: "InstallContext", site_root: Path, root: Path
+) -> Optional[Dict[str, Any]]:
+    """Prepare ``root`` as a jarvis Spack with ``site_root`` as its upstream.
+
+    Prepared once per root (``site-prep.json`` names the same site Spack);
+    concurrent installs wait on one lock. Returns the open
+    ``ambiguous_compiler`` issue, or None when the root is ready.
+    """
+    from jarvis_cd.core.spack_site import SITE_PREP_RECORD, prepare_site
+
+    root.parent.mkdir(parents=True, exist_ok=True)
+    with _file_lock(root.parent / f".{root.name}.lock", exclusive=True):
+        try:
+            previous = json.loads((root / SITE_PREP_RECORD).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            previous = None
+        if (
+            isinstance(previous, Mapping)
+            and previous.get("status") == "prepared"
+            and previous.get("site_spack") == str(site_root)
+        ):
+            return None
+        answers = {
+            str(issue_id): dict(entry) if isinstance(entry, Mapping) else {"constraint": entry}
+            for issue_id, entry in (context.answers or {}).items()
+        }
+        record = prepare_site(root=str(root), site_spack=str(site_root), answers=answers)
+    context.log(
+        f"[{_utc_now()}] jarvis Spack {root} prepared ({record.get('checkout')}), "
+        f"upstream {record.get('upstream_install_tree')}\n"
+    )
+    for issue in record.get("issues") or []:
+        context.raise_issue(issue)
+        return issue
     return None
 
 

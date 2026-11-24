@@ -592,7 +592,17 @@ issue:
 An answer without `bin/spack` is refused. The answer is recorded as the site
 decision `spack` in `decisions.yaml` and becomes `JARVIS_SPACK_ROOT` for that
 process, so the install, the run's `spack load` and the provenance record all
-use it. A later run replays it (`applied_decisions[].source:
+use it. A shared site Spack is usually read-only, and Spack cannot run from a
+root whose site scope (`etc/spack`) or install tree (`opt/spack`) this user
+cannot write. When the answer is such a root, JARVIS keeps the answer and
+uses its own Spack instead: `<site record>/spacks/<release>-<digest>`, where
+the site record is the directory of `JARVIS_RESOURCE_GRAPH`, else
+`JARVIS_ROOT`, else `~/.ppi-jarvis`. It prepares that root once, as
+`jarvis spack prepare --site_spack <answer>` would, with the answer as its
+upstream, so find-first reuses what the site built. Concurrent installs wait
+on one lock, and later ones find `site-prep.json` and skip the work. An
+`ambiguous_compiler` question from that preparation is raised like any other
+install issue. A later run replays it (`applied_decisions[].source:
 decisions_file`). When the set of candidates changes, for example a new
 checkout appears, the question gets a new `issue_id`. The old answer is then
 listed in `stale_decisions` and offered as `previous_answer`, with
