@@ -411,6 +411,14 @@ wrapped ssh:
 - **OpenMPI**: `--mca plm_rsh_agent "<ssh_cmd>"`
 - **MPICH / Hydra**: `-bootstrap-exec "<ssh_cmd>"`
 
+With no `ssh_cmd`, an OpenMPI launch inside a Slurm allocation sets its
+agent to `jarvis_cd/shell/srun_ssh_agent.sh`, which starts each remote
+daemon with `srun --nodelist=<host>`. An OpenMPI built without a Slurm
+launcher otherwise uses ssh between compute nodes, which fails on a node
+whose host key the person's `known_hosts` lacks. An OpenMPI with a Slurm
+launcher ignores the agent. Set `ssh_cmd: "ssh"` to keep ssh; container
+launches keep it, since their ranks reach sshd inside the instances.
+
 Pass an empty string (`ssh_cmd: ""`) to explicitly reset a slot back
 to the built-in default.
 

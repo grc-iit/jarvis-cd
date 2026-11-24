@@ -1050,7 +1050,10 @@ Once the job is running, packages reach the other allocated nodes over
 SSH/PSSH (e.g. apptainer instance start is fanned to every host, MPI
 bootstraps remote ranks). Inside a SLURM allocation those ssh hops to
 allocated peers are adopted automatically by `pam_slurm_adopt`, so no
-extra SSH keys are needed.
+extra SSH keys are needed, but each node's host key must still be in
+`known_hosts`. OpenMPI launches avoid that: with no `ssh_cmd`, inside an
+allocation they start their remote daemons through `srun` (see
+[shell.md → Launcher Overrides](shell.md#launcher-overrides)).
 
 If the workload runs from a conda environment, pair the scheduler with
 a pipeline-level `ssh_cmd` launcher override so the host `ssh` does not

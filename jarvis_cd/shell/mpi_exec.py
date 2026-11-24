@@ -376,9 +376,11 @@ class OpenMpiExec(LocalMpiExec):
         params.append('--oversubscribe')
         params.append('--allow-run-as-root')  # For docker
         # Forward the pipeline-level ssh_cmd to OpenMPI's rsh agent
-        # so prted spawns remote daemons via the wrapped ssh.
-        if self.ssh_cmd:
-            params.append(f'--mca plm_rsh_agent "{self.ssh_cmd}"')
+        # so prted spawns remote daemons via the wrapped ssh. With none,
+        # inside a Slurm allocation the daemons start through srun.
+        agent = self.ssh_cmd or self._slurm_agent()
+        if agent:
+            params.append(f'--mca plm_rsh_agent "{agent}"')
 
         # --prefix lets remote nodes (daemons started over ssh, as with an
         # Open MPI built without Slurm) find prted/orted: the chosen MPI's
@@ -435,6 +437,27 @@ class OpenMpiExec(LocalMpiExec):
             params.append(self.original_cmd)
 
         return ' '.join(params)
+
+    def _slurm_agent(self):
+        """The srun agent for remote daemons inside a Slurm allocation.
+
+        An Open MPI built without a Slurm launcher starts its remote daemons
+        over ssh, which needs every node's host key and a key pair between
+        nodes. Inside an allocation srun can start them instead, with Slurm's
+        own authentication; an Open MPI with a Slurm launcher ignores this.
+        A pipeline ``ssh_cmd`` (or an ssh port) keeps ssh.
+        """
+        import os
+        import shutil
+        if self.ssh_port or not os.environ.get('SLURM_JOB_ID') \
+                or not shutil.which('srun'):
+            return None
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              'srun_ssh_agent.sh')
+        # The agent string is split on spaces and colons.
+        if not os.path.isfile(script) or any(c in script for c in ' :'):
+            return None
+        return f'/bin/sh {script}'
 
 
 class MpichExec(LocalMpiExec):

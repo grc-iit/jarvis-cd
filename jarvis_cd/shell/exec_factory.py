@@ -182,10 +182,13 @@ class Exec(CoreExec):
                 # Clear env so mpirun -x flags don't override the
                 # container's PATH/LD_LIBRARY_PATH with host values.
                 mpi_type = self._detect_mpi(self.exec_info)
+                # Open MPI keeps ssh here rather than its srun agent.
+                ssh_cmd = self.exec_info.ssh_cmd or (
+                    'ssh' if mpi_type == ExecType.OPENMPI else None)
                 mpi_executor = self._create_mpi_executor_with_type(
                     self.cmd,
                     self.exec_info.mod(container='none', dry_run=True,
-                                       env={}),
+                                       env={}, ssh_cmd=ssh_cmd),
                     mpi_type)
                 mpi_cmd = mpi_executor.cmd
                 # Force SSH launcher (not Slurm) so mpirun reaches the
@@ -205,8 +208,11 @@ class Exec(CoreExec):
                 # Docker/Podman: mpirun runs INSIDE the already-running
                 # container.  Build the full mpirun command, then wrap it.
                 mpi_type = self._detect_mpi(self.exec_info)
+                ssh_cmd = self.exec_info.ssh_cmd or (
+                    'ssh' if mpi_type == ExecType.OPENMPI else None)
                 mpi_executor = self._create_mpi_executor_with_type(
-                    self.cmd, self.exec_info.mod(container='none', dry_run=True),
+                    self.cmd, self.exec_info.mod(container='none', dry_run=True,
+                                                 ssh_cmd=ssh_cmd),
                     mpi_type)
                 mpi_cmd = self._network_env_prefix(mpi_executor) + mpi_executor.cmd
                 wrapped_cmd, local_info = self._prepare_container(mpi_cmd)
