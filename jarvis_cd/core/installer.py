@@ -170,6 +170,7 @@ class Installer(ABC):
             context.open()
             owns_context = True
         failure: Optional[InstallFailed] = None
+        held_questions: List[Dict[str, Any]] = []
         try:
             for method, pkg_list in grouped.items():
                 installer = Installer.for_method(method)
@@ -207,6 +208,16 @@ class Installer(ABC):
                     report["last_install"] = read_last_install(ppl, context=context)
                 except Exception as exc:  # reporting must never fail a check
                     report["last_install"] = {"error": str(exc)[:512]}
+                last = report["last_install"] or {}
+                seen = {issue.get("issue_id") for issue in report["issues"]}
+                for doc in last.get("open_questions") or []:
+                    if doc.get("issue_id") in seen:
+                        continue
+                    # an install job's question this host cannot raise (HELD_METHODS)
+                    held_questions.append({**doc, "raised_by": "install_job",
+                                           "execution_id": last.get("execution_id")})
+                report["issues"].extend(held_questions)
+                report["open_issues"].extend(doc["issue_id"] for doc in held_questions)
                 spack_pkgs = Installer.get_installers(ppl).get("spack")
                 if spack_pkgs:
                     try:
@@ -231,9 +242,11 @@ class Installer(ABC):
                           "issue_id; an answer may name a candidate by "
                           "constraint, alias, id or key",
             }
-        report["satisfied"] = not (context is not None and context.issues) and all(
-            result.get("status") in ("done", "satisfied", "installed", "unchecked")
-            for result in report["installers"].values()
+        report["satisfied"] = (
+            not (context is not None and context.issues) and not held_questions and all(
+                result.get("status") in ("done", "satisfied", "installed", "unchecked")
+                for result in report["installers"].values()
+            )
         )
         spack_result = report["installers"].get("spack") or {}
         if spack_result.get("check"):
@@ -269,8 +282,10 @@ class Installer(ABC):
             # A failed build wins over open questions: exit 6 with all issues.
             failure.report = report
             raise failure
-        if context is not None and context.issues:
-            raise InstallDecisionNeeded(context.issues, context.issues_path, report)
+        if (context is not None and context.issues) or held_questions:
+            issues = [*(context.issues if context is not None else []), *held_questions]
+            raise InstallDecisionNeeded(issues, context.issues_path if context else None,
+                                        report)
         return report
 
     #: set by ``install_all`` before ``install``/``check`` run
@@ -1449,13 +1464,42 @@ def write_last_install(ppl, context, *, execution_id=None, phase: str) -> Option
     return path
 
 
-def _classify_last_issues(issue_ids, record, decisions_path, context):
+HELD_METHODS = ("pip", "conda", "container")
+"""Methods whose install-job questions a later check keeps open until answered.
+
+Their questions depend on the host that asks (a compute node's Python, conda
+or container engine), so a check on the login host not raising one does not
+resolve it. Spack's job questions reach the check through ``install-check.json``.
+"""
+
+
+def _last_issue_docs(pointer: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """The last install's questions from its ``issues.jsonl``, by issue id."""
+    import json
+
+    docs: Dict[str, Dict[str, Any]] = {}
+    try:
+        lines = Path(str(pointer.get("issues") or "")).read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return docs
+    for line in lines.splitlines():
+        try:
+            doc = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(doc, dict) and doc.get("issue_id"):
+            docs[str(doc["issue_id"])] = doc
+    return docs
+
+
+def _classify_last_issues(issue_ids, record, decisions_path, context, held=()):
     """Split the last install's questions into still-open and resolved ones.
 
-    A question is resolved when a recorded decision answers it (directly or
-    by ``rekeyed_from``), when a newer question superseded it, or, during a
-    check, when the current check no longer raises it. Only open ones are
-    re-presented.
+    A question is resolved when a recorded decision or this round's answers
+    answer it (directly or by ``rekeyed_from``), when a newer question
+    superseded it, or, during a check, when the current check no longer
+    raises it, unless it is ``held`` (see :data:`HELD_METHODS`). Only open
+    ones are re-presented.
     """
     from jarvis_cd.core.spack_install import Decisions
 
@@ -1484,6 +1528,7 @@ def _classify_last_issues(issue_ids, record, decisions_path, context):
                 superseded.setdefault(str(stale["issue_id"]), stale.get("superseded_by"))
     open_ids: List[str] = []
     resolved: List[Dict[str, Any]] = []
+    given = getattr(context, "answers", None) or {}
     for issue_id in issue_ids:
         issue_id = str(issue_id)
         if current is not None and issue_id in current:
@@ -1494,10 +1539,12 @@ def _classify_last_issues(issue_ids, record, decisions_path, context):
                              "constraint": entry.get("constraint"),
                              "decision_issue_id": entry.get("issue_id"),
                              "scope": entry.get("scope")})
+        elif issue_id in given:
+            resolved.append({"issue_id": issue_id, "resolved_by": "answer"})
         elif issue_id in superseded:
             resolved.append({"issue_id": issue_id, "resolved_by": "superseded",
                              "superseded_by": superseded[issue_id]})
-        elif current is not None:
+        elif current is not None and issue_id not in held:
             resolved.append({"issue_id": issue_id, "resolved_by": "not_raised",
                              "note": "the current check no longer raises it"})
         else:
@@ -1553,9 +1600,15 @@ def read_last_install(ppl, context=None) -> Optional[Dict[str, Any]]:
     try:
         record = json.loads(Path(pointer["record"]).read_text(encoding="utf-8"))
     except (OSError, ValueError, KeyError, TypeError):
-        pointer["record_readable"] = False
-        return pointer
-    pointer["record_readable"] = True
+        record = None
+    pointer["record_readable"] = record is not None
+    docs = _last_issue_docs(pointer)
+    if record is None:
+        # pip, conda and container installs that stop for a question write no
+        # record, only the questions; those are still the install's to present.
+        if pointer.get("phase") != "needs_decision" or not docs:
+            return pointer
+        record = {"issues": list(docs)}
     pointer["finished_at"] = record.get("finished_at")
     pointer["packages"] = {
         name: {
@@ -1575,13 +1628,20 @@ def read_last_install(ppl, context=None) -> Optional[Dict[str, Any]]:
         if isinstance(entry, dict)
     }
     pointer["applied_decisions"] = record.get("applied_decisions") or []
+    held = {
+        issue_id for issue_id, doc in docs.items()
+        if pointer.get("phase") == "needs_decision" and doc.get("answerable")
+        and doc.get("method") in HELD_METHODS
+    }
     open_issues, resolved = _classify_last_issues(
         list(record.get("issues") or []), record,
         pointer.get("decisions") or (context.decisions_path if context is not None else None),
-        context,
+        context, held=held,
     )
     pointer["open_issues"] = open_issues
     pointer["resolved_issues"] = resolved
+    pointer["open_questions"] = [docs[issue_id] for issue_id in open_issues
+                                 if issue_id in held]
     if record.get("spack_env"):
         pointer["spack_env"] = record.get("spack_env")
     return pointer

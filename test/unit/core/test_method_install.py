@@ -200,6 +200,71 @@ class TestPip(_Case):
         self.assertEqual((issue['kind'], issue['scope'], issue['answerable']),
                          ('python_missing', 'site', True))
 
+    def test_jarvis_python_is_found_first_and_used(self):
+        def which(name):
+            return '/usr/bin/python3' if name == 'python3' else None
+
+        with mock.patch.object(mi, 'jarvis_python', return_value='/site/uv/python3.12'), \
+                mock.patch.object(mi.shutil, 'which', side_effect=which), \
+                mock.patch.object(mi.os.path, 'realpath', side_effect=lambda p: p), \
+                mock.patch.object(mi.subprocess, 'run', return_value=done([], '3.12.7')):
+            found = mi.find_pythons()
+        self.assertEqual([(item['name'], item['constraint']) for item in found],
+                         [('jarvis', '/site/uv/python3.12'), ('python3', '/usr/bin/python3')])
+        ppl = FakePipeline(self.jarvis, [pkg('pip', 'numpy', 'a')])
+        fake = FakePip()
+        self.run_pip(ppl, 'install', fake, pythons=found)
+        self.assertEqual(fake.calls[0][:3], ['/site/uv/python3.12', '-m', 'venv'])
+
+    def held_job_question(self, phase='needs_decision'):
+        """An install job that stopped on a compute node's Python question."""
+        import json
+        job = self.tmp / 'shared' / 'demo' / 'executions' / 'e1' / 'install'
+        job.mkdir(parents=True)
+        question = {'schema': 'jarvis.install-issue.v1', 'issue_id': 'sha256:py',
+                    'kind': 'python_missing', 'method': 'pip', 'scope': 'site',
+                    'package': '*', 'answerable': True,
+                    'candidates': [{'id': 'python-1', 'constraint': '/site/uv/python3'}]}
+        (job / 'issues.jsonl').write_text(json.dumps(question) + '\n')
+        shared = self.tmp / 'shared' / 'demo' / 'install'
+        shared.mkdir(parents=True, exist_ok=True)
+        (shared / 'last-install.json').write_text(json.dumps({
+            'schema_version': 'jarvis.install-pointer.v1', 'execution_id': 'e1',
+            'phase': phase, 'record': str(job / 'install-record.json'),
+            'issues': str(job / 'issues.jsonl'), 'log': str(job / 'install.log')}))
+        return question
+
+    def check_all(self, ppl, context):
+        with mock.patch.object(mi, 'run_logged', FakePip()), \
+                mock.patch.object(mi, 'find_pythons', return_value=PYTHON):
+            with self.assertRaises(InstallDecisionNeeded) as caught:
+                Installer.install_all(ppl, mode='check', context=context)
+        return caught.exception.report
+
+    def test_check_keeps_an_install_jobs_question_this_host_cannot_raise(self):
+        question = self.held_job_question()
+        ppl = FakePipeline(self.jarvis, [pkg('pip', 'cowsay', 'a')])
+        report = self.check_all(ppl, self.new_context())
+        held = [issue for issue in report['issues'] if issue['issue_id'] == 'sha256:py']
+        self.assertEqual(len(held), 1)
+        self.assertEqual((held[0]['raised_by'], held[0]['execution_id']),
+                         ('install_job', 'e1'))
+        self.assertIn('sha256:py', report['open_issues'])
+        self.assertFalse(report['satisfied'])
+        self.assertFalse(report['last_install']['record_readable'])
+        # this round's answer resolves it, so the check asks it no more
+        answered = self.check_all(
+            ppl, self.new_context({question['issue_id']: {'constraint': '/site/uv/python3'}}))
+        self.assertEqual([issue['kind'] for issue in answered['issues']], ['not_installed'])
+        self.assertEqual(answered['last_install']['resolved_issues'][0]['resolved_by'],
+                         'answer')
+
+    def test_a_finished_install_holds_no_question(self):
+        self.held_job_question(phase='done')
+        ppl = FakePipeline(self.jarvis, [pkg('pip', 'cowsay', 'a')])
+        report = self.check_all(ppl, self.new_context())
+        self.assertEqual([issue['kind'] for issue in report['issues']], ['not_installed'])
+
     def test_failed_pip_is_typed(self):
         ppl = FakePipeline(self.jarvis, [pkg('pip', 'nope', 'a')])
         with self.assertRaises(InstallFailed) as caught:

@@ -279,7 +279,7 @@ silent default:
 
 | Issue | When | Answer |
 |-------|------|--------|
-| `python_missing` | no `python3` with `venv` and `ensurepip` for the pip venv | a Python (or set `install_python`) |
+| `python_missing` | no Python with `venv` and `ensurepip` for the pip venv. JARVIS tries the Python it runs on first (it is on every node JARVIS runs on), then `python3` on `PATH` | a Python (or set `install_python`) |
 | `conda_select` | several condas | one of them (or set `install_conda`) |
 | `conda_missing` | no conda | `miniforge`: JARVIS installs Miniforge into the site home (`<site>/miniforge3`) in the install job |
 | `container_engine` | the pipeline names no `container_engine` and several engines run as this user | one of them |
@@ -544,8 +544,19 @@ current check raises again stays open. The others move to
 | `resolved_by` | When | Extra fields |
 |---------------|------|--------------|
 | `decision` | `decisions.yaml` answers it (by `issue_id` or `rekeyed_from`) | `constraint`, `decision_issue_id`, `scope` |
+| `answer` | this round's `answers.json` answers it | |
 | `superseded` | a newer question replaced it (`supersedes`, or a `stale_decisions` entry) | `superseded_by` |
 | `not_raised` | the current check no longer raises it | `note` |
+
+A pip, conda or container install job that stops for a question
+(`phase: needs_decision`) writes no record, only its `issues.jsonl`; the check
+reads the questions from there. Those questions depend on the host that asked:
+a compute node's Python, conda or container engine can differ from the login
+host's. So a check that does not raise one again does not resolve it
+(`not_raised` never applies). It stays in `open_issues`, its document is in
+`last_install.open_questions[]`, and the check adds it to its own `issues[]`
+with `raised_by: install_job` and the job's `execution_id`. The check then
+exits for a decision, and the caller asks the person.
 
 When no pointer exists, because the install ran under an older JARVIS, the
 newest install-mode

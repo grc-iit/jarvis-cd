@@ -8,7 +8,8 @@ allocation (``ensure_may_build``), and a failure is a typed
 detect is a typed question answered through ``answers.json`` and recorded in
 ``decisions.yaml``, never a silent default:
 
-* ``python_missing``: no ``python3`` to make the pip venv with;
+* ``python_missing``: no Python that can make the pip venv (JARVIS's own
+  interpreter comes first, as it is on every node JARVIS runs on);
 * ``conda_select`` / ``conda_missing``: several condas, or none (then one
   candidate is Miniforge, installed into the site home once the person says so);
 * ``container_engine`` / ``container_engine_missing``: several usable engines,
@@ -34,6 +35,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import urllib.request
 from pathlib import Path
@@ -347,13 +349,29 @@ print(json.dumps(out))
 """
 
 
+def jarvis_python() -> Optional[str]:
+    """The interpreter JARVIS itself runs on, outside any venv it runs in.
+
+    It is on every host JARVIS runs on (login and compute alike), unlike a
+    ``python3`` on ``PATH``, which differs from node to node.
+    """
+    base = getattr(sys, "_base_executable", None) or sys.executable
+    return os.path.realpath(base) if base else None
+
+
 def find_pythons() -> List[Dict[str, Any]]:
-    """Pythons on ``PATH`` that can make a venv with pip (``venv`` and ``ensurepip``)."""
+    """Pythons that can make a venv with pip (``venv`` and ``ensurepip``).
+
+    The one JARVIS runs on comes first (``source: jarvis``), then those on ``PATH``.
+    """
     found: List[Dict[str, Any]] = []
     seen: set = set()
-    for name in ("python3", "python3.13", "python3.12", "python3.11", "python3.10",
-                 "python3.9"):
-        path = shutil.which(name)
+    own = jarvis_python()
+    named = [(own, "jarvis")] if own else []
+    named += [(shutil.which(name), name) for name in
+              ("python3", "python3.13", "python3.12", "python3.11", "python3.10",
+               "python3.9")]
+    for path, name in named:
         if not path:
             continue
         real = os.path.realpath(path)
@@ -390,7 +408,7 @@ def pip_python(ppl, pkg_list, context, prefix: Path) -> Optional[str]:
     if (prefix / "bin" / "python").exists():
         return str(prefix / "bin" / "python")
     pythons = find_pythons()
-    named = next((item for item in pythons if item["name"] == "python3"), None)
+    named = next((item for item in pythons if item["name"] in ("jarvis", "python3")), None)
     if named is not None:
         return str(named["constraint"])
     issue = _issue(
@@ -400,7 +418,8 @@ def pip_python(ppl, pkg_list, context, prefix: Path) -> Optional[str]:
         "No python3 that can make a venv was found on this site; which Python should "
         "JARVIS use for pip packages?",
         method="pip", scope="site", candidates=pythons, answerable=True,
-        evidence=["python3, python3.13 ... python3.9 on PATH, each with venv and ensurepip"],
+        evidence=["the Python JARVIS runs on, then python3, python3.13 ... python3.9 on "
+                  "PATH, each with venv and ensurepip"],
         hint="answer with a Python executable (recorded as the site decision `python`), "
              "or set install_python on the package",
     )
