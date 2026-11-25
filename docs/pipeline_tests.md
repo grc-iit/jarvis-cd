@@ -284,12 +284,26 @@ silent default:
 | `conda_missing` | no conda | `miniforge`: JARVIS installs Miniforge into the site home (`<site>/miniforge3`) in the install job |
 | `container_engine` | the pipeline names no `container_engine` and several engines run as this user | one of them |
 | `container_engine_missing` | no apptainer, rootless podman or rootless docker | none: install one, or name `container_engine` |
+| `container_engine_unusable` | the engine is installed but cannot run here (`podman info` fails, or a pull fails on its store); the engine's own error is the detail | none: the remedy says what to fix on the node |
 | `install_method` | the package lists several `install_methods` and more than one fits this site. A method fits when its tool is here: for Spack, a Spack JARVIS already uses or a site Spack it finds (then a `spack_missing` question, or the site's recorded answer, picks which) | one of the fitting methods |
 
 Pip and conda never install an MPI: a query naming one (conda's `mpi4py`
 too) is refused as `mpi_from_package_manager`. MPI codes use Spack, which
 reuses the site's MPI. A shared rootful docker daemon is never picked on its
 own; podman gets a private `XDG_RUNTIME_DIR` on batch nodes that have none.
+
+When rootless podman's default store is on a network file system (the home
+on most clusters), JARVIS gives each node its own store under the node's
+temp dir (`JARVIS_PODMAN_STORE=node|default` overrides the detection; a
+user `storage.conf` wins) and archives the image once on the shared file
+system for the other nodes to load. Rootless podman 3.x ignores
+`CONTAINERS_STORAGE_CONF`, so every podman call JARVIS makes or starts
+(podman-compose included, on every node) goes through a node-local `podman`
+wrapper first on `PATH`. It passes the store as `--root`, `--runroot`,
+`--storage-driver` and `--tmpdir`. When podman's default OCI runtime is
+missing on a node (a login node may have `crun` while compute nodes only
+have `runc`), the wrapper finds one that node has and passes `--runtime`.
+It probes once per node and caches the result in the node's store dir.
 
 A package that installs several ways lists them, and leaves `install_method`
 empty:

@@ -4,6 +4,7 @@ No tool runs: ``run_logged`` and the host probes are replaced by fakes that
 act on a temp directory the way pip, conda and podman would.
 """
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -415,6 +416,7 @@ class TestContainer(_Case):
                 mock.patch.object(mi, 'image_present', image_present), \
                 mock.patch.object(mi, 'engine_error', return_value=engine_error), \
                 mock.patch.object(mi, 'podman_store', return_value=None), \
+                mock.patch.object(mi, 'podman_wrapper', return_value=None), \
                 mock.patch.object(mi, 'node_store_conf',
                                   return_value=conf if node_store else None), \
                 mock.patch('shutil.which', return_value='/usr/bin/podman'):
@@ -507,6 +509,7 @@ class TestContainer(_Case):
 
         with mock.patch('shutil.which', side_effect=which), \
                 mock.patch.object(mi, 'podman_store', return_value=None), \
+                mock.patch.object(mi, 'podman_wrapper', return_value=None), \
                 mock.patch.object(mi, 'engine_error', return_value='Error: no subuid ranges'):
             engine = mi.resolve_engine(ppl, self.context)
         self.assertIsNone(engine)
@@ -586,9 +589,73 @@ class TestContainer(_Case):
         with mock.patch.object(mi, 'node_store_conf', return_value=str(conf)), \
                 mock.patch('tempfile.gettempdir', return_value=str(self.tmp)):
             script = mi.podman_node_script(self.tmp / 'shared').read_text()
+            wrapper_dir = mi.podman_wrapper_dir()
         self.assertIn('graphroot = "/tmp/x"', script)
         self.assertIn(f'export CONTAINERS_STORAGE_CONF={conf}', script)
+        self.assertIn(f'mv -f {wrapper_dir}/.podman.$$ {wrapper_dir}/podman', script)
+        self.assertIn(f'PATH={wrapper_dir}:"$PATH"', script)
+        self.assertIn(f'store={conf.parent}', script)
         self.assertTrue(script.rstrip().endswith('exec "$@"'))
+
+    def test_wrapper_text_carries_the_store_only_with_one(self):
+        conf = self.tmp / 'jarvis-podman-1000-store' / 'storage.conf'
+        with mock.patch('tempfile.gettempdir', return_value=str(self.tmp)), \
+                mock.patch('os.getuid', return_value=1000, create=True):
+            with mock.patch.object(mi, 'node_store_conf', return_value=str(conf)):
+                text = mi.podman_wrapper_text()
+            self.assertIn(f'store={conf.parent}', text)
+            self.assertIn('--root "$store/storage"', text)
+            self.assertIn('--tmpdir "$XDG_RUNTIME_DIR/libpod/tmp"', text)
+            with mock.patch.object(mi, 'node_store_conf', return_value=None):
+                self.assertIn("store=''", mi.podman_wrapper_text())
+
+    def test_oci_runtime_missing_is_unusable_with_a_remedy(self):
+        remedy = mi.engine_remedy(
+            'podman', 'Error: default OCI runtime "crun" not found: invalid argument')
+        self.assertIn('OCI runtime', remedy)
+        self.assertIn('runc', remedy)
+
+    @unittest.skipUnless(os.name == 'posix' and shutil.which('sh'), 'POSIX shell')
+    def test_wrapper_gives_the_node_store_and_a_runtime_it_has(self):
+        real = self.tmp / 'real'
+        sbin = self.tmp / 'sbin'
+        real.mkdir()
+        sbin.mkdir()
+        log = self.tmp / 'calls'
+        # a podman whose default runtime (crun) is not on this node
+        (real / 'podman').write_text(
+            '#!/bin/sh\n'
+            f'echo "$*" >> {log}\n'
+            'case " $* " in *" --runtime ' + str(sbin / 'runc') + ' "*) exit 0 ;; esac\n'
+            'echo \'Error: default OCI runtime "crun" not found: invalid argument\' >&2\n'
+            'exit 125\n')
+        (sbin / 'runc').write_text('#!/bin/sh\nexit 0\n')
+        for path in (real / 'podman', sbin / 'runc'):
+            path.chmod(0o755)
+        conf = self.tmp / 'jarvis-podman-1000-store' / 'storage.conf'
+        env = {'PATH': f'{real}:{sbin}:/usr/bin:/bin',
+               'XDG_RUNTIME_DIR': str(self.tmp / 'not-there')}
+        with mock.patch('tempfile.gettempdir', return_value=str(self.tmp)), \
+                mock.patch('os.getuid', return_value=1000, create=True), \
+                mock.patch.dict(os.environ, env), \
+                mock.patch.object(mi, 'node_store_conf', return_value=str(conf)):
+            wrapper = mi.podman_wrapper()
+            self.assertEqual(shutil.which('podman'), wrapper)
+            counts = []
+            for _ in range(2):
+                ran = subprocess.run(['podman', 'image', 'inspect', 'x'], env=os.environ.copy(),
+                                     capture_output=True, text=True, check=False)
+                self.assertEqual(ran.returncode, 0, ran.stderr)
+                counts.append(len(log.read_text().splitlines()))
+        calls = log.read_text().splitlines()
+        store = conf.parent
+        self.assertTrue(calls[-1].endswith('image inspect x'))
+        self.assertIn(f'--runtime {sbin / "runc"}', calls[-1])
+        self.assertIn(f'--root {store}/storage --runroot {store}/run', calls[-1])
+        self.assertIn(f'--tmpdir {self.tmp / "jarvis-podman-1000"}/libpod/tmp', calls[-1])
+        self.assertEqual((store / 'oci-runtime').read_text(), str(sbin / 'runc'))
+        # probed once: the second call used the cached runtime
+        self.assertEqual(counts[1] - counts[0], 1)
 
     def test_mount_fstype_takes_the_longest_mount(self):
         mounts = self.tmp / 'mounts'

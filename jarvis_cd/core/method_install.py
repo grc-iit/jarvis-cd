@@ -923,23 +923,25 @@ def podman_store(mounts: str = "/proc/self/mounts") -> Optional[str]:
     home directory. On an HPC site that is NFS (or Lustre, GPFS...): its
     database is bound to the host that made it ("database configuration
     mismatch" elsewhere), and rootless overlay cannot pivot on it. JARVIS then
-    points ``CONTAINERS_STORAGE_CONF`` at a store under the node's temp dir, and
+    gives podman a store under the node's temp dir (``storage.conf`` there, and
+    the same store as global flags through :func:`podman_wrapper`, since rootless
+    podman 3.x ignores ``CONTAINERS_STORAGE_CONF``), and
     keeps an archive of each image on the shared file system that other nodes
     load (:func:`keep_archive`). A ``storage.conf`` the user set wins, and
     ``JARVIS_PODMAN_STORE`` (``node`` or ``default``) overrides the detection.
     """
     mode = os.environ.get(STORE_ENV, "").strip().lower()
-    if node_store_conf():
-        return node_store_conf()
-    if mode == "default" or os.environ.get("CONTAINERS_STORAGE_CONF", "").strip():
-        return None
-    if getattr(os, "geteuid", lambda: 0)() == 0:
-        return None
+    ours = node_store_conf()
+    if not ours:
+        if mode == "default" or os.environ.get("CONTAINERS_STORAGE_CONF", "").strip():
+            return None
+        if getattr(os, "geteuid", lambda: 0)() == 0:
+            return None
     config_home = Path(os.environ.get("XDG_CONFIG_HOME", "").strip()
                        or Path.home() / ".config")
     data_home = Path(os.environ.get("XDG_DATA_HOME", "").strip()
                      or Path.home() / ".local" / "share")
-    if mode != "node":
+    if mode != "node" and not ours:
         if (config_home / "containers" / "storage.conf").exists():
             return None
         if mount_fstype(data_home / "containers" / "storage", mounts) not in NETWORK_FS:
@@ -954,23 +956,161 @@ def podman_store(mounts: str = "/proc/self/mounts") -> Optional[str]:
     return str(conf)
 
 
+#: OCI runtimes the podman wrapper tries, in order, when podman's default one is
+#: not on this node (a login node may have crun while compute nodes only have runc)
+OCI_RUNTIMES = ("crun", "runc", "youki", "krun", "runsc", "kata-runtime")
+
+_PODMAN_WRAPPER = r"""#!/bin/sh
+# written by JARVIS: podman with this node's own image store and an OCI runtime
+# this node has. Rootless podman 3.x ignores CONTAINERS_STORAGE_CONF, so the
+# store is given as global flags; the runtime is probed once per node.
+here=$(cd "$(dirname "$0")" && pwd -P)
+real=
+old_ifs=$IFS
+IFS=:
+for dir in $PATH; do
+  [ -n "$dir" ] && [ -x "$dir/podman" ] && [ ! -d "$dir/podman" ] || continue
+  [ "$(cd "$dir" 2>/dev/null && pwd -P)" = "$here" ] && continue
+  real=$dir/podman
+  break
+done
+IFS=$old_ifs
+if [ -z "$real" ]; then
+  echo "JARVIS podman wrapper: no podman on PATH besides $here" >&2
+  exit 127
+fi
+cache=@CACHE@
+mkdir -p -m 700 "$cache"
+if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -w "$XDG_RUNTIME_DIR" ]; then
+  mkdir -p -m 700 @RUNTIME@
+  XDG_RUNTIME_DIR=@RUNTIME@
+  export XDG_RUNTIME_DIR
+fi
+store=@STORE@
+driver=
+option=
+if [ -n "$store" ]; then
+  mkdir -p -m 700 "$store/storage" "$store/run" "$XDG_RUNTIME_DIR/libpod/tmp"
+  driver=overlay
+  release=$(uname -r)
+  major=${release%%.*}
+  minor=${release#*.}
+  minor=${minor%%[!0-9]*}
+  # rootless native overlay needs Linux 5.13; before it, fuse-overlayfs or vfs
+  if [ "${major:-0}" -lt 5 ] || { [ "$major" -eq 5 ] && [ "${minor:-0}" -lt 13 ]; }; then
+    if mount_program=$(command -v fuse-overlayfs); then
+      option=overlay.mount_program=$mount_program
+    else
+      driver=vfs
+    fi
+  fi
+fi
+oci=
+podman_() {
+  if [ -n "$oci" ]; then set -- --runtime "$oci" "$@"; fi
+  if [ -n "$option" ]; then set -- --storage-opt "$option" "$@"; fi
+  if [ -n "$store" ]; then
+    set -- --root "$store/storage" --runroot "$store/run" --storage-driver "$driver" \
+      --tmpdir "$XDG_RUNTIME_DIR/libpod/tmp" "$@"
+  fi
+  exec "$real" "$@"
+}
+if [ -f "$cache/oci-runtime" ]; then
+  oci=$(cat "$cache/oci-runtime")
+else
+  probe=$(podman_ info --format '{{.Host.OCIRuntime.Name}}' 2>&1)
+  status=$?
+  found=
+  if [ "$status" -eq 0 ]; then
+    found=yes
+  else
+    case $probe in
+      *"OCI runtime"*"not found"*|*"no valid executable found for OCI runtime"*)
+        for name in @RUNTIMES@; do
+          path=$(command -v "$name" 2>/dev/null) || path=
+          if [ -z "$path" ]; then
+            for dir in /usr/sbin /sbin /usr/local/sbin /usr/libexec/podman; do
+              if [ -x "$dir/$name" ]; then path=$dir/$name; break; fi
+            done
+          fi
+          [ -n "$path" ] || continue
+          oci=$path
+          if (podman_ info >/dev/null 2>&1); then found=yes; break; fi
+          oci=
+        done ;;
+    esac
+  fi
+  if [ -n "$found" ]; then
+    printf '%s' "$oci" > "$cache/oci-runtime.$$" && mv -f "$cache/oci-runtime.$$" "$cache/oci-runtime"
+  fi
+fi
+podman_ "$@"
+"""
+
+
+def podman_wrapper_dir() -> Path:
+    """The node-local directory of the ``podman`` wrapper (first on PATH)."""
+    return _store_base() / "bin"
+
+
+def podman_wrapper_text() -> str:
+    """The wrapper: the real podman with the node-local store (when JARVIS gives
+    one) as global flags, and ``--runtime`` when the default OCI runtime is not
+    on this node. It finds the real podman and the runtime on whichever node it
+    runs, so the same text serves every node."""
+    conf = node_store_conf()
+    store = shlex.quote(str(Path(conf).parent)) if conf else "''"
+    return (_PODMAN_WRAPPER
+            .replace("@CACHE@", shlex.quote(str(_store_base())))
+            .replace("@RUNTIME@", shlex.quote(str(_runtime_base())))
+            .replace("@STORE@", store)
+            .replace("@RUNTIMES@", " ".join(OCI_RUNTIMES)))
+
+
+def podman_wrapper() -> Optional[str]:
+    """Write the wrapper and put its directory first on this process's PATH.
+
+    Every podman call JARVIS makes or starts (pull, save, load, inspect,
+    build, podman-compose) then carries the store and the runtime.
+    """
+    if os.name != "posix":
+        return None
+    directory = podman_wrapper_dir()
+    directory.mkdir(parents=True, mode=0o700, exist_ok=True)
+    script = directory / "podman"
+    text = podman_wrapper_text()
+    if not script.exists() or script.read_text() != text:
+        partial = directory / f".podman.{os.getpid()}"
+        partial.write_text(text)
+        partial.chmod(0o755)
+        os.replace(partial, script)
+    entries = [entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+               if entry and entry != str(directory)]
+    os.environ["PATH"] = os.pathsep.join([str(directory), *entries])
+    return str(script)
+
+
 def prepare_engine(engine: str) -> None:
-    """Set up what ``engine`` needs on this host before it runs (podman: runtime dir, store)."""
+    """Set up what ``engine`` needs on this host before it runs (podman: runtime
+    dir, store, and the wrapper that applies them with an OCI runtime it has)."""
     if engine == "podman":
         podman_runtime_dir()
         podman_store()
+        podman_wrapper()
 
 
 def podman_node_script(directory: Path) -> Path:
     """Write a wrapper that gives podman on another node what it has here.
 
-    ``sh <script> podman ...`` makes the runtime dir when the node has none
-    and writes the same node-local ``storage.conf``, then runs the command.
+    ``sh <script> podman ...`` makes the runtime dir when the node has none,
+    writes the same node-local ``storage.conf`` and the podman wrapper (the
+    store as global flags, an OCI runtime that node has), puts the wrapper
+    first on PATH, then runs the command.
     """
     runtime = _runtime_base()
     lines = [
         "#!/bin/sh",
-        "# written by JARVIS: podman's runtime dir and image store on this node",
+        "# written by JARVIS: podman's runtime dir, image store and OCI runtime on this node",
         "set -e",
         'if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -w "${XDG_RUNTIME_DIR}" ]; then',
         f"  mkdir -p -m 700 {shlex.quote(str(runtime))}",
@@ -986,6 +1126,17 @@ def podman_node_script(directory: Path) -> Path:
             "JARVIS_EOF",
             f"export CONTAINERS_STORAGE_CONF={shlex.quote(conf)}",
         ]
+    wrapper_dir = shlex.quote(str(podman_wrapper_dir()))
+    lines += [
+        f"mkdir -p -m 700 {wrapper_dir}",
+        f"cat > {wrapper_dir}/.podman.$$ <<'JARVIS_EOF'",
+        podman_wrapper_text().rstrip("\n"),
+        "JARVIS_EOF",
+        f"chmod 755 {wrapper_dir}/.podman.$$",
+        f"mv -f {wrapper_dir}/.podman.$$ {wrapper_dir}/podman",
+        f'PATH={wrapper_dir}:"$PATH"',
+        "export PATH",
+    ]
     lines.append('exec "$@"')
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -1025,6 +1176,10 @@ _ENGINE_FAULTS = (
     (re.compile(r"subuid|subgid|newuidmap|insufficient uids|lchown", re.I),
      "rootless podman has no subordinate ids for this user here: ask the site to add the "
      "user to /etc/subuid and /etc/subgid on every node"),
+    (re.compile(r"OCI runtime.*not found|no valid executable found for OCI runtime", re.I),
+     "this node has no OCI runtime podman can use (JARVIS tried "
+     + ", ".join(OCI_RUNTIMES) + "): ask the site to install one on every node, or set "
+     "[engine] runtime in containers.conf"),
 )
 _ENGINE_FAULT = re.compile("|".join(pattern.pattern for pattern, _ in _ENGINE_FAULTS), re.I)
 
@@ -1060,6 +1215,7 @@ def _detect() -> Tuple[List[Dict[str, Any]], List[str], List[Dict[str, str]]]:
     podman = shutil.which("podman")
     if podman:
         prepare_engine("podman")
+        podman = shutil.which("podman") or podman  # the wrapper, now first on PATH
         error = engine_error(podman)
         rootless = None if error else _engine_field(podman, "{{.Host.Security.Rootless}}")
         if error:
