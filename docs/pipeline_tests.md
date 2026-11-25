@@ -496,7 +496,7 @@ JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
 | `not_installed` | `+check` found nodes that still need building | no: run `jarvis ppl install` |
 | `site_copy` | the site already has a copy of the package (a module, a site Spack install or a resource graph `software` entry); see [Site copies](#site-copies-before-a-spack-build-site_copy) | yes: a site candidate's `id` or `constraint`, or `spack` |
 | `site_copy_unusable` | a site copy chosen for the package doesn't load on this host (`module load` or `spack load` fails, or its prefix is gone); `failing`, `failing_kind` (`module`, `spack` or `graph`), `why`, `needs`; see [The `site` install method](#the-site-install-method) | yes, when the copy came from a `site_copy` answer: another site copy, `spack_build` or `forget`; no, when the pipeline config sets the copy |
-| `spack_broken` | a Spack fails on its own, before any package: [`spack providers mpi`](#a-broken-spack-spack_broken) fails (`subject: spack:<root>`, `scope: site`, `package: "*"`); `spack_root`, `probe`, `without_user_config`, `failing_repos[]`, `failing_scope`, `failing_file`, `cause` | yes: `no_user_config`, `skip` or `recheck`; the first two are recorded per site |
+| `spack_broken` | a Spack fails on its own, before any package: [`spack providers mpi`](#a-broken-spack-spack_broken) fails (`subject: spack:<root>`, `scope: site`, `package: "*"`); `spack_root`, `probe`, `without_user_config`, `without_failing_repos`, `failing_repos[]`, `failing_scope`, `failing_file`, `cause` | yes: `drop_failing_repos`, `no_user_config`, `skip` or `recheck`; the first three are recorded per site |
 | `install_unchecked` | a scheduled pipeline's check on its submitting host found no matching `install-check.json` (JARVIS runs no Spack there); `packages`, `reason`, `record`, `remedy[]`; see [scheduler.md → Light checks](scheduler.md#light-checks-on-the-submitting-host) | no: check in a job, `jarvis ppl install +check +submit` (or `+submit` to also build) |
 | `install_placement` | where a scheduled pipeline's full check or build runs at this site is not chosen yet (or the site chose `ask_each_time`). One site question per phase (`install_placement.check` / `install_placement.build`) covers every package; `phase`, `cost_class` (the costliest package's), `cost_classes`, `covers`, `once`, `recommended`, `recommendation_reason`, `recommendation_basis` (a site answer recorded in this home or the resource graph's `install_placement`, with who, when and `basis`; else cost and load), `packages[]` (with `estimate`), `login_host`, `limits`, `queue`, `site_policy`, `package_overrides[]` (each with its own recommendation); see [scheduler.md → Install placement](scheduler.md#install-placement-where-checks-and-builds-run) | yes: `login_limited`, `compute_job` or `ask_each_time` (an `install_placement.<phase>.occasion` question: the first two, this run only); recorded per site, or per package for an override; `basis` records why |
 
@@ -823,18 +823,24 @@ cause when JARVIS can isolate it. It probes again with
 repo from the user and system scopes (`spack config blame repos`) alone in a
 temporary `-C` scope. `failing_repos[]` holds each repo that fails alone,
 with its namespace, the file and line that list it, the scope and the error.
-`failing_scope` and `failing_file` are the first one's.
+`failing_scope` and `failing_file` are the first one's. When the failing
+repos are named, JARVIS also builds a copy of each scope that lists them,
+with those repos removed, and probes with it (`without_failing_repos`).
 
 Candidates:
 
 | `id` | Offered | What JARVIS does |
 | --- | --- | --- |
-| `no_user_config` | only when the probe passes with `SPACK_DISABLE_LOCAL_CONFIG=1` (then it is `recommended`) | runs its own find, load and build commands for that Spack with `SPACK_DISABLE_LOCAL_CONFIG=1`. `leaves_out` says what that drops: the user scope (`~/.spack`, or `SPACK_USER_CONFIG_PATH`) and the system scope (`/etc/spack`), with the files in them and their repos, compilers, mirrors and package preferences. Installs built from a dropped repo's packages can't be loaded this way |
+| `drop_failing_repos` | only when the failure is confined to the named repos: the probe passes with JARVIS's copy of the scopes without them (then it is `recommended`) | runs its own find, load and build commands for that Spack with JARVIS's copy of each scope that lists a failing repo: the same config files, with only the failing repos removed from `repos.yaml`. It points `SPACK_USER_CONFIG_PATH` (or `SPACK_SYSTEM_CONFIG_PATH`) at the copy; the other scopes are read as they are. `leaves_out_repos[]` names the repos it drops, `keeps_repos[]` the repos it keeps, and `scopes` the copies. The copies live in `$JARVIS_SPACK_SCOPE_DIR`, by default `spack-scopes/` in the site home, in a directory named by their content. They are rebuilt from the person's scope on every run, so later edits to it are followed. Installs built from a dropped repo's packages can't be loaded this way |
+| `no_user_config` | only when the probe passes with `SPACK_DISABLE_LOCAL_CONFIG=1` (`recommended` when `drop_failing_repos` isn't offered) | runs its own find, load and build commands for that Spack with `SPACK_DISABLE_LOCAL_CONFIG=1`. `leaves_out` says what that drops: the user scope (`~/.spack`, or `SPACK_USER_CONFIG_PATH`) and the system scope (`/etc/spack`), with the files in them and their repos, compilers, mirrors and package preferences. It names the dropped repos that work. Installs built from a dropped repo's packages can't be loaded this way |
 | `skip` | always (`recommended` when the Spack fails in its own scopes) | offers no copies from that Spack. Modules, other site Spacks and the resource graph are still searched. If that Spack is the one JARVIS builds with, JARVIS builds with its own Spack under the site home, with that Spack's installs as an upstream (as for a read-only site Spack). If that Spack is `JARVIS_SPACK_ROOT`, nothing can be planned, and that is the non-answerable `spack_broken_skipped` |
 | `recheck` | always | records nothing. It probes again now and asks again while the probe still fails. Use it after fixing the config yourself |
 
-`no_user_config` and `skip` are recorded per site in `decisions.yaml`,
-keyed by `spack:<root>`, and later runs replay them. A Spack that fails
+`drop_failing_repos`, `no_user_config` and `skip` are recorded per site in
+`decisions.yaml`, keyed by `spack:<root>`, and later runs replay them. A
+recorded `drop_failing_repos` keeps the dropped repos (`dropped_repos`).
+Each run rebuilds the copy and probes with it; if the Spack fails even
+without them, JARVIS asks again. A Spack that fails
 differently later makes a new question, which carries `supersedes`.
 `jarvis ppl install --forget spack:<root>` forgets the answer. JARVIS never
 edits the person's `~/.spack`, and the person's own Spack commands still
