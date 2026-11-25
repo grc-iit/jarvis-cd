@@ -1724,7 +1724,7 @@ def test_node_without_the_engine_is_engine_missing_before_any_image_moves(
 ) -> None:
     """A run node without podman (the wrapper finds no real one: exit 127)
     refuses the start with ``container_engine_missing`` naming the node,
-    before any image load or ``up``; the stop then skips that node."""
+    before any image load or ``up``; the stop then brings nothing down."""
     import socket
 
     from jarvis_cd.core.issues import JarvisIssueError
@@ -1777,12 +1777,8 @@ def test_node_without_the_engine_is_engine_missing_before_any_image_moves(
     pipeline.packages = []
     calls.clear()
     pipeline._stop_containerized_pipeline()
-    if local_only:
-        assert calls == []
-    else:
-        (command, exec_info), = calls
-        assert command.endswith(" down")
-        assert getattr(exec_info, "hostfile").hosts == ["node-a"]
+    # the refusal came before ``up`` on every node: no ``compose down`` at all
+    assert calls == []
 
 
 def test_scheduler_finalizer_covers_failures_before_pipeline_run(

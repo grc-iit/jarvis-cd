@@ -24,7 +24,7 @@ jarvis sched info --provider slurm +no_mpi +json
 | `+json` | Print the document as one JSON line |
 
 It runs only light, short reads, so it is safe on a login node: `sinfo`,
-`scontrol show partition -o`, one `spack find` per MPI provider and
+`scontrol show partition -o`, one `spack find` (kept to the MPI providers) and
 `spack config get packages`, plus file reads of the resource graph and the
 site skills. It never submits, concretizes or builds. A missing piece
 becomes an entry in `issues`, never a failure, and the command exits `0`.

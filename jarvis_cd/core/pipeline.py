@@ -6995,24 +6995,18 @@ class Pipeline:
         engine = self.container_engine.lower()
         hostfile = self.get_hostfile()
         local_only = self._hostfile_is_local_only(hostfile)
-        # nodes the start found without the engine have nothing to bring down
-        missing = set(getattr(self, "_engine_missing_hosts", None) or ())
-        hosts = [host for host in hostfile.hosts if host not in missing]
+        # A node without the engine refuses the start before any container
+        # comes up on any node, so there is nothing to bring down anywhere.
+        missing = sorted(getattr(self, "_engine_missing_hosts", None) or ())
         if local_only:
             exec_info = LocalExecInfo()
-        elif missing and hosts:
-            from jarvis_cd.util.hostfile import Hostfile
-
-            exec_info = PsshExecInfo(hostfile=Hostfile(hosts=hosts, find_ips=False))
         else:
             exec_info = PsshExecInfo(hostfile=hostfile)
 
-        if missing and (local_only or not hosts):
-            logger.info(f"No container to stop: {engine} is not on the run nodes")
+        if missing:
+            logger.info(f"No container to stop: the start was refused before any "
+                        f"container started ({engine} is not on {', '.join(missing)})")
         else:
-            if missing:
-                logger.info(f"Not stopping containers on {sorted(missing)}: "
-                            f"{engine} is not there")
             try:
                 if engine == "apptainer":
                     stop_cmd = f"apptainer instance stop {self.execution_container_name}"

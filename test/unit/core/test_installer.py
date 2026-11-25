@@ -195,7 +195,10 @@ class _FakeSpack:
             if self.installed:
                 out = out.replace(' -  ', '[+] ')
         elif arguments[:1] == ['find']:
-            out = self.find.get(arguments[-1], '')
+            if '{' in arguments[-1]:
+                out = ''.join(self.find.values())
+            else:
+                out = self.find.get(arguments[-1], '')
             rc = 0 if out else 1
         elif arguments[:1] == ['install']:
             rc = self.install_rc
@@ -285,6 +288,8 @@ class TestSpackInstaller(unittest.TestCase):
         issue = needed.issues[0]
         self.assertEqual(issue['kind'], 'ambiguous_provider')
         self.assertEqual(len(issue['candidates']), 2)
+        self.assertIn('(MPI providers found: mpich, openmpi)', issue['evidence'][0])
+        self.assertNotIn('cray-mpich', issue['evidence'][0])
 
         self.context.issues = []
         self.context.answers = {issue['issue_id']: {'constraint': '^mpich/fffffff'}}
@@ -295,6 +300,21 @@ class TestSpackInstaller(unittest.TestCase):
         self.assertTrue(report['satisfied'])
         with open(self.context.decisions_path) as stream:
             self.assertIn('^mpich/fffffff', stream.read())
+
+    def test_mpi_discovery_asks_spack_only_once_and_names_no_provider(self):
+        from jarvis_cd.core.spack_install import MPI_PROVIDERS, SpackPlanner, SpackRunner
+        fake = _FakeSpack({}, {
+            'openmpi': 'openmpi@5.0.5 ' + 'e' * 32 + ' /site/openmpi external=\n',
+            'zlib': 'zlib@1.3 ' + 'a' * 32 + ' /site/zlib external=\n',
+        })
+        with mock.patch('jarvis_cd.core.spack_install.SpackRunner.run',
+                        autospec=True, side_effect=fake):
+            planner = SpackPlanner(self.context, SpackRunner(self.context.log_stream))
+            candidates = planner.mpi_candidates()
+        self.assertEqual([c['name'] for c in candidates], ['openmpi'])
+        finds = [c for c in fake.calls if c[0] == 'find']
+        self.assertEqual(len(finds), 1)
+        self.assertFalse(set(finds[0]) & set(MPI_PROVIDERS))
 
 
 class TestInstallAll(unittest.TestCase):

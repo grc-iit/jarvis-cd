@@ -940,7 +940,13 @@ def _record_install_costs(pkg_list, record: Mapping[str, Any], resolve_seconds: 
                           built_at=now,
                           built_nodes=len(entry.get("built") or entry.get("missing") or []))
         if update:
-            updates[name] = update
+            updates.setdefault(name, {}).update(update)
+        if entry.get("status") == "installed":
+            # each node Spack built, so a later build of another package
+            # sharing these nodes estimates from what they took here
+            for node, seconds in (entry.get("node_build_seconds") or {}).items():
+                updates.setdefault(str(node), {}).update(
+                    node_build_seconds=seconds, node_build_host=host, node_built_at=now)
     if not updates:
         return
     try:

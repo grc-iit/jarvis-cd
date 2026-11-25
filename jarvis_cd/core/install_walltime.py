@@ -285,12 +285,14 @@ def install_estimate(ppl, *, install_check: bool,
                                     for h in built)]
             skipped = len(entries) - len(remaining)
             prior = (costs.get(name) or {}).get("build_seconds")
-            if prior is not None:
+            if prior is not None and not placement.measured_nodes(
+                    costs, _missing_names(entries)):
                 full = placement.estimate("build", name, costs, _missing_names(entries))
                 seconds = float(full["seconds"] or 0) * len(remaining) / len(entries)
                 basis = full["basis"]
             else:
-                full = placement.estimate("build", name, {}, _missing_names(remaining))
+                full = placement.estimate("build", name, costs, _missing_names(remaining),
+                                          use_prior=False)
                 seconds, basis = float(full["seconds"] or 0), full["basis"]
             if skipped:
                 basis += f"; {skipped} of {len(entries)} missing node(s) already built"

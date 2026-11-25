@@ -515,10 +515,11 @@ time = ceil((startup + estimate) × factor / 5 min) × 5 min, capped at MaxTime
 - `estimate` is the time for what is still missing. For Spack packages it
   is the install check's estimate plus the build: a package the recorded
   install check (`install-check.json`) found installed counts as nothing;
-  a missing one uses the measured `build_seconds` of a previous build
-  (`install-costs.json`), scaled to the nodes still missing, or else the
-  per-node estimate the placement question uses. Nodes a previous attempt
-  already built are subtracted. pip, conda and container installs get a
+  a missing one uses Spack's measured per-node times for the nodes still
+  missing (`node_build_seconds` in `install-costs.json`), else the measured
+  `build_seconds` of a previous build, scaled to the nodes still missing,
+  or else the per-node estimate the placement question uses. Nodes a
+  previous attempt already built are subtracted. pip, conda and container installs get a
   fixed allowance (15, 30 and 20 min; 1 min for a `+check`). When a
   package has neither a check record nor a measured build, and is not a
   known-heavy package, the estimate is unknown: `time` stays unset and the
@@ -762,10 +763,22 @@ earlier recorded one site answer per cost class
 - a prior measurement at this site, from `install-costs.json`
   (`jarvis.install-costs.v1`) next to the decisions store. Every full check
   records `check_seconds` (with `check_host`, `checked_at`), and every build
-  records `build_seconds` (with `build_host`, `built_at`, `built_nodes`);
-- otherwise, for a build: the check's missing Spack nodes × 120 s, with
+  records `build_seconds` (with `build_host`, `built_at`, `built_nodes`) and,
+  for each Spack node it built, `node_build_seconds` (Spack's own
+  `<prefix>/.spack/install_times.json`; binary-cache installs are skipped).
+  A build through the pipeline's Spack environment records `build_seconds`
+  as the install's wall clock when it built one package, else each
+  package's measured nodes;
+- for a build with known missing nodes, the nodes built here before count
+  at their measured `node_build_seconds` and the rest at the per-node
+  heuristic below; with none measured, a prior `build_seconds` of the
+  package is used whole;
+- otherwise, for a build: the check's missing Spack nodes × 60 s, with
   known-heavy nodes (`paraview`, `vtk`, `qt`, `llvm`, `gcc`, `trilinos`, …)
-  at 3600 s each;
+  at 1800 s, except `llvm` and `gcc` (3600 s), `paraview` (3000 s) and
+  `mesa` (600 s). These are calibrated on a measured ParaView 5.13.1 build
+  of 62 nodes: 59 ordinary nodes averaged 34 s, llvm took 3276 s, paraview
+  2698 s and mesa 116 s;
 - otherwise a known-heavy package (600 s check, 4 h build), or a default
   (60 s check; an unknown build counts as long).
 

@@ -340,7 +340,8 @@ The start first checks that every run node has the engine (`<engine>
 --version` on each node; for podman through JARVIS's wrapper, which exits
 127 when the node has no real podman). A node without it refuses the start
 as `container_engine_missing`, naming the nodes, before any image is loaded
-or moved and before `up`; the stop then skips those nodes. The nodes run
+or moved and before `up` on any node; the stop then brings nothing down
+(no `compose down` on any node). The nodes run
 `podman-compose` from JARVIS's own environment, by absolute
 path (that `bin` is not on a node's `PATH`), then from `PATH`, then
 `podman compose`. With none of these, the start is refused as
@@ -439,9 +440,10 @@ For each Spack package, JARVIS:
    constraints>`. Every node is marked installed (`[+]`), upstream/site
    (`[^]`), external (`[e]`) or missing (` - `).
 3. Picks the MPI when the query doesn't pin one with `^<mpi>`. A recorded site
-   decision wins. The candidates are every installed or upstream MPI
-   (`spack find` over openmpi, mpich, mvapich2, intel-oneapi-mpi,
-   cray-mpich, …, merged by prefix) plus every MPI external configured in
+   decision wins. The candidates are every installed or upstream MPI (one
+   unconstrained `spack find`, kept to the MPI providers openmpi, mpich,
+   mvapich2, intel-oneapi-mpi, cray-mpich, …, and merged by prefix; providers
+   the site doesn't have are never queried) plus every MPI external configured in
    `packages.yaml` (`spack config get packages`). Spack only lists an
    external in `spack find` once something has used it, so a site module MPI
    such as `mpich: externals: [{spec: mpich@4.1.1, modules: [mpich/4.1.1]}]`

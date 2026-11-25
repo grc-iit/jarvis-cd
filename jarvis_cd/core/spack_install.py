@@ -2757,21 +2757,17 @@ class SpackPlanner:
         if self._mpi_candidates is not None:
             return self._mpi_candidates
         by_prefix: Dict[str, Dict[str, Any]] = {}
-        for provider in MPI_PROVIDERS:
-            completed = self.runner.run(
-                ["find", "--format", _MPI_FIND_FORMAT, provider]
-            )
-            if completed.returncode != 0 and "No package matches" not in (
-                (completed.stdout or "") + (completed.stderr or "")
-            ):
-                completed = self.runner.run(
-                    ["find", "--format", _MPI_FIND_FORMAT_LEGACY, provider]
-                )
-            if completed.returncode != 0:
-                continue
-            for line in completed.stdout.splitlines():
+        # One unconstrained ``spack find``, filtered here: naming each
+        # provider asks Spack about MPIs the site does not have (each one an
+        # error, e.g. cray-mpich on a non-Cray site) and an unknown name
+        # fails the whole query.
+        completed = self.runner.run(["find", "--format", _MPI_FIND_FORMAT])
+        if completed.returncode != 0:
+            completed = self.runner.run(["find", "--format", _MPI_FIND_FORMAT_LEGACY])
+        if completed.returncode == 0:
+            for line in (completed.stdout or "").splitlines():
                 match = _FIND_LINE.match(line.strip())
-                if match is None:
+                if match is None or match.group("name") not in MPI_PROVIDERS:
                     continue
                 prefix = match.group("prefix").strip()
                 short = match.group("hash")[:7]
@@ -3103,7 +3099,8 @@ class SpackPlanner:
             candidates=options,
             evidence=[
                 "spack find --format '{name}@{version} {hash} {prefix}' "
-                + " ".join(MPI_PROVIDERS),
+                "(MPI providers found: "
+                + ", ".join(sorted({str(c["name"]) for c in candidates})) + ")",
                 "spack config get packages (MPI externals)",
                 f"spack spec -I -l (concretizer picked {concretized.name}/{concretized.hash})",
             ],
@@ -3282,6 +3279,7 @@ class SpackPlanner:
         """Build only the missing nodes of a resolved entry, then re-verify."""
         tokens = shlex.split(entry["spec"])
         missing_before = [item["name"] for item in entry["missing"]]
+        missing_items = list(entry["missing"])
         completed = self.runner.run(["install", "--fail-fast", *tokens], stream=True)
         if completed.returncode != 0:
             entry["status"] = "failed"
@@ -3307,6 +3305,9 @@ class SpackPlanner:
             return entry
         self._fill_nodes(entry, nodes, tokens)
         entry["built"] = missing_before
+        measured = _node_install_seconds(self.runner, missing_items)
+        if measured:
+            entry["node_build_seconds"] = measured
         if entry["status"] == "satisfied":
             entry["status"] = "installed"
         else:
@@ -3558,6 +3559,66 @@ class SpackEnvironment:
         }
 
 
+def _attribute_env_build_seconds(entries: Sequence[Dict[str, Any]], elapsed: float) -> None:
+    """``build_seconds`` of each package the environment install built.
+
+    One package built: the install's wall clock. Several built together:
+    each one's own nodes as Spack measured them (shared nodes count for
+    each, as each would need them alone).
+    """
+    built = [entry for entry in entries if entry.get("status") == "installed"]
+    for entry in built:
+        if entry.get("build_seconds") is not None:
+            continue
+        if len(built) == 1:
+            entry["build_seconds"] = elapsed
+            entry["build_seconds_source"] = "wall_clock"
+        elif entry.get("node_build_seconds"):
+            entry["build_seconds"] = round(sum(entry["node_build_seconds"].values()), 3)
+            entry["build_seconds_source"] = "spack_install_times"
+
+
+def _node_install_seconds(
+    runner: "SpackRunner", nodes: Sequence[Mapping[str, Any]]
+) -> Dict[str, float]:
+    """Spack's measured install seconds of just-built nodes, by node name.
+
+    Spack writes ``<prefix>/.spack/install_times.json`` for each node it
+    builds; one ``spack find`` gives the prefixes. Binary-cache installs
+    are not builds and are skipped.
+    """
+    wanted = {
+        str(node.get("hash")): str(node.get("name"))
+        for node in nodes
+        if node.get("hash") and node.get("name")
+    }
+    if not wanted:
+        return {}
+    completed = runner.run(["find", "--format", "{name} {hash} {prefix}"])
+    if completed.returncode != 0:
+        return {}
+    seconds: Dict[str, float] = {}
+    for line in (completed.stdout or "").splitlines():
+        parts = line.strip().split(None, 2)
+        if len(parts) != 3 or not parts[2].startswith("/"):
+            continue
+        name, full_hash, prefix = parts
+        if not any(full_hash.startswith(short) and wanted[short] == name
+                   for short in wanted):
+            continue
+        try:
+            document = json.loads(
+                (Path(prefix) / ".spack" / "install_times.json").read_text(encoding="utf-8")
+            )
+            total = float(document["total"])
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if document.get("cache"):
+            continue
+        seconds[name] = max(seconds.get(name, 0.0), round(total, 1))
+    return seconds
+
+
 def _sync_spack_environment(
     planner: SpackPlanner,
     context: InstallContext,
@@ -3684,6 +3745,11 @@ def _sync_spack_environment_locked(
             record["spack_env"] = environment.describe(None)
             return
         roots = environment.current_roots(specs)
+        node_seconds = _node_install_seconds(
+            planner.runner,
+            [node.to_dict() for node in concretized if not node.present]
+            or [item for _p, e in missing for item in e["missing"]],
+        )
         for package, entry in missing:
             missing_before = [item["name"] for item in entry["missing"]]
             verify = planner._spec(shlex.split(entry["spec"]))
@@ -3694,6 +3760,10 @@ def _sync_spack_environment_locked(
                 continue
             planner._fill_nodes(entry, nodes, shlex.split(entry["spec"]))
             entry["built"] = missing_before
+            measured = {name: node_seconds[name] for name in missing_before
+                        if name in node_seconds}
+            if measured:
+                entry["node_build_seconds"] = measured
             if entry["status"] == "satisfied":
                 entry["status"] = "installed"
             else:
@@ -4005,6 +4075,8 @@ def run_spack_install(
             )
             if any(entry.get("status") == "installed" for _p, entry in resolved):
                 record["env_build_seconds"] = round(time.monotonic() - sync_started, 3)
+                _attribute_env_build_seconds(
+                    [entry for _p, entry in resolved], record["env_build_seconds"])
     except BuildOutsideAllocation as refused:
         record["refused"] = refused.to_dict()
         record["finished_at"] = _utc_now()

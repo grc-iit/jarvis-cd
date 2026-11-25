@@ -68,9 +68,17 @@ KNOWN_HEAVY = frozenset({
     "ecp-data-vis-sdk", "kokkos-kernels", "hipblas", "rocblas", "cuda", "nvhpc",
 })
 
-#: heuristic seconds per missing node (ordinary, known-heavy)
-NODE_BUILD_SECONDS = 120
-HEAVY_NODE_BUILD_SECONDS = 3600
+#: heuristic seconds per missing node (ordinary, known-heavy), used only for
+#: nodes this site has not built before. Calibrated on a measured ParaView
+#: 5.13.1 build (62 nodes on one compute node, Spack ``install_times.json``):
+#: 59 ordinary nodes averaged 34 s (max 249 s); llvm 3276 s, paraview
+#: 2698 s, mesa 116 s.
+NODE_BUILD_SECONDS = 60
+HEAVY_NODE_BUILD_SECONDS = 1800
+#: known-heavy nodes whose build is far from the known-heavy default
+HEAVY_BUILD_SECONDS = {"llvm": 3600, "gcc": 3600, "paraview": 3000, "mesa": 600}
+#: a known-heavy package with neither a check nor a prior build here
+HEAVY_PACKAGE_BUILD_SECONDS = 4 * 3600
 DEFAULT_CHECK_SECONDS = 60
 HEAVY_CHECK_SECONDS = 600
 
@@ -444,11 +452,45 @@ def record_costs(path: Path, updates: Mapping[str, Mapping[str, Any]]) -> None:
         print(f"install placement: costs not recorded ({exc})")
 
 
+def node_build_seconds(node: str) -> int:
+    """Heuristic build seconds of one Spack node never built at this site."""
+    if node in HEAVY_BUILD_SECONDS:
+        return HEAVY_BUILD_SECONDS[node]
+    return HEAVY_NODE_BUILD_SECONDS if node in KNOWN_HEAVY else NODE_BUILD_SECONDS
+
+
+def measured_nodes(costs: Mapping[str, Mapping[str, Any]],
+                   nodes: Sequence[str]) -> Dict[str, float]:
+    """Spack nodes with a measured ``node_build_seconds`` at this site."""
+    measured: Dict[str, float] = {}
+    for node in nodes:
+        seconds = (costs.get(node) or {}).get("node_build_seconds")
+        if seconds is not None:
+            measured[node] = float(seconds)
+    return measured
+
+
+def _heuristic_basis(nodes: Sequence[str]) -> str:
+    heavy = sorted({node for node in nodes if node in KNOWN_HEAVY})
+    light = sum(1 for node in nodes if node not in KNOWN_HEAVY)
+    return (f"{len(nodes)} missing Spack node(s): {light} x {NODE_BUILD_SECONDS} s"
+            + (", known-heavy " + ", ".join(f"{node} {node_build_seconds(node)} s"
+                                            for node in heavy) if heavy else ""))
+
+
 def estimate(phase: str, name: str, costs: Mapping[str, Mapping[str, Any]],
-             missing: Optional[Sequence[str]] = None) -> Dict[str, Any]:
-    """Estimated seconds and cost class of one package's check or build."""
+             missing: Optional[Sequence[str]] = None,
+             use_prior: bool = True) -> Dict[str, Any]:
+    """Estimated seconds and cost class of one package's check or build.
+
+    A build with known ``missing`` nodes sums each node's measured seconds
+    at this site where Spack recorded one, else the per-node heuristic. With
+    no node measured, a prior whole build of ``name`` is used (unless
+    ``use_prior`` is false), then the heuristic.
+    """
     prior = costs.get(name) or {}
     seconds: Optional[float]
+    measured = measured_nodes(costs, missing) if missing is not None else {}
     if phase == "check":
         if prior.get("check_seconds") is not None:
             seconds = float(prior["check_seconds"])
@@ -461,20 +503,23 @@ def estimate(phase: str, name: str, costs: Mapping[str, Mapping[str, Any]],
             seconds, basis = DEFAULT_CHECK_SECONDS, \
                 "default for a package never checked at this site"
     else:
-        if prior.get("build_seconds") is not None:
+        if measured and missing is not None:
+            rest = [node for node in missing if node not in measured]
+            measured_total = sum(measured[node] for node in missing if node in measured)
+            seconds = measured_total + sum(node_build_seconds(node) for node in rest)
+            basis = (f"{len(missing) - len(rest)} of {len(missing)} missing Spack "
+                     f"node(s) built before at this site ({_human(measured_total)}, "
+                     "Spack install_times)"
+                     + (f"; the other {_heuristic_basis(rest)}" if rest else ""))
+        elif use_prior and prior.get("build_seconds") is not None:
             seconds = float(prior["build_seconds"])
             basis = (f"prior build of {name} at this site ({prior.get('build_host')}, "
                      f"{prior.get('built_at')}, {prior.get('built_nodes')} nodes)")
         elif missing is not None:
-            heavy = sorted({node for node in missing if node in KNOWN_HEAVY})
-            light = len(missing) - sum(1 for node in missing if node in KNOWN_HEAVY)
-            seconds = light * NODE_BUILD_SECONDS + \
-                (len(missing) - light) * HEAVY_NODE_BUILD_SECONDS
-            basis = (f"{len(missing)} missing Spack node(s) x {NODE_BUILD_SECONDS} s"
-                     + (f", known-heavy {', '.join(heavy)} x "
-                        f"{HEAVY_NODE_BUILD_SECONDS} s" if heavy else ""))
+            seconds = float(sum(node_build_seconds(node) for node in missing))
+            basis = _heuristic_basis(missing)
         elif name in KNOWN_HEAVY:
-            seconds, basis = 4 * HEAVY_NODE_BUILD_SECONDS, \
+            seconds, basis = HEAVY_PACKAGE_BUILD_SECONDS, \
                 f"{name} is a known-heavy package"
         else:
             seconds, basis = None, "unknown: no prior build and no check of it here"

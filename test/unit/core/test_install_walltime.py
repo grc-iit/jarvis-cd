@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
+from jarvis_cd.core import install_placement as placement
 from jarvis_cd.core import install_walltime as walltime
 from jarvis_cd.core.issues import JarvisIssueError
 
@@ -111,9 +112,9 @@ def test_node_count_estimate_and_installed_packages(site):
     builds = {item["pkg_id"]: item for item in document["estimate"]["packages"]
               if item["phase"] == "build"}
     assert builds["pv"]["seconds"] == 0
-    assert builds["tool"]["seconds"] == 10 * 120
+    assert builds["tool"]["seconds"] == 10 * placement.NODE_BUILD_SECONDS
     # checks: paraview 600 (known heavy) + mytool 60
-    assert document["needed_seconds"] == 600 + 600 + 60 + 1200
+    assert document["needed_seconds"] == 600 + 600 + 60 + 10 * placement.NODE_BUILD_SECONDS
 
 
 def test_explicit_time_wins(site):
@@ -166,7 +167,8 @@ def test_resubmit_after_timeout_reports_built_nodes_and_counts_the_rest(site):
     assert len(previous["already_built"]) == 20
     [build] = [item for item in document["estimate"]["packages"]
                if item["phase"] == "build"]
-    assert build["already_built"] == 20 and build["seconds"] == 42 * 120
+    assert build["already_built"] == 20 and \
+        build["seconds"] == 42 * placement.NODE_BUILD_SECONDS
     summary = walltime.summary(document)
     assert len(summary["already_built"]) == 20
     assert summary["source"] == "jarvis_estimate"
@@ -184,6 +186,24 @@ def test_prior_build_time_is_scaled_by_what_is_left(site):
             built_hashes=[node["hash"] for node in missing[:4]])
     [build] = [item for item in estimate["packages"] if item["phase"] == "build"]
     assert build["seconds"] == 3600
+
+
+def test_measured_nodes_estimate_what_is_left(site):
+    # a whole prior build plus Spack's per-node times: the nodes still
+    # missing are summed, not the whole build scaled
+    missing = _missing(10)
+    site.costs({"mytool": {"build_seconds": 6000},
+                "n0": {"node_build_seconds": 3000}, "n5": {"node_build_seconds": 50}})
+    with patch("jarvis_cd.core.installer.Installer.get_installers",
+               return_value={"spack": [OTHER]}), \
+            patch("jarvis_cd.core.installer.read_install_check",
+                  return_value=(_record({"tool": missing}), "")):
+        estimate = walltime.install_estimate(
+            _ppl([OTHER]), install_check=False,
+            built_hashes=[node["hash"] for node in missing[:4]])
+    [build] = [item for item in estimate["packages"] if item["phase"] == "build"]
+    assert build["seconds"] == 50 + 5 * placement.NODE_BUILD_SECONDS
+    assert "1 of 6 missing Spack node(s) built before" in build["basis"]
 
 
 def test_format_and_log_parsing(tmp_path):

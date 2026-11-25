@@ -278,24 +278,26 @@ def toolchains(spack: _Spack, packages: Mapping[str, Any]) -> List[Dict[str, Any
 def installed_mpis(spack: _Spack) -> List[Dict[str, Any]]:
     """Installed MPIs (local and upstream) with the compiler they used.
 
-    One ``spack find`` per provider, like the planner: a provider name the
-    Spack release does not know must not hide the others.
+    One unconstrained ``spack find``, filtered to the MPI providers: naming
+    each provider asks Spack about MPIs the site does not have, and a name
+    the Spack release does not know fails the whole query.
     """
     mpis: List[Dict[str, Any]] = []
-    for provider in MPI_PROVIDERS:
-        completed = spack.run(
-            ["find", "--format", "{name}@{version} {hash:7} {compiler} {prefix}", provider],
-            timeout=60,
-        )
-        if completed.returncode != 0:
+    completed = spack.run(
+        ["find", "--format", "{name}@{version} {hash:7} {compiler} {prefix}"],
+        timeout=60,
+    )
+    if completed.returncode != 0:
+        return mpis
+    for line in (completed.stdout or "").splitlines():
+        parts = line.split()
+        if len(parts) != 4 or "@" not in parts[0] or not parts[3].startswith("/"):
             continue
-        for line in (completed.stdout or "").splitlines():
-            parts = line.split()
-            if len(parts) != 4 or "@" not in parts[0] or not parts[3].startswith("/"):
-                continue
-            name, _, version = parts[0].partition("@")
-            mpis.append({"name": name, "version": version, "hash": parts[1],
-                         "compiler": parts[2].replace("@=", "@"), "prefix": parts[3]})
+        name, _, version = parts[0].partition("@")
+        if name not in MPI_PROVIDERS:
+            continue
+        mpis.append({"name": name, "version": version, "hash": parts[1],
+                     "compiler": parts[2].replace("@=", "@"), "prefix": parts[3]})
     return mpis
 
 
