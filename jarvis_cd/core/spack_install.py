@@ -781,6 +781,10 @@ class SpackRunner:
         #: ``-C`` scopes (e.g. the pipeline's ``repos.yaml``) put on every
         #: command except ``-e DIR`` ones, whose manifest lists the repos.
         self.config_scopes: List[str] = []
+        #: ``-c`` overrides on every command (the install's build stage)
+        self.config_overrides: List[str] = []
+        #: variables set on every command (the install's ``TMPDIR``)
+        self.environment: Dict[str, str] = {}
 
     def _log(self, text: str) -> None:
         if self.log is not None:
@@ -798,6 +802,11 @@ class SpackRunner:
                 *(token for scope in self.config_scopes for token in ("-C", scope)),
                 *arguments,
             ]
+        if self.config_overrides:
+            arguments = [
+                *(token for item in self.config_overrides for token in ("-c", item)),
+                *arguments,
+            ]
         # On a login host under install_placement limits: -c config:build_jobs,
         # nice/idle I/O and an address-space bound (no-ops otherwise).
         arguments = install_placement.spack_arguments(arguments)
@@ -807,6 +816,7 @@ class SpackRunner:
         self._log(f"[{_utc_now()}] $ {command}\n")
         environment = install_placement.subprocess_environment(
             spack_subprocess_environment())
+        environment.update(self.environment)
         preexec = install_placement.preexec()
         extra = {"preexec_fn": preexec} if preexec is not None else {}
         if stream:
@@ -969,6 +979,119 @@ def _log_tail(text: str, lines: int = 40) -> str:
     return _bounded("\n".join(text.splitlines()[-lines:]), 4096)
 
 
+#: the site's chosen scratch for install temp files (the compiler probe,
+#: TMPDIR and Spack's build stage); default ``<install dir>/tmp``
+INSTALL_TMPDIR_ENV = "JARVIS_INSTALL_TMPDIR"
+#: free space (MiB) the install temp directory must have before a build
+INSTALL_TMP_MIN_MB_ENV = "JARVIS_INSTALL_TMP_MIN_MB"
+DEFAULT_INSTALL_TMP_MIN_MB = 1024
+#: what a compiler, tar or Spack prints when storage, not the code, failed
+_STORAGE_FAULT = re.compile(
+    r"No space left on device|Disk quota exceeded|Read-only file system"
+    r"|cannot create temporary file|No usable temporary directory"
+    r"|\[Errno (?:28|30|122)\]|\bENOSPC\b|\bEDQUOT\b|\bEROFS\b",
+    re.IGNORECASE,
+)
+_STORAGE_PATH = re.compile(r"(?<![\w.~])(/[^\s'\"`:,;()]+)")
+
+
+def _storage_path(line: str) -> Optional[str]:
+    """The first absolute path ``line`` names that is not a program (the
+    ``/usr/bin/ld:`` or ``tar:`` prefix of the message)."""
+    for path in _STORAGE_PATH.findall(line):
+        path = path.rstrip(".")
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            continue
+        return path
+    return None
+
+
+def storage_fault(text: str) -> Optional[Dict[str, Optional[str]]]:
+    """``{"error", "path"}`` when ``text`` shows full or unwritable storage
+    (``No space left on device``, a quota, a read-only file system, no
+    usable temporary directory), else ``None``. ``path`` is the file or
+    directory the line names, when it names one."""
+    for line in (text or "").splitlines():
+        if _STORAGE_FAULT.search(line):
+            return {"error": line.strip()[:400], "path": _storage_path(line)}
+    return None
+
+
+def storage_problem(directory: Path, min_free_bytes: int = 0) -> Optional[str]:
+    """Why ``directory`` cannot hold install temp files (unwritable, or
+    under ``min_free_bytes`` free), else ``None``."""
+    directory = Path(directory)
+    probe = directory / f".jarvis-write-test-{os.getpid()}"
+    try:
+        with open(probe, "wb") as stream:
+            stream.write(b"\0" * 65536)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError as error:
+        with contextlib.suppress(OSError):
+            probe.unlink()
+        return f"cannot write {directory}: {error.strerror or error}"
+    with contextlib.suppress(OSError):
+        probe.unlink()
+    if min_free_bytes:
+        try:
+            free = shutil.disk_usage(str(directory)).free
+        except OSError as error:
+            return f"cannot read the free space of {directory}: {error.strerror or error}"
+        if free < min_free_bytes:
+            return (f"only {free // 2**20} MiB free in {directory}; JARVIS needs "
+                    f"{min_free_bytes // 2**20} MiB ({INSTALL_TMP_MIN_MB_ENV})")
+    return None
+
+
+def storage_unusable_issue(
+    *,
+    host: str,
+    path: Optional[str],
+    error: str,
+    role: str,
+    origin: str,
+    evidence: Sequence[str] = (),
+    directory: Optional[str] = None,
+) -> Dict[str, Any]:
+    """``storage_unusable``: storage on a node is full or not writable.
+
+    A node or storage problem, never a compiler or spec question: no
+    candidates, ``scope: node``, naming ``host`` and ``path``.
+    """
+    where = path or "(the error names no path)"
+    first = (error.strip().splitlines() or [""])[0][:300]
+    question = (f"{role.capitalize()} {where} on {host} is full or not writable "
+                f"({first}). No compiler or spec choice fixes this.")
+    issue = make_issue(
+        kind="storage_unusable",
+        package="*",
+        subject=f"{host}:{path or role}",
+        scope="node",
+        question=question,
+        candidates=[],
+        detail=error,
+        evidence=list(evidence),
+        answerable=False,
+        hint=(f"free space on {host} or run the install on another node; "
+              f"{INSTALL_TMPDIR_ENV} names a scratch directory with space for "
+              "install temp files"),
+    )
+    issue.update(
+        message=question,
+        host=host,
+        path=path,
+        directory=directory or (posixpath.dirname(path.rstrip("/")) if path else None),
+        role=role,
+        origin=origin,
+        error=_bounded(error, 1024),
+        remedy=(f"Free space on {where} on {host}, or run the install on another "
+                f"node (exclude {host}), or set {INSTALL_TMPDIR_ENV} to a scratch "
+                "directory with space; then run the install again."),
+    )
+    return issue
+
+
 def compiler_question_candidates(
     usable: Sequence[Mapping[str, Any]],
 ) -> List[Dict[str, Any]]:
@@ -1098,10 +1221,15 @@ def classify_install_failure(
     log_path: Optional[Path] = None,
     command: Optional[str] = None,
     nodes: Sequence[Any] = (),
+    temp_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Map a failed ``spack install``/``concretize`` to one typed issue.
 
-    ``compiler_unavailable`` (``CompilerAccessError``, or a compiler that
+    ``storage_unusable`` first (``No space left on device``, a quota, a
+    read-only file system in the output or the build log, or a "cannot
+    create executables" while the install's ``temp_dir`` is full or not
+    writable): a node or storage problem, never a compiler question.
+    Then ``compiler_unavailable`` (``CompilerAccessError``, or a compiler that
     cannot create executables in a configure/CMake check), ``fetch_failed``,
     ``build_failed``, a concretize kind (``variant_conflict``, ``no_recipe``,
     ``concretize_failed``) for ``stage='concretize'``, else
@@ -1116,20 +1244,34 @@ def classify_install_failure(
     package = packages[0] if len(packages) == 1 else "*"
     excerpt = _error_excerpt(output)
     evidence = [item for item in (command, f"log: {log_path}" if log_path else None) if item]
-    access = _COMPILER_ACCESS.search(output)
-    broken = None if access is not None or stage == "concretize" else _COMPILER_BROKEN.search(output)
     build_log = _BUILD_LOG.search(output)
-    if access is None and broken is None and stage != "concretize" and build_log is not None:
+    log_text = ""
+    if build_log is not None:
         # Spack prints only the build log's error lines; the configure check
-        # message can be further up the log.
+        # message (or the full disk) can be further up the log.
         try:
             with open(build_log.group("path"), "rb") as stream:
                 stream.seek(0, os.SEEK_END)
                 stream.seek(max(0, stream.tell() - 262144))
-                broken = _COMPILER_BROKEN.search(stream.read().decode("utf-8", "replace"))
+                log_text = stream.read().decode("utf-8", "replace")
         except OSError:
-            broken = None
-    if access is not None:
+            log_text = ""
+    access = _COMPILER_ACCESS.search(output)
+    broken = None if access is not None or stage == "concretize" else (
+        _COMPILER_BROKEN.search(output) or _COMPILER_BROKEN.search(log_text))
+    storage = storage_fault(output) or storage_fault(log_text)
+    if storage is None and broken is not None and temp_dir is not None:
+        problem = storage_problem(Path(temp_dir))
+        if problem:
+            storage = {"error": f"{broken.group(0)}; {problem}", "path": str(temp_dir)}
+    if storage is not None:
+        issue = storage_unusable_issue(
+            host=host, path=storage["path"] or (str(temp_dir) if temp_dir else None),
+            error=str(storage["error"]), role="storage", origin=f"spack {stage}",
+            evidence=evidence,
+        )
+        issue["packages_failed"] = list(packages)
+    elif access is not None:
         compiler = access.group("spec").replace("@=", "@")
         missing = re.findall(r"'([^']+)'", access.group("paths"))
         # Spack could not run it here, whatever the earlier check found.
@@ -1315,23 +1457,39 @@ def _compiler_environment(entry: Mapping[str, Any]) -> Dict[str, str]:
     return env
 
 
-def probe_compiler(paths: Mapping[str, str], entry: Mapping[str, Any]) -> Dict[str, Any]:
+def probe_compiler(paths: Mapping[str, str], entry: Mapping[str, Any],
+                   temp_dir: Optional[Path] = None) -> Dict[str, Any]:
     """Build and run a trivial program with each of ``cc``/``cxx``/``fc``,
     as a configure or CMake check would. Returns ``{lang: "ok" | reason}``.
 
     Finding the executables is not enough: a driver over an incomplete
     toolchain (no crt files, no libstdc++, a missing assembler) exists and
     still "cannot create executables".
+
+    The test programs and the compiler's own temp files (``TMPDIR``) go to
+    ``temp_dir`` (the install's temp directory), not the node's ``/tmp``.
     """
     env = _compiler_environment(entry)
+    if temp_dir is not None:
+        env["TMPDIR"] = str(temp_dir)
     results: Dict[str, Any] = {}
-    with tempfile.TemporaryDirectory(prefix="jarvis-compiler-probe-") as tmp:
+    try:
+        scratch = tempfile.TemporaryDirectory(
+            prefix="jarvis-compiler-probe-", dir=str(temp_dir) if temp_dir else None)
+    except OSError as error:
+        reason = f"compile could not start: no temp directory ({error})"
+        return {lang: reason for lang in _PROBE_SOURCES if paths.get(lang)}
+    with scratch as tmp:
         for lang, (name, text) in _PROBE_SOURCES.items():
             compiler = paths.get(lang)
             if not compiler:
                 continue
             source = Path(tmp) / name
-            source.write_text(text)
+            try:
+                source.write_text(text)
+            except OSError as error:
+                results[lang] = f"compile could not start: cannot write {source} ({error})"
+                continue
             # Windows has no a.out to run; the stub compilers the local proof
             # uses write a .cmd, so the run step is exercised there too.
             output = Path(tmp) / (f"probe-{lang}.cmd" if os.name == "nt" else f"probe-{lang}")
@@ -1361,7 +1519,8 @@ def probe_compiler(paths: Mapping[str, str], entry: Mapping[str, Any]) -> Dict[s
 
 
 def verify_compilers(
-    compilers: Sequence[Mapping[str, Any]], *, probe: bool = False
+    compilers: Sequence[Mapping[str, Any]], *, probe: bool = False,
+    temp_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Check every compiler's executables on this host, as Spack's
     ``CompilerAccessError`` would (each configured path must be executable).
@@ -1369,15 +1528,30 @@ def verify_compilers(
     With ``probe`` (the build job, before the first build; off with
     ``JARVIS_COMPILER_PROBE=off``) each compiler whose executables exist
     must also compile, link and run a test program per language here
-    (``probe``). One whose C test fails is unusable; a C++ or Fortran
-    failure removes that language from ``languages`` (and clears ``full``),
-    with the reason per language in ``failures``.
+    (``probe``), in ``temp_dir``. One whose C test fails is unusable; a C++
+    or Fortran failure removes that language from ``languages`` (and clears
+    ``full``), with the reason per language in ``failures``.
+
+    A probe that failed because storage is full or not writable (the error
+    says so, or ``temp_dir`` fails its write check) says nothing about the
+    compiler: it is kept as checked by its executables, the reason goes to
+    ``storage_failures`` and the document's ``storage_faults``.
 
     A compiler loaded through ``modules`` is not checked (its paths exist
     only after the module load) and counts as usable.
     """
     probe = probe and compiler_probe_enabled()
     checked: List[Dict[str, Any]] = []
+    storage_faults: List[Dict[str, Any]] = []
+    temp_problem: List[Optional[str]] = []
+
+    def temp_fault() -> Optional[str]:
+        if temp_dir is None:
+            return None
+        if not temp_problem:
+            temp_problem.append(storage_problem(Path(temp_dir)))
+        return temp_problem[0]
+
     for compiler in compilers:
         item = dict(compiler)
         paths = item.get("paths") or {}
@@ -1391,9 +1565,26 @@ def verify_compilers(
                                 if problem}
             item.update(verified=True, usable=not item["missing"])
             if probe and item["usable"]:
-                results = probe_compiler(paths, item.get("entry") or {})
-                item["probe"] = results
+                results = probe_compiler(paths, item.get("entry") or {}, temp_dir)
                 failures = {lang: reason for lang, reason in results.items() if reason != "ok"}
+                storage = {}
+                for lang, reason in failures.items():
+                    fault = storage_fault(str(reason))
+                    if fault is None and temp_fault():
+                        fault = {"error": f"{reason}; {temp_fault()}", "path": str(temp_dir)}
+                    if fault is not None:
+                        storage[lang] = fault
+                if storage:
+                    item["storage_failures"] = {lang: fault["error"]
+                                                for lang, fault in storage.items()}
+                    storage_faults.extend(
+                        {"compiler": item.get("spec"), "language": lang, **fault}
+                        for lang, fault in storage.items())
+                    results = {lang: reason for lang, reason in results.items()
+                               if lang not in storage}
+                    failures = {lang: reason for lang, reason in failures.items()
+                                if lang not in storage}
+                item["probe"] = results
                 if failures:
                     item["failures"] = failures
                 if any(lang in failures for lang in _PROBE_REQUIRED):
@@ -1407,6 +1598,8 @@ def verify_compilers(
         "checked_at": _utc_now(),
         "allocation": current_allocation(),
         "probed": probe,
+        **({"temp_dir": str(temp_dir)} if temp_dir is not None else {}),
+        **({"storage_faults": storage_faults} if storage_faults else {}),
         "compilers": checked,
         "usable": [item["spec"] for item in checked if item["usable"]],
         "unusable": [
@@ -1614,15 +1807,38 @@ def apply_build_compilers(
     ``compiler_unavailable``. Returns ``{"sections", "blocked"}``: ``blocked``
     is the ``compiler_unavailable`` issue to raise if anything must be built.
     """
-    state: Dict[str, Any] = {"sections": {}, "blocked": None}
+    state: Dict[str, Any] = {"sections": {}, "blocked": None, "storage": None}
     document: Optional[Dict[str, Any]] = None
     if context.mode == "install":
-        document = verify_compilers(configured_compilers(planner.runner), probe=True)
+        # Without a usable temp directory the probe would only measure the
+        # full disk; the check by executables still runs.
+        document = verify_compilers(configured_compilers(planner.runner),
+                                    probe=getattr(context, "storage_issue", None) is None,
+                                    temp_dir=getattr(context, "temp_dir", None))
         document["source"] = "verified"
+        faults = document.get("storage_faults") or []
+        preflight = getattr(context, "storage_issue", None)
+        if preflight is not None:
+            state["storage"] = preflight
+        elif faults:
+            fault = faults[0]
+            state["storage"] = storage_unusable_issue(
+                host=str(document.get("host")), path=fault.get("path"),
+                error=str(fault.get("error")), role="storage",
+                origin="build-host compiler probe",
+                evidence=[f"{fault.get('compiler')} {fault.get('language')} test program",
+                          str(context.install_dir / BUILD_COMPILERS_NAME)],
+                directory=str(context.temp_dir) if getattr(context, "temp_dir", None) else None,
+            )
         text = json.dumps(document, indent=2, sort_keys=True) + "\n"
         _atomic_write_text(context.install_dir / BUILD_COMPILERS_NAME, text)
         site_path = _site_build_compilers_path()
-        if site_path is not None:
+        if state["storage"] is not None:
+            # Not a verdict on the compilers: the site's last check stands.
+            context.log("COMPILER probe spoiled by storage "
+                        f"({state['storage']['question']}); "
+                        f"{site_path or 'the site record'} left as it was\n")
+        elif site_path is not None:
             try:
                 _atomic_write_text(site_path, text)
             except OSError as error:
@@ -2295,6 +2511,16 @@ def load_answers(path: Optional[Path]) -> Dict[str, Dict[str, Any]]:
 #: per-process re-entrancy for the decision store's file lock: path -> [RLock, depth]
 _DECISION_LOCKS: Dict[str, List[Any]] = {}
 _DECISION_LOCKS_GUARD = threading.Lock()
+#: who answered, when and why: not part of what was answered
+_ANSWER_PROVENANCE = ("answered_at", "answered_by", "ask_id", "basis")
+
+
+def _same_answer(current: Any, entry: Mapping[str, Any]) -> bool:
+    """Whether the stored ``current`` already holds ``entry``'s answer."""
+    return isinstance(current, Mapping) and all(
+        current.get(key) == value for key, value in entry.items()
+        if key not in _ANSWER_PROVENANCE)
+
 
 #: package answers that are not Spack spec constraints (see SpackPlanner.plan_package)
 _NOT_SPEC_KINDS = frozenset({"install_method", "install_placement", "site_copy"})
@@ -2381,6 +2607,9 @@ class Decisions:
 
         ``extra`` adds fields such as the chosen ``candidate_key``; an
         ``answered_at`` already on ``answer`` (a re-keyed replay) is kept.
+        The same answer to the same question again (a caller resending every
+        answer of an operation) leaves the stored entry, and its
+        ``answered_at``, as they are.
         """
         entry = {
             "kind": issue["kind"],
@@ -2397,11 +2626,16 @@ class Decisions:
                 entry[key] = value
         with self.locked():
             if issue["scope"] == "site":
+                if _same_answer(self.data["site"].get(issue["subject"]), entry):
+                    return
                 self.data["site"][issue["subject"]] = entry
             else:
+                current = self.data["packages"].get(issue["package"], [])
+                if any(_same_answer(existing, entry) for existing in current):
+                    return
                 entries = [
                     existing
-                    for existing in self.data["packages"].get(issue["package"], [])
+                    for existing in current
                     if existing.get("issue_id") != issue["issue_id"]
                 ]
                 entries.append(entry)
@@ -2598,6 +2832,10 @@ class InstallContext:
         self.stale_decisions: List[Dict[str, Any]] = []
         #: ``{pkg_id: text}``: the site has no copy of this package (site_copies)
         self.site_copy_facts: Dict[str, str] = {}
+        #: this install's temp directory (TMPDIR of the probe and of Spack)
+        self.temp_dir: Optional[Path] = None
+        #: ``storage_unusable`` when no usable temp directory could be made
+        self.storage_issue: Optional[Dict[str, Any]] = None
         self._log_stream: Optional[IO[str]] = None
 
     @property
@@ -3366,7 +3604,9 @@ class SpackPlanner:
                 log_path=self.context.log_path,
                 command=self.runner.commands[-1] if self.runner.commands else None,
                 nodes=entry.get("missing") or [],
+                temp_dir=getattr(self.context, "temp_dir", None),
             )
+            keep_stage_build_log(self.context, issue)
             self.context.raise_issue(issue)
             entry["issue_id"] = issue["issue_id"]
             entry["failure_kind"] = issue["kind"]
@@ -3809,7 +4049,9 @@ def _sync_spack_environment_locked(
                 log_path=context.log_path,
                 command=planner.runner.commands[-1] if planner.runner.commands else None,
                 nodes=concretized or [item for _p, e in failing for item in e.get("missing") or []],
+                temp_dir=getattr(context, "temp_dir", None),
             )
+            keep_stage_build_log(context, issue)
             context.raise_issue(issue)
             for _package, entry in failing:
                 entry["status"] = "failed"
@@ -3973,6 +4215,159 @@ def write_repo_scope(scope_dir: Path, repos: Sequence[str]) -> Path:
     return scope_dir
 
 
+def keep_stage_build_log(context: "InstallContext", issue: Dict[str, Any]) -> None:
+    """Copy a failed build's log out of the install temp directory, which
+    is removed when the install ends; ``build_log`` then names the copy."""
+    log = issue.get("build_log")
+    temp_dir = getattr(context, "temp_dir", None)
+    if not log or temp_dir is None:
+        return
+    source = Path(str(log))
+    try:
+        source.resolve().relative_to(Path(temp_dir).resolve())
+    except (OSError, ValueError):
+        return
+    target_dir = context.install_dir / "build-logs" / source.parent.name
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for sibling in (source, source.with_name("spack-build-env.txt")):
+            if sibling.is_file():
+                shutil.copy2(sibling, target_dir / sibling.name)
+    except OSError as error:
+        context.log(f"WARNING: could not keep {source}: {error}\n")
+        return
+    issue["build_log_stage"] = str(source)
+    issue["build_log"] = str(target_dir / source.name)
+
+
+class InstallTemp:
+    """The install's own temp directory: ``TMPDIR`` of the compiler probe
+    and of every Spack command, and Spack's build stage when the config
+    does not choose one. Removed when the install ends.
+
+    It is made under the site's chosen scratch (``JARVIS_INSTALL_TMPDIR``),
+    else under the install directory (in a job, the execution's own
+    directory), never in the node's ``/tmp``. Before anything uses it,
+    it must be writable and have ``JARVIS_INSTALL_TMP_MIN_MB`` free; else
+    the context's ``storage_issue`` is ``storage_unusable`` and ``path`` is
+    ``None``.
+    """
+
+    def __init__(self, base: Path, source: str, host: str):
+        self.base = base
+        self.source = source
+        self.host = host
+        self.path: Optional[Path] = None
+        self.build_stage: Dict[str, Any] = {"source": "not checked"}
+        self.problem: Optional[str] = None
+
+    @classmethod
+    def open(cls, context: "InstallContext", runner: "SpackRunner") -> "InstallTemp":
+        configured = os.environ.get(INSTALL_TMPDIR_ENV, "").strip()
+        host = socket.gethostname()
+        if configured:
+            temp = cls(Path(configured).expanduser(), INSTALL_TMPDIR_ENV, host)
+        else:
+            temp = cls(context.install_dir / "tmp", "install_dir", host)
+        try:
+            minimum = int(os.environ.get(INSTALL_TMP_MIN_MB_ENV, "")
+                          or DEFAULT_INSTALL_TMP_MIN_MB) * 2**20
+        except ValueError:
+            minimum = DEFAULT_INSTALL_TMP_MIN_MB * 2**20
+        try:
+            temp.base.mkdir(parents=True, exist_ok=True)
+            temp.path = Path(tempfile.mkdtemp(prefix=f"{host}-", dir=str(temp.base)))
+            temp.problem = storage_problem(temp.path, minimum)
+        except OSError as error:
+            temp.problem = f"cannot create a directory in {temp.base}: {error.strerror or error}"
+        if temp.problem:
+            where = str(temp.path or temp.base)
+            temp.remove()
+            context.storage_issue = storage_unusable_issue(
+                host=host, path=where, error=temp.problem,
+                role="the install temp directory", origin="install temp check",
+                evidence=[f"{INSTALL_TMPDIR_ENV}={configured}" if configured
+                          else f"{INSTALL_TMPDIR_ENV} unset: under the install directory"],
+                directory=str(temp.base),
+            )
+            context.log(f"[{_utc_now()}] TMPDIR {where} on {host}: {temp.problem}\n")
+            return temp
+        assert temp.path is not None
+        context.temp_dir = temp.path
+        if isinstance(getattr(runner, "environment", None), dict):
+            runner.environment["TMPDIR"] = str(temp.path)
+        context.log(f"[{_utc_now()}] TMPDIR {temp.path} on {host} ({temp.source})\n")
+        return temp
+
+    def prepare_stage(self, runner: "SpackRunner", context: "InstallContext") -> None:
+        """Put Spack's build stage in the temp directory unless the config
+        names one: a stage under ``$tempdir`` follows ``TMPDIR`` already, and a
+        stage the site or user chose is theirs."""
+        if self.path is None or self.build_stage.get("source") != "not checked":
+            return
+        stage: Any = None
+        try:
+            completed = runner.run(["config", "get", "config"])
+            if completed.returncode == 0:
+                loaded = yaml.safe_load(completed.stdout or "") or {}
+                section = loaded.get("config") if isinstance(loaded, Mapping) else None
+                stage = section.get("build_stage") if isinstance(section, Mapping) else None
+            else:
+                self.build_stage = {"source": "unknown",
+                                    "why": "spack config get config failed; TMPDIR only"}
+                return
+        except (OSError, RuntimeError, yaml.YAMLError) as error:
+            self.build_stage = {"source": "unknown", "why": f"{error}; TMPDIR only"}
+            return
+        entries = [str(item) for item in (stage if isinstance(stage, list) else [stage])
+                   if item]
+        follows = bool(entries) and any(
+            marker in entries[0] for marker in ("$tempdir", "${tempdir}", "$TMPDIR",
+                                                "${TMPDIR}"))
+        if not entries and ":" not in str(self.path):
+            path = str(self.path / "spack-stage")
+            if isinstance(getattr(runner, "config_overrides", None), list):
+                runner.config_overrides.append(f"config:build_stage:{path}")
+            self.build_stage = {"source": "jarvis", "path": path}
+        elif follows:
+            self.build_stage = {"source": "config", "configured": entries,
+                                "follows_tmpdir": True}
+        else:
+            self.build_stage = {"source": "config", "configured": entries,
+                                "follows_tmpdir": False}
+        context.log(f"[{_utc_now()}] build stage: {json.dumps(self.build_stage)}\n")
+
+    def describe(self) -> Dict[str, Any]:
+        return {
+            "host": self.host,
+            "path": str(self.path) if self.path else None,
+            "base": str(self.base),
+            "source": self.source,
+            "build_stage": dict(self.build_stage),
+            "problem": self.problem,
+            "removed_at_end": True,
+        }
+
+    def remove(self) -> None:
+        if self.path is None:
+            return
+        # Spack leaves read-only files in a stage; make them removable first.
+        for root, dirs, _files in os.walk(self.path):
+            for name in dirs:
+                with contextlib.suppress(OSError):
+                    os.chmod(os.path.join(root, name), 0o700)
+        with contextlib.suppress(OSError):
+            os.chmod(self.path, 0o700)
+        shutil.rmtree(self.path, ignore_errors=True)
+
+    def close(self, context: "InstallContext") -> None:
+        if self.path is None:
+            return
+        self.remove()
+        context.log(f"[{_utc_now()}] TMPDIR {self.path} removed"
+                    f"{'' if not self.path.exists() else ' (partly: some files remain)'}\n")
+
+
 def run_spack_install(
     pkg_list: Sequence[Mapping[str, Any]],
     context: InstallContext,
@@ -3998,29 +4393,72 @@ def run_spack_install(
             missing = ensure_build_spack_healthy(context, planner.decisions)
             blocked_by = "spack_broken"
         if missing is not None:
-            record = {
-                "schema_version": RECORD_SCHEMA,
-                "mode": context.mode,
-                "spack_root": None,
-                blocked_by: missing["issue_id"],
-                "decisions": str(context.decisions_path),
-                "started_at": _utc_now(),
-                "finished_at": _utc_now(),
-                "packages": {
-                    str(d.get("pkg_id") or d.get("pkg_name") or "pkg"): {
-                        "status": "blocked", "blocked_by": blocked_by,
-                    }
-                    for d in pkg_list
-                },
-                "packages_total": len(pkg_list),
-                "issues": [issue["issue_id"] for issue in context.issues],
-                "applied_decisions": list(context.applied_decisions),
-                "stale_decisions": list(context.stale_decisions),
-            }
-            _atomic_write_text(
-                context.record_path, json.dumps(record, indent=2, sort_keys=True) + "\n"
-            )
-            return record
+            return _blocked_record(context, pkg_list, blocked_by, missing["issue_id"])
+    temp = InstallTemp.open(context, planner.runner) if context.mode == "install" else None
+    try:
+        if temp is not None and context.storage_issue is not None:
+            # Nothing is probed or built in a temp directory that cannot hold it.
+            issue = context.storage_issue
+            context.raise_issue(issue)
+            return _blocked_record(context, pkg_list, "storage_unusable",
+                                   issue["issue_id"], install_tmp=temp.describe(),
+                                   failed_issue=issue)
+        return _plan_and_build(planner, pkg_list, context, env_dir, temp)
+    finally:
+        if temp is not None:
+            temp.close(context)
+
+
+def _blocked_record(
+    context: InstallContext,
+    pkg_list: Sequence[Mapping[str, Any]],
+    blocked_by: str,
+    issue_id: str,
+    failed_issue: Optional[Mapping[str, Any]] = None,
+    **extra: Any,
+) -> Dict[str, Any]:
+    """The record of a run stopped before planning. With ``failed_issue``
+    every package failed on it (the install exits 6); else each waits on
+    the answer to ``issue_id``."""
+    if failed_issue is not None:
+        state: Dict[str, Any] = {
+            "status": "failed", "blocked_by": blocked_by, "issue_id": issue_id,
+            "failure_kind": failed_issue.get("kind"),
+            "error": failed_issue.get("message") or failed_issue.get("question"),
+        }
+    else:
+        state = {"status": "blocked", "blocked_by": blocked_by}
+    record = {
+        "schema_version": RECORD_SCHEMA,
+        "mode": context.mode,
+        "spack_root": None,
+        blocked_by: issue_id,
+        "decisions": str(context.decisions_path),
+        "started_at": _utc_now(),
+        "finished_at": _utc_now(),
+        "packages": {
+            str(d.get("pkg_id") or d.get("pkg_name") or "pkg"): dict(state)
+            for d in pkg_list
+        },
+        "packages_total": len(pkg_list),
+        "issues": [issue["issue_id"] for issue in context.issues],
+        "applied_decisions": list(context.applied_decisions),
+        "stale_decisions": list(context.stale_decisions),
+        **extra,
+    }
+    _atomic_write_text(
+        context.record_path, json.dumps(record, indent=2, sort_keys=True) + "\n"
+    )
+    return record
+
+
+def _plan_and_build(
+    planner: SpackPlanner,
+    pkg_list: Sequence[Mapping[str, Any]],
+    context: InstallContext,
+    env_dir: Optional[Path],
+    temp: Optional[InstallTemp],
+) -> Dict[str, Any]:
     repos = pipeline_repos(pkg_list)
     record: Dict[str, Any] = {
         "schema_version": RECORD_SCHEMA,
@@ -4040,6 +4478,9 @@ def run_spack_install(
         scope = write_repo_scope(context.install_dir / REPO_SCOPE_NAME, repos)
         record["spack_scope"] = str(scope)
         planner.runner.config_scopes = [str(scope)]
+    if temp is not None:
+        temp.prepare_stage(planner.runner, context)
+        record["install_tmp"] = temp.describe()
     record["spack_config_scopes"] = spack_config_scopes(
         planner.runner.config_scopes, env_dir
     )
@@ -4131,6 +4572,23 @@ def run_spack_install(
                 f"binding compiler {blocked['compiler']} is not usable on "
                 f"{blocked['host']}; nothing needed building"
             )
+    storage = compiler_state.get("storage")
+    if storage is not None:
+        record.setdefault("build_compilers", {})["storage_blocked_by"] = storage["issue_id"]
+        needed = [package for package, entry in resolved
+                  if entry.get("status") == "missing"]
+        if needed:
+            # The probe could not write its temp files: a node problem, not
+            # a compiler one. Nothing is built on storage that cannot hold it.
+            context.raise_issue(storage)
+            for package in needed:
+                record["packages"][package].update(
+                    status="failed", issue_id=storage["issue_id"],
+                    failure_kind=storage["kind"], error=storage["message"])
+            to_build = []
+            resolved = []
+        else:
+            record.setdefault("warnings", []).append(storage["message"])
     try:
         if to_build and not context.issues:
             context.ensure_may_build(

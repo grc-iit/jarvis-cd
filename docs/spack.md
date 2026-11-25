@@ -50,7 +50,9 @@ the Spack root, so a relay can run it before `jarvis init`.
      `tcl` module trees when they exist;
    - `config.yaml`: `misc_cache`, `test_stage` and the bootstrap root under
      `<root>/var/jarvis`, `build_stage` under `$tempdir/$user`, and
-     `build_jobs`;
+     `build_jobs`. In an install, `$tempdir` is the install's own temp
+     directory (see [Install temp files](#install-temp-files)), not the
+     node's `/tmp`;
    - `concretizer.yaml`: `reuse: true`;
    - `bootstrap.yaml`: a private bootstrap root.
 3. **Compilers and build tools.** `spack compiler find --scope site`, then
@@ -162,7 +164,8 @@ builds, before any `spack install`:
    externals in `packages:` on Spack 1.x). It checks that each configured
    `cc`, `cxx`, `f77` and `fc` is an executable file on that host, which is
    the same test behind Spack's `CompilerAccessError`. Then it **probes**
-   each compiler that passed: in a temp dir it compiles, links and runs a
+   each compiler that passed: in the install's temp directory (`TMPDIR`
+   too; see [Install temp files](#install-temp-files)) it compiles, links and runs a
    trivial program per language (C with `cc`, C++ with `cxx`, Fortran with
    `fc`), with the compiler entry's `environment` applied. This is the
    check a configure or CMake step makes. A driver that exists over an
@@ -173,7 +176,13 @@ builds, before any `spack install`:
    (see step 3). A compiler's `languages` are those with a configured path
    that, when probed, passed. A compiler loaded through `modules` is not
    checked. Set
-   `JARVIS_COMPILER_PROBE=off` to keep only the existence check. The result
+   `JARVIS_COMPILER_PROBE=off` to keep only the existence check. A probe
+   that fails because storage is full or not writable (`No space left on
+   device` and the like, or the temp directory fails its write check) is
+   not a verdict on the compiler: the compiler stays usable, the reason
+   goes to its `storage_failures` and the document's `storage_faults`, the
+   site's `build-compilers.json` is left as it was, and the install stops
+   with `storage_unusable` instead of asking for a compiler. The result
    (`jarvis.build-compilers.v1`, with `probed`, and `probe`/`failures`/
    `languages` per compiler) goes to `<install>/build-compilers.json`
    and to `<JARVIS_SPACK_ROOT>/var/jarvis/build-compilers.json`. A
@@ -273,10 +282,40 @@ builds, before any `spack install`:
 | `per_node` | why the shown usability holds for one node (`host`, `checked_at`), not as a promise for others |
 | `required` | `{spec, source, require}` for the binding compiler, or `null` |
 | `blocked_by` | the `compiler_unavailable` `issue_id` that stopped the install, or `null` |
+| `storage_blocked_by` | the `storage_unusable` `issue_id` when the probe's storage failed, if present |
 | `scope`, `path` | the `-C` scope dir and the `build-compilers.json` used |
 
 A build that fails anyway is reported as a typed failure (exit `6`); see
 [Install failures](pipeline_tests.md#install-failures).
+
+### Install temp files
+
+An install (`ppl install` in install mode, normally the `+submit` job)
+never writes its temp files to the node's `/tmp`. Before the compiler
+probe, it makes its own temp directory, `<host>-XXXXXX`, under:
+
+- `JARVIS_INSTALL_TMPDIR`, when set (the site's chosen scratch), else
+- `<install>/tmp`; in a job that is `<execution>/install/tmp`, under the
+  execution's own directory.
+
+That directory must be writable and have `JARVIS_INSTALL_TMP_MIN_MB` MiB
+free (default `1024`). If it doesn't, nothing is probed or built: every
+package fails (exit `6`) on one `storage_unusable` issue that names the
+host and the path ([Install failures](pipeline_tests.md#install-failures)).
+
+Otherwise it is the `TMPDIR` of the compiler probe and of every Spack
+command of the install. Spack's `$tempdir` follows `TMPDIR`, so a
+`build_stage` under `$tempdir` (Spack's default, and the site prep's
+`$tempdir/$user/jarvis-spack-stage`) lands there too. When the config sets
+no `build_stage`, JARVIS adds `-c config:build_stage:<temp>/spack-stage`. A
+`build_stage` the site or user set to a fixed path is left alone. The
+directory is removed when the install ends, whether it built or failed. A
+failed build's log under it is first copied to `<install>/build-logs/`.
+
+`install-record.json` carries it as `install_tmp`: `host`, `path`, `base`,
+`source` (`JARVIS_INSTALL_TMPDIR` or `install_dir`), `build_stage`
+(`{source: jarvis, path}`, or `{source: config, configured,
+follows_tmpdir}`), `problem` and `removed_at_end`.
 
 ### Finding a site Spack
 
