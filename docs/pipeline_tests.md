@@ -296,7 +296,10 @@ When rootless podman's default store is on a network file system (the home
 on most clusters), JARVIS gives each node its own store under the node's
 temp dir (`JARVIS_PODMAN_STORE=node|default` overrides the detection; a
 user `storage.conf` wins) and archives the image once on the shared file
-system for the other nodes to load. Rootless podman 3.x ignores
+system for the other nodes to load. A matching archive satisfies the check
+on any host, whatever its own store (a login node that serves the home
+locally keeps the default store, so an image a compute node pulled is only
+in the archive), and every run passes it to the nodes. Rootless podman 3.x ignores
 `CONTAINERS_STORAGE_CONF`, so every podman call JARVIS makes or starts
 (podman-compose included, on every node) goes through a node-local `podman`
 wrapper first on `PATH`. It passes the store as `--root`, `--runroot`,

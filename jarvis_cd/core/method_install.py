@@ -1393,7 +1393,7 @@ def image_present(ppl, engine: str, image: str) -> bool:
 
 
 def archives_images(engine: str) -> bool:
-    """Whether images are archived on the shared FS: podman with a node-local store."""
+    """Whether this host saves its images to the shared FS: podman with a node-local store."""
     return engine == "podman" and node_store_conf() is not None
 
 
@@ -1411,17 +1411,34 @@ def archived(archive: Path, image: str) -> bool:
     return archive.is_file() and isinstance(meta, dict) and meta.get("image") == image
 
 
-def keep_archive(ppl, pkg_list, engine: str, image: str, context) -> Optional[Path]:
-    """Archive ``image`` on the shared FS so other nodes load it; return the archive.
+def archive_of(ppl, pkg_list: Sequence[Mapping[str, Any]], engine: str,
+               image: str) -> Optional[Path]:
+    """The shared archive of ``image`` when one is there, whatever this host's store.
 
-    Only with a node-local store (:func:`archives_images`). An archive of the
-    same image is kept; a pulled or built image is saved once.
+    The install may have run on a node with a node-local store while this host
+    (a login node serving the home locally, say) keeps the default store: the
+    image is then in the archive, not here, and each run node loads it.
+    Only podman loads archives (:meth:`Pipeline._load_archived_image`).
     """
+    if engine != "podman":
+        return None
+    archive = image_archive(ppl, pkg_list)
+    return archive if archived(archive, image) else None
+
+
+def keep_archive(ppl, pkg_list, engine: str, image: str, context) -> Optional[Path]:
+    """The archive of ``image`` the run nodes load, or None when there is none.
+
+    A matching archive is used whatever this host's store is. A new one is saved
+    (once) only from a node-local store (:func:`archives_images`): other stores
+    are where the run nodes look already.
+    """
+    existing = archive_of(ppl, pkg_list, engine, image)
+    if existing is not None:
+        return existing
     if not archives_images(engine):
         return None
     archive = image_archive(ppl, pkg_list)
-    if archived(archive, image):
-        return archive
     if not image_present(ppl, engine, image):
         return None
     archive.parent.mkdir(parents=True, exist_ok=True)

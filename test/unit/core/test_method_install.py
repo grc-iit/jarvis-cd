@@ -581,6 +581,24 @@ class TestContainer(_Case):
         self.assertEqual([call[1] for call in calls], ['pull'])
         self.assertNotIn(mi.ARCHIVE_ENV, ppl.env)
 
+    def test_archive_satisfies_a_host_with_the_default_store(self):
+        # the install ran on a compute node (node-local store); the check runs on
+        # a login node that keeps the home store, where the image never lands
+        packages = [pkg('container', 'docker.io/example/foo:1', 'app')]
+        ppl = FakePipeline(self.jarvis, packages)
+        self.install(ppl, present=False, node_store=True)
+        archive = mi.image_archive(ppl, packages)
+        login = FakePipeline(self.jarvis, packages)
+        result, calls = self.install(login, 'check', present=False,
+                                     context=self.new_context())
+        self.assertEqual(result['status'], 'satisfied')
+        self.assertEqual(calls, [])
+        self.assertEqual(login.env[mi.ARCHIVE_ENV], str(archive))
+        # an archive of another image is no stand-in
+        other = FakePipeline(self.jarvis, [pkg('container', 'docker.io/example/bar:1', 'app')])
+        result, _ = self.install(other, 'check', present=False, context=self.new_context())
+        self.assertEqual(result['status'], 'missing')
+
     def store(self, fstype, **env):
         mounts = self.tmp / 'mounts'
         share = self.tmp / 'home' / '.local' / 'share'

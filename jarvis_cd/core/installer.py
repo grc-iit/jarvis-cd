@@ -1722,7 +1722,8 @@ class ContainerInstaller(Installer):
         return engine, uri, result
 
     def _image_ready(self, ppl, engine, uri, pkg_list=()) -> bool:
-        """The image is in this host's store, or archived for this node to load."""
+        """The image is in this host's store, or in a shared archive the run nodes
+        load (whatever this host's store is: the install may have run elsewhere)."""
         from jarvis_cd.core import method_install
         from jarvis_cd.core.pkg import Pkg
 
@@ -1732,9 +1733,7 @@ class ContainerInstaller(Installer):
         else:
             here = Pkg._image_exists(engine, ppl.name,
                                      sif_dir=str(ppl.jarvis.get_containers_dir()))
-        if here or not method_install.archives_images(engine):
-            return here
-        return method_install.archived(method_install.image_archive(ppl, pkg_list), image)
+        return here or method_install.archive_of(ppl, pkg_list, engine, image) is not None
 
     def _finish(self, ppl, image, pkg_list=(), context=None) -> None:
         from jarvis_cd.core import method_install
@@ -1783,7 +1782,8 @@ class ContainerInstaller(Installer):
             ppl, "install", lambda context: self._install(ppl, pkg_list, context))
 
     def _install(self, ppl, pkg_list, context):
-        from jarvis_cd.core.method_install import engine_fault, failed, run_logged
+        from jarvis_cd.core.method_install import (
+            engine_fault, failed, image_present, run_logged)
 
         engine, uri, result = self._prepare(ppl, pkg_list, context)
         if engine is None:
@@ -1801,7 +1801,7 @@ class ContainerInstaller(Installer):
                 else:
                     argv = [engine, 'pull', uri]
                 pulled = run_logged(argv, context)
-                if pulled.returncode != 0 or not self._image_ready(ppl, engine, uri):
+                if pulled.returncode != 0 or not image_present(ppl, engine, uri):
                     engine_fault(context, engine, package, pulled.stdout)
                     raise failed(context, "container_pull_failed", "container",
                                  package, uri,
