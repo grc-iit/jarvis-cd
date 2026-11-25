@@ -6398,7 +6398,11 @@ class Pipeline:
                 f' sed -i "s/^#*Port .*/Port {ssh_port}/" /etc/ssh/sshd_config; fi',
                 "ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1 || ssh-keygen -A",
                 "sshd_bin=$(command -v sshd || echo /usr/sbin/sshd)",
-                f'"$sshd_bin" -p {ssh_port} -o StrictModes=no -o UsePAM=no',
+                # UsePAM only where sshd is built with PAM (not Alpine's).
+                'pam_opt="-o UsePAM=no"',
+                'if "$sshd_bin" -T $pam_opt 2>&1 | grep -q "Unsupported option UsePAM";'
+                ' then pam_opt=; fi',
+                f'"$sshd_bin" -p {ssh_port} -o StrictModes=no $pam_opt',
                 "sleep infinity || while :; do sleep 86400; done",
             ]
         )
@@ -6711,12 +6715,16 @@ class Pipeline:
         diagnostic = str(up_error) if up_error is not None else ""
         if up_error is None:
             quoted = shlex.quote(name)
+            # stderr stays out of the state: outside a systemd user session
+            # (a batch step) podman warns about cgroups on every call.
             probe = (
                 "sleep 2; "
                 f"state=$({engine} inspect --format '{{{{.State.Running}}}}' "
-                f"{quoted} 2>&1) || true; "
+                f"{quoted} 2>/dev/null) || true; "
                 '[ "$state" = true ] || { '
-                f'echo "container {name} is not running: $state" >&2; '
+                f'echo "container {name} is not running: ${{state:-unknown}}" >&2; '
+                f"{engine} inspect --format '{{{{.State.Status}}}} "
+                f"exit={{{{.State.ExitCode}}}} {{{{.State.Error}}}}' {quoted} >&2 || true; "
                 f"{engine} logs --tail 40 {quoted} >&2 || true; exit 1; }}"
             )
             command = f"sh -c {shlex.quote(probe)}"

@@ -1563,6 +1563,51 @@ def test_container_start_failure_is_typed_before_any_package(
     assert pipeline._started_instances == []
 
 
+@pytest.mark.skipif(os.name == "nt", reason="runs the probe under POSIX sh")
+@pytest.mark.parametrize(("running", "refused"), [("true", False), ("false", True)])
+def test_running_probe_ignores_engine_warnings(
+    tmp_path: Path, running: str, refused: bool
+) -> None:
+    """Outside a systemd user session podman warns on stderr on every call;
+    the probe reads only the state, so a running container is not refused."""
+    import subprocess
+
+    from jarvis_cd.core.issues import JarvisIssueError
+
+    fake = tmp_path / "bin" / "docker"
+    fake.parent.mkdir()
+    fake.write_text(
+        "#!/bin/sh\n"
+        "echo 'level=warning msg=\"no systemd user session\"' >&2\n"
+        f'case "$1 $3" in "inspect {{{{.State.Running}}}}") echo {running};; '
+        "inspect*) echo 'exited exit=1 ';; logs*) echo 'sshd: fatal' >&2;; esac\n",
+        encoding="utf-8",
+    )
+    fake.chmod(0o755)
+    pipeline = _pipeline_double(tmp_path)
+    pipeline.container_image = "example:latest"
+
+    class ShellExec:
+        def __init__(self, command: str, _exec_info: object) -> None:
+            env = dict(os.environ, PATH=f"{fake.parent}:{os.environ.get('PATH', '')}")
+            done = subprocess.run(command, shell=True, env=env, capture_output=True,
+                                  text=True, check=False)
+            self.exit_code = {"localhost": done.returncode}
+            self.stderr = {"localhost": done.stderr}
+
+        def run(self) -> "ShellExec":
+            return self
+
+    with patch.object(jarvis_cd.shell, "Exec", ShellExec):
+        if not refused:
+            pipeline._require_containers_running("docker", None, object())
+            return
+        with pytest.raises(JarvisIssueError) as caught:
+            pipeline._require_containers_running("docker", None, object())
+    error = caught.value.issues[0]["details"]["error"]
+    assert "is not running: false" in error and "exited exit=1" in error
+
+
 def test_container_start_writes_this_executions_compose_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
