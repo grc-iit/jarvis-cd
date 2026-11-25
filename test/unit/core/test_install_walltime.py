@@ -201,6 +201,52 @@ def test_read_install_check_tolerates_only_decisions_for_an_estimate(
     assert reason == why
 
 
+def _packages_digest(pkg_def):
+    from jarvis_cd.core import installer
+
+    return installer._capture_inputs(SimpleNamespace(name="p"), [pkg_def])["packages"]
+
+
+def test_packages_digest_ignores_replayed_site_copy_answers(site):
+    import copy
+
+    from jarvis_cd.core import site_copies
+
+    written = {"pkg_id": "ior", "pkg_type": "builtin.ior",
+               "config": {"install_method": "spack", "install_query": "ior@3.3.0+hdf5",
+                          "install_site_search": True}}
+    expected = _packages_digest(written)
+    # the check job applies the person's answer, a later +plan replays the record
+    for why in ("the person's answer", "the site's recorded answer"):
+        built = copy.deepcopy(written)
+        site_copies.apply_choice(built, "spack", None, why, "sha256:i1")
+        assert _packages_digest(built) == expected
+    chosen = copy.deepcopy(written)
+    site_copies.apply_choice(chosen, "site:ior", {"source": "spack", "spack_hash": "abc"},
+                             "the person's answer", "sha256:i1")
+    assert chosen["config"]["install_method"] == site_copies.METHOD
+    assert _packages_digest(chosen) == expected
+    changed = copy.deepcopy(written)
+    changed["config"]["install_query"] = "ior@3.3.0"
+    assert _packages_digest(changed) != expected
+
+
+def test_packages_digest_keeps_the_chosen_method_not_its_why(site):
+    import copy
+
+    from jarvis_cd.core.method_install import apply_method
+
+    written = {"pkg_id": "x", "pkg_type": "x.tool",
+               "config": {"install_methods": [{"method": "pip", "query": "x"},
+                                              {"method": "spack", "query": "x"}]}}
+    login, job = copy.deepcopy(written), copy.deepcopy(written)
+    apply_method(login, {"method": "pip", "query": "x"}, "fits (pip on this host)")
+    apply_method(job, {"method": "pip", "query": "x"}, "fits (pip at /node/bin/pip)")
+    assert _packages_digest(login) == _packages_digest(job)
+    other = copy.deepcopy(written)
+    apply_method(other, {"method": "spack", "query": "x"}, "fits (pip on this host)")
+    assert _packages_digest(other) != _packages_digest(login)
+
 def test_check_job_uses_check_estimates_only(site):
     document = _resolve(_ppl([OTHER]), None, install_check=True)
     assert document["needed_seconds"] == 600 + 60

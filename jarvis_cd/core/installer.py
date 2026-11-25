@@ -1121,6 +1121,31 @@ def decisions_digest_without_placement(path: Path) -> Optional[str]:
     return digest(path)
 
 
+def _install_settings(config: Mapping[str, Any]) -> Dict[str, Any]:
+    """A package's install settings as written, for the ``packages`` digest.
+
+    A check applies the site-copy answer to the package config (the job that
+    asked, as "the person's answer"); a later ``+plan`` replays it as "the
+    site's recorded answer" and the wall-time estimate not at all. That answer
+    is an input of its own (``decisions``), so it is undone here. A method
+    choice is applied on every host, but its ``why`` names the host's tools,
+    so only the chosen method counts.
+    """
+    settings = {key: value for key, value in config.items() if str(key).startswith("install")}
+    site_choice = settings.pop("install_site_choice", None)
+    if isinstance(site_choice, Mapping):
+        settings.pop("install_site", None)
+        previous = site_choice.get("previous_method")
+        if previous:
+            settings["install_method"] = previous
+        else:
+            settings.pop("install_method", None)
+    method_choice = settings.get("install_method_choice")
+    if isinstance(method_choice, Mapping):
+        settings["install_method_choice"] = {"method": method_choice.get("method")}
+    return dict(sorted(settings.items(), key=lambda item: str(item[0])))
+
+
 def _capture_inputs(ppl, pkg_list) -> Dict[str, Optional[str]]:
     """Digests of everything that decides what an install loads.
 
@@ -1140,11 +1165,7 @@ def _capture_inputs(ppl, pkg_list) -> Dict[str, Optional[str]]:
             {
                 "pkg_id": pkg_def.get("pkg_id"),
                 "pkg_type": pkg_def.get("pkg_type"),
-                "install": {
-                    key: value
-                    for key, value in sorted((pkg_def.get("config") or {}).items())
-                    if str(key).startswith("install")
-                },
+                "install": _install_settings(pkg_def.get("config") or {}),
             }
             for pkg_def in pkg_list
         ),
