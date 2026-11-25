@@ -390,22 +390,33 @@ class TestConda(_Case):
 
 
 class TestContainer(_Case):
-    def install(self, ppl, mode='install', present=True, pull_rc=0, context=None):
+    def install(self, ppl, mode='install', present=True, pull_rc=0, context=None,
+                engine_error=None, pull_out='pull output', node_store=False):
         calls = []
 
         def run(argv, context, env=None, timeout=None):
-            calls.append([str(item) for item in argv])
-            return done(argv, 'pull output', pull_rc)
+            argv = [str(item) for item in argv]
+            calls.append(argv)
+            if argv[1] == 'save':
+                Path(argv[3]).write_text('image bytes')
+                return done(argv)
+            return done(argv, pull_out, pull_rc)
 
         state = {'present': present}
 
         def image_present(ppl, engine, image):
-            return state['present'] or (bool(calls) and pull_rc == 0)
+            return state['present'] or (
+                any(call[1] == 'pull' for call in calls) and pull_rc == 0)
 
+        conf = str(self.tmp / 'store' / 'storage.conf')
         installer = ContainerInstaller()
         installer.context = context or self.context
         with mock.patch.object(mi, 'run_logged', run), \
                 mock.patch.object(mi, 'image_present', image_present), \
+                mock.patch.object(mi, 'engine_error', return_value=engine_error), \
+                mock.patch.object(mi, 'podman_store', return_value=None), \
+                mock.patch.object(mi, 'node_store_conf',
+                                  return_value=conf if node_store else None), \
                 mock.patch('shutil.which', return_value='/usr/bin/podman'):
             if mode == 'check':
                 return installer.check(ppl, ppl.packages), calls
@@ -454,12 +465,12 @@ class TestContainer(_Case):
                            source='default')
         both = [{'id': 'apptainer', 'constraint': 'apptainer'},
                 {'id': 'podman', 'constraint': 'podman'}]
-        with mock.patch.object(mi, 'detect_engines', return_value=(both, [])):
+        with mock.patch.object(mi, '_detect', return_value=(both, [], [])):
             result, _ = self.install(ppl, 'check')
         self.assertEqual(result['status'], 'needs_decision')
         self.assertEqual(self.kinds(), ['container_engine'])
-        with mock.patch.object(mi, 'detect_engines',
-                               return_value=(both[1:], ['docker: rootful'])):
+        with mock.patch.object(mi, '_detect',
+                               return_value=(both[1:], ['docker: rootful'], [])):
             result, _ = self.install(ppl, 'check', context=self.new_context())
         self.assertEqual(result['status'], 'satisfied')
         self.assertEqual((ppl.container_engine, ppl.container_engine_source),
@@ -474,6 +485,116 @@ class TestContainer(_Case):
             found, excluded = mi.detect_engines()
         self.assertEqual(found, [])
         self.assertIn('rootful', excluded[0])
+
+    def test_broken_named_engine_is_unusable_with_its_error(self):
+        ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/example/foo:1', 'app')])
+        error = 'Error: database configuration mismatch: graph root /home/u/.local/share'
+        result, calls = self.install(ppl, 'check', engine_error=error)
+        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(self.kinds(), ['container_engine_unusable'])
+        issue = self.context.issues[0]
+        self.assertIn('database configuration mismatch', issue['detail'])
+        self.assertIn('JARVIS_PODMAN_STORE=node', issue['remedy'])
+        self.assertFalse(issue['answerable'])
+        self.assertEqual(calls, [])
+
+    def test_detected_broken_podman_is_unusable_not_missing(self):
+        ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/x/y:1', 'app')],
+                           source='default')
+
+        def which(name):
+            return '/usr/bin/podman' if name == 'podman' else None
+
+        with mock.patch('shutil.which', side_effect=which), \
+                mock.patch.object(mi, 'podman_store', return_value=None), \
+                mock.patch.object(mi, 'engine_error', return_value='Error: no subuid ranges'):
+            engine = mi.resolve_engine(ppl, self.context)
+        self.assertIsNone(engine)
+        self.assertEqual(self.kinds(), ['container_engine_unusable'])
+        self.assertIn('/etc/subuid', self.context.issues[0]['remedy'])
+
+    def test_pull_failing_on_the_store_is_unusable(self):
+        ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/example/foo:1', 'app')])
+        out = 'Error: creating overlay mount: pivot dir: mkdir: operation not permitted'
+        with self.assertRaises(InstallFailed) as caught:
+            self.install(ppl, present=False, pull_rc=125, pull_out=out)
+        issue = caught.exception.issues[0]
+        self.assertEqual(issue['kind'], 'container_engine_unusable')
+        self.assertIn('pivot dir', issue['log_tail'])
+
+    def test_node_store_archives_the_image_for_other_nodes(self):
+        packages = [pkg('container', 'docker.io/example/foo:1', 'app')]
+        ppl = FakePipeline(self.jarvis, packages)
+        result, calls = self.install(ppl, present=False, node_store=True)
+        self.assertEqual(result['status'], 'installed')
+        archive = mi.image_archive(ppl, packages)
+        self.assertEqual(calls[-1], ['podman', 'save', '-o', str(archive.with_suffix('.tar.part')),
+                                     'docker.io/example/foo:1'])
+        self.assertTrue(mi.archived(archive, 'docker.io/example/foo:1'))
+        self.assertEqual(ppl.env[mi.ARCHIVE_ENV], str(archive))
+        # another node: nothing in its own store, the archive satisfies the check
+        other = FakePipeline(self.jarvis, packages)
+        result, calls = self.install(other, 'check', present=False, node_store=True,
+                                     context=self.new_context())
+        self.assertEqual(result['status'], 'satisfied')
+        self.assertEqual(calls, [])
+        self.assertEqual(other.env[mi.ARCHIVE_ENV], str(archive))
+
+    def test_shared_store_keeps_no_archive(self):
+        ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/example/foo:1', 'app')])
+        _, calls = self.install(ppl, present=False)
+        self.assertEqual([call[1] for call in calls], ['pull'])
+        self.assertNotIn(mi.ARCHIVE_ENV, ppl.env)
+
+    def store(self, fstype, **env):
+        mounts = self.tmp / 'mounts'
+        share = self.tmp / 'home' / '.local' / 'share'
+        share.mkdir(parents=True, exist_ok=True)
+        mounts.write_text(f'/dev/sda1 / ext4 rw 0 0\nsrv:/home {self.tmp / "home"} '
+                          f'{fstype} rw 0 0\n')
+        values = {'XDG_DATA_HOME': str(share), 'XDG_CONFIG_HOME': str(self.tmp / 'cfg'),
+                  **env}
+        with mock.patch.dict(os.environ, values), \
+                mock.patch('tempfile.gettempdir', return_value=str(self.tmp)), \
+                mock.patch('os.geteuid', return_value=1000, create=True), \
+                mock.patch('os.getuid', return_value=1000, create=True):
+            os.environ.pop('CONTAINERS_STORAGE_CONF', None)
+            conf = mi.podman_store(str(mounts))
+            return conf, os.environ.get('CONTAINERS_STORAGE_CONF')
+
+    def test_store_on_nfs_moves_to_the_node(self):
+        conf, set_to = self.store('nfs4')
+        self.assertEqual(conf, set_to)
+        text = Path(conf).read_text()
+        self.assertIn(f'graphroot = "{self.tmp / "jarvis-podman-1000-store" / "storage"}"',
+                      text)
+        self.assertIn('runroot = ', text)
+
+    def test_local_store_and_overrides_stay(self):
+        self.assertEqual(self.store('ext4'), (None, None))
+        self.assertEqual(self.store('nfs4', JARVIS_PODMAN_STORE='default'), (None, None))
+        conf, _ = self.store('ext4', JARVIS_PODMAN_STORE='node')
+        self.assertTrue(conf.endswith('storage.conf'))
+        (self.tmp / 'cfg' / 'containers').mkdir(parents=True)
+        (self.tmp / 'cfg' / 'containers' / 'storage.conf').write_text('[storage]\n')
+        self.assertEqual(self.store('nfs4'), (None, None))
+
+    def test_node_script_carries_the_store(self):
+        conf = self.tmp / 'jarvis-podman-1000-store' / 'storage.conf'
+        conf.parent.mkdir()
+        conf.write_text('[storage]\ngraphroot = "/tmp/x"\n')
+        with mock.patch.object(mi, 'node_store_conf', return_value=str(conf)), \
+                mock.patch('tempfile.gettempdir', return_value=str(self.tmp)):
+            script = mi.podman_node_script(self.tmp / 'shared').read_text()
+        self.assertIn('graphroot = "/tmp/x"', script)
+        self.assertIn(f'export CONTAINERS_STORAGE_CONF={conf}', script)
+        self.assertTrue(script.rstrip().endswith('exec "$@"'))
+
+    def test_mount_fstype_takes_the_longest_mount(self):
+        mounts = self.tmp / 'mounts'
+        mounts.write_text(f'/dev/sda1 / ext4 rw 0 0\nsrv:/x {self.tmp} nfs rw 0 0\n')
+        self.assertEqual(mi.mount_fstype(self.tmp / 'a' / 'b', str(mounts)), 'nfs')
+        self.assertEqual(mi.mount_fstype(Path('/'), str(mounts)), 'ext4')
 
     def test_podman_gets_a_runtime_dir(self):
         with mock.patch.dict(os.environ, {'XDG_RUNTIME_DIR': str(self.tmp / 'nope')}), \

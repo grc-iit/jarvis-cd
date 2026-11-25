@@ -20,6 +20,14 @@ detect is a typed question answered through ``answers.json`` and recorded in
 Pip and conda never bring an MPI: a query naming one is refused
 (``mpi_from_package_manager``), so MPI codes reuse the site's Spack and modules.
 
+An engine that is installed but cannot run here (``podman info`` fails, or a
+pull fails on its store) is ``container_engine_unusable``, with the engine's
+own error; no answer fixes it.
+
+Rootless podman whose default store is on a network file system gets a
+node-local store (:func:`podman_store`); the image is then archived once on
+the shared file system and each node loads it before it runs.
+
 Pip installs into a venv and conda into an env, both under
 ``<jarvis root>/envs/<method>/<name>`` (the pipeline's name, or the packages'
 ``install_env``); the pipeline's env gets its ``bin`` first on ``PATH``.
@@ -814,6 +822,18 @@ def conda_run(ppl, pkg_list, context, mode: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _uid() -> int:
+    return getattr(os, "getuid", lambda: 0)()
+
+
+def _runtime_base() -> Path:
+    return Path(tempfile.gettempdir()) / f"jarvis-podman-{_uid()}"
+
+
+def _store_base() -> Path:
+    return Path(tempfile.gettempdir()) / f"jarvis-podman-{_uid()}-store"
+
+
 def podman_runtime_dir() -> Optional[str]:
     """Give rootless podman a runtime dir on hosts with no ``/run/user/<uid>``.
 
@@ -824,11 +844,155 @@ def podman_runtime_dir() -> Optional[str]:
     current = os.environ.get("XDG_RUNTIME_DIR", "").strip()
     if current and os.path.isdir(current) and os.access(current, os.W_OK):
         return None
-    uid = getattr(os, "getuid", lambda: 0)()
-    directory = Path(tempfile.gettempdir()) / f"jarvis-podman-{uid}"
+    directory = _runtime_base()
     directory.mkdir(mode=0o700, exist_ok=True)
     os.environ["XDG_RUNTIME_DIR"] = str(directory)
     return str(directory)
+
+
+#: file systems a podman image store must not sit on: rootless overlay cannot
+#: pivot there, and the store's database records the host that made it
+NETWORK_FS = frozenset({
+    "nfs", "nfs4", "lustre", "gpfs", "beegfs", "fuse.beegfs", "cifs", "smb3", "smbfs",
+    "fuse.sshfs", "panfs", "ceph", "fuse.ceph", "glusterfs", "fuse.glusterfs", "afs",
+    "9p", "wekafs", "orangefs", "pvfs2", "fuse.weka",
+})
+STORE_ENV = "JARVIS_PODMAN_STORE"
+"""``node`` always gives podman a node-local store, ``default`` never does."""
+ARCHIVE_ENV = "JARVIS_CONTAINER_ARCHIVE"
+"""The pipeline env's path to the image archive a node loads its image from."""
+
+
+def _unescape_mount(text: str) -> str:
+    return re.sub(r"\\([0-7]{3})", lambda match: chr(int(match.group(1), 8)), text)
+
+
+def mount_fstype(path: Path, mounts: str = "/proc/self/mounts") -> Optional[str]:
+    """The file system type of the mount ``path`` (or its nearest existing parent) is on."""
+    try:
+        lines = Path(mounts).read_text().splitlines()
+    except OSError:
+        return None
+    target = Path(path).expanduser()
+    while not target.exists() and target.parent != target:
+        target = target.parent
+    text = str(target.resolve()) if target.exists() else str(target)
+    best, fstype = "", None
+    for line in lines:
+        parts = line.split()
+        if len(parts) < 3:
+            continue
+        point = _unescape_mount(parts[1])
+        if (text == point or text.startswith(point.rstrip("/") + "/")) and len(point) >= len(best):
+            best, fstype = point, parts[2]
+    return fstype
+
+
+def _storage_conf(base: Path) -> str:
+    driver, mount_program = "overlay", None
+    found = re.match(r"(\d+)\.(\d+)", platform.release())
+    kernel = (int(found.group(1)), int(found.group(2))) if found else (0, 0)
+    if kernel < (5, 13):
+        # rootless native overlay needs Linux 5.13; before it, fuse-overlayfs or vfs
+        mount_program = shutil.which("fuse-overlayfs")
+        if mount_program is None:
+            driver = "vfs"
+    lines = [
+        "# written by JARVIS: a node-local podman store (the default one is on a "
+        "network file system)",
+        "[storage]",
+        f'driver = "{driver}"',
+        f'graphroot = "{base / "storage"}"',
+        f'runroot = "{base / "run"}"',
+    ]
+    if mount_program:
+        lines += ["", "[storage.options.overlay]", f'mount_program = "{mount_program}"']
+    return "\n".join(lines) + "\n"
+
+
+def node_store_conf() -> Optional[str]:
+    """The node-local store's ``storage.conf`` when JARVIS gave podman one, else None."""
+    conf = str(_store_base() / "storage.conf")
+    return conf if os.environ.get("CONTAINERS_STORAGE_CONF", "").strip() == conf else None
+
+
+def podman_store(mounts: str = "/proc/self/mounts") -> Optional[str]:
+    """Give rootless podman a node-local image store when its default one is shared.
+
+    The default store, ``$XDG_DATA_HOME/containers/storage``, is usually in the
+    home directory. On an HPC site that is NFS (or Lustre, GPFS...): its
+    database is bound to the host that made it ("database configuration
+    mismatch" elsewhere), and rootless overlay cannot pivot on it. JARVIS then
+    points ``CONTAINERS_STORAGE_CONF`` at a store under the node's temp dir, and
+    keeps an archive of each image on the shared file system that other nodes
+    load (:func:`keep_archive`). A ``storage.conf`` the user set wins, and
+    ``JARVIS_PODMAN_STORE`` (``node`` or ``default``) overrides the detection.
+    """
+    mode = os.environ.get(STORE_ENV, "").strip().lower()
+    if node_store_conf():
+        return node_store_conf()
+    if mode == "default" or os.environ.get("CONTAINERS_STORAGE_CONF", "").strip():
+        return None
+    if getattr(os, "geteuid", lambda: 0)() == 0:
+        return None
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME", "").strip()
+                       or Path.home() / ".config")
+    data_home = Path(os.environ.get("XDG_DATA_HOME", "").strip()
+                     or Path.home() / ".local" / "share")
+    if mode != "node":
+        if (config_home / "containers" / "storage.conf").exists():
+            return None
+        if mount_fstype(data_home / "containers" / "storage", mounts) not in NETWORK_FS:
+            return None
+    base = _store_base()
+    base.mkdir(mode=0o700, exist_ok=True)
+    conf = base / "storage.conf"
+    text = _storage_conf(base)
+    if not conf.exists() or conf.read_text() != text:
+        conf.write_text(text)
+    os.environ["CONTAINERS_STORAGE_CONF"] = str(conf)
+    return str(conf)
+
+
+def prepare_engine(engine: str) -> None:
+    """Set up what ``engine`` needs on this host before it runs (podman: runtime dir, store)."""
+    if engine == "podman":
+        podman_runtime_dir()
+        podman_store()
+
+
+def podman_node_script(directory: Path) -> Path:
+    """Write a wrapper that gives podman on another node what it has here.
+
+    ``sh <script> podman ...`` makes the runtime dir when the node has none
+    and writes the same node-local ``storage.conf``, then runs the command.
+    """
+    runtime = _runtime_base()
+    lines = [
+        "#!/bin/sh",
+        "# written by JARVIS: podman's runtime dir and image store on this node",
+        "set -e",
+        'if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -w "${XDG_RUNTIME_DIR}" ]; then',
+        f"  mkdir -p -m 700 {shlex.quote(str(runtime))}",
+        f"  export XDG_RUNTIME_DIR={shlex.quote(str(runtime))}",
+        "fi",
+    ]
+    conf = node_store_conf()
+    if conf:
+        lines += [
+            f"mkdir -p -m 700 {shlex.quote(str(Path(conf).parent))}",
+            f"cat > {shlex.quote(conf)} <<'JARVIS_EOF'",
+            Path(conf).read_text().rstrip("\n"),
+            "JARVIS_EOF",
+            f"export CONTAINERS_STORAGE_CONF={shlex.quote(conf)}",
+        ]
+    lines.append('exec "$@"')
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    script = directory / "podman-node.sh"
+    script.write_text("\n".join(lines) + "\n")
+    script.chmod(0o755)
+    return script
 
 
 def _engine_field(executable: str, template: str) -> Optional[str]:
@@ -841,29 +1005,73 @@ def _engine_field(executable: str, template: str) -> Optional[str]:
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def detect_engines() -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Container engines this user can run, and why others were left out.
+def engine_error(executable: str) -> Optional[str]:
+    """None when ``<engine> info`` works here, else the engine's own error."""
+    try:
+        result = subprocess.run([executable, "info"], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.PIPE, text=True, timeout=120, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"`{executable} info` did not run: {exc}"
+    if result.returncode == 0:
+        return None
+    return _tail(result.stderr) or f"`{executable} info` exited {result.returncode}"
 
-    Apptainer runs as the user. Podman counts when it runs rootless. Docker
-    counts only when its daemon is rootless: a shared rootful daemon is left
-    out unless the pipeline names ``container_engine: docker``.
-    """
+
+_ENGINE_FAULTS = (
+    (re.compile(r"database configuration mismatch|pivot|graphroot|overlay", re.I),
+     "podman's image store cannot work here: it is on a network file system, or another "
+     "host made it. Set JARVIS_PODMAN_STORE=node so JARVIS gives each node its own store, "
+     "or point CONTAINERS_STORAGE_CONF at a store on local disk"),
+    (re.compile(r"subuid|subgid|newuidmap|insufficient uids|lchown", re.I),
+     "rootless podman has no subordinate ids for this user here: ask the site to add the "
+     "user to /etc/subuid and /etc/subgid on every node"),
+)
+_ENGINE_FAULT = re.compile("|".join(pattern.pattern for pattern, _ in _ENGINE_FAULTS), re.I)
+
+
+def engine_remedy(engine: str, error: str) -> str:
+    for pattern, remedy in _ENGINE_FAULTS:
+        if pattern.search(error):
+            return remedy
+    return (f"fix {engine} on this host (its own error is in the detail), or name "
+            "another container_engine in the pipeline")
+
+
+def unusable_issue(engine: str, error: str, evidence: Sequence[str] = ()) -> Dict[str, Any]:
+    """``container_engine_unusable``: the engine is installed but cannot run here."""
+    host = socket.gethostname()
+    question = f"{engine} is installed on {host} but cannot run: `{engine} info` fails."
+    hint = engine_remedy(engine, error)
+    issue = _issue("container_engine_unusable", "*", "container_engine", question,
+                   method="container", scope="site", detail=_tail(error),
+                   evidence=[f"`{engine} info` on {host}", *evidence], hint=hint)
+    issue.update(message=question, remedy=hint, host=host, engine=engine)
+    return issue
+
+
+def _detect() -> Tuple[List[Dict[str, Any]], List[str], List[Dict[str, str]]]:
     found: List[Dict[str, Any]] = []
     excluded: List[str] = []
+    broken: List[Dict[str, str]] = []
     apptainer = shutil.which("apptainer")
     if apptainer:
         found.append({"id": "apptainer", "constraint": "apptainer", "executable": apptainer,
                       "source": apptainer, "does": "runs as this user"})
     podman = shutil.which("podman")
     if podman:
-        podman_runtime_dir()
-        rootless = _engine_field(podman, "{{.Host.Security.Rootless}}")
-        if rootless == "true" or getattr(os, "geteuid", lambda: 1)() == 0:
+        prepare_engine("podman")
+        error = engine_error(podman)
+        rootless = None if error else _engine_field(podman, "{{.Host.Security.Rootless}}")
+        if error:
+            broken.append({"engine": "podman", "executable": podman, "error": error})
+            excluded.append(f"podman at {podman}: `podman info` failed: "
+                            f"{error.splitlines()[-1] if error.splitlines() else error}")
+        elif rootless == "true" or getattr(os, "geteuid", lambda: 1)() == 0:
             found.append({"id": "podman", "constraint": "podman", "executable": podman,
                           "rootless": rootless == "true", "source": podman,
                           "does": "rootless" if rootless == "true" else "runs as root"})
         else:
-            excluded.append(f"podman at {podman}: `podman info` failed or is not rootless")
+            excluded.append(f"podman at {podman}: not rootless")
     docker = shutil.which("docker")
     if docker:
         options = _engine_field(docker, "{{.SecurityOptions}}")
@@ -873,16 +1081,27 @@ def detect_engines() -> Tuple[List[Dict[str, Any]], List[str]]:
         else:
             excluded.append(f"docker at {docker}: a shared rootful daemon (or `docker info` "
                             "failed); used only when the pipeline names it")
+    return found, excluded, broken
+
+
+def detect_engines() -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Container engines this user can run, and why others were left out.
+
+    Apptainer runs as the user. Podman counts when it runs rootless and
+    ``podman info`` works. Docker counts only when its daemon is rootless: a
+    shared rootful daemon is left out unless the pipeline names
+    ``container_engine: docker``.
+    """
+    found, excluded, _ = _detect()
     return found, excluded
 
 
 def resolve_engine(ppl, context) -> Optional[str]:
-    """The pipeline's container engine, or None after a typed question."""
+    """The pipeline's container engine, or None after a typed question or issue."""
     explicit = getattr(ppl, "container_engine_source", "yaml") == "yaml"
     engine = str(getattr(ppl, "container_engine", "") or "")
     if explicit and engine:
-        if engine == "podman":
-            podman_runtime_dir()
+        prepare_engine(engine)
         if shutil.which(engine) is None:
             context.raise_issue(_issue(
                 "container_engine_missing", "*", "container_engine",
@@ -891,13 +1110,21 @@ def resolve_engine(ppl, context) -> Optional[str]:
                 method="container", scope="site", evidence=[f"`command -v {engine}`"],
                 hint="install the engine or name another container_engine"))
             return None
+        error = engine_error(engine) if engine == "podman" else None
+        if error:
+            context.raise_issue(unusable_issue(engine, error))
+            return None
         return engine
-    found, excluded = detect_engines()
+    found, excluded, broken = _detect()
     evidence = ["apptainer, rootless podman, rootless docker on PATH", *excluded]
     if len(found) == 1:
         chosen = str(found[0]["constraint"])
         context.log(f"[{_utc_now()}] container engine {chosen}: the only one this user "
                     "can run here\n")
+    elif not found and broken:
+        context.raise_issue(unusable_issue(broken[0]["engine"], broken[0]["error"],
+                                           evidence))
+        return None
     elif not found:
         context.raise_issue(_issue(
             "container_engine_missing", "*", "container_engine",
@@ -917,11 +1144,24 @@ def resolve_engine(ppl, context) -> Optional[str]:
         if answer is None:
             return None
         chosen = str(answer["constraint"])
-    if chosen == "podman":
-        podman_runtime_dir()
+    prepare_engine(chosen)
     ppl.container_engine = chosen
     ppl.container_engine_source = "detected"
     return chosen
+
+
+def engine_fault(context, engine: str, package: str, output: Optional[str]) -> None:
+    """Raise ``container_engine_unusable`` when a failed pull or build was the engine's fault."""
+    if engine == "apptainer":
+        return
+    error = engine_error(engine)
+    text = error or (output or "")
+    if error is None and not _ENGINE_FAULT.search(text):
+        return
+    host = socket.gethostname()
+    raise failed(context, "container_engine_unusable", "container", package, engine,
+                 f"{engine} is installed on {host} but cannot run images here.",
+                 text, engine_remedy(engine, text))
 
 
 def container_image(ppl, pkg_list, context) -> Tuple[bool, str]:
@@ -948,6 +1188,7 @@ def container_image(ppl, pkg_list, context) -> Tuple[bool, str]:
 
 
 def image_present(ppl, engine: str, image: str) -> bool:
+    """Whether ``image`` is in this host's own store (a SIF file for apptainer)."""
     from jarvis_cd.core.pkg import Pkg
 
     if engine == "apptainer":
@@ -956,10 +1197,84 @@ def image_present(ppl, engine: str, image: str) -> bool:
     return Pkg._image_exists(engine, image)
 
 
-def _engine_env(ppl) -> None:
+def archives_images(engine: str) -> bool:
+    """Whether images are archived on the shared FS: podman with a node-local store."""
+    return engine == "podman" and node_store_conf() is not None
+
+
+def image_archive(ppl, pkg_list: Sequence[Mapping[str, Any]]) -> Path:
+    """``<container env>/image.tar``, shared by the check, the install and the run jobs."""
+    return env_prefix(ppl, "container", pkg_list) / "image.tar"
+
+
+def archived(archive: Path, image: str) -> bool:
+    """Whether ``archive`` holds ``image`` (its ``image.json`` says so)."""
+    try:
+        meta = json.loads(archive.with_suffix(".json").read_text())
+    except (OSError, ValueError):
+        return False
+    return archive.is_file() and isinstance(meta, dict) and meta.get("image") == image
+
+
+def keep_archive(ppl, pkg_list, engine: str, image: str, context) -> Optional[Path]:
+    """Archive ``image`` on the shared FS so other nodes load it; return the archive.
+
+    Only with a node-local store (:func:`archives_images`). An archive of the
+    same image is kept; a pulled or built image is saved once.
+    """
+    if not archives_images(engine):
+        return None
+    archive = image_archive(ppl, pkg_list)
+    if archived(archive, image):
+        return archive
+    if not image_present(ppl, engine, image):
+        return None
+    archive.parent.mkdir(parents=True, exist_ok=True)
+    partial = archive.with_suffix(".tar.part")
+    saved = run_logged([engine, "save", "-o", partial, image], context)
+    if saved.returncode != 0 or not partial.is_file():
+        partial.unlink(missing_ok=True)
+        raise failed(context, "container_archive_failed", "container",
+                     str(pkg_list[0].get("pkg_id") or "container") if pkg_list
+                     else "container", str(archive),
+                     f"{engine} could not save {image} to {archive}, so other nodes "
+                     "cannot load it.", saved.stdout,
+                     "check the free space and write access of the container env dir "
+                     "(JARVIS_INSTALL_ENV_DIR), then install again")
+    os.replace(partial, archive)
+    archive.with_suffix(".json").write_text(json.dumps({
+        "image": image, "engine": engine, "saved_at": _utc_now(),
+        "host": socket.gethostname(), "bytes": archive.stat().st_size,
+    }, indent=2) + "\n")
+    context.log(f"[{_utc_now()}] archived {image} to {archive} for the other nodes\n")
+    return archive
+
+
+def load_archived(engine: str, image: str, archive: Optional[str]) -> bool:
+    """Load ``image`` into this host's store from ``archive`` when it is not there yet."""
+    from jarvis_cd.core.pkg import Pkg
+
+    if Pkg._image_exists(engine, image):
+        return True
+    if not archive or not archived(Path(archive), image):
+        return False
+    print(f"Loading container image {image} from {archive}")
+    result = subprocess.run([engine, "load", "-i", str(archive)], check=False)
+    return result.returncode == 0 and Pkg._image_exists(engine, image)
+
+
+def _engine_env(ppl, archive: Optional[Path] = None) -> None:
+    env = getattr(ppl, "env", None)
+    if env is None:
+        return
     runtime = os.environ.get("XDG_RUNTIME_DIR", "").strip()
-    if runtime and getattr(ppl, "env", None) is not None:
-        ppl.env["XDG_RUNTIME_DIR"] = runtime
+    if runtime:
+        env["XDG_RUNTIME_DIR"] = runtime
+    conf = node_store_conf()
+    if conf:
+        env["CONTAINERS_STORAGE_CONF"] = conf
+    if archive is not None:
+        env[ARCHIVE_ENV] = str(archive)
 
 
 def method_fits(method: str) -> Tuple[bool, str]:

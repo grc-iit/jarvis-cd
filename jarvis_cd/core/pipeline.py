@@ -6540,10 +6540,11 @@ class Pipeline:
                 )
 
             if engine == "podman":
-                up_cmd = f"podman-compose -f {compose_path} up -d"
+                up_cmd = self._podman_node(f"podman-compose -f {compose_path} up -d")
             else:
                 up_cmd = f"docker compose -f {compose_path} up -d"
 
+            self._load_archived_image()
             hostfile = self.get_hostfile()
             if self._hostfile_is_local_only(hostfile):
                 logger.info("Hostfile is local-only, deploying to localhost directly")
@@ -6580,15 +6581,42 @@ class Pipeline:
                     f"Pipeline startup failed at package '{pkg_def['pkg_id']}': {e}"
                 ) from e
 
+    def _podman_node(self, command: str) -> str:
+        """``command`` run through the wrapper that gives podman, on any node,
+        the runtime dir and the node-local store it has here."""
+        from jarvis_cd.core import method_install
+
+        method_install.prepare_engine("podman")
+        script = method_install.podman_node_script(self.get_pipeline_shared_dir())
+        return f"sh {script} {command}"
+
+    def _load_archived_image(self) -> None:
+        """With a node-local podman store, load the deploy image on this host
+        from its archive on the shared FS (the install may have run elsewhere)."""
+        from jarvis_cd.core import method_install
+
+        engine = self.container_engine.lower()
+        if engine != "podman":
+            return
+        method_install.prepare_engine(engine)
+        archive = (self.env or {}).get(method_install.ARCHIVE_ENV)
+        image = self.container_image or self.name
+        if archive and not method_install.load_archived(engine, image, archive):
+            raise RuntimeError(
+                f"The container image {image} is not on this host and could not be "
+                f"loaded from {archive}"
+            )
+
     def _distribute_image_to_hosts(self, hostfile):
         """
-        Ship the locally-built deploy image to every remote host's docker/podman
-        daemon so `docker compose up -d` finds it without a registry pull.
-        Mirrors the apptainer flow: save the image once to the pipeline's
-        shared dir, then PSSH a `docker load -i ...` to every host that
-        doesn't already have the image. Apptainer itself is skipped — its
-        SIF is already on the shared FS.
+        Ship the deploy image to every remote host's docker/podman store so
+        `docker compose up -d` finds it without a registry pull. With an
+        archive from the install (a node-local podman store) each host loads
+        that; otherwise the image is saved once to the pipeline's shared dir.
+        Hosts that already have the image are skipped. Apptainer itself is
+        skipped: its SIF is already on the shared FS.
         """
+        from jarvis_cd.core import method_install
         from jarvis_cd.util.logger import logger
         from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo
         from jarvis_cd.util.hostfile import Hostfile
@@ -6597,7 +6625,13 @@ class Pipeline:
         if engine == "apptainer":
             return
 
-        image = self.name
+        image = self.container_image or self.name
+        archive = (self.env or {}).get(method_install.ARCHIVE_ENV)
+        if not (archive and method_install.archived(Path(archive), image)):
+            archive = None
+
+        def on_node(command):
+            return self._podman_node(command) if engine == "podman" else command
         local_host = socket.gethostname()
         skip = ("localhost", "127.0.0.1", local_host)
 
@@ -6606,9 +6640,10 @@ class Pipeline:
         for host in hostfile.hosts:
             if host in skip:
                 continue
+            inspect = on_node(f"{engine} image inspect {image}")
             check_cmd = (
                 f"ssh -o BatchMode=yes -o StrictHostKeyChecking=no "
-                f"{host} '{engine} image inspect {image} >/dev/null 2>&1'"
+                f"{host} '{inspect} >/dev/null 2>&1'"
             )
             if (
                 Exec(check_cmd, LocalExecInfo(hide_output=True))
@@ -6623,29 +6658,35 @@ class Pipeline:
         if not needs_transfer:
             return
 
-        # Save image once to the pipeline's shared dir (visible from every node)
-        shared_dir = self.get_pipeline_shared_dir()
-        tar_path = shared_dir / f"{image}.tar"
-        logger.info(f"Saving image '{image}' to {tar_path}...")
-        save = Exec(f"{engine} save -o {tar_path} {image}", LocalExecInfo()).run()
-        if save.exit_code.get("localhost", 1) != 0:
-            raise RuntimeError(f"Failed to save image '{image}' to {tar_path}")
+        if archive:
+            tar_path = Path(archive)
+        else:
+            # Save image once to the pipeline's shared dir (visible from every node)
+            shared_dir = self.get_pipeline_shared_dir()
+            tar_name = image.replace("/", "_").replace(":", "_")
+            tar_path = shared_dir / f"{tar_name}.tar"
+            logger.info(f"Saving image '{image}' to {tar_path}...")
+            save = Exec(on_node(f"{engine} save -o {tar_path} {image}"),
+                        LocalExecInfo()).run()
+            if save.exit_code.get("localhost", 1) != 0:
+                raise RuntimeError(f"Failed to save image '{image}' to {tar_path}")
 
         # PSSH-load on every host that needs it (parallel)
         logger.info(f"Loading image '{image}' on {needs_transfer} in parallel...")
         load = Exec(
-            f"{engine} load -i {tar_path}",
+            on_node(f"{engine} load -i {tar_path}"),
             PsshExecInfo(hostfile=Hostfile(hosts=needs_transfer)),
         ).run()
         for host, code in load.exit_code.items():
             if code != 0:
                 raise RuntimeError(f"Failed to load image '{image}' on {host}")
 
-        # Tar served its purpose; reclaim the disk
-        try:
-            tar_path.unlink()
-        except OSError:
-            pass
+        if not archive:
+            # Tar served its purpose; reclaim the disk
+            try:
+                tar_path.unlink()
+            except OSError:
+                pass
 
     def _stop_containerized_pipeline(self) -> None:
         """
@@ -6681,7 +6722,7 @@ class Pipeline:
             stop_cmd = f"apptainer instance stop {self.execution_container_name}"
         elif engine == "podman":
             compose_path = self.get_pipeline_shared_dir() / "docker-compose.yaml"
-            stop_cmd = f"podman-compose -f {compose_path} down"
+            stop_cmd = self._podman_node(f"podman-compose -f {compose_path} down")
         else:
             compose_path = self.get_pipeline_shared_dir() / "docker-compose.yaml"
             stop_cmd = f"docker compose -f {compose_path} down"
@@ -6739,7 +6780,11 @@ class Pipeline:
             kill_cmd = f"apptainer instance stop {self.execution_container_name}"
         elif engine == "podman":
             compose_path = self.get_pipeline_shared_dir() / "docker-compose.yaml"
-            kill_cmd = f"podman-compose -f {compose_path} kill && podman-compose -f {compose_path} down"
+            kill_cmd = (
+                self._podman_node(f"podman-compose -f {compose_path} kill")
+                + " && "
+                + self._podman_node(f"podman-compose -f {compose_path} down")
+            )
         else:
             compose_path = self.get_pipeline_shared_dir() / "docker-compose.yaml"
             kill_cmd = f"docker compose -f {compose_path} kill && docker compose -f {compose_path} down"

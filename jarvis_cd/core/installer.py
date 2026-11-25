@@ -1710,7 +1710,8 @@ class ContainerInstaller(Installer):
                                   [p.get('pkg_id') for p in pkg_list]}
         engine = method_install.resolve_engine(ppl, context)
         if engine is None:
-            result["status"] = "needs_decision"
+            asked = bool(context.issues) and context.issues[-1].get("answerable")
+            result["status"] = "needs_decision" if asked else "blocked"
             return None, "", result
         ok, uri = method_install.container_image(ppl, pkg_list, context)
         result.update(engine=engine, image=uri or ppl.name,
@@ -1720,20 +1721,30 @@ class ContainerInstaller(Installer):
             return None, "", result
         return engine, uri, result
 
-    def _image_ready(self, ppl, engine, uri) -> bool:
+    def _image_ready(self, ppl, engine, uri, pkg_list=()) -> bool:
+        """The image is in this host's store, or archived for this node to load."""
         from jarvis_cd.core import method_install
         from jarvis_cd.core.pkg import Pkg
 
+        image = uri or ppl.name
         if uri:
-            return method_install.image_present(ppl, engine, uri)
-        return Pkg._image_exists(engine, ppl.name,
-                                 sif_dir=str(ppl.jarvis.get_containers_dir()))
+            here = method_install.image_present(ppl, engine, uri)
+        else:
+            here = Pkg._image_exists(engine, ppl.name,
+                                     sif_dir=str(ppl.jarvis.get_containers_dir()))
+        if here or not method_install.archives_images(engine):
+            return here
+        return method_install.archived(method_install.image_archive(ppl, pkg_list), image)
 
-    def _finish(self, ppl, image) -> None:
-        from jarvis_cd.core.method_install import _engine_env
+    def _finish(self, ppl, image, pkg_list=(), context=None) -> None:
+        from jarvis_cd.core import method_install
 
         ppl.container_image = image
-        _engine_env(ppl)
+        archive = None
+        if context is not None:
+            archive = method_install.keep_archive(
+                ppl, pkg_list, ppl.container_engine, image, context)
+        method_install._engine_env(ppl, archive)
         # Save side-effects (container_image was just set) and emit the
         # runtime artifacts (compose file / container-side pipeline yaml).
         ppl.save()
@@ -1754,8 +1765,8 @@ class ContainerInstaller(Installer):
         engine, uri, result = self._prepare(ppl, pkg_list, context)
         if engine is None:
             return result
-        if self._image_ready(ppl, engine, uri):
-            self._finish(ppl, uri or ppl.name)
+        if self._image_ready(ppl, engine, uri, pkg_list):
+            self._finish(ppl, uri or ppl.name, pkg_list, context)
             result["status"] = "satisfied"
             return result
         image = uri or ppl.name
@@ -1772,13 +1783,14 @@ class ContainerInstaller(Installer):
             ppl, "install", lambda context: self._install(ppl, pkg_list, context))
 
     def _install(self, ppl, pkg_list, context):
-        from jarvis_cd.core.method_install import failed, run_logged
+        from jarvis_cd.core.method_install import engine_fault, failed, run_logged
 
         engine, uri, result = self._prepare(ppl, pkg_list, context)
         if engine is None:
             return result
+        package = str(pkg_list[0].get('pkg_id') or 'container')
         if uri:
-            if not self._image_ready(ppl, engine, uri):
+            if not self._image_ready(ppl, engine, uri, pkg_list):
                 context.ensure_may_build(f"pull the container image {uri}",
                                          [p.get('pkg_id') for p in pkg_list])
                 context.report_progress(phase="building", current_package=uri)
@@ -1790,16 +1802,18 @@ class ContainerInstaller(Installer):
                     argv = [engine, 'pull', uri]
                 pulled = run_logged(argv, context)
                 if pulled.returncode != 0 or not self._image_ready(ppl, engine, uri):
+                    engine_fault(context, engine, package, pulled.stdout)
                     raise failed(context, "container_pull_failed", "container",
-                                 str(pkg_list[0].get('pkg_id') or 'container'), uri,
+                                 package, uri,
                                  f"{engine} could not pull {uri}.", pulled.stdout,
                                  "check the image name and the host's registry access "
                                  "(proxy, login), then install again")
             print(f"ContainerInstaller: using prebuilt deploy container: {uri}")
-            self._finish(ppl, uri)
+            self._finish(ppl, uri, pkg_list, context)
         else:
-            self._build_pipeline_container(ppl)
-            self._finish(ppl, ppl.name)
+            if not self._image_ready(ppl, engine, uri, pkg_list):
+                self._build_pipeline_container(ppl)
+            self._finish(ppl, ppl.name, pkg_list, context)
         result["status"] = "installed"
         return result
 
