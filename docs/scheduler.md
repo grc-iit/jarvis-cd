@@ -952,11 +952,25 @@ by its `after_steps` option (a common option for every package):
 
 A stopped package is not stopped again by the run's `ppl stop`. A `start()`
 that raises because `stop()` ended it doesn't fail the run (it's recorded as
-`start_error_after_stop`). A `start()` that failed before the steps ended
-still fails the run. The decisions are recorded in
+`start_error_after_stop`). The decisions are recorded in
 [`metadata.phase_timings.services_after_steps`](executions.md#phase-timings).
 If a step fails, nothing is stopped early: the run's normal stop and failure
 path applies.
+
+### A service that crashes
+
+A service that fails before it is ready fails the start, as any package
+does. Once it is ready, a crash depends on whether it served the steps:
+
+| The service | When it crashes | The run |
+|-------------|-----------------|---------|
+| `after_steps` `stop` (it served the steps) | while the steps run | the steps keep running; when the last step returns OK the run completes (rc 0). The service's component is `failed` (`service crashed: ...`), its decision is `crashed`, and its `stop()` still runs once so it can clean up (an error there is kept as `stop_error_after_crash`) |
+| `after_steps` `keep` (it is the pipeline's purpose) | at any time | the run fails, as before |
+
+Either way the run records the application's result and each service's
+result separately, in [`metadata.outcomes`](executions.md#outcomes). A
+restart policy, if a package has one, is the package's own: its `start()`
+only raises once it gave up.
 
 So in a pilot where pvserver starts before xcompact3d, the execution ends
 `completed` when xcompact3d returns, instead of holding the allocation until

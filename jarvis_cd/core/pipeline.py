@@ -3543,6 +3543,10 @@ class Pipeline:
             background: List[Dict[str, Any]] = []
             last_step_index: Optional[int] = None
             self._stopped_after_steps: set = set()
+            self._service_outcomes: List[Dict[str, Any]] = []
+            self._steps_ended_monotonic: Optional[float] = None
+            self._application_outcome: Dict[str, Any] = {
+                "state": "running", "steps": [], "failed_package": None}
             for index, pkg_def in enumerate(self.packages):
                 try:
                     # Print BEGIN message
@@ -3581,6 +3585,8 @@ class Pipeline:
                         is_step = self._is_step_package(pkg_instance)
                         if is_step:
                             self._component_state(pkg_def, "running")
+                            self._application_outcome["steps"].append(
+                                str(pkg_def["pkg_id"]))
                         pkg_instance.start()
                         self._time_package_phase(pkg_def, pkg_instance, "returned",
                                                  phase_started)
@@ -3604,11 +3610,15 @@ class Pipeline:
                     if self._stop_was_requested():
                         self._component_state(pkg_def, "cancelled",
                                               reason=f"stopped by request: {e}")
+                        self._application_outcome["state"] = "cancelled"
                     else:
                         self._component_state(pkg_def, "failed", reason=str(e))
+                        self._application_outcome["state"] = "failed"
+                        self._application_outcome["failed_package"] = str(pkg_def["pkg_id"])
                     raise RuntimeError(
                         f"Pipeline startup failed at package '{pkg_def['pkg_id']}': {e}"
                     ) from e
+            self._application_outcome["state"] = "completed"
             self._stop_services_after_steps(background, last_step_index)
             self._wait_background_packages(background)
 
@@ -3651,19 +3661,36 @@ class Pipeline:
         from jarvis_cd.util.logger import logger
 
         decisions: List[Dict[str, Any]] = []
+        steps_ended = time.monotonic()
+        self._steps_ended_monotonic = steps_ended
         for handle in reversed(background):
             policy = self._after_steps_policy(handle, last_step_index)
+            handle["after_steps_policy"] = policy
             entry: Dict[str, Any] = {"pkg_id": handle["pkg_id"], "after_steps": policy}
-            if policy == "stop" and not handle["thread"].is_alive():
+            if policy == "stop" and handle["error"] is not None:
+                # The service crashed while it served the steps. The steps
+                # returned OK, so the application completed: record the crash
+                # as the service's own typed outcome instead of failing the run.
+                handle["thread"].join(5.0)
+                entry["after_steps"] = "crashed"
+                self._service_crash_cleanup(handle, entry)
+                self._record_service_outcome(handle, "crashed", steps_ended)
+                handle["stopped_after_steps"] = True
+                self._stopped_after_steps.add(str(handle["pkg_id"]))
+                self._component_state(
+                    handle["pkg_def"], "failed",
+                    reason=f"service crashed: {handle['error']}"[:512])
+                logger.warning(f"[{handle['pkg_def']['pkg_type']}] service crashed "
+                               f"while serving the steps: {handle['error']}; the "
+                               "steps completed, so the run does not fail")
+            elif policy == "stop" and not handle["thread"].is_alive():
                 entry["after_steps"] = "already_returned"
+                self._record_service_outcome(handle, "returned", steps_ended)
             elif policy == "stop":
-                if handle["error"] is not None:
-                    raise RuntimeError(
-                        f"Background package '{handle['pkg_id']}' failed: {handle['error']}"
-                    ) from handle["error"]
                 logger.info(f"[{handle['pkg_def']['pkg_type']}] [STOP] the pipeline's "
                             "last step returned; stopping (after_steps)")
                 stop_started = time.monotonic()
+                handle["stopping"] = True
                 self._bind_package_execution_environment(handle["pkg_def"])
                 instance = handle["instance"]
                 if not self._claim_package_stop(str(handle["pkg_id"])):
@@ -3685,6 +3712,7 @@ class Pipeline:
                     entry["start_error_after_stop"] = str(handle["error"])[:512]
                 handle["stopped_after_steps"] = True
                 self._stopped_after_steps.add(str(handle["pkg_id"]))
+                self._record_service_outcome(handle, "stopped", steps_ended)
                 self._component_state(handle["pkg_def"], "done",
                                       reason="stopped after the last step (after_steps)")
             decisions.append(entry)
@@ -3899,6 +3927,9 @@ class Pipeline:
                 pkg_instance.start()
             except BaseException as error:  # reported by the waiter
                 handle["error"] = error
+            finally:
+                handle["ended_at"] = _utc_timestamp()
+                handle["ended_monotonic"] = time.monotonic()
 
         thread = threading.Thread(
             target=_run, name=f"jarvis-start-{pkg_id}", daemon=True
@@ -3923,6 +3954,7 @@ class Pipeline:
             if state is True:
                 logger.success(f"[{pkg_def['pkg_type']}] [START] ready")
                 handle["start_outcome"] = "ready"
+                handle["ready"] = True
                 return handle
             if state is False:
                 raise RuntimeError("service reported failed/stopped before ready")
@@ -3947,16 +3979,90 @@ class Pipeline:
         for handle in background:
             while handle["thread"].is_alive():
                 handle["thread"].join(1.0)
+        steps_ended = getattr(self, "_steps_ended_monotonic", None)
         for handle in background:
             if handle["error"] is not None:
                 state = "cancelled" if self._stop_was_requested() else "failed"
                 self._component_state(handle["pkg_def"], state,
                                       reason=str(handle["error"]))
+                self._record_service_outcome(
+                    handle, "cancelled" if state == "cancelled" else "crashed",
+                    steps_ended)
+            else:
+                self._record_service_outcome(handle, "returned", steps_ended)
         for handle in background:
             if handle["error"] is not None:
                 raise RuntimeError(
                     f"Background package '{handle['pkg_id']}' failed: {handle['error']}"
                 ) from handle["error"]
+
+    def _service_crash_cleanup(self, handle: Dict[str, Any], entry: Dict[str, Any]) -> None:
+        """Give a crashed service its stop() so it can clean up; never raises."""
+        from jarvis_cd.util.logger import logger
+
+        instance = handle["instance"]
+        if not hasattr(instance, "stop") or not self._claim_package_stop(
+                str(handle["pkg_id"])):
+            return
+        try:
+            self._bind_package_execution_environment(handle["pkg_def"])
+            instance.stop()
+        except Exception as error:  # the service is already gone
+            entry["stop_error_after_crash"] = str(error)[:512]
+            logger.info(f"{handle['pkg_id']}: stop() after the crash: {error}")
+
+    OUTCOMES_SCHEMA = "jarvis.execution.outcomes.v1"
+
+    def _record_service_outcome(
+        self, handle: Dict[str, Any], outcome: str, steps_ended: Optional[float]
+    ) -> None:
+        """Keep one service's typed result for ``metadata.outcomes``."""
+        outcomes = getattr(self, "_service_outcomes", None)
+        if outcomes is None or any(o["pkg_id"] == handle["pkg_id"] for o in outcomes):
+            return
+        pkg_def = handle.get("pkg_def") or {}
+        error = handle.get("error")
+        record: Dict[str, Any] = {
+            "pkg_id": str(handle["pkg_id"]),
+            "package": str(pkg_def.get("pkg_type") or handle["pkg_id"]),
+            "outcome": outcome,
+            "after_steps": handle.get("after_steps_policy"),
+            "after_ready": bool(handle.get("ready")),
+        }
+        ended = handle.get("ended_monotonic")
+        if ended is not None:
+            record["ended_at"] = handle.get("ended_at")
+            if steps_ended is not None:
+                record["during_steps"] = ended < steps_ended
+        if error is not None and outcome in ("crashed", "cancelled"):
+            record["error"] = str(error)[:1024]
+            code = getattr(error, "returncode", None)
+            if code is None:
+                code = getattr(error, "exit_code", None)
+            if isinstance(code, int):
+                record["exit_code"] = code
+        outcomes.append(record)
+
+    def _publish_outcomes(self, store: Any, execution_id: str) -> None:
+        """Write the application's and each service's result, separately."""
+        from jarvis_cd.util.logger import logger
+
+        application = getattr(self, "_application_outcome", None)
+        if application is None:
+            return
+        services = list(getattr(self, "_service_outcomes", None) or [])
+        document = {
+            "schema_version": self.OUTCOMES_SCHEMA,
+            "application": dict(application),
+            "services": services,
+            "services_crashed": [s["pkg_id"] for s in services
+                                 if s["outcome"] == "crashed"],
+        }
+        try:
+            store.update(execution_id, metadata={"outcomes": json.loads(
+                json.dumps(document, default=str))})
+        except Exception as error:  # outcomes must never fail a run
+            logger.warning(f"execution outcomes not recorded: {error}")
 
     def _bind_package_execution_environment(self, pkg_def: Dict[str, Any]) -> None:
         """Bind authoritative package runtime sidecars to the active execution."""
@@ -4585,6 +4691,7 @@ class Pipeline:
                 self._execution_id = original_execution_id
                 raise
         try:
+            self._application_outcome = None
             self._begin_phase_timings(store, resolved_execution_id)
             self._record_scheduler_job(store, resolved_execution_id)
             self._components_waiting(self._execution_root)
@@ -4603,6 +4710,7 @@ class Pipeline:
             logger.pipeline("Pipeline started successfully. Stopping packages...")
             self.stop()
             self._end_phase_timings()
+            self._publish_outcomes(store, resolved_execution_id)
             self._write_execution_provenance(store, resolved_execution_id)
             self._record_site_facts(store, resolved_execution_id)
             if record.mode == "scheduler":
@@ -4625,6 +4733,7 @@ class Pipeline:
                 logger.error(f"Error during cleanup: {stop_error}")
                 error.add_note(f"pipeline cleanup also failed: {stop_error}")
             self._end_phase_timings()
+            self._publish_outcomes(store, resolved_execution_id)
             self._write_execution_provenance(store, resolved_execution_id)
             self._record_site_facts(store, resolved_execution_id)
             failure_metadata = self._launch_failure_issues(

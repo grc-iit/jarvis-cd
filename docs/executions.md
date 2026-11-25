@@ -189,7 +189,7 @@ The transitions:
 | a package's `start()` begins | `starting` |
 | a background package is ready, or a foreground step starts | `running` |
 | a foreground step's `start()` returns | `done` (`returned`); a foreground non-step stays `running` (`started`) until stopped |
-| `start()` raises | `failed`, or `cancelled` if a stop or cancel was requested |
+| `start()` raises | `failed`, or `cancelled` if a stop or cancel was requested; a ready service that crashed while it served the steps is `failed` (`service crashed: ...`) once the last step returns |
 | `ppl stop`, or the `after_steps` stop | `done`, or `failed` (`stop failed: ...`); a component that never started is `cancelled` (`not started`) |
 | an install job starts its install | `install` `running` with the node's hostname |
 | the record reaches a terminal state | each component still open is closed: `completed` → `done`, `canceled` → `cancelled`, `failed` → `failed` (a component still `waiting` → `cancelled`, `not started`) |
@@ -215,7 +215,25 @@ keeps what it reached. `provenance.json` carries the same document.
 | `packages[]` | per started package: `pkg_id`, `pkg_type`, `role` (`service` or `step`), `start_mode` (`background` or `foreground`), `started_at`, `started_after_seconds` (since the run began); services add `ready_at` and `ready_seconds` (start to ready); foreground packages add `returned_seconds` |
 | `first_step` | the first non-service package: `pkg_id`, `started_at`, `started_after_seconds` |
 | `before_first_step_seconds` | env activation plus everything from the run's start to the first step: the overhead before any solver step |
-| `services_after_steps` | once the last step returned: `last_step` (its `pkg_id`) and `packages[]` with each background package's `pkg_id` and `after_steps` decision (`stop`, `keep`, `already_returned`), plus `stop_seconds` and `start_error_after_stop` or `start_thread` for stopped ones (see [after_steps](scheduler.md#services-once-the-last-step-returns-after_steps)); each `packages[]` entry above also gets its `after_steps` |
+| `services_after_steps` | once the last step returned: `last_step` (its `pkg_id`) and `packages[]` with each background package's `pkg_id` and `after_steps` decision (`stop`, `keep`, `already_returned`, `crashed`), plus `stop_seconds` and `start_error_after_stop` or `start_thread` for stopped ones, or `stop_error_after_crash` for a crashed one (see [after_steps](scheduler.md#services-once-the-last-step-returns-after_steps)); each `packages[]` entry above also gets its `after_steps` |
+
+## Outcomes
+
+A run that starts its packages directly records `metadata.outcomes`
+(`jarvis.execution.outcomes.v1`). It keeps the application's result apart
+from each background service's, so a service that crashed while the solver
+finished doesn't hide the solver's result (see
+[A service that crashes](scheduler.md#a-service-that-crashes)).
+
+| Field | Content |
+|-------|---------|
+| `application` | `state` (`completed` when every step returned OK, `failed`, `cancelled`, or `running` if the run ended before the steps did), `steps` (the step `pkg_id`s that started), `failed_package` (the package whose start failed, or `null`) |
+| `services[]` | per background service: `pkg_id`, `package`, `outcome` (`stopped`, `returned`, `crashed` or `cancelled`), `after_steps` (`stop` or `keep`), `after_ready`, `ended_at` and `during_steps` (whether its `start()` ended before the last step returned), plus `error` and `exit_code` (when the error carries one) for `crashed` and `cancelled` |
+| `services_crashed` | the `pkg_id`s whose outcome is `crashed` |
+
+The execution's own `state` and `return_code` still say whether the run as a
+whole succeeded: a crashed service that served the steps leaves it
+`completed` with rc 0, while one kept as the pipeline's purpose fails it.
 
 ## Provenance record
 
