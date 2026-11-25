@@ -50,6 +50,9 @@ class Installer(ABC):
         method = cfg.get('install_method')
         if method:
             return str(method)
+        if cfg.get('install_methods'):
+            # A choice still open (its question is pending) installs nothing yet.
+            return None
         base_mode = getattr(ppl, 'base_deploy_mode', None)
         if base_mode in ('container', 'spack'):
             return base_mode
