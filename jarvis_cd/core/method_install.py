@@ -32,6 +32,7 @@ import platform
 import re
 import shlex
 import shutil
+import socket
 import subprocess
 import tempfile
 import urllib.request
@@ -134,15 +135,25 @@ def site_home() -> Path:
 
 
 def env_prefix(ppl, method: str, pkg_list: Sequence[Mapping[str, Any]]) -> Path:
-    """``<jarvis root>/envs/<method>/<name>``: one venv or conda env per group."""
+    """One venv or conda env per group of packages with the same method.
+
+    ``JARVIS_INSTALL_ENV_DIR`` wins when set, as ``JARVIS_SPACK_ENV_DIR`` does
+    for Spack: ``<dir>/<method>/<install_env or "env">``, shared by the check,
+    the install and the run even when each has its own JARVIS root. Otherwise
+    it is ``<jarvis root>/envs/<method>/<install_env or pipeline name>``.
+    """
     names = {str(_config(pkg_def).get("install_env") or "").strip() for pkg_def in pkg_list}
     names.discard("")
     if len(names) > 1:
         raise ValueError(
             f"the {method} packages name different install_env values: {sorted(names)}")
-    name = names.pop() if names else str(getattr(ppl, "name", "") or "pipeline")
+    named = names.pop() if names else ""
+    configured = os.environ.get("JARVIS_INSTALL_ENV_DIR", "").strip()
+    name = named or ("env" if configured else str(getattr(ppl, "name", "") or "pipeline"))
     if not _ENV_NAME.match(name):
         raise ValueError(f"install_env {name!r} is not a plain directory name")
+    if configured:
+        return Path(os.path.expandvars(os.path.expanduser(configured))) / method / name
     return jarvis_root(ppl) / "envs" / method / name
 
 
@@ -198,9 +209,15 @@ def not_installed_issue(method: str, package: str, subject: str, missing: Sequen
 
 def failed(context, kind: str, method: str, package: str, subject: str, question: str,
            output: Optional[str], hint: str) -> InstallFailed:
-    """Raise-ready typed failure, with its issue in ``issues.jsonl``."""
+    """Raise-ready typed failure, with its issue in ``issues.jsonl``.
+
+    It carries what Spack's typed failures carry (message, remedy, stage,
+    packages, log, log_tail, host), so readers treat every method alike.
+    """
     issue = _issue(kind, package, subject, question, method=method, detail=_tail(output),
                    hint=hint)
+    issue.update(message=question, remedy=hint, stage="install", packages=[package],
+                 log=str(context.log_path), log_tail=_tail(output), host=socket.gethostname())
     context.raise_issue(issue)
     return InstallFailed([issue], context.issues_path)
 
@@ -572,7 +589,8 @@ def find_condas() -> List[Dict[str, Any]]:
             continue
         seen.add(real)
         found.append({"id": f"conda-{len(found) + 1}", "constraint": str(path),
-                      "kind": path.name, "root": str(path.parent.parent), "source": source})
+                      "kind": path.name, "root": str(path.parent.parent),
+                      "prefix": str(path.parent.parent), "source": source})
         if len(found) >= 8:
             break
     return found
@@ -616,6 +634,7 @@ def resolve_conda(pkg_list, context) -> Optional[str]:
             "root": str(prefix), "action": "install_miniforge",
             "url": MINIFORGE_URL.format(system=system, machine=machine),
             "summary": f"install Miniforge (conda-forge's conda) into {prefix}",
+            "does": f"installs Miniforge (conda-forge's conda) into {prefix} in the install job",
         }
         issue = _issue(
             "conda_missing", "*", "conda",
@@ -814,14 +833,16 @@ def detect_engines() -> Tuple[List[Dict[str, Any]], List[str]]:
     excluded: List[str] = []
     apptainer = shutil.which("apptainer")
     if apptainer:
-        found.append({"id": "apptainer", "constraint": "apptainer", "executable": apptainer})
+        found.append({"id": "apptainer", "constraint": "apptainer", "executable": apptainer,
+                      "source": apptainer, "does": "runs as this user"})
     podman = shutil.which("podman")
     if podman:
         podman_runtime_dir()
         rootless = _engine_field(podman, "{{.Host.Security.Rootless}}")
         if rootless == "true" or getattr(os, "geteuid", lambda: 1)() == 0:
             found.append({"id": "podman", "constraint": "podman", "executable": podman,
-                          "rootless": rootless == "true"})
+                          "rootless": rootless == "true", "source": podman,
+                          "does": "rootless" if rootless == "true" else "runs as root"})
         else:
             excluded.append(f"podman at {podman}: `podman info` failed or is not rootless")
     docker = shutil.which("docker")
@@ -829,7 +850,7 @@ def detect_engines() -> Tuple[List[Dict[str, Any]], List[str]]:
         options = _engine_field(docker, "{{.SecurityOptions}}")
         if options and "rootless" in options:
             found.append({"id": "docker", "constraint": "docker", "executable": docker,
-                          "rootless": True})
+                          "rootless": True, "source": docker, "does": "rootless daemon"})
         else:
             excluded.append(f"docker at {docker}: a shared rootful daemon (or `docker info` "
                             "failed); used only when the pipeline names it")
@@ -1017,7 +1038,8 @@ def resolve_method_choices(ppl, context) -> Dict[str, Any]:
         candidates = [
             {"id": option["method"], "constraint": option["method"],
              "query": option.get("query"), "fits": fits[option["method"]][0],
-             "why": fits[option["method"]][1]}
+             "why": fits[option["method"]][1],
+             "does": f"{option.get('query') or option['method']}: {fits[option['method']][1]}"}
             for option in offered
         ]
         issue = _issue(

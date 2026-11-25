@@ -206,6 +206,11 @@ class TestPip(_Case):
             self.run_pip(ppl, 'install', FakePip(fail_install=True))
         self.assertEqual(caught.exception.issues[0]['kind'], 'pip_install_failed')
         self.assertIn('No matching distribution', caught.exception.issues[0]['detail'])
+        # the fields Spack's typed failures carry, so relay reads every method alike
+        failure = caught.exception.issues[0]
+        self.assertEqual((failure['stage'], failure['packages']), ('install', ['a']))
+        self.assertTrue(failure['message'] and failure['remedy'] and failure['host'])
+        self.assertIn('No matching distribution', failure['log_tail'])
 
     def test_installer_class_goes_through_install_all(self):
         ppl = FakePipeline(self.jarvis, [pkg('pip', 'numpy', 'a')])
@@ -484,6 +489,18 @@ class TestHelpers(unittest.TestCase):
                            [pkg('pip', 'x', 'a', install_env='../up')])
         with self.assertRaises(ValueError):
             mi.env_prefix(ppl, 'pip', ppl.packages)
+
+    def test_shared_env_dir_wins_over_the_jarvis_root(self):
+        # relay gives each job its own JARVIS root; the env must outlive them
+        ppl = FakePipeline(FakeJarvis(tempfile.gettempdir()), [pkg('pip', 'x', 'a')])
+        with mock.patch.dict(os.environ, {'JARVIS_INSTALL_ENV_DIR': '/site/envs'}):
+            self.assertEqual(mi.env_prefix(ppl, 'pip', ppl.packages),
+                             Path('/site/envs') / 'pip' / 'env')
+        named = FakePipeline(FakeJarvis(tempfile.gettempdir()),
+                             [pkg('conda', 'x', 'a', install_env='tools')])
+        with mock.patch.dict(os.environ, {'JARVIS_INSTALL_ENV_DIR': '/site/envs'}):
+            self.assertEqual(mi.env_prefix(named, 'conda', named.packages),
+                             Path('/site/envs') / 'conda' / 'tools')
 
 
 if __name__ == '__main__':

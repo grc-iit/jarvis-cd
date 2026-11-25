@@ -265,8 +265,8 @@ The thing to install is named by **`install_query`** (the legacy alias
 | `install_method` | `install_query` is …                    | Action |
 |------------------|------------------------------------------|--------|
 | `spack`          | a Spack spec, e.g. `ior@3.3.0 +hdf5`     | find-first: reuse what Spack already has, build only missing nodes, then `spack load /<hash>` its env into the run |
-| `pip`            | one or more pip requirements             | find-first into a venv at `<jarvis root>/envs/pip/<install_env or pipeline>`; its `bin` goes first on `PATH` |
-| `conda`          | conda package specs                      | find-first into an env at `<jarvis root>/envs/conda/<install_env or pipeline>`, from `install_channels` |
+| `pip`            | one or more pip requirements             | find-first into a venv at `<jarvis root>/envs/pip/<install_env or pipeline>` (or `$JARVIS_INSTALL_ENV_DIR/pip/<install_env or env>`); its `bin` goes first on `PATH` |
+| `conda`          | conda package specs                      | find-first into an env at `<jarvis root>/envs/conda/<install_env or pipeline>` (or `$JARVIS_INSTALL_ENV_DIR/conda/...`), from `install_channels` |
 | `container`      | the image to pull (or empty: built from the package Dockerfiles) | find-first: reuse the image if the engine has it, else pull or build it |
 
 Every method has a check (`jarvis ppl install +check`) that reports what is
@@ -717,6 +717,11 @@ and one lock. For example, a caller can key the directory on the package
 digests (`<site home>/jarvis-cd/spack-envs/<sha256 of the sorted package
 digests>`). Set it on the submitting process, as with `JARVIS_INSTALL_ON_LOAD`.
 The job inherits it.
+
+`JARVIS_INSTALL_ENV_DIR=<dir>` does the same for the pip venvs and conda envs:
+they go to `<dir>/<method>/<install_env or env>` in place of the JARVIS root's
+`envs`, so a caller that gives each job its own JARVIS root still has the
+install job's env in the run.
 
 Every environment operation holds a `flock` on `<dir>/.jarvis-env.lock`:
 
