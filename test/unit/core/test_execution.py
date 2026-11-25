@@ -1558,7 +1558,7 @@ def test_container_start_failure_is_typed_before_any_package(
     assert issue["kind"] == "container_start_failed"
     assert error.splitlines()[-1] in issue["details"]["error"]
     assert issue["remedy"]
-    assert "docker compose -f" in commands[0]
+    assert "docker compose -f" in next(c for c in commands if "up -d" in c)
     pipeline._load_package_instance.assert_not_called()
     assert pipeline._started_instances == []
 
@@ -1712,7 +1712,77 @@ def test_container_start_writes_this_executions_compose_file(
 
     pipeline._generate_pipeline_compose_file.assert_called_once_with()
     assert private_dir.is_dir()
-    assert f"-f {shared_dir / 'docker-compose.yaml'}" in commands[0]
+    assert commands[0] == "docker --version"
+    assert f"-f {shared_dir / 'docker-compose.yaml'}" in commands[1]
+
+
+@pytest.mark.parametrize("local_only", [False, True])
+def test_node_without_the_engine_is_engine_missing_before_any_image_moves(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    local_only: bool,
+) -> None:
+    """A run node without podman (the wrapper finds no real one: exit 127)
+    refuses the start with ``container_engine_missing`` naming the node,
+    before any image load or ``up``; the stop then skips that node."""
+    import socket
+
+    from jarvis_cd.core.issues import JarvisIssueError
+
+    hosts = ["localhost"] if local_only else ["node-a", "node-b"]
+    lacking = "localhost" if local_only else "node-b"
+    pipeline = _pipeline_double(tmp_path)
+    pipeline.container_engine = "podman"
+    pipeline.container_image = "example:latest"
+    pipeline.packages = [{"pkg_id": "app", "pkg_type": "builtin.example"}]
+    pipeline._started_instances = []
+    pipeline._hostfile_is_local_only = Mock(return_value=local_only)
+    pipeline.get_hostfile = Mock(return_value=SimpleNamespace(hosts=hosts))
+    pipeline._podman_node = Mock(side_effect=lambda command: f"sh node.sh {command}")
+    pipeline._load_archived_image = Mock()
+    pipeline._distribute_image_to_hosts = Mock()
+    pipeline._load_package_instance = Mock()
+    shared_dir = pipeline.get_pipeline_shared_dir()
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "docker-compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    calls: list[tuple[str, object]] = []
+    wrapper = "JARVIS podman wrapper: no podman on PATH besides /tmp/jarvis/bin"
+
+    class NodeExec:
+        def __init__(self, command: str, exec_info: object) -> None:
+            calls.append((command, exec_info))
+            probe = command.endswith("podman --version")
+            self.exit_code = {h: 127 if probe and h == lacking else 0 for h in hosts}
+            self.stderr = {h: wrapper if probe and h == lacking else "" for h in hosts}
+
+        def run(self) -> "NodeExec":
+            return self
+
+    monkeypatch.setattr(jarvis_cd.shell, "Exec", NodeExec)
+
+    with pytest.raises(JarvisIssueError) as caught:
+        pipeline._start_containerized_pipeline()
+
+    issue = caught.value.issues[0]
+    node = socket.gethostname() if local_only else "node-b"
+    assert issue["kind"] == "container_engine_missing"
+    assert issue["details"]["hosts"] == [node]
+    assert "no podman on PATH" in issue["details"]["errors"][node]
+    assert node in issue["remedy"]
+    assert len(calls) == 1
+    pipeline._load_archived_image.assert_not_called()
+    pipeline._distribute_image_to_hosts.assert_not_called()
+    pipeline._load_package_instance.assert_not_called()
+
+    pipeline.packages = []
+    calls.clear()
+    pipeline._stop_containerized_pipeline()
+    if local_only:
+        assert calls == []
+    else:
+        (command, exec_info), = calls
+        assert command.endswith(" down")
+        assert getattr(exec_info, "hostfile").hosts == ["node-a"]
 
 
 def test_scheduler_finalizer_covers_failures_before_pipeline_run(

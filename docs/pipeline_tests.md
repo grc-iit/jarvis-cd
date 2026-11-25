@@ -336,7 +336,12 @@ image JARVIS cannot make ready (no `/bin/sh`, no known package manager, or
 no mirror) is `container_image_not_ready`, with a remedy, before any job
 runs.
 
-The nodes run `podman-compose` from JARVIS's own environment, by absolute
+The start first checks that every run node has the engine (`<engine>
+--version` on each node; for podman through JARVIS's wrapper, which exits
+127 when the node has no real podman). A node without it refuses the start
+as `container_engine_missing`, naming the nodes, before any image is loaded
+or moved and before `up`; the stop then skips those nodes. The nodes run
+`podman-compose` from JARVIS's own environment, by absolute
 path (that `bin` is not on a node's `PATH`), then from `PATH`, then
 `podman compose`. With none of these, the start is refused as
 `container_compose_missing`. A failed `up`, or a container that is not

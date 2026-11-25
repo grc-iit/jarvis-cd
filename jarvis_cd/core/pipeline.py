@@ -6591,7 +6591,9 @@ class Pipeline:
             # own ssh_cmd override (e.g. env -u LD_LIBRARY_PATH ssh)
             # neutralizes the conda libcrypto/OpenSSL mismatch.
             hostfile = self.get_hostfile()
-            if self._hostfile_is_local_only(hostfile):
+            local_only = self._hostfile_is_local_only(hostfile)
+            self._require_engine_on_nodes(engine, hostfile, local_only)
+            if local_only:
                 logger.info("Hostfile is local-only, deploying to localhost directly")
                 exec_info = LocalExecInfo()
             else:
@@ -6636,9 +6638,11 @@ class Pipeline:
 
             up_cmd = self._compose_node("up -d")
 
-            self._load_archived_image()
             hostfile = self.get_hostfile()
-            if self._hostfile_is_local_only(hostfile):
+            local_only = self._hostfile_is_local_only(hostfile)
+            self._require_engine_on_nodes(engine, hostfile, local_only)
+            self._load_archived_image()
+            if local_only:
                 logger.info("Hostfile is local-only, deploying to localhost directly")
                 exec_info = LocalExecInfo()
             else:
@@ -6803,6 +6807,64 @@ class Pipeline:
             ]
         )
 
+    def _require_engine_on_nodes(self, engine: str, hostfile: Any,
+                                 local_only: bool) -> None:
+        """Refuse the start, before any image moves or container starts, when
+        a run node has no ``engine``: ``container_engine_missing`` naming the
+        nodes. Exit 127 is the shell's "command not found" and the podman
+        wrapper's "no podman on PATH"; any other failure is left to the steps
+        that follow, which report it with the engine's own error."""
+        from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
+        from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo
+
+        self._engine_missing_hosts = []
+        probe = f"{engine} --version"
+        if engine == "podman":
+            probe = self._podman_node(probe)
+        if local_only:
+            exec_info = LocalExecInfo(collect_output=True, hide_output=True)
+        else:
+            exec_info = PsshExecInfo(hostfile=hostfile, collect_output=True,
+                                     hide_output=True)
+        result = Exec(probe, exec_info).run()
+        codes = getattr(result, "exit_code", None)
+        stderr = getattr(result, "stderr", None)
+        codes = codes if isinstance(codes, Mapping) else {}
+        stderr = stderr if isinstance(stderr, Mapping) else {}
+        missing = [host for host, code in codes.items() if code == 127]
+        if not missing:
+            return
+        self._engine_missing_hosts = list(missing)
+        here = socket.gethostname()
+        errors = {(here if local_only else str(host)):
+                  str(stderr.get(host, "") or "").strip()[-1024:] for host in missing}
+        nodes = sorted(errors)
+        raise JarvisIssueError(
+            [
+                make_jarvis_issue(
+                    kind="container_engine_missing",
+                    subject=engine,
+                    message=(
+                        f"{engine} is not on {', '.join(nodes)}, so the pipeline's "
+                        "container cannot run there; no image was moved and no "
+                        "container was started."
+                    ),
+                    identity={"engine": engine, "nodes": nodes},
+                    field="container_engine",
+                    details={
+                        "hosts": nodes,
+                        "probe": f"{engine} --version (exit 127)",
+                        "errors": errors,
+                    },
+                    remedy=(
+                        f"run on nodes that have {engine}: exclude "
+                        f"{', '.join(nodes)} from the job's allocation, or install "
+                        f"{engine} there, then run again"
+                    ),
+                )
+            ]
+        )
+
     def _load_archived_image(self) -> None:
         """With a node-local podman store, load the deploy image on this host
         from its archive on the shared FS (the install may have run elsewhere)."""
@@ -6932,27 +6994,41 @@ class Pipeline:
         # Bring down the containers
         engine = self.container_engine.lower()
         hostfile = self.get_hostfile()
-        if self._hostfile_is_local_only(hostfile):
+        local_only = self._hostfile_is_local_only(hostfile)
+        # nodes the start found without the engine have nothing to bring down
+        missing = set(getattr(self, "_engine_missing_hosts", None) or ())
+        hosts = [host for host in hostfile.hosts if host not in missing]
+        if local_only:
             exec_info = LocalExecInfo()
+        elif missing and hosts:
+            from jarvis_cd.util.hostfile import Hostfile
+
+            exec_info = PsshExecInfo(hostfile=Hostfile(hosts=hosts, find_ips=False))
         else:
             exec_info = PsshExecInfo(hostfile=hostfile)
 
-        try:
-            if engine == "apptainer":
-                stop_cmd = f"apptainer instance stop {self.execution_container_name}"
-            else:
-                stop_cmd = self._compose_node("down")
-            result = Exec(stop_cmd, exec_info).run()
-            status_error = _executor_status_error(
-                result,
-                operation="container stop",
-            )
-            if status_error is not None:
-                raise status_error
-            logger.success("Containers stopped")
-        except Exception as exc:
-            logger.error(f"Error stopping pipeline containers: {exc}")
-            failures.append(exc)
+        if missing and (local_only or not hosts):
+            logger.info(f"No container to stop: {engine} is not on the run nodes")
+        else:
+            if missing:
+                logger.info(f"Not stopping containers on {sorted(missing)}: "
+                            f"{engine} is not there")
+            try:
+                if engine == "apptainer":
+                    stop_cmd = f"apptainer instance stop {self.execution_container_name}"
+                else:
+                    stop_cmd = self._compose_node("down")
+                result = Exec(stop_cmd, exec_info).run()
+                status_error = _executor_status_error(
+                    result,
+                    operation="container stop",
+                )
+                if status_error is not None:
+                    raise status_error
+                logger.success("Containers stopped")
+            except Exception as exc:
+                logger.error(f"Error stopping pipeline containers: {exc}")
+                failures.append(exc)
 
         if failures:
             raise ExceptionGroup("containerized pipeline stop failed", failures)
