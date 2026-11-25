@@ -40,12 +40,19 @@ LOGIN_LIMITED = "login_limited"
 COMPUTE_JOB = "compute_job"
 ASK_EACH_TIME = "ask_each_time"
 CHOICES = (LOGIN_LIMITED, COMPUTE_JOB, ASK_EACH_TIME)
+#: the choices that state where work may run here (site facts)
+STANDING = (LOGIN_LIMITED, COMPUTE_JOB)
 PHASES = ("check", "build")
 SHORT, LONG = "short", "long"
 
 COSTS_NAME = "install-costs.json"
 COSTS_SCHEMA = "jarvis.install-costs.v1"
 PLACEMENT_SCHEMA = "jarvis.install-placement.v1"
+#: the resource graph section holding person-confirmed site answers, per phase
+GRAPH_SECTION = "install_placement"
+GRAPH_SCHEMA = "jarvis.resource-graph.install-placement.v1"
+GRAPH_ENTRY_KEYS = ("constraint", "basis", "answered_by", "answered_at", "issue_id",
+                    "recorded_in")
 
 #: JSON merged over the measured login-host sample (proofs and tests only)
 SAMPLE_ENV = "JARVIS_LOGIN_HOST_SAMPLE"
@@ -561,39 +568,267 @@ def is_site_subject(subject: str, phase: str) -> bool:
     return subject == base or subject.startswith(base + ".")
 
 
+def _home_record(phase: str, cost_class: str,
+                 site_entries: Mapping[str, Mapping[str, Any]]
+                 ) -> Optional[Tuple[str, Mapping[str, Any]]]:
+    """This home's standing site answer for ``phase`` (legacy per-class included)."""
+    keys = [site_subject(phase), legacy_site_subject(phase, cost_class)]
+    keys += [subject for subject in sorted(site_entries)
+             if is_site_subject(subject, phase) and subject not in keys
+             and not subject.endswith(".occasion")]
+    for subject in keys:
+        entry = site_entries.get(subject)
+        if isinstance(entry, Mapping) and entry.get("constraint") in STANDING:
+            return subject, entry
+    return None
+
+
+def _recorded(phase: str, cost_class: str,
+              site_entries: Mapping[str, Mapping[str, Any]],
+              graph_answers: Mapping[str, Mapping[str, Any]]
+              ) -> Optional[Dict[str, Any]]:
+    """The site's recorded constraint for ``phase``: this home's, then the graph's."""
+    home = _home_record(phase, cost_class, site_entries)
+    if home is not None:
+        subject, entry = home
+        return {"source": "site_decision", "subject": subject, "phase": phase,
+                **_provenance(entry)}
+    entry = graph_answers.get(phase)
+    if isinstance(entry, Mapping) and entry.get("constraint") in STANDING:
+        return {"source": "resource_graph", "subject": site_subject(phase),
+                "phase": phase, "graph": entry.get("graph"), **_provenance(entry)}
+    return None
+
+
+def _provenance(entry: Mapping[str, Any]) -> Dict[str, Any]:
+    return {key: entry.get(key) for key in GRAPH_ENTRY_KEYS if entry.get(key) is not None}
+
+
+def _describe(record: Mapping[str, Any]) -> str:
+    who = ", ".join(str(part) for part in (
+        f"answered by {record['answered_by']}" if record.get("answered_by") else None,
+        record.get("answered_at"),
+    ) if part)
+    where = (f"the site resource graph {record.get('graph')}"
+             if record.get("source") == "resource_graph" else "this home's decisions")
+    text = f"{record['constraint']} for Spack {record['phase']}s"
+    if who:
+        text += f" ({who})"
+    if record.get("basis"):
+        text += f"; basis: {record['basis']}"
+    return f"{text}; recorded in {where}"
+
+
 def recommend(phase: str, cost_class: str, limits: Mapping[str, Any],
               site_entries: Mapping[str, Mapping[str, Any]],
-              est: Mapping[str, Any]) -> Tuple[str, str]:
-    """The recommended choice and why, from cost, load and the site's answers."""
-    if limits.get("defer"):
-        return COMPUTE_JOB, "the login host is busy now: " + "; ".join(limits["defer_reasons"])
-    login_ok = [subject for subject, entry in site_entries.items()
-                if is_site_subject(subject, phase) and not subject.endswith(".occasion")
-                and entry.get("constraint") == LOGIN_LIMITED]
+              est: Mapping[str, Any],
+              graph_answers: Optional[Mapping[str, Mapping[str, Any]]] = None,
+              ) -> Tuple[str, str, Dict[str, Any]]:
+    """The recommended choice, why, and its basis.
+
+    A constraint the site recorded for ``phase`` (this home's decisions,
+    then the active resource graph's ``install_placement`` section) is
+    recommended with its provenance. Without one, a recorded answer for the
+    other phase still informs it where the order of cost does: a check
+    recorded ``compute_job`` means the heavier build goes to a job too, and
+    a build recorded ``login_limited`` means the lighter check may run here.
+    Otherwise cost and load decide. This is only a recommendation: the
+    question still offers every choice.
+    """
+    graph_answers = graph_answers or {}
+    busy = ("the login host is busy now: " + "; ".join(limits.get("defer_reasons") or [])
+            if limits.get("defer") else None)
+    record = _recorded(phase, cost_class, site_entries, graph_answers)
+    if record is not None:
+        reason = f"this site recorded {_describe(record)}"
+        if busy and record["constraint"] == LOGIN_LIMITED:
+            reason += f"; {busy}, so a login_limited run defers to a compute job this time"
+        return str(record["constraint"]), reason, record
+    other = "build" if phase == "check" else "check"
+    implied = COMPUTE_JOB if phase == "build" else LOGIN_LIMITED
+    record = _recorded(other, cost_class, site_entries, graph_answers)
+    if record is not None and record["constraint"] == implied:
+        why = ("a build is at least as heavy as a check" if phase == "build"
+               else "a check is lighter than a build")
+        reason = (f"this site recorded {_describe(record)}, and {why}; no answer is "
+                  f"recorded for {phase}s yet")
+        if busy and implied == LOGIN_LIMITED:
+            reason += f"; {busy}, so a login_limited run defers to a compute job this time"
+        return implied, reason, {**record, "source": f"{record['source']} ({other})",
+                                 "inferred_for": phase}
+    heuristic = {"source": "heuristic", "phase": phase, "cost_class": cost_class}
+    if busy:
+        return COMPUTE_JOB, busy, heuristic
     if phase == "check":
         if cost_class == SHORT:
             return LOGIN_LIMITED, (
                 f"estimated {est.get('human')} concretization and {limits.get('free_cores')} "
-                "free cores here: checking now saves a queue wait")
-        if login_ok:
-            return LOGIN_LIMITED, (
-                f"estimated {est.get('human')}, and this site's recorded answer "
-                f"({', '.join(login_ok)}) allows checks on the login host")
+                "free cores here: checking now saves a queue wait"), heuristic
         return COMPUTE_JOB, (
             f"estimated {est.get('human')} concretization: a short compute job keeps "
-            "the login host light")
-    if cost_class == SHORT and login_ok:
-        return LOGIN_LIMITED, (
-            f"estimated {est.get('human')} build, and this site's recorded answer "
-            f"({', '.join(login_ok)}) allows builds on the login host")
+            "the login host light"), heuristic
     if cost_class == SHORT:
         return COMPUTE_JOB, (
             f"estimated {est.get('human')} build: builds go to a compute job until the "
             "person confirms (from the site's guidance or its admins) that login "
-            "builds are fine here; login_limited stays an option")
+            "builds are fine here; login_limited stays an option"), heuristic
     return COMPUTE_JOB, (
         f"estimated {est.get('human')} build would hold a shared login host for that "
-        "long: a compute job")
+        "long: a compute job"), heuristic
+
+
+# -- confirmed answers in the resource graph ----------------------------------
+
+
+def _graph_file(path: Optional[Path] = None) -> Path:
+    if path is not None:
+        return Path(path)
+    from jarvis_cd.util.network import active_graph_file
+
+    return active_graph_file()
+
+
+def graph_answers(path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
+    """The person-confirmed placement answers in the resource graph, per phase.
+
+    The graph is the active one (``JARVIS_RESOURCE_GRAPH``, which names a
+    graph the site publishes, else this root's own graph). Each answer
+    carries ``graph`` (the file it came from). Unreadable graphs give none.
+    """
+    import yaml
+
+    graph_path = _graph_file(path)
+    try:
+        graph = yaml.safe_load(graph_path.read_text(encoding="utf-8")) or {}
+    except (OSError, ValueError, yaml.YAMLError):
+        return {}
+    section = graph.get(GRAPH_SECTION) if isinstance(graph, dict) else None
+    if not isinstance(section, Mapping):
+        return {}
+    found: Dict[str, Dict[str, Any]] = {}
+    for phase in PHASES:
+        entry = section.get(phase)
+        if isinstance(entry, Mapping) and entry.get("constraint") in STANDING:
+            found[phase] = {**_provenance(entry), "graph": str(graph_path)}
+    return found
+
+
+@contextlib.contextmanager
+def _graph_locked(graph_path: Path) -> Iterator[Dict[str, Any]]:
+    """Hold the graph lock and yield the graph mapping; written back on exit."""
+    import tempfile
+
+    import yaml
+
+    with open(graph_path.parent / ".resource_graph.lock", "a+") as lock:
+        try:
+            import fcntl
+
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)  # type: ignore[attr-defined]
+        except ImportError:  # pragma: no cover - non-POSIX
+            pass
+        try:
+            graph = yaml.safe_load(graph_path.read_text(encoding="utf-8")) or {}
+        except FileNotFoundError:
+            graph = {}
+        if not isinstance(graph, dict):
+            raise ValueError(f"{graph_path} is not a mapping")
+        before = json.dumps(graph, sort_keys=True, default=str)
+        yield graph
+        if json.dumps(graph, sort_keys=True, default=str) == before:
+            return
+        descriptor, temporary = tempfile.mkstemp(
+            dir=graph_path.parent, prefix=".resource_graph.", suffix=".tmp", text=True)
+        try:
+            if os.name != "nt":
+                os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w") as stream:
+                yaml.dump(graph, stream, default_flow_style=False)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, graph_path)
+        finally:
+            Path(temporary).unlink(missing_ok=True)
+
+
+def persist_graph_answer(phase: str, entry: Mapping[str, Any], *,
+                         recorded_in: Optional[Path] = None,
+                         path: Optional[Path] = None) -> Dict[str, Any]:
+    """Write a person-confirmed site answer into the graph's ``install_placement``.
+
+    Only standing constraints (``login_limited``, ``compute_job``) are site
+    facts; ``ask_each_time`` is not written. An answer already in the graph
+    that is newer is kept. The graph's directory must exist (it is never
+    created here). Never raises: the decision is recorded either way.
+    """
+    graph_path = _graph_file(path)
+    result: Dict[str, Any] = {"graph": str(graph_path), "phase": phase,
+                              "persisted": False}
+    if phase not in PHASES or entry.get("constraint") not in STANDING:
+        result["skipped"] = "not a standing constraint"
+        return result
+    if not graph_path.parent.is_dir():
+        result["skipped"] = "the graph's directory does not exist"
+        return result
+    record = _provenance(entry)
+    if recorded_in is not None:
+        record["recorded_in"] = str(recorded_in)
+    try:
+        with _graph_locked(graph_path) as graph:
+            section = graph.get(GRAPH_SECTION)
+            section = dict(section) if isinstance(section, Mapping) else {}
+            current = section.get(phase)
+            if (isinstance(current, Mapping)
+                    and str(current.get("answered_at") or "")
+                    > str(record.get("answered_at") or "")):
+                result["skipped"] = "the graph holds a newer answer"
+                return result
+            section["schema_version"] = GRAPH_SCHEMA
+            section[phase] = record
+            graph[GRAPH_SECTION] = section
+        result["persisted"] = True
+    except Exception as error:
+        result["error"] = str(error)[:500]
+    return result
+
+
+def forget_graph_answers(forgotten: Sequence[Mapping[str, Any]], *,
+                         path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """Drop graph answers that came from forgotten site decisions.
+
+    A graph answer is dropped only when it is the same record (``issue_id``
+    and ``answered_at``) as a forgotten per-phase site decision, so another
+    person's answer in a published graph stays. Never raises.
+    """
+    graph_path = _graph_file(path)
+    targets = {}
+    for entry in forgotten:
+        for phase in PHASES:
+            if entry.get("scope") == "site" and entry.get("subject") == site_subject(phase):
+                targets[phase] = (entry.get("issue_id"), entry.get("answered_at"))
+    dropped: List[Dict[str, Any]] = []
+    if not targets or not graph_path.is_file():
+        return dropped
+    try:
+        with _graph_locked(graph_path) as graph:
+            section = graph.get(GRAPH_SECTION)
+            if not isinstance(section, Mapping):
+                return dropped
+            section = dict(section)
+            for phase, identity in targets.items():
+                current = section.get(phase)
+                if (isinstance(current, Mapping)
+                        and (current.get("issue_id"), current.get("answered_at")) == identity):
+                    section.pop(phase)
+                    dropped.append({"graph": str(graph_path), "phase": phase,
+                                    **_provenance(current)})
+            if any(phase in section for phase in PHASES):
+                graph[GRAPH_SECTION] = section
+            else:
+                graph.pop(GRAPH_SECTION, None)
+    except Exception:
+        return []
+    return dropped
 
 
 class PlacementResolver:
@@ -636,18 +871,62 @@ class PlacementResolver:
             if str(subject).startswith("install_placement.") and isinstance(entry, Mapping)
         }
 
+    def graph_answers(self) -> Dict[str, Dict[str, Any]]:
+        """The confirmed answers in the active resource graph (read each time)."""
+        return graph_answers()
+
+    def sync_graph(self, site: Mapping[str, Mapping[str, Any]]) -> List[Dict[str, Any]]:
+        """Copy this home's per-phase standing answers into the graph.
+
+        Answers recorded before the graph held them (or while it was
+        unwritable) reach it here; a newer graph answer is kept.
+        """
+        written: List[Dict[str, Any]] = []
+        graph = self.graph_answers()
+        for phase in PHASES:
+            entry = site.get(site_subject(phase))
+            if not isinstance(entry, Mapping) or entry.get("constraint") not in STANDING:
+                continue
+            current = graph.get(phase) or {}
+            if all(current.get(key) == entry.get(key)
+                   for key in ("constraint", "issue_id", "answered_at")):
+                continue
+            result = persist_graph_answer(phase, entry, recorded_in=self.decisions.path)
+            if result.get("persisted"):
+                written.append(result)
+        return written
+
+    def recommendation(self, phase: str, est: Mapping[str, Any]
+                       ) -> Tuple[str, str, Dict[str, Any]]:
+        return recommend(phase, est["class"], self.limits, self.site_entries(), est,
+                         self.graph_answers())
+
     # -- issues ------------------------------------------------------------
 
-    def override_issue(self, phase: str, name: str) -> Dict[str, Any]:
+    def override_issue(self, phase: str, name: str,
+                       est: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+        """A package override question; with ``est`` it carries a recommendation.
+
+        The id depends only on the package, phase and choices, so it is the
+        same with or without the recommendation.
+        """
         from jarvis_cd.core.spack_install import make_issue
 
-        return make_issue(
+        choice = reason = basis = None
+        if est is not None:
+            choice, reason, basis = self.recommendation(phase, est)
+        issue = make_issue(
             kind=PLACEMENT_KIND, package=name, subject=f"install_placement.{phase}",
             scope="package",
-            question=f"Where should JARVIS run the Spack {phase} of {name} at this site?",
-            candidates=_candidates(phase, None), answerable=True,
+            question=(f"Where should JARVIS run the Spack {phase} of {name} at this site?"
+                      + (f" Recommended: {choice} ({reason})." if choice else "")),
+            candidates=_candidates(phase, choice), answerable=True,
             hint="a package override: beats the site's answer for this package",
         )
+        if choice is not None:
+            issue.update(recommended=choice, recommendation_reason=reason,
+                         recommendation_basis=basis)
+        return issue
 
     def legacy_site_issue(self, phase: str, cost_class: str, *, once: bool = False
                           ) -> Dict[str, Any]:
@@ -668,9 +947,10 @@ class PlacementResolver:
         limits = self.limits
         worst = max(packages, key=lambda item: item["estimate"].get("seconds") or 1e12)
         cost_class = worst["estimate"]["class"]
-        choice, reason = recommend(phase, cost_class, limits, self.site_entries(),
-                                   worst["estimate"])
-        if len(packages) > 1:
+        graph = self.graph_answers()
+        choice, reason, basis = recommend(phase, cost_class, limits, self.site_entries(),
+                                          worst["estimate"], graph)
+        if len(packages) > 1 and basis.get("source") == "heuristic":
             reason = f"costliest here is {worst['spec_name']}: {reason}"
         names = ", ".join(f"{item['spec_name']} ({item['estimate']['human']})"
                           for item in packages)
@@ -702,12 +982,14 @@ class PlacementResolver:
             cost_classes=sorted({item["estimate"]["class"] for item in packages}),
             covers="every package at this site" if not once else "this run",
             recommended=choice, recommendation_reason=reason,
+            recommendation_basis=basis,
             packages=packages,
             login_host=sample,
             limits=limits,
             queue=self.queue,
             site_policy={
                 "recorded": self.site_entries(),
+                "graph": graph,
                 "discovered": {"cgroup": sample.get("cgroup")},
                 "how_to_supply": ("an agent may read the site's documentation, propose a "
                                   "choice and give the source as the answer's `basis`; "
@@ -717,12 +999,20 @@ class PlacementResolver:
             costs_path=str(self.costs_file),
         )
         if not once:
-            issue["package_overrides"] = [
-                {"package": item["spec_name"], "phase": phase,
-                 "issue_id": item["override_issue_id"],
-                 "subject": f"install_placement.{phase}"}
-                for item in packages
-            ]
+            overrides = []
+            for item in packages:
+                override = self.override_issue(phase, item["spec_name"], item["estimate"])
+                overrides.append({
+                    "package": item["spec_name"], "phase": phase,
+                    "issue_id": item["override_issue_id"],
+                    "subject": f"install_placement.{phase}",
+                    "question": override["question"],
+                    "candidates": override["candidates"],
+                    "recommended": override["recommended"],
+                    "recommendation_reason": override["recommendation_reason"],
+                    "recommendation_basis": override["recommendation_basis"],
+                })
+            issue["package_overrides"] = overrides
         return issue
 
     def _evidence_lines(self, phase: str, packages: List[Dict[str, Any]]) -> List[str]:
@@ -762,6 +1052,15 @@ class PlacementResolver:
     def _record(self, issue: Mapping[str, Any], answer: Mapping[str, Any],
                 extra: Mapping[str, Any]) -> None:
         self.decisions.record(issue, answer, extra={**extra, "basis": answer.get("basis")})
+        phase = extra.get("phase")
+        if issue.get("scope") == "site" and issue.get("subject") == site_subject(str(phase)):
+            entry = self.decisions.site(str(issue["subject"]))
+            if entry is not None:
+                result = persist_graph_answer(str(phase), entry,
+                                              recorded_in=self.decisions.path)
+                log = getattr(self.context, "log", None)
+                if callable(log) and (result.get("persisted") or result.get("error")):
+                    log(f"install placement: graph answer {json.dumps(result)}\n")
 
     def resolve(self, phase: str, pkg_defs: Sequence[Mapping[str, Any]],
                 missing: Optional[Mapping[str, Sequence[str]]] = None,
@@ -775,6 +1074,11 @@ class PlacementResolver:
         with self.decisions.locked():
             pass  # re-read the store fresh
         site = self.site_entries()
+        synced = self.sync_graph(site)
+        log = getattr(self.context, "log", None)
+        if synced and callable(log):
+            log(f"install placement: recorded answers copied to the graph "
+                f"{json.dumps(synced)}\n")
         resolved: Dict[str, Dict[str, Any]] = {}
         pending: Dict[bool, List[Dict[str, Any]]] = {}
         for pkg_def in pkg_defs:

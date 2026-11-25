@@ -39,6 +39,13 @@ The graph's directory also holds the site's [skills](site-skills.md)
 Spack (`<graph dir>/spack`), which a `spack_missing` question offers as a
 candidate (see [Missing Spack](pipeline_tests.md#missing-spack-spack_missing)).
 
+The graph may also carry an `install_placement` section: the person's
+confirmed answers to where Spack checks and builds run at this site, per
+phase, with `basis`, `answered_by` and `answered_at`. JARVIS writes it when
+the person answers, and recommends it (it never applies it unasked) to any
+home that reads this graph. `rg build`, `rg load` and `rg net set|clear`
+keep it. See [scheduler.md → Install placement](scheduler.md#install-placement-where-checks-and-builds-run).
+
 ### Key Components
 
 - **ResourceGraphManager**: Coordinates resource collection across the cluster

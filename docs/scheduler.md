@@ -727,16 +727,73 @@ The class is `short` up to `JARVIS_PLACEMENT_SHORT_CHECK_SECONDS` (300) or
 `JARVIS_PLACEMENT_SHORT_BUILD_SECONDS` (1800), else `long`.
 
 **Recommendation** (for the costliest pending package, which
-`recommendation_reason` names when there are several):
+`recommendation_reason` names when there are several). The first that
+applies:
 
-- when the login host is busy now (see `defer` below): `compute_job`;
-- a short check: `login_limited` (it saves a queue wait);
-- a long check: `compute_job`, unless the site already answered
-  `login_limited` for checks;
-- a short build: `compute_job` until the site has answered `login_limited`
-  for builds. Login builds stay an option the person picks, because many
-  sites' admins object to compiling on login nodes;
-- a long build: `compute_job`.
+1. a constraint the site recorded for this phase (`login_limited` or
+   `compute_job`): this home's decision, else the resource graph's
+   `install_placement` answer (see Confirmed answers in the resource graph,
+   below). The reason gives who
+   answered, when, the answer's `basis`, and where it is recorded. When the
+   login host is busy, the reason adds that a `login_limited` run defers to
+   a compute job this time;
+2. the other phase's recorded answer, where cost orders the phases: a check
+   recorded as `compute_job` recommends `compute_job` for builds (a build is
+   at least as heavy), and a build recorded as `login_limited` recommends
+   `login_limited` for checks;
+3. otherwise cost and load:
+   - when the login host is busy now (see `defer` below): `compute_job`;
+   - a short check: `login_limited` (it saves a queue wait);
+   - a long check: `compute_job`;
+   - a short build: `compute_job` until the site has answered
+     `login_limited` for builds. Login builds stay an option the person
+     picks, because many sites' admins object to compiling on login nodes;
+   - a long build: `compute_job`.
+
+`ask_each_time` is not a constraint, so it never becomes a recommendation.
+The same rules give the "this time" question (`once`) and every package
+override its recommendation. The question still offers every choice: a
+recorded answer is a recommendation with its basis, never applied for a
+phase the person has not answered here.
+
+The question carries `recommended`, `recommendation_reason` and
+`recommendation_basis` (`source`: `site_decision`, `resource_graph`, either
+with the other phase in brackets when inferred (`inferred_for`), or
+`heuristic`; plus `constraint`, `answered_by`, `answered_at`, `basis`,
+`issue_id`, `subject`, `graph`). Each `package_overrides[]` entry carries
+its own `question`, `candidates`, `recommended`, `recommendation_reason` and
+`recommendation_basis`, from that package's estimate.
+
+**Confirmed answers in the resource graph.** A person's per-phase site
+answer of `login_limited` or `compute_job` is also written to the active
+resource graph (`JARVIS_RESOURCE_GRAPH`, else the root's graph) as a typed
+`install_placement` section, so a fresh home that reads the same graph (a
+new user, a new relay home, or after its decisions were cleaned) is
+recommended the site's answer:
+
+```yaml
+install_placement:
+  schema_version: jarvis.resource-graph.install-placement.v1
+  check:
+    constraint: compute_job
+    basis: "site docs: no builds or long concretizations on login nodes"
+    answered_by: person
+    answered_at: "2026-11-25T07:23:00Z"
+    issue_id: "sha256:..."
+    recorded_in: /home/me/.jarvis-site/decisions.yaml
+```
+
+- A site publishes its answers by publishing that graph through the usual
+  site graph path, and homes point `JARVIS_RESOURCE_GRAPH` at it.
+- Answers recorded before the graph held them are copied in on the next
+  placement resolve. A newer answer already in the graph is kept.
+- `ask_each_time` and "this time" answers are not written.
+- `rg build`, `rg load` and `rg net set|clear` keep the section.
+- `--forget install_placement.<phase>` also drops the graph's copy of that
+  same answer (same `issue_id` and `answered_at`); someone else's answer in
+  a published graph stays.
+- Graph answers are never standing answers: with no decision in this home,
+  the question is asked and the graph answer is its recommendation.
 
 The reason is in `recommendation_reason`.
 
@@ -750,7 +807,8 @@ The reason is in `recommendation_reason`.
 - `queue`: for Slurm, `sbatch --test-only --nodes=1 --time=30` with the
   pipeline's partition/account/qos gives `start_at`/`wait` (one light
   scheduler call). Other schedulers are reported as not measured;
-- `site_policy`: the recorded placement answers and the discovered cgroup;
+- `site_policy`: the recorded placement answers (`recorded`), the
+  resource graph's confirmed answers (`graph`) and the discovered cgroup;
 - `packages` (each with its `estimate` and `override_issue_id`) and
   `package_overrides[]`.
 

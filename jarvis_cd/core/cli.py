@@ -2534,6 +2534,9 @@ class JarvisCLI(ArgParse):
                               f"{entry.get('subject') or entry.get('package')}: "
                               f"{entry.get('constraint')} ({entry.get('issue_id')})")
                     print(f"  decisions: {forgotten['decisions_path']}")
+                    for entry in forgotten.get("graph_forgotten") or []:
+                        print(f"  also dropped {entry.get('phase')} from the resource "
+                              f"graph {entry.get('graph')}")
                 return
             print(f"Forgot {len(forgotten['forgotten'])} decision(s) in "
                   f"{forgotten['decisions_path']}", file=sys.stderr)

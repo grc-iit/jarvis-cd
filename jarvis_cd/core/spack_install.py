@@ -2424,7 +2424,14 @@ def forget_decisions(decisions_path: Path, selectors: Sequence[str]) -> Dict[str
     """
     decisions = Decisions(Path(decisions_path))
     with decisions.locked():
-        return _forget_locked(decisions, decisions_path, selectors)
+        report = _forget_locked(decisions, decisions_path, selectors)
+    from jarvis_cd.core.install_placement import forget_graph_answers
+
+    # the resource graph's copy of a forgotten placement answer goes with it
+    dropped = forget_graph_answers(report["forgotten"])
+    if dropped:
+        report["graph_forgotten"] = dropped
+    return report
 
 
 def _forget_locked(

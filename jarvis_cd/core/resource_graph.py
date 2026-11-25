@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, cast
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import yaml
+
 from jarvis_cd.core.config import Jarvis
 from jarvis_cd.util.resource_graph import ResourceGraph
 from jarvis_cd.util.logger import logger
@@ -188,6 +190,8 @@ class ResourceGraphManager:
                 )
         else:
             self.resource_graph.net = previous.net
+        # confirmed placement answers are the person's, not collected facts
+        self.resource_graph.install_placement = self._stored_install_placement(previous)
 
         # Save resource graph
         self._save()
@@ -385,10 +389,35 @@ class ResourceGraphManager:
 
     def _save(self):
         """Save resource graph through the configured JARVIS state boundary."""
+        self.resource_graph.install_placement = self._stored_install_placement(
+            self.resource_graph
+        )
         self.jarvis.save_resource_graph(self.resource_graph.to_dict())
+
+    def _stored_install_placement(
+        self, fallback: Optional[ResourceGraph] = None
+    ) -> Optional[Dict[str, Any]]:
+        """The active file's confirmed placement answers (kept across rebuilds).
+
+        Read at save time, so an answer recorded while a build collected is
+        kept; ``fallback``'s copy applies when the file has none.
+        """
+        try:
+            with open(self.jarvis.resource_graph_file, "r", encoding="utf-8") as stream:
+                stored = yaml.safe_load(stream) or {}
+        except (OSError, ValueError, yaml.YAMLError):
+            stored = None
+        if isinstance(stored, dict):
+            section = stored.get("install_placement")
+            return section if isinstance(section, dict) else None
+        return fallback.install_placement if fallback is not None else None
 
     def _activate(self, loaded_graph: ResourceGraph) -> None:
         """Publish a graph while keeping every live view coherent on failure."""
+        if loaded_graph.install_placement is None:
+            loaded_graph.install_placement = self._stored_install_placement(
+                self.resource_graph
+            )
         try:
             self.jarvis.save_resource_graph(loaded_graph.to_dict())
         except Exception:
