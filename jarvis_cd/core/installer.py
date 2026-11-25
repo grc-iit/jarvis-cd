@@ -342,7 +342,8 @@ class PipInstaller(_MethodInstaller):
 
     Each package's ``install_query`` is one or more pip requirements
     (anything ``pip install`` accepts). The venv is
-    ``<jarvis root>/envs/pip/<install_env or pipeline name>``; a check reads
+    ``<jarvis root>/envs/pip/<install_env or pipeline name>``, or
+    ``$JARVIS_INSTALL_ENV_DIR/pip/<install_env or env>`` when set; a check reads
     the installed versions there and only a missing or mismatched
     requirement is installed. The venv's ``bin`` goes first on the
     pipeline's ``PATH``. A query naming an MPI is refused.
@@ -354,8 +355,9 @@ class PipInstaller(_MethodInstaller):
 class CondaInstaller(_MethodInstaller):
     """Install packages with conda into an env JARVIS owns.
 
-    The env is ``<jarvis root>/envs/conda/<install_env or pipeline name>``,
-    with ``install_channels`` as its channels. The conda is the one this
+    The env is ``<jarvis root>/envs/conda/<install_env or pipeline name>``
+    (or under ``$JARVIS_INSTALL_ENV_DIR/conda/`` when set), with
+    ``install_channels`` as its channels. The conda is the one this
     host has; several are a ``conda_select`` question, and none is a
     ``conda_missing`` question whose answer installs Miniforge into the site
     home. A query naming an MPI (or mpi4py) is refused.

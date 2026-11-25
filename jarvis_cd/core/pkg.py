@@ -912,8 +912,9 @@ class Pkg:
             },
             {
                 "name": "install_env",
-                "msg": "pip/conda: name of the env under <jarvis root>/envs/<method>/ "
-                "(default: the pipeline's name).",
+                "msg": "pip/conda: name of the env under <jarvis root>/envs/<method>/, "
+                "or $JARVIS_INSTALL_ENV_DIR/<method>/ when set (default: the "
+                "pipeline's name, or env under JARVIS_INSTALL_ENV_DIR).",
                 "type": str,
                 "default": "",
             },
