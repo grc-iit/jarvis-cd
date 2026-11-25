@@ -392,7 +392,23 @@ class ResourceGraphManager:
         self.resource_graph.install_placement = self._stored_install_placement(
             self.resource_graph
         )
+        self.resource_graph.software = self._stored_software(self.resource_graph)
         self.jarvis.save_resource_graph(self.resource_graph.to_dict())
+
+    def _stored_software(
+        self, fallback: Optional[ResourceGraph] = None
+    ) -> Optional[List[Dict[str, Any]]]:
+        """The active file's confirmed ``software`` copies (kept across rebuilds)."""
+        try:
+            with open(self.jarvis.resource_graph_file, "r", encoding="utf-8") as stream:
+                stored = yaml.safe_load(stream) or {}
+        except (OSError, ValueError, yaml.YAMLError):
+            stored = None
+        if isinstance(stored, dict):
+            section = stored.get("software")
+            return ([dict(item) for item in section if isinstance(item, dict)]
+                    if isinstance(section, list) else None)
+        return fallback.software if fallback is not None else None
 
     def _stored_install_placement(
         self, fallback: Optional[ResourceGraph] = None
@@ -418,6 +434,8 @@ class ResourceGraphManager:
             loaded_graph.install_placement = self._stored_install_placement(
                 self.resource_graph
             )
+        if loaded_graph.software is None:
+            loaded_graph.software = self._stored_software(self.resource_graph)
         try:
             self.jarvis.save_resource_graph(loaded_graph.to_dict())
         except Exception:

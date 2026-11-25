@@ -2528,6 +2528,13 @@ class JarvisCLI(ArgParse):
 
             decisions_path = install_context_for(pipeline, "check").decisions_path
             forgotten = forget_decisions(decisions_path, [forget])
+            from jarvis_cd.core.site_copies import forget_choices
+
+            reset = forget_choices(pipeline, forgotten["forgotten"])
+            if reset:
+                # a saved site-copy choice would keep loading the old copy
+                forgotten["site_copy_reset"] = reset
+                pipeline.save()
             if not (check or self.kwargs.get("submit")):
                 forgotten["pipeline_id"] = pipeline.name
                 forgotten["exit_code"] = 0

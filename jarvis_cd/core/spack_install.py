@@ -2233,6 +2233,9 @@ def load_answers(path: Optional[Path]) -> Dict[str, Dict[str, Any]]:
 _DECISION_LOCKS: Dict[str, List[Any]] = {}
 _DECISION_LOCKS_GUARD = threading.Lock()
 
+#: package answers that are not Spack spec constraints (see SpackPlanner.plan_package)
+_NOT_SPEC_KINDS = frozenset({"install_method", "install_placement", "site_copy"})
+
 
 class Decisions:
     """Recorded answers, keyed by scope: ``site`` subjects and per package.
@@ -2530,6 +2533,8 @@ class InstallContext:
         self.applied_decisions: List[Dict[str, Any]] = []
         #: recorded answers not replayed because their question changed
         self.stale_decisions: List[Dict[str, Any]] = []
+        #: ``{pkg_id: text}``: the site has no copy of this package (site_copies)
+        self.site_copy_facts: Dict[str, str] = {}
         self._log_stream: Optional[IO[str]] = None
 
     @property
@@ -2945,7 +2950,13 @@ class SpackPlanner:
     def plan_package(self, package: str, query: str) -> Dict[str, Any]:
         """Resolve one package; returns its install-record entry."""
         base_tokens = shlex.split(query)
-        package_entries = self.decisions.package_entries(package)
+        # only Spack constraints: other answers filed under the package (its
+        # install method, a site copy, a placement) are not spec tokens
+        package_entries = [
+            item for item in self.decisions.package_entries(package)
+            if item.get("kind") not in _NOT_SPEC_KINDS
+            and not str(item.get("subject") or "").startswith("install_placement")
+        ]
         constraints = [str(item["constraint"]) for item in package_entries]
         for item in package_entries:
             self.context.note_decision(
@@ -4006,6 +4017,10 @@ def run_spack_install(
                             detail=", ".join(
                                 f"{item['name']}/{item['hash']}" for item in entry["missing"]
                             ),
+                            evidence=[
+                                text for text in (context.site_copy_facts.get(package),)
+                                if text
+                            ],
                             answerable=False,
                             hint="run `jarvis ppl install` (e.g. as a 1-node +submit job)",
                         )

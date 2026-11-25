@@ -25,6 +25,8 @@ class ResourceGraph:
         self.net: Optional[Dict[str, Any]] = None
         # person-confirmed install placement answers, see core.install_placement
         self.install_placement: Optional[Dict[str, Any]] = None
+        # site software copies the person confirmed, see core.site_copies
+        self.software: Optional[List[Dict[str, Any]]] = None
         
     def add_node_data(self, hostname: str, resource_data: Dict[str, Any]):
         """
@@ -176,6 +178,8 @@ class ResourceGraph:
             data['net'] = self.net
         if self.install_placement:
             data['install_placement'] = self.install_placement
+        if self.software:
+            data['software'] = self.software
         return data
 
     def save_to_file(self, output_path: Path, format: str = 'yaml'):
@@ -216,9 +220,13 @@ class ResourceGraph:
         self.net = net if isinstance(net, dict) else None
         placement = data.get('install_placement')
         self.install_placement = placement if isinstance(placement, dict) else None
+        software = data.get('software')
+        self.software = ([dict(item) for item in software if isinstance(item, dict)]
+                         if isinstance(software, list) else None)
 
         # Handle resource graph format with 'fs' section
-        if 'fs' in data or self.net is not None or self.install_placement is not None:
+        if ('fs' in data or self.net is not None or self.install_placement is not None
+                or self.software is not None):
             # Determine hostname for resource graph files
             hostname = input_path.stem  # Use filename as hostname
             self.nodes[hostname] = []

@@ -129,6 +129,7 @@ class Installer(ABC):
 
         if mode not in ("install", "check"):
             raise ValueError("install mode must be 'install' or 'check'")
+        from jarvis_cd.core import site_copies
         from jarvis_cd.core.method_install import needs_method_choice, resolve_method_choices
 
         started = time.monotonic()
@@ -165,6 +166,30 @@ class Installer(ABC):
             if captured["result"] is not None:
                 report["installers"]["spack"] = captured["result"]
                 grouped = {m: pkgs for m, pkgs in grouped.items() if m != "spack"}
+        site_summary: Optional[Dict[str, Any]] = None
+        if any(site_copies.needs_search(ppl, pkg_def) for pkg_def in grouped.get("spack") or []):
+            # Before Spack plans a build: does the site already have the package?
+            if context is None:
+                context = install_context_for(ppl, mode)
+                context.open()
+                owns_context = True
+            try:
+                site_summary = site_copies.resolve_site_copies(ppl, context)
+            except BaseException:
+                if owns_context:
+                    context.close()
+                raise
+            report["site_copies"] = site_summary
+            held = set(site_summary["held"])
+            grouped = Installer.get_installers(ppl)
+            spack_pkgs = [pkg_def for pkg_def in grouped.get("spack") or []
+                          if site_copies.pkg_key(pkg_def) not in held]
+            grouped.pop("spack", None)
+            if spack_pkgs:
+                grouped["spack"] = spack_pkgs
+        if "site" in grouped:
+            # last: Spack's activation replaces ppl.env, the site's copy prepends to it
+            grouped["site"] = grouped.pop("site")
         if context is None and grouped:
             context = install_context_for(ppl, mode)
             context.open()
@@ -379,6 +404,32 @@ class CondaInstaller(_MethodInstaller):
     """
 
     install_method = "conda"
+
+
+class SiteInstaller(Installer):
+    """Use a copy the site already has (modules or a site Spack install).
+
+    A package gets this method when the person answers a ``site_copy``
+    question with one of the site's copies (see :mod:`jarvis_cd.core.site_copies`),
+    or when its config sets ``install_method: site`` with ``install_modules``
+    (and optionally ``install_modulepath``). Nothing is built: the check and
+    the install load the copy in a login shell and put what it sets on the
+    pipeline's env, so the package's run sees those modules.
+    """
+
+    install_method = "site"
+
+    def _run(self, ppl, pkg_list, mode):
+        from jarvis_cd.core import site_copies
+
+        return self._with_context(
+            ppl, mode, lambda context: site_copies.site_run(ppl, pkg_list, context, mode))
+
+    def check(self, ppl, pkg_list):
+        return self._run(ppl, pkg_list, "check")
+
+    def install(self, ppl, pkg_list):
+        return self._run(ppl, pkg_list, "install")
 
 
 class SpackInstaller(Installer):

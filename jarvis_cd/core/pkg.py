@@ -881,7 +881,8 @@ class Pkg:
             {
                 "name": "install_method",
                 "msg": "Installer to use for this package "
-                "('pip', 'conda', 'spack', 'container'). Empty "
+                "('pip', 'conda', 'spack', 'container', or 'site' for a copy "
+                "the site has, see install_modules). Empty "
                 "string uses install_methods, else the pipeline's "
                 "base_deploy_mode.",
                 "type": str,
@@ -954,6 +955,29 @@ class Pkg:
                         "type": str,
                     }
                 ],
+            },
+            {
+                "name": "install_site_search",
+                "msg": "spack: before planning a build, look for the site's own "
+                "copies (modules, site Spack, the resource graph's software "
+                "section) and ask whether to use one (site_copy question). "
+                "Set false to skip the search.",
+                "type": bool,
+                "default": True,
+            },
+            {
+                "name": "install_modules",
+                "msg": "site: the modules to load for this package, in order "
+                "(space separated), when install_method is 'site'.",
+                "type": str,
+                "default": "",
+            },
+            {
+                "name": "install_modulepath",
+                "msg": "site: a module directory to `module use` before "
+                "install_modules load (default: the login MODULEPATH).",
+                "type": str,
+                "default": "",
             },
             {
                 "name": "container_cache",

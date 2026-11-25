@@ -253,7 +253,7 @@ up for every iteration the test generates.
 An installer is selected per package, in this order:
 
 1. The package's explicit **`install_method`** — one of `pip`, `conda`,
-   `spack`, or `container`.
+   `spack`, `container` or `site`.
 2. Otherwise the pipeline-level **`base_deploy_mode`** — when it is
    `container` or `spack`, it doubles as the default install method for
    every package that doesn't set its own.
@@ -268,6 +268,7 @@ The thing to install is named by **`install_query`** (the legacy alias
 | `pip`            | one or more pip requirements             | find-first into a venv at `<jarvis root>/envs/pip/<install_env or pipeline>` (or `$JARVIS_INSTALL_ENV_DIR/pip/<install_env or env>`); its `bin` goes first on `PATH` |
 | `conda`          | conda package specs                      | find-first into an env at `<jarvis root>/envs/conda/<install_env or pipeline>` (or `$JARVIS_INSTALL_ENV_DIR/conda/...`), from `install_channels` |
 | `container`      | the image to pull (or empty: built from the package Dockerfiles) | find-first: reuse the image if the engine has it, else pull or build it |
+| `site`           | (unused) the copy is `install_site`, set by a `site_copy` answer, or `install_modules` | load the site's copy (`module load`, or `spack load` with the site Spack) into the run's env; nothing is built, see [Site copies](#site-copies-before-a-spack-build-site_copy) |
 
 Every method has a check (`jarvis ppl install +check`) that reports what is
 missing as `not_installed` without installing, and an install that builds
@@ -432,7 +433,8 @@ merged into the run, so the resolved binaries are on
 
 ### Find-first Spack installs
 
-For each Spack package, JARVIS:
+For each Spack package, JARVIS first looks for a copy the site already has
+(see [Site copies](#site-copies-before-a-spack-build-site_copy)). Then it:
 
 1. Collects every package's `install_repos` (see
    [Package Spack repos](#package-spack-repos-install_repos)).
@@ -492,6 +494,7 @@ JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
 | `no_recipe` | Spack has no recipe for the package | no: add `install_repos` or change `install_query` |
 | `compiler_unavailable` | a compiler the install would use can't run on the build host (`subject: compiler`, `scope: site`): `compiler`, `host`, `missing_executables` (or `probe_failures` when it exists but can't build a test program), `usable_compilers`, `origin`, plus `to_build` and `reused_specs` when reused upstream specs pull the DAG onto it. With `compiler: null` and `missing_languages`/`needed_languages`, no usable compiler on the build host has every language (`c`, `cxx`, `fortran`) the nodes to build need; see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host) | yes, with one usable compiler (`candidates[]`), which becomes a binding `require`; the language form has no candidates (add a compiler, or pin the install job's nodes) |
 | `not_installed` | `+check` found nodes that still need building | no: run `jarvis ppl install` |
+| `site_copy` | the site already has a copy of the package (a module, a site Spack install or a resource graph `software` entry); see [Site copies](#site-copies-before-a-spack-build-site_copy) | yes: a site candidate's `id` or `constraint`, or `spack` |
 | `install_unchecked` | a scheduled pipeline's check on its submitting host found no matching `install-check.json` (JARVIS runs no Spack there); `packages`, `reason`, `record`, `remedy[]`; see [scheduler.md → Light checks](scheduler.md#light-checks-on-the-submitting-host) | no: check in a job, `jarvis ppl install +check +submit` (or `+submit` to also build) |
 | `install_placement` | where a scheduled pipeline's full check or build runs at this site is not chosen yet (or the site chose `ask_each_time`). One site question per phase (`install_placement.check` / `install_placement.build`) covers every package; `phase`, `cost_class` (the costliest package's), `cost_classes`, `covers`, `once`, `recommended`, `recommendation_reason`, `recommendation_basis` (a site answer recorded in this home or the resource graph's `install_placement`, with who, when and `basis`; else cost and load), `packages[]` (with `estimate`), `login_host`, `limits`, `queue`, `site_policy`, `package_overrides[]` (each with its own recommendation); see [scheduler.md → Install placement](scheduler.md#install-placement-where-checks-and-builds-run) | yes: `login_limited`, `compute_job` or `ask_each_time` (an `install_placement.<phase>.occasion` question: the first two, this run only); recorded per site, or per package for an override; `basis` records why |
 
@@ -730,6 +733,94 @@ without a pipeline.
 `SPACK_DISABLE_LOCAL_CONFIG=1`, so Spack reads no user or system
 configuration. Put site configuration in `<root>/etc/spack` (see above).
 
+### Site copies before a Spack build (`site_copy`)
+
+Before JARVIS plans a Spack build of a package, it looks for copies the site
+already has of the package itself (the root name of `install_query`, any
+version):
+
+- **Modules.** In a login shell (where `module` is defined): `module -t
+  avail <name>`, and with Lmod also `module -t spider <name>` (which finds
+  modules behind a hierarchy, such as an MPI). `module spider <module>` gives
+  the modules to load first, and `module show` gives the module file, what it
+  loads and its install prefix.
+- **Site Spacks.** Every site Spack JARVIS finds (those under the site home
+  and the JARVIS root are JARVIS's own and are skipped): `spack find --json
+  <name>` and `spack find -d --format '{hash} {name} {version} {prefix}'`.
+  A module that a site Spack wrote, with the same install prefix or hash, is
+  one copy: the module, with that Spack record's variants, dependencies and
+  MPI.
+- **The resource graph.** Its `software:` section lists copies the person
+  confirmed for the site, as `{name, version, label, modules, modulepath,
+  prefix, variants, implies: {mpi: ...}, basis}`. `jarvis rg build` keeps
+  the section.
+
+When at least one copy is found, JARVIS raises an answerable `site_copy`
+issue, "use the site's copy or build with Spack", and does not plan that
+package with Spack in this run. The issue (`scope: package`, `package`: the
+Spack name, `schema_site_copies: jarvis.site-copies.v1`) carries `needs`
+(the query's versions, variants, compiler, MPI and `^` dependencies, and
+the site's recorded MPI), `searched[]` (every command run and what it
+found), `pkg_ids`, `recommended`, `recommendation_reason` and
+`candidates[]`. Each site candidate has `id` (`site-1`, ...), `constraint`
+(`module:<module>`, `spack:/<hash7>` or `graph:<name>@<version>`), `label`,
+`version`, `modules` (in load order), `implies` (`mpi`, `loads`,
+`load_first`, `depends_on`), `prefix`, `fits`, `why` and `does`. Where they
+are known it also has `module_dir`, `module_file`, `spack_root`,
+`spack_hash`, `compiler` and `flavor`. The last candidate is always
+`{id: spack_build, constraint: spack}`.
+
+A copy fits when its version satisfies the query's versions (Spack rules:
+`3.3` matches 3.3.0, `=3.3` is exact, `4:5` is a range), it has the variants
+the query names, its MPI is the one the query names (`^openmpi@5:`), and its
+`^` dependencies match. Without an MPI in the query, the copy's MPI must be
+the site's recorded MPI (`decisions.yaml` site `mpi`, same name and version,
+and the same prefix when both are known). A module copy whose variants are
+unknown doesn't fit a query that names variants. `recommended` is the best
+fitting copy: one from the resource graph first, then a module, then a site
+Spack install, newest version first. When no copy fits, `recommended` is
+`spack_build`, and `recommendation_reason` says why each copy doesn't fit.
+
+The answer is a candidate `id` or `constraint`. It is recorded per package
+in `decisions.yaml`, with `candidate_id`, the `needs` it answered and the
+chosen copy, and later runs replay it without searching again. A changed
+query or site MPI makes a new question, which carries `supersedes`. Choosing
+a site copy sets the package's `install_method: site` (below). Choosing
+`spack` keeps the Spack path. `jarvis ppl install --forget <package>` (or
+the chosen `constraint`) forgets the answer, resets a saved pipeline's
+choice, and asks again.
+
+When nothing is found, nothing is asked. The install report's
+`site_copies.facts[]` holds a `site_copy_none` fact (`answerable: false`,
+`fact: true`, `method: spack`, `searched[]`), and the Spack path runs as
+before. A later `not_installed` for the package carries the fact as its
+evidence.
+
+The search runs once per package and query, on the host that plans the
+Spack install. A fresh env capture (a load after an install) and a plan-only
+run search nothing. `install_site_search: false` in a package's config, or
+`JARVIS_SITE_COPIES=off`, turns the search off.
+
+#### The `site` install method
+
+A `site` package builds nothing. Its check and its install load the copy in
+a login shell (`module use` of its `modulepath`, `module load` of its
+`modules` in order, or `spack load --sh /<hash>` with the site Spack for a
+Spack copy without modules). What that changes goes on the pipeline's env:
+path lists are prepended, other variables are set. So the package's run sees
+the modules. The `site` group runs after Spack's, so a Spack activation
+doesn't replace it. A module that doesn't load, or a copy whose prefix is
+gone, fails as `site_copy_unusable` with the module system's error.
+
+A package can also name its modules directly:
+
+```yaml
+- pkg_type: builtin.ior
+  install_method: site
+  install_modules: "openmpi/5.0.5 ior/3.3.0"
+  install_modulepath: /opt/site/modules   # optional, `module use`d first
+```
+
 ### Package Spack repos (`install_repos`)
 
 A package can ship its own Spack recipes. `install_repos` is a list of Spack
@@ -883,7 +974,9 @@ report carries the forget document as `forgotten`. The selector is one of:
 
 A selector that matches nothing refuses with `decision_not_found` (exit 5),
 whose `details.recorded` lists what is recorded, and nothing is removed. The
-next `ppl install +check` asks the question again.
+next `ppl install +check` asks the question again. Forgetting a `site_copy`
+answer also resets the pipeline's saved choice (its `install_method` goes
+back to `spack`), listed as `site_copy_reset`.
 
 The final stdout line with `+json` is a `jarvis.install-report.v1` document:
 `mode`, `satisfied`, per-installer `status`/`packages`, `issues`,
