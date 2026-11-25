@@ -494,7 +494,6 @@ JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
 | `no_recipe` | Spack has no recipe for the package | no: add `install_repos` or change `install_query` |
 | `compiler_unavailable` | a compiler the install would use can't run on the build host (`subject: compiler`, `scope: site`): `compiler`, `host`, `missing_executables` (or `probe_failures` when it exists but can't build a test program), `usable_compilers`, `origin`, plus `to_build` and `reused_specs` when reused upstream specs pull the DAG onto it. With `compiler: null` and `missing_languages`/`needed_languages`, no usable compiler on the build host has every language (`c`, `cxx`, `fortran`) the nodes to build need; see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host) | yes, with one usable compiler (`candidates[]`), which becomes a binding `require`; the language form has no candidates (add a compiler, or pin the install job's nodes) |
 | `not_installed` | `+check` found nodes that still need building | no: run `jarvis ppl install` |
-| `storage_unusable` | in an install job, the install's temp directory (or the storage a compiler probe or build wrote to) is full or not writable (`scope: node`, `package: "*"`, `subject: <host>:<path>`): `host`, `path`, `directory`, `role`, `origin`, `error`, `remedy`; a node or storage problem, never a compiler question. The install fails with exit `6`; see [spack.md → Install temp files](spack.md#install-temp-files) and [Install failures](#install-failures) | no: free space on the node, exclude the node, or set `JARVIS_INSTALL_TMPDIR` |
 | `site_copy` | the site already has a copy of the package (a module, a site Spack install or a resource graph `software` entry); see [Site copies](#site-copies-before-a-spack-build-site_copy) | yes: a site candidate's `id` or `constraint`, or `spack` |
 | `site_copy_unusable` | a site copy chosen for the package doesn't load on this host (`module load` or `spack load` fails, or its prefix is gone); `failing`, `failing_kind` (`module`, `spack` or `graph`), `why`, `needs`; see [The `site` install method](#the-site-install-method) | yes, when the copy came from a `site_copy` answer: another site copy, `spack_build` or `forget`; no, when the pipeline config sets the copy |
 | `spack_broken` | a Spack fails on its own, before any package: [`spack providers mpi`](#a-broken-spack-spack_broken) fails (`subject: spack:<root>`, `scope: site`, `package: "*"`); `spack_root`, `probe`, `without_user_config`, `without_failing_repos`, `failing_repos[]`, `failing_scope`, `failing_file`, `cause` | yes: `drop_failing_repos`, `no_user_config`, `skip` or `recheck`; the first three are recorded per site |
@@ -521,15 +520,6 @@ so an answer given to an install job is reused by every later run job of
 that pipeline. That is how the chosen MPI reaches a run (see
 [MPI selection](#mpi-selection)). Set `JARVIS_SPACK_DECISIONS` to share one
 decisions file across pipelines on a site.
-
-`answers.json` may carry more answers than a run raises questions for,
-such as every answer given so far in an operation. An answer whose
-`issue_id` this run doesn't raise is ignored, with no error. An answer
-that matches what is already recorded for that question (the same
-`constraint` and fields, whatever its `answered_at`, `answered_by`, `ask_id`
-or `basis`) leaves the record, and its `answered_at`, unchanged. So
-resending answers neither rewrites `decisions.yaml` nor makes
-`install-check.json` stale.
 
 Writes to `decisions.yaml` (recording an answer, re-keying one, `--forget`)
 hold an exclusive lock on `.decisions.yaml.lock` beside it. They re-read the
@@ -660,7 +650,6 @@ failed` with its `issue_id`, and exits `6`:
 
 | `kind` | Matched by | `remedy` |
 |--------|------------|----------|
-| `storage_unusable` | full or unwritable storage, checked first: `No space left on device`, `Disk quota exceeded`, `Read-only file system`, `cannot create temporary file`, `[Errno 28]`, in Spack's output or its build log; or `cannot create executables` while the install's temp directory fails its write check. `scope: node`, `host`, `path` (the file or directory the error names), `directory`, `role`, `origin`, `error`, `packages_failed`. No candidates and not answerable: no compiler or spec choice fixes a full disk. A build log under the install's temp directory is copied to `<install>/build-logs/<stage>/` first (`build_log`; the original path is `build_log_stage`) | free space on `path` on `host`, run the install on another node (exclude `host`), or set `JARVIS_INSTALL_TMPDIR` to a scratch directory with space (see [spack.md → Install temp files](spack.md#install-temp-files)) |
 | `compiler_unavailable` | `CompilerAccessError: Compiler '…' has executables that are missing…` (`origin: spack install`); `missing_executables` are the paths Spack named, and that compiler is dropped from `usable_compilers` | answer with a usable compiler, or re-run `jarvis spack prepare --compiler` inside a job |
 | `compiler_unavailable` | a compiler that exists but can't build: `C compiler cannot create executables` (autoconf), `The C compiler "…" is not able to compile a simple test program` (CMake), `no acceptable C compiler found`, `cannot run C compiled programs`, in Spack's output or its build log. `compiler` is the failed node's compiler (from the concretized spec, `compiler_identified: true`); `build_failure` and `probe_failures` quote the line; `candidates` are the usable compilers minus that one. Checked before `build_failed`, so this never surfaces as a generic build failure | answer with a usable compiler; the next run takes the failed one out and binds the answer (see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host)) |
 | `fetch_failed` | `FetchError`, `All fetchers failed`, `ChecksumError`, `Manual download is required`, … | fix the build node's network or proxy, or add a mirror |

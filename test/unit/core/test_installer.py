@@ -5,7 +5,6 @@ The pip, conda and container installers are covered in
 ``test_method_install.py``. These tests stub out subprocess execution so
 they run fast and don't need the underlying tooling present.
 """
-import json
 import os
 import sys
 import unittest
@@ -263,28 +262,6 @@ class TestSpackInstaller(unittest.TestCase):
         entry = report['installers']['spack']['packages']['p']
         self.assertEqual(entry['status'], 'installed')
         self.assertEqual(entry['built'], ['ior'])
-        with open(self.context.record_path, encoding='utf-8') as stream:
-            install_tmp = json.load(stream)['install_tmp']
-        # the build's TMPDIR was the install's own, and it is gone
-        self.assertEqual(os.path.dirname(install_tmp['path']),
-                         os.path.join(self.tmp.name, 'tmp'))
-        self.assertFalse(os.path.exists(install_tmp['path']))
-        self.assertEqual(install_tmp['build_stage']['source'], 'jarvis')
-
-    def test_an_unusable_temp_dir_fails_the_install_as_storage(self):
-        from jarvis_cd.core.spack_install import InstallFailed
-        blocker = os.path.join(self.tmp.name, 'not-a-dir')
-        with open(blocker, 'w', encoding='utf-8'):
-            pass
-        fake = _FakeSpack({'ior': _SPEC_ONE_MISSING})
-        with mock.patch.dict(os.environ, {'JARVIS_INSTALL_TMPDIR': blocker}), \
-                self.assertRaises(InstallFailed) as failed:
-            self._run(fake, [pkg('spack', 'ior')])
-        issue = failed.exception.issues[0]
-        self.assertEqual(issue['kind'], 'storage_unusable')
-        self.assertEqual(issue['path'], blocker)
-        self.assertEqual(issue['candidates'], [])
-        self.assertFalse(any(c[0] in ('install', 'spec') for c in fake.calls))
 
     def test_check_mode_raises_not_installed_without_building(self):
         from jarvis_cd.core.spack_install import InstallDecisionNeeded
