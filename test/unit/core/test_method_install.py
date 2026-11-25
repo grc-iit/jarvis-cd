@@ -857,6 +857,35 @@ class TestContainer(_Case):
         # probed once: the second call used the cached runtime
         self.assertEqual(counts[1] - counts[0], 1)
 
+    @unittest.skipUnless(os.name == 'posix' and shutil.which('sh'), 'POSIX shell')
+    def test_wrapper_pins_the_runtime_dir_with_the_node_store(self):
+        # ssh has /run/user/<uid>, a batch step has none: with the node store
+        # both must give the OCI runtime the same state dir
+        real = self.tmp / 'real'
+        real.mkdir()
+        log = self.tmp / 'calls'
+        (real / 'podman').write_text(
+            f'#!/bin/sh\necho "$XDG_RUNTIME_DIR $*" >> {log}\nexit 0\n')
+        (real / 'podman').chmod(0o755)
+        session = self.tmp / 'run-user'
+        session.mkdir(mode=0o700)
+        pinned = self.tmp / 'jarvis-podman-1000'
+        conf = self.tmp / 'jarvis-podman-1000-store' / 'storage.conf'
+        env = {'PATH': f'{real}:/usr/bin:/bin', 'XDG_RUNTIME_DIR': str(session)}
+        for store_conf, expected in ((str(conf), pinned), (None, session)):
+            log.unlink(missing_ok=True)
+            with mock.patch('tempfile.gettempdir', return_value=str(self.tmp)), \
+                    mock.patch('os.getuid', return_value=1000, create=True), \
+                    mock.patch.dict(os.environ, env), \
+                    mock.patch.object(mi, 'node_store_conf', return_value=store_conf):
+                mi.podman_wrapper()
+                ran = subprocess.run(['podman', 'exec', 'c', 'true'], env=os.environ.copy(),
+                                     capture_output=True, text=True, check=False)
+            self.assertEqual(ran.returncode, 0, ran.stderr)
+            last = log.read_text().splitlines()[-1]
+            self.assertTrue(last.startswith(f'{expected} '), last)
+            self.assertTrue(last.endswith('exec c true'), last)
+
     def test_mount_fstype_takes_the_longest_mount(self):
         mounts = self.tmp / 'mounts'
         mounts.write_text(f'/dev/sda1 / ext4 rw 0 0\nsrv:/x {self.tmp} nfs rw 0 0\n')

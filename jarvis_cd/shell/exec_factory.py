@@ -1,12 +1,35 @@
 """
 Exec base class for Jarvis shell execution.
 """
-from typing import Dict
+import contextlib
+import threading
+from typing import Any, Dict, Iterator, List
 from .exec_info import ExecInfo, ExecType
 from .core_exec import CoreExec, LocalExec, MpiVersion
 from .ssh_exec import SshExec, PsshExec
 from .mpi_exec import OpenMpiExec, MpichExec, IntelMpiExec, CrayMpichExec
 from .scp_exec import ScpExec, PscpExec
+
+#: ``docker``/``podman exec`` exit codes that mean the command never ran in the
+#: container: the engine failed (125), or could not invoke the command (126, 127)
+CONTAINER_EXEC_NOT_RUN = (125, 126, 127)
+
+_watch_lock = threading.Lock()
+_watchers: List[List[Dict[str, Any]]] = []
+
+
+@contextlib.contextmanager
+def watch_container_execs() -> Iterator[List[Dict[str, Any]]]:
+    """Collect, while active, every finished container exec whose command did
+    not run in the container (an exit code in :data:`CONTAINER_EXEC_NOT_RUN`)."""
+    failures: List[Dict[str, Any]] = []
+    with _watch_lock:
+        _watchers.append(failures)
+    try:
+        yield failures
+    finally:
+        with _watch_lock:
+            _watchers.remove(failures)
 
 
 class Exec(CoreExec):
@@ -247,7 +270,35 @@ class Exec(CoreExec):
         self.processes = self._delegate.processes
         self.output_threads = self._delegate.output_threads
 
+        if is_container:
+            self._note_container_exec_failures()
+
         return self._delegate
+
+    def _note_container_exec_failures(self) -> None:
+        """Report a finished container exec whose command never ran to every
+        :func:`watch_container_execs` (async execs have no exit code yet)."""
+        info = self.exec_info
+        if info.dry_run or info.exec_async:
+            return
+        with _watch_lock:
+            watchers = list(_watchers)
+        if not watchers:
+            return
+        stderr = self.stderr if isinstance(self.stderr, dict) else {}
+        for host, code in dict(self.exit_code or {}).items():
+            if code not in CONTAINER_EXEC_NOT_RUN:
+                continue
+            failure = {
+                "engine": str(info.container),
+                "container": str(info.container_image or ""),
+                "host": str(host),
+                "exit_code": code,
+                "command": self.cmd,
+                "stderr": str(stderr.get(host, "") or "")[-2048:],
+            }
+            for failures in watchers:
+                failures.append(failure)
 
     def get_cmd(self) -> str:
         """Get the command string"""

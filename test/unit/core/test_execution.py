@@ -1608,6 +1608,68 @@ def test_running_probe_ignores_engine_warnings(
     assert "is not running: false" in error and "exited exit=1" in error
 
 
+def test_container_exec_that_never_ran_fails_the_start(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A package's exec into the container that the engine could not run
+    (exit 127 here) fails the start with ``container_exec_failed``."""
+    from jarvis_cd.core.issues import JarvisIssueError
+    from jarvis_cd.shell import exec_factory
+    from jarvis_cd.shell.exec_info import ExecInfo, ExecType
+
+    pipeline = _pipeline_double(tmp_path)
+    pipeline.container_engine = "docker"
+    pipeline.container_image = "example:latest"
+    pipeline.packages = [{"pkg_id": "app", "pkg_type": "builtin.example"}]
+    pipeline._started_instances = []
+    pipeline._hostfile_is_local_only = Mock(return_value=True)
+    pipeline.get_hostfile = Mock(return_value=SimpleNamespace(hosts=["localhost"]))
+    pipeline._apply_interceptors_to_package = Mock()
+    shared_dir = pipeline.get_pipeline_shared_dir()
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "docker-compose.yaml").write_text("services: {}\n", encoding="utf-8")
+
+    class EngineExec:
+        def __init__(self, _command: str, _exec_info: object) -> None:
+            self.exit_code = {"localhost": 0}
+            self.stderr = {"localhost": ""}
+
+        def run(self) -> "EngineExec":
+            return self
+
+    class NotRun:
+        def __init__(self, _command: str, _exec_info: object) -> None:
+            self.exit_code = {"localhost": 127}
+            self.stdout = {"localhost": ""}
+            self.stderr = {"localhost": "Error: OCI runtime attempted to invoke a command"}
+            self.processes: dict = {}
+            self.output_threads: dict = {}
+
+    class Package:
+        env: dict = {}
+
+        def start(self) -> None:
+            info = ExecInfo(exec_type=ExecType.LOCAL, container="docker",
+                            container_image="demo")
+            exec_factory.Exec("cat /etc/alpine-release", info).run()
+
+    pipeline._load_package_instance = Mock(return_value=Package())
+    monkeypatch.setattr(jarvis_cd.shell, "Exec", EngineExec)
+    monkeypatch.setattr(exec_factory, "LocalExec", NotRun)
+
+    with pytest.raises(RuntimeError) as caught:
+        pipeline._start_containerized_pipeline()
+
+    cause = caught.value.__cause__
+    assert isinstance(cause, JarvisIssueError)
+    issue = cause.issues[0]
+    assert issue["kind"] == "container_exec_failed"
+    assert issue["details"]["exit_code"] == 127
+    assert "OCI runtime" in issue["details"]["error"]
+    assert pipeline._started_instances == []
+
+
 def test_container_start_writes_this_executions_compose_file(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

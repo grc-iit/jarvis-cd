@@ -6500,6 +6500,7 @@ class Pipeline:
         """
         from jarvis_cd.util.logger import logger
         from jarvis_cd.shell import Exec, LocalExecInfo, PsshExecInfo
+        from jarvis_cd.shell.exec_factory import watch_container_execs
 
         logger.info("Starting containerized pipeline deployment")
 
@@ -6663,7 +6664,10 @@ class Pipeline:
                 self._apply_interceptors_to_package(pkg_instance, pkg_def)
 
                 if hasattr(pkg_instance, "start"):
-                    pkg_instance.start()
+                    with watch_container_execs() as not_run:
+                        pkg_instance.start()
+                    if not_run:
+                        raise self._container_exec_failed(pkg_def, not_run)
                 else:
                     logger.warning(f"Package {pkg_def['pkg_id']} has no start method")
 
@@ -6675,6 +6679,46 @@ class Pipeline:
                 raise RuntimeError(
                     f"Pipeline startup failed at package '{pkg_def['pkg_id']}': {e}"
                 ) from e
+
+    def _container_exec_failed(self, pkg_def: Dict[str, Any],
+                               failures: List[Dict[str, Any]]) -> Exception:
+        """``container_exec_failed``: a command the package ran in the pipeline's
+        container never ran there (the engine's exec exited 125, 126 or 127)."""
+        from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
+
+        first = failures[0]
+        hosts = sorted({failure["host"] for failure in failures})
+        name = f"{first['container']}_container" if first["container"] else ""
+        return JarvisIssueError(
+            [
+                make_jarvis_issue(
+                    kind="container_exec_failed",
+                    subject=str(pkg_def["pkg_id"]),
+                    message=(
+                        f"Package {pkg_def['pkg_id']} ran a command in the container "
+                        f"{name} on {', '.join(hosts)}, but {first['engine']} exec exited "
+                        f"{first['exit_code']}: the command never ran there, so the "
+                        "start failed."
+                    ),
+                    identity={
+                        "engine": first["engine"],
+                        "container": name,
+                        "package": str(pkg_def["pkg_id"]),
+                    },
+                    details={
+                        "exit_code": first["exit_code"],
+                        "hosts": hosts,
+                        "command": str(first["command"])[-1024:],
+                        "error": first["stderr"],
+                    },
+                    remedy=(
+                        "read the engine's error in the execution's stderr: 125 is the "
+                        "engine's own error, 126 or 127 a command that is not "
+                        "executable or not in the image"
+                    ),
+                )
+            ]
+        )
 
     def _podman_node(self, command: str) -> str:
         """``command`` run through the wrapper that gives podman, on any node,

@@ -193,7 +193,44 @@ class TestPrepareContainerPodman(unittest.TestCase):
         self.assertEqual(returned_info.env, {})
 
 
-class TestResolveExecInfo(unittest.TestCase):
+class TestWatchContainerExecs(unittest.TestCase):
+    """A container exec whose command never ran is reported to the watcher."""
+
+    def run_exec(self, code, container='podman'):
+        from unittest import mock
+
+        from jarvis_cd.shell import exec_factory
+
+        class Delegate:
+            def __init__(self, _cmd, _info):
+                self.exit_code = {'comp-20': code}
+                self.stdout = {'comp-20': ''}
+                self.stderr = {'comp-20': 'Error: OCI runtime ... not found'}
+                self.processes = {}
+                self.output_threads = {}
+
+        info = ExecInfo(exec_type=ExecType.LOCAL, container=container,
+                        container_image='demo')
+        with mock.patch.object(exec_factory, 'LocalExec', Delegate), \
+                exec_factory.watch_container_execs() as failures:
+            Exec('cat /etc/alpine-release', info).run()
+        return failures
+
+    def test_not_run_codes_are_reported(self):
+        for code in (125, 126, 127):
+            failures = self.run_exec(code)
+            self.assertEqual(len(failures), 1)
+            self.assertEqual(failures[0]['exit_code'], code)
+            self.assertEqual(failures[0]['host'], 'comp-20')
+            self.assertEqual(failures[0]['container'], 'demo')
+            self.assertIn('OCI runtime', failures[0]['stderr'])
+
+    def test_the_commands_own_exit_codes_are_not(self):
+        for code in (0, 1, 2):
+            self.assertEqual(self.run_exec(code), [])
+
+    def test_host_execs_are_not_watched(self):
+        self.assertEqual(self.run_exec(127, container='none'), [])
     """Tests for Exec._resolve_exec_info()."""
 
     def test_local_localhost_stays_local(self):

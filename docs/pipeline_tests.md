@@ -306,8 +306,12 @@ wrapper first on `PATH`. It passes the store as `--root`, `--runroot`,
 `--storage-driver` and `--tmpdir`. When podman's default OCI runtime is
 missing on a node (a login node may have `crun` while compute nodes only
 have `runc`), the wrapper finds one that node has and passes `--runtime`.
-It probes once per node and caches the result in the node's store dir. A
-node whose temp dir cannot hold the store (full, read-only, or missing, so
+It probes once per node and caches the result in the node's store dir. With
+the node-local store the wrapper also gives podman one runtime dir per node,
+under the node's temp dir, in every session: the OCI runtime keeps each
+container's state there, so `podman exec` over ssh (a session with
+`/run/user/<uid>`) finds a container a batch step (no user session) started.
+A node whose temp dir cannot hold the store (full, read-only, or missing, so
 that Python would fall back to the working directory on the shared file
 system) is `container_engine_unusable`, never a store in the working
 directory.
@@ -336,7 +340,14 @@ path (that `bin` is not on a node's `PATH`), then from `PATH`, then
 `container_compose_missing`. A failed `up`, or a container that is not
 running on every node right after it, refuses the start as
 `container_start_failed`, with the engine's error or the container's last
-log, before any package starts. Each execution starts from its own compose
+log, before any package starts. A command a package runs in the container
+(`Exec(..., container=..., container_image=...)`) that the engine's `exec`
+could not run there (exit 125, the engine's own error; 126 or 127, a command
+not executable or not found) fails that package's start as
+`container_exec_failed`, with the hosts, the exit code and the engine's
+error. Any other exit code is the command's own; a package checks it from
+the finished `Exec`'s `exit_code`, a dict of host to code (see
+`builtin/ior`). Each execution starts from its own compose
 file in its shared directory, which mounts that execution's shared and
 private directories; the start writes it when the install ran before the
 execution existed (`jarvis ppl run yaml`).

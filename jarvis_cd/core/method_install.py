@@ -1003,12 +1003,15 @@ if [ -z "$real" ]; then
 fi
 cache=@CACHE@
 mkdir -p -m 700 "$cache"
-if [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -w "$XDG_RUNTIME_DIR" ]; then
+store=@STORE@
+# With JARVIS's node-local store every session on this node uses one runtime
+# dir: the OCI runtime keeps container state there, so an exec over ssh (which
+# has /run/user/<uid>) must find what a batch step (which has none) started.
+if [ -n "$store" ] || [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -w "$XDG_RUNTIME_DIR" ]; then
   mkdir -p -m 700 @RUNTIME@
   XDG_RUNTIME_DIR=@RUNTIME@
   export XDG_RUNTIME_DIR
 fi
-store=@STORE@
 driver=
 option=
 if [ -n "$store" ]; then
@@ -1079,7 +1082,9 @@ def podman_wrapper_text() -> str:
     """The wrapper: the real podman with the node-local store (when JARVIS gives
     one) as global flags, and ``--runtime`` when the default OCI runtime is not
     on this node. It finds the real podman and the runtime on whichever node it
-    runs, so the same text serves every node."""
+    runs, so the same text serves every node. With the node-local store it also
+    pins the runtime dir, so a session with ``/run/user/<uid>`` (ssh) and one
+    without it (a batch step) see the same containers."""
     conf = node_store_conf()
     store = shlex.quote(str(Path(conf).parent)) if conf else "''"
     return (_PODMAN_WRAPPER
