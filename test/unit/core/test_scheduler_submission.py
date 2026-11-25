@@ -455,7 +455,23 @@ def _run_execution_scheduler_script(
     jarvis = executable_dir / "jarvis"
     jarvis.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     jarvis.chmod(0o700)
+    # The script's finalizer runs the real JARVIS CLI: give it its own
+    # initialized root rather than whatever an earlier test left in HOME.
+    jarvis_root = tmp_path / "jarvis-root"
+    original_instance = Jarvis._instance
+    try:
+        Jarvis._instance = None
+        Jarvis.get_instance(str(jarvis_root)).initialize(
+            str(tmp_path / "config"),
+            str(tmp_path / "private"),
+            str(tmp_path / "shared"),
+            force=False,
+            no_builtin=True,
+        )
+    finally:
+        Jarvis._instance = original_instance
     environment = dict(os.environ)
+    environment["JARVIS_ROOT"] = str(jarvis_root)
     environment["PATH"] = f"{executable_dir}{os.pathsep}{environment['PATH']}"
     environment["SLURM_JOB_NODELIST"] = "ignored"
     environment["SLURM_JOB_ID"] = "41"
