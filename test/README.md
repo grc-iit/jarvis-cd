@@ -98,6 +98,22 @@ python -m pytest test/unit/ --cov=jarvis_cd --cov-report=term-missing --cov-repo
 python -m pytest test/unit/ -n auto
 ```
 
+### The JARVIS home stays untouched
+
+Tests run `jarvis init`, `jarvis mod create` and similar commands. `test/conftest.py`
+points `HOME` (and `USERPROFILE`) at a temporary directory for the whole session and
+clears every `JARVIS_*` and `XDG_*_HOME` variable, so `~/.ppi-jarvis`,
+`~/.ppi-jarvis-mods` and the containers and builtin copies all land there. It is
+removed when the session ends.
+
+The guard refuses to start if that redirection doesn't hold. Before each test it stops
+the session if the JARVIS root, the modules directory or the `Jarvis` singleton's root
+points inside the real home. After each test it compares the real
+`~/.ppi-jarvis`, `~/.ppi-jarvis-mods` and any `JARVIS_ROOT` you had set with a
+snapshot taken at startup, and stops the session, naming the test, if any of them
+changed. A test that needs its own home should set `HOME` or `JARVIS_ROOT` to its
+`tmp_path` with `monkeypatch`.
+
 ## Test Categories
 
 ### Core Tests (test/unit/core/)
