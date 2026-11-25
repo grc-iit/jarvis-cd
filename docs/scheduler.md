@@ -649,8 +649,8 @@ install-on-load, a `login_limited` check on the submitting host, or a local
   `failed`);
 - the full `issues[]` and `issue_kinds`, and the per-package summary
   (`status`, `spec`, `root`, `missing`, `mpi`) with `mpi_env`;
-- the `inputs` digests the env capture uses (packages' `install*` settings,
-  `decisions.yaml`, the Spack root and config, `spack.lock`), and
+- the `inputs` digests the env capture uses (packages' `install*` settings
+  as written, `decisions.yaml`, the Spack root and config, `spack.lock`), and
   `watched_paths` (the root prefixes it saw);
 - the install `log` and `record` paths, and `placement` (the
   `login_limited` choice, host measurements, limits and usage) when the
@@ -661,7 +661,12 @@ paths exist. A `failed` outcome is never replayed: it counts as unchecked. An
 answer recorded in `decisions.yaml` changes the `decisions` digest, so the
 next light check is unchecked until a job checks again. Install placement
 answers are left out of that digest: they decide where a check runs, not
-what it finds. The report's `check`
+what it finds. A site-copy answer that the check applied to a package's
+config (`install_site_choice`, and for a site copy `install_method: site`
+and `install_site`) is undone in the `packages` digest, and a method choice
+counts by its method only (not its host-specific `why`): the answer itself
+is the `decisions` input, so a `+plan` or wall-time estimate on the
+submitting host matches the record the job wrote. The report's `check`
 block (also in `phase_timings.env_activation.check`) says what happened:
 `{where: recorded, light: true, host_reason, record, source (install_check |
 env_capture | null), outcome, checked_at, checked_where, reason, missing,
