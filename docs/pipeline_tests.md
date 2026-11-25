@@ -311,6 +311,8 @@ the node-local store the wrapper also gives podman one runtime dir per node,
 under the node's temp dir, in every session: the OCI runtime keeps each
 container's state there, so `podman exec` over ssh (a session with
 `/run/user/<uid>`) finds a container a batch step (no user session) started.
+That dir has no systemd user bus, so the wrapper also passes
+`--cgroup-manager cgroupfs` there (a batch step falls back to it anyway).
 A node whose temp dir cannot hold the store (full, read-only, or missing, so
 that Python would fall back to the working directory on the shared file
 system) is `container_engine_unusable`, never a store in the working

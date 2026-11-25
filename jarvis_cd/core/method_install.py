@@ -1007,10 +1007,14 @@ store=@STORE@
 # With JARVIS's node-local store every session on this node uses one runtime
 # dir: the OCI runtime keeps container state there, so an exec over ssh (which
 # has /run/user/<uid>) must find what a batch step (which has none) started.
+# That dir has no user bus, so the cgroups are podman's own (cgroupfs), as a
+# batch step falls back to anyway: systemd's would fail over sd-bus.
+pinned=
 if [ -n "$store" ] || [ -z "${XDG_RUNTIME_DIR:-}" ] || [ ! -w "$XDG_RUNTIME_DIR" ]; then
   mkdir -p -m 700 @RUNTIME@
   XDG_RUNTIME_DIR=@RUNTIME@
   export XDG_RUNTIME_DIR
+  pinned=yes
 fi
 driver=
 option=
@@ -1032,6 +1036,7 @@ if [ -n "$store" ]; then
 fi
 oci=
 podman_() {
+  if [ -n "$pinned" ]; then set -- --cgroup-manager cgroupfs "$@"; fi
   if [ -n "$oci" ]; then set -- --runtime "$oci" "$@"; fi
   if [ -n "$option" ]; then set -- --storage-opt "$option" "$@"; fi
   if [ -n "$store" ]; then

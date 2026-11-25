@@ -885,6 +885,8 @@ class TestContainer(_Case):
             last = log.read_text().splitlines()[-1]
             self.assertTrue(last.startswith(f'{expected} '), last)
             self.assertTrue(last.endswith('exec c true'), last)
+            # the pinned dir has no user bus: cgroupfs, not systemd over sd-bus
+            self.assertEqual('--cgroup-manager cgroupfs' in last, bool(store_conf), last)
 
     def test_mount_fstype_takes_the_longest_mount(self):
         mounts = self.tmp / 'mounts'
