@@ -24,6 +24,16 @@ those modules (or ``spack load``s that site install) into the pipeline's env,
 and nothing is built. No copy found is a ``site_copy_none`` fact (not a
 question): the Spack path runs as before.
 
+Each site Spack is probed first (:mod:`jarvis_cd.core.spack_health`): one
+that is broken apart from any package is the answerable ``spack_broken``
+issue, nothing from it is offered, and the package waits for the answer.
+
+Before the install runs, each ``site`` package's copy is loaded once
+(:func:`verify_site_choices`). A copy that does not load here is the
+answerable ``site_copy_unusable`` issue: its candidates are the site's other
+copies, the Spack build, and ``forget`` (drop the recorded choice and ask the
+``site_copy`` question again, with that copy marked as not loading).
+
 Nothing here knows any site: all of it is read from the host's module
 system, its Spacks and its resource graph.
 """
@@ -37,7 +47,7 @@ import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from jarvis_cd.core.spack_install import (
     MPI_PROVIDERS,
@@ -611,21 +621,34 @@ def parse_spack_find_d(text: str) -> Dict[str, Dict[str, Any]]:
     return found
 
 
-def _run_spack(executable: str, args: Sequence[str]) -> Tuple[int, str]:
+def _run_spack(executable: str, args: Sequence[str], root: Any = None) -> Tuple[int, str]:
+    from jarvis_cd.core import spack_health
+
     try:
         completed = subprocess.run(
             [executable, *args], capture_output=True, text=True, timeout=_SPACK_TIMEOUT,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL, env=spack_health.environment(root),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return 127, str(exc)
     return completed.returncode, completed.stdout or ""
 
 
+#: ``gate(spack_item) -> {"status": ..., "issue_id"?}`` (see spack_health.gate)
+SpackGate = Callable[[Mapping[str, Any]], Mapping[str, Any]]
+
+
 def spack_copies(name: str, searched: List[str],
-                 roots: Optional[Sequence[Mapping[str, Any]]] = None
+                 roots: Optional[Sequence[Mapping[str, Any]]] = None,
+                 gate: Optional[SpackGate] = None,
+                 blocked: Optional[List[str]] = None,
                  ) -> List[Dict[str, Any]]:
-    """The installs of ``name`` in the site's Spacks (any version)."""
+    """The installs of ``name`` in the site's Spacks (any version).
+
+    With ``gate`` each Spack is probed first: a broken one (``spack_broken``,
+    its issue id appended to ``blocked``) or a skipped one is not searched,
+    so nothing from it is offered.
+    """
     roots = site_spack_roots() if roots is None else roots
     if not roots:
         searched.append("site Spack: none found")
@@ -635,7 +658,18 @@ def spack_copies(name: str, searched: List[str],
     for item in roots:
         root, executable = str(item["root"]), str(item.get("executable")
                                                  or Path(str(item["root"])) / "bin" / "spack")
-        rc, output = _run_spack(executable, ["find", "--json", name])
+        if gate is not None:
+            state = gate(item)
+            if state.get("status") == "broken":
+                searched.append(f"site Spack {root}: not searched, it is broken "
+                                f"(spack_broken {state.get('issue_id')})")
+                if blocked is not None:
+                    blocked.append(str(state.get("issue_id")))
+                continue
+            if state.get("status") == "skipped":
+                searched.append(f"site Spack {root}: skipped (the site's spack_broken answer)")
+                continue
+        rc, output = _run_spack(executable, ["find", "--json", name], root)
         try:
             nodes = _spack_nodes(json.loads(output)) if rc == 0 and output.strip() else []
         except ValueError:
@@ -645,7 +679,7 @@ def spack_copies(name: str, searched: List[str],
         if not nodes:
             continue
         _, detail = _run_spack(executable, ["find", "-d", "--format",
-                                            "{hash} {name} {version} {prefix}", name])
+                                            "{hash} {name} {version} {prefix}", name], root)
         known = parse_spack_find_d(detail)
         for node in nodes:
             full_hash = str(node.get("hash") or "")
@@ -743,13 +777,15 @@ def graph_copies(name: str, searched: List[str], path: Optional[Path] = None
 
 
 def find_site_copies(name: str, *, graph: Optional[Path] = None,
-                     spack_roots: Optional[Sequence[Mapping[str, Any]]] = None
+                     spack_roots: Optional[Sequence[Mapping[str, Any]]] = None,
+                     gate: Optional[SpackGate] = None,
+                     blocked: Optional[List[str]] = None,
                      ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Every copy of ``name`` the site has, and what was searched."""
     searched: List[str] = []
     found = graph_copies(name, searched, graph)
     modules = module_copies(name, searched)
-    spacks = spack_copies(name, searched, spack_roots)
+    spacks = spack_copies(name, searched, spack_roots, gate, blocked)
     for copy in modules:
         twin = next((item for item in found if item.get("modules")
                      and item["modules"][-1] == copy["modules"][-1]), None)
@@ -895,12 +931,19 @@ def _does(copy: Mapping[str, Any]) -> str:
             "when the package runs; JARVIS builds nothing")
 
 
-def candidates_for(copies: Sequence[Mapping[str, Any]], needs: Needs
+def candidates_for(copies: Sequence[Mapping[str, Any]], needs: Needs,
+                   unusable: Optional[Mapping[str, str]] = None,
                    ) -> Tuple[List[Dict[str, Any]], str, str]:
-    """The issue's candidates, the recommended id, and why."""
+    """The issue's candidates, the recommended id, and why.
+
+    ``unusable`` maps the constraint of a copy that did not load here to
+    the error; such a copy is listed, but does not fit.
+    """
     candidates: List[Dict[str, Any]] = []
     for index, copy in enumerate(copies, start=1):
         fits, why = evaluate(copy, needs)
+        if unusable and _constraint(copy) in unusable:
+            fits, why = False, f"it did not load on this host: {unusable[_constraint(copy)]}"
         candidate = {
             "id": f"site-{index}",
             "constraint": _constraint(copy),
@@ -952,9 +995,12 @@ def candidates_for(copies: Sequence[Mapping[str, Any]], needs: Needs
 
 def site_copy_issue(package: str, needs: Needs, copies: Sequence[Mapping[str, Any]],
                     searched: Sequence[str], pkg_ids: Sequence[str],
-                    decisions_path: Optional[Path] = None) -> Dict[str, Any]:
+                    decisions_path: Optional[Path] = None,
+                    unusable: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
     """The answerable ``site_copy`` question for ``package`` (a Spack name)."""
-    candidates, recommended, reason = candidates_for(copies, needs)
+    candidates, recommended, reason = candidates_for(copies, needs, unusable)
+    marked = sorted(f"unusable:{c['constraint']}" for c in candidates
+                    if unusable and c["constraint"] in unusable)
     labels = "; ".join(c["label"] for c in candidates if c["id"] != "spack_build")
     pick = next(c for c in candidates if c["id"] == recommended)
     count = len(candidates) - 1
@@ -972,7 +1018,8 @@ def site_copy_issue(package: str, needs: Needs, copies: Sequence[Mapping[str, An
         hint=("answers.json: {issue_id: '<candidate id or constraint>'} or {issue_id: "
               "{constraint, answered_by, basis}}; the answer is recorded for this site "
               f"and package; `jarvis ppl install --forget {package}` asks again"),
-        identity_keys=[str(c["constraint"]) for c in candidates] + [f"needs:{needs.key()}"],
+        identity_keys=([str(c["constraint"]) for c in candidates] + [f"needs:{needs.key()}"]
+                       + marked),
     )
     issue.update(
         schema_site_copies=SCHEMA,
@@ -1050,11 +1097,17 @@ def apply_choice(pkg_def: Dict[str, Any], choice: str, site: Optional[Mapping[st
     config = pkg_def.setdefault("config", {})
     previous = (config.get("install_site_choice") or {}).get("previous_method") \
         or config.get("install_method")
+    if previous == METHOD:
+        previous = None
     config["install_site_choice"] = {"choice": choice, "why": why, "issue_id": issue_id,
                                      "previous_method": previous}
     if choice != SPACK_BUILD and site is not None:
         config["install_method"] = METHOD
         config["install_site"] = dict(site)
+    elif config.get("install_method") == METHOD:
+        # a copy chosen earlier did not load: back to the Spack build
+        config["install_method"] = previous or SPACK_BUILD
+        config.pop("install_site", None)
 
 
 def forget_choices(ppl, forgotten: Sequence[Mapping[str, Any]]) -> List[str]:
@@ -1093,6 +1146,75 @@ def pkg_key(pkg_def: Mapping[str, Any]) -> str:
     return str(pkg_def.get("pkg_id") or pkg_def.get("pkg_name") or spec_name(dict(pkg_def)))
 
 
+def spack_gate(context, decisions: Decisions) -> SpackGate:
+    """Probe each site Spack once before anything is taken from it."""
+    from jarvis_cd.core import spack_health
+
+    def gate(item: Mapping[str, Any]) -> Mapping[str, Any]:
+        return spack_health.gate(item["root"], item.get("executable"), context, decisions)
+
+    return gate
+
+
+def _context_dict(context, name: str) -> Dict[str, Any]:
+    value = getattr(context, name, None)
+    if not isinstance(value, dict):
+        value = {}
+        setattr(context, name, value)
+    return value
+
+
+def _site_unusable(context) -> Dict[str, Any]:
+    """constraint -> why the copy did not load here (this process)."""
+    return _context_dict(context, "site_unusable")
+
+
+def _site_loads(context) -> Dict[str, Any]:
+    """pkg_id -> the env delta its site copy loaded (verified before the run)."""
+    return _context_dict(context, "site_loads")
+
+
+def _needs(query: str, site_mpi_entry: Mapping[str, Any]) -> Needs:
+    site_key = str(site_mpi_entry.get("candidate_key") or "")
+    return parse_needs(query, site_mpi_entry.get("constraint"),
+                       site_key[len("prefix:"):] if site_key.startswith("prefix:") else None)
+
+
+def _record_site_choice(decisions: Decisions, package: str, needs: Needs,
+                        issue: Mapping[str, Any], answer: Mapping[str, Any],
+                        site: Optional[Mapping[str, Any]]) -> None:
+    """Replace the package's ``site_copy`` answer for ``needs`` with ``answer``."""
+    entry: Dict[str, Any] = {
+        "kind": KIND, "subject": SUBJECT, "issue_id": issue["issue_id"],
+        "constraint": answer["constraint"], "needs": needs.key(),
+        "answered_at": answer.get("answered_at") or _utc_now(),
+        "via": issue.get("kind"),
+    }
+    for key in ("answered_by", "basis", "candidate_id"):
+        if answer.get(key) is not None:
+            entry[key] = answer[key]
+    if site is not None:
+        entry["site"] = dict(site)
+    with decisions.locked():
+        kept = [item for item in decisions.data["packages"].get(package, []) or []
+                if not (isinstance(item, Mapping) and item.get("kind") == KIND
+                        and item.get("needs") == needs.key())]
+        decisions.data["packages"][package] = kept + [entry]
+        decisions.save()
+
+
+def _forget_site_choice(decisions: Decisions, package: str, needs: Needs) -> None:
+    with decisions.locked():
+        kept = [item for item in decisions.data["packages"].get(package, []) or []
+                if not (isinstance(item, Mapping) and item.get("kind") == KIND
+                        and item.get("needs") == needs.key())]
+        if kept:
+            decisions.data["packages"][package] = kept
+        else:
+            decisions.data["packages"].pop(package, None)
+        decisions.save()
+
+
 def resolve_site_copies(ppl, context) -> Dict[str, Any]:
     """Find site copies for each Spack package and apply the recorded answer.
 
@@ -1110,18 +1232,18 @@ def resolve_site_copies(ppl, context) -> Dict[str, Any]:
     if not wanted:
         return summary
     decisions = Decisions(context.decisions_path)
+    gate = spack_gate(context, decisions)
+    unusable = _site_unusable(context)
     site_mpi_entry = decisions.site("mpi") or {}
     groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
     for pkg_def in wanted:
         config = _config(pkg_def)
         query = str(config.get("install_query") or config.get("install") or "").strip()
         groups.setdefault((spec_name(pkg_def), query), []).append(pkg_def)
-    searches: Dict[str, Tuple[List[Dict[str, Any]], List[str]]] = {}
+    searches: Dict[str, Tuple[List[Dict[str, Any]], List[str], List[str]]] = {}
     for (package, query), pkg_defs in groups.items():
         pkg_ids = [pkg_key(p) for p in pkg_defs]
-        site_key = str(site_mpi_entry.get("candidate_key") or "")
-        needs = parse_needs(query, site_mpi_entry.get("constraint"),
-                            site_key[len("prefix:"):] if site_key.startswith("prefix:") else None)
+        needs = _needs(query, site_mpi_entry)
         recorded = _recorded(decisions, package, needs)
         if recorded is not None:
             context.note_decision(recorded, recorded, source="decisions_file",
@@ -1142,8 +1264,18 @@ def resolve_site_copies(ppl, context) -> Dict[str, Any]:
             continue
         if package not in searches:
             context.log(f"[{_utc_now()}] site copies: searching for {package}\n")
-            searches[package] = find_site_copies(package)
-        copies, searched = searches[package]
+            blocked: List[str] = []
+            found, searched_where = find_site_copies(package, gate=gate, blocked=blocked)
+            searches[package] = (found, searched_where, blocked)
+        copies, searched, blocked = searches[package]
+        if blocked:
+            # a broken site Spack: nothing is recommended until spack_broken is answered
+            summary["held"].extend(pkg_ids)
+            for pkg_id in pkg_ids:
+                summary["packages"][pkg_id] = {
+                    "status": "blocked", "spec_name": package, "blocked_by": "spack_broken",
+                    "issues": list(blocked)}
+            continue
         if not copies:
             fact = none_fact(package, needs, searched, pkg_ids)
             summary["facts"].append(fact)
@@ -1157,7 +1289,7 @@ def resolve_site_copies(ppl, context) -> Dict[str, Any]:
             context.log(f"[{_utc_now()}] site copies: {fact['question']}\n")
             continue
         issue = site_copy_issue(package, needs, copies, searched, pkg_ids,
-                                context.decisions_path)
+                                context.decisions_path, unusable)
         for entry in decisions.package_entries(package):
             if entry.get("kind") == KIND and entry.get("constraint"):
                 issue["supersedes"] = entry.get("issue_id")
@@ -1226,6 +1358,7 @@ def _parse_env0(blob: str) -> Dict[str, str]:
 
 def load_env_delta(site: Mapping[str, Any]) -> Tuple[Optional[Dict[str, Any]], str]:
     """What loading ``site`` (its modules, or ``spack load``) changes in the env."""
+    from jarvis_cd.core import spack_health
     from jarvis_cd.core.installer import _env_delta
 
     modules = [str(m) for m in site.get("modules") or []]
@@ -1233,9 +1366,10 @@ def load_env_delta(site: Mapping[str, Any]) -> Tuple[Optional[Dict[str, Any]], s
     uses = [uses] if isinstance(uses, str) else [str(u) for u in uses]
     spack_hash = ""
     executable = ""
+    root = None
     if not modules and site.get("spack_hash"):
         spack_hash = str(site["spack_hash"])
-        root = site.get("spack_root") or ""
+        root = site.get("spack_root") or None
         executable = str(Path(str(root)) / "bin" / "spack") if root else "spack"
     if not modules and not spack_hash:
         return None, "the site copy names no modules and no site Spack install"
@@ -1244,6 +1378,7 @@ def load_env_delta(site: Mapping[str, Any]) -> Tuple[Optional[Dict[str, Any]], s
             ["bash", "-lc", _LOAD_SCRIPT, "_", " ".join(uses), " ".join(modules),
              executable, spack_hash],
             capture_output=True, text=True, timeout=_LOGIN_TIMEOUT, stdin=subprocess.DEVNULL,
+            env=spack_health.environment(root),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return None, str(exc)
@@ -1289,42 +1424,237 @@ def site_of(pkg_def: Mapping[str, Any]) -> Dict[str, Any]:
     return site
 
 
+UNUSABLE_KIND = "site_copy_unusable"
+FORGET = "forget"
+_MAX_REANSWERS = 4
+
+
+_STAGE = re.compile(r"^[\w ]+ failed \(exit -?\d+\): ")
+
+
+def _short(text: str) -> str:
+    from jarvis_cd.core.spack_health import error_line
+
+    return error_line(_STAGE.sub("", text or "")) or "no error output"
+
+
+def load_site(site: Mapping[str, Any], context, decisions: Decisions
+              ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """Load ``site`` here: ``(delta, None)``, or ``(None, failure)``.
+
+    ``failure`` is ``{"why", "detail", "blocked"?}``; ``blocked`` is the
+    open ``spack_broken`` issue id when the copy's Spack is broken.
+    """
+    from jarvis_cd.core import spack_health
+
+    root = site.get("spack_root") if not site.get("modules") and site.get("spack_hash") else None
+    if root:
+        state = spack_health.gate(root, None, context, decisions)
+        if state["status"] == "broken":
+            return None, {"why": f"the site Spack {root} is broken (spack_broken)",
+                          "detail": state["issue"].get("detail"),
+                          "blocked": state["issue_id"]}
+        if state["status"] == "skipped":
+            return None, {"why": (f"the site's answer to spack_broken skips the site Spack "
+                                  f"{root}, which this copy is in"), "detail": None}
+    prefix = site.get("prefix")
+    if prefix and not os.path.isdir(str(prefix)):
+        return None, {"why": f"its prefix {prefix} is not there on this host", "detail": None}
+    delta, output = load_env_delta(site)
+    if delta is not None:
+        return delta, None
+    modules = " ".join(site.get("modules") or [])
+    if modules:
+        why = f"`module load {modules}` failed in a login shell on this host: {_short(output)}"
+    elif site.get("spack_hash"):
+        why = (f"`spack load /{str(site['spack_hash'])[:7]}` with the site Spack "
+               f"{site.get('spack_root') or '(on PATH)'} failed on this host: {_short(output)}")
+    else:
+        why = output
+    return None, {"why": why, "detail": output}
+
+
+def unusable_issue(pkg_def: Mapping[str, Any], site: Mapping[str, Any],
+                   failure: Mapping[str, Any], context, decisions: Decisions,
+                   ) -> Dict[str, Any]:
+    """The ``site_copy_unusable`` issue: the chosen copy does not load here.
+
+    Answerable when the copy was the person's choice: the site's other
+    copies, the Spack build (with an ``install_query``) and ``forget``.
+    A copy set in the pipeline's own config is a fact to fix there.
+    """
+    from jarvis_cd.core.install_placement import spec_name
+
+    package = spec_name(dict(pkg_def))
+    config = _config(pkg_def)
+    query = str(config.get("install_query") or config.get("install") or "").strip()
+    choice = config.get("install_site_choice")
+    chosen = isinstance(choice, Mapping) and bool(choice.get("issue_id"))
+    failing = str(site.get("constraint") or "")
+    label = site.get("label") or failing or package
+    candidates: List[Dict[str, Any]] = []
+    recommended, reason = "", ""
+    searched: List[str] = []
+    needs = _needs(query or package, decisions.site("mpi") or {})
+    if chosen:
+        copies, searched = find_site_copies(package, gate=spack_gate(context, decisions))
+        others = [c for c in copies if _constraint(c) != failing]
+        candidates, recommended, reason = candidates_for(others, needs, _site_unusable(context))
+        if not query:
+            candidates = [c for c in candidates if c["id"] != "spack_build"]
+        candidates.append({
+            "id": FORGET, "constraint": FORGET, "source": "forget",
+            "label": "forget the recorded choice and be asked again",
+            "version": None, "modules": [], "implies": {}, "fits": True,
+            "why": "the site_copy question is asked again, with this copy marked as not "
+                   "loading here",
+            "does": "drop the site's recorded site_copy answer for this package",
+        })
+        if not any(c["id"] == recommended for c in candidates):
+            recommended = FORGET
+            reason = "no other site copy fits, and the package has no Spack query"
+        for candidate in candidates:
+            candidate["recommended"] = candidate["id"] == recommended
+        pick = next(c for c in candidates if c["id"] == recommended)
+        question = (f"{package} uses the site's copy {label}, but {failure['why']}. Use "
+                    "another of the site's copies, build it with Spack, or forget the choice "
+                    f"and be asked again? Recommended: {pick['label']} ({reason}).")
+        hint = ("answers.json: {issue_id: '<candidate id or constraint>'} or {issue_id: "
+                "{constraint, answered_by, basis}}; a copy or the Spack build replaces the "
+                "site's recorded site_copy answer for this package")
+    else:
+        question = (f"{package} uses the site's copy {label} set in the pipeline's config, "
+                    f"but {failure['why']}.")
+        hint = ("set the package's install_modules (and install_modulepath) to a copy that "
+                "loads here, or its install_method to another method, in the pipeline")
+    issue = make_issue(
+        kind=UNUSABLE_KIND, package=package, subject=SUBJECT, scope="package",
+        question=question, candidates=candidates, detail=str(failure.get("detail") or ""),
+        evidence=list(searched), answerable=chosen, hint=hint,
+        identity_keys=[f"failing:{failing or label}", f"needs:{needs.key()}",
+                       *(str(c["constraint"]) for c in candidates)],
+    )
+    issue.update(schema_site_copies=SCHEMA, method=METHOD, spec_name=package, query=query,
+                 needs=needs.to_dict(), pkg_ids=[pkg_key(pkg_def)], failing=failing,
+                 failing_kind=("module" if site.get("modules") else
+                               "spack" if site.get("spack_hash") else "other"),
+                 why=failure["why"], site=dict(site))
+    if chosen and isinstance(choice, Mapping):
+        issue.update(recommended=recommended, recommendation_reason=reason,
+                     replaces=choice.get("issue_id"))
+    return issue
+
+
+def verify_site_choices(ppl, context) -> Dict[str, Any]:
+    """Load each ``site`` package's copy once, before anything is installed.
+
+    A copy that loads is cached for :func:`site_run`. One that does not is
+    the ``site_copy_unusable`` issue; its answer (another copy, the Spack
+    build, or ``forget``) is applied here. Returns ``{"packages", "held",
+    "resolved"}``: held packages wait for an answer this run.
+    """
+    from jarvis_cd.core.installer import Installer, plan_only_active
+    from jarvis_cd.core.install_placement import spec_name
+
+    summary: Dict[str, Any] = {"packages": {}, "held": [], "resolved": []}
+    if plan_only_active():
+        return summary
+    decisions = Decisions(context.decisions_path)
+    loads = _site_loads(context)
+    for pkg_def in list(getattr(ppl, "packages", []) or []):
+        key = pkg_key(pkg_def)
+        for _ in range(_MAX_REANSWERS):
+            if Installer._resolve_install_method(ppl, dict(pkg_def)) != METHOD:
+                break
+            site = site_of(pkg_def)
+            delta, failure = load_site(site, context, decisions)
+            if delta is not None:
+                loads[key] = delta
+                summary["packages"][key] = {"status": "loads",
+                                            "choice": site.get("constraint")}
+                break
+            assert failure is not None
+            if failure.get("blocked"):
+                summary["held"].append(key)
+                summary["packages"][key] = {"status": "blocked", "blocked_by": "spack_broken",
+                                            "issues": [failure["blocked"]]}
+                break
+            issue = unusable_issue(pkg_def, site, failure, context, decisions)
+            answer = context.answer_for(issue) if issue["answerable"] else None
+            if answer is None:
+                context.raise_issue(issue)
+                summary["held"].append(key)
+                summary["packages"][key] = {"status": "question", "issue_id": issue["issue_id"],
+                                            "recommended": issue.get("recommended")}
+                break
+            package = spec_name(dict(pkg_def))
+            needs = _needs(issue["query"] or package, decisions.site("mpi") or {})
+            chosen = next(c for c in issue["candidates"]
+                          if c["constraint"] == answer["constraint"])
+            context.log(f"[{_utc_now()}] {UNUSABLE_KIND} {issue['issue_id']} answered: "
+                        f"{chosen['constraint']}\n")
+            summary["packages"][key] = {"status": "answered", "issue_id": issue["issue_id"],
+                                        "choice": chosen["constraint"]}
+            if chosen["constraint"] == FORGET:
+                _forget_site_choice(decisions, package, needs)
+                forget_choices(ppl, [{"kind": KIND, "issue_id": _config(pkg_def)
+                                      .get("install_site_choice", {}).get("issue_id")}])
+                _site_unusable(context)[issue["failing"]] = failure["why"]
+                resolved = resolve_site_copies(ppl, context)
+                summary["resolved"].append(resolved)
+                if key in resolved["held"]:
+                    summary["held"].append(key)
+                    break
+                continue
+            site_payload = None if chosen["constraint"] == SPACK_BUILD else _site_payload(chosen)
+            _record_site_choice(decisions, package, needs, issue, answer, site_payload)
+            apply_choice(pkg_def, chosen["constraint"], site_payload,
+                         f"the person's answer to {UNUSABLE_KIND}", issue["issue_id"])
+        else:
+            summary["held"].append(key)
+            summary["packages"][key] = {"status": "unresolved",
+                                        "why": f"{_MAX_REANSWERS} answers and still no copy "
+                                               "that loads"}
+    return summary
+
+
 def site_run(ppl, pkg_list: Sequence[Mapping[str, Any]], context, mode: str) -> Dict[str, Any]:
-    """Load each ``site`` package's copy into ``ppl.env``; nothing is built."""
-    from jarvis_cd.core.method_install import failed, package_id
+    """Load each ``site`` package's copy into ``ppl.env``; nothing is built.
+
+    The copy :func:`verify_site_choices` loaded is reused; one that does not
+    load is the ``site_copy_unusable`` issue (the package waits for it).
+    """
+    from jarvis_cd.core.method_install import package_id
 
     result: Dict[str, Any] = {"method": METHOD, "mode": mode, "status": "satisfied",
                               "packages": {}}
     env = getattr(ppl, "env", None)
+    loads = _site_loads(context)
+    decisions: Optional[Decisions] = None
     for pkg_def in pkg_list:
         package = package_id(pkg_def)
         site = site_of(pkg_def)
-        what = " ".join(site.get("modules") or []) or f"/{site.get('spack_hash')}"
-        context.log(f"[{_utc_now()}] {package}: loading the site's copy ({what})\n")
-        delta, output = load_env_delta(site)
+        delta = loads.pop(pkg_key(pkg_def), None)
         if delta is None:
-            raise failed(
-                context, "site_copy_unusable", METHOD, package, "site_copy",
-                f"{package} uses the site's copy ({what}), but it did not load in a "
-                "login shell on this host.",
-                output,
-                f"check `module load {what}` here; to choose again, "
-                f"`jarvis ppl install --forget {site.get('constraint') or package}` "
-                "(or set install_method/install_modules in the pipeline)",
-            )
-        prefix = site.get("prefix")
-        if prefix and not os.path.isdir(str(prefix)):
-            raise failed(
-                context, "site_copy_unusable", METHOD, package, "site_copy",
-                f"{package} uses the site's copy at {prefix}, which is not there on "
-                "this host.", None,
-                f"choose again with `jarvis ppl install --forget "
-                f"{site.get('constraint') or package}`",
-            )
+            what = " ".join(site.get("modules") or []) or f"/{site.get('spack_hash')}"
+            context.log(f"[{_utc_now()}] {package}: loading the site's copy ({what})\n")
+            decisions = decisions or Decisions(context.decisions_path)
+            delta, failure = load_site(site, context, decisions)
+            if delta is None:
+                assert failure is not None
+                issue_id = failure.get("blocked")
+                if not issue_id:
+                    issue = unusable_issue(pkg_def, site, failure, context, decisions)
+                    context.raise_issue(issue)
+                    issue_id = issue["issue_id"]
+                result["status"] = "question"
+                result["packages"][package] = {"status": "question", "issue_id": issue_id,
+                                               "why": failure["why"]}
+                continue
         changed = apply_delta(env, delta) if env is not None else sorted(delta)
         result["packages"][package] = {
             "status": "satisfied", "source": site.get("source"), "label": site.get("label"),
-            "modules": list(site.get("modules") or []), "prefix": prefix,
+            "modules": list(site.get("modules") or []), "prefix": site.get("prefix"),
             "env_changed": changed,
         }
     return result

@@ -22,7 +22,6 @@ from jarvis_cd.core.spack_install import (
     Decisions,
     InstallContext,
     InstallDecisionNeeded,
-    InstallFailed,
 )
 
 LMOD_TREE = '/site/spack/share/spack/lmod/linux-x86_64'
@@ -94,7 +93,7 @@ SPACK_FIND_D = (f"{IOR_HASH} ior 3.3.0 {IOR_PREFIX}\n"
 
 
 def fake_spack(found=True, version='3.3.0'):
-    def run(executable, args):
+    def run(executable, args, root=None):
         if '--json' in args:
             return (0, spack_find_json(version)) if found else (3, '')
         return (0, SPACK_FIND_D) if found else (3, '')
@@ -469,18 +468,31 @@ class TestSiteMethod(_Case):
         self.assertEqual(ppl.env['LOADEDMODULES'], 'openmpi/5.0.5-x2kvx5l:ior/3.3.0-fihmxeb')
         self.assertEqual(result['packages']['bench']['env_changed'], ['LOADEDMODULES', 'PATH'])
 
-    def test_a_module_that_does_not_load_fails_typed(self):
+    def test_a_module_that_does_not_load_is_an_answerable_question(self):
         ppl = FakePipeline(self.jarvis, [self.site_pkg()])
         installer = SiteInstaller()
         context = self.context()
         installer.context = cast(Any, context)
         failed = subprocess.CompletedProcess([], 3, '', 'Lmod has detected the following error')
-        with mock.patch.object(sc.subprocess, 'run', return_value=failed):
-            with self.assertRaises(InstallFailed):
-                installer.install(ppl, ppl.packages)
+        with mock.patch.object(sc.subprocess, 'run', return_value=failed), \
+                mock.patch.object(sc, '_login', side_effect=fake_login()), \
+                mock.patch.object(sc, '_run_spack', side_effect=fake_spack()), \
+                mock.patch.object(sc, 'site_spack_roots', return_value=SITE_SPACK):
+            result = installer.install(ppl, ppl.packages)
+        self.assertEqual(result['status'], 'question')
         issue = context.issues[-1]
         self.assertEqual(issue['kind'], 'site_copy_unusable')
+        self.assertTrue(issue['answerable'])
         self.assertIn('module load failed (exit 3)', issue['detail'] or '')
+        self.assertIn('`module load openmpi/5.0.5-x2kvx5l ior/3.3.0-fihmxeb` failed in a '
+                      'login shell', issue['question'])
+        self.assertNotIn('spack load', issue['question'])
+        # the only copy is the one that fails: the Spack build, or ask again
+        self.assertEqual([c['id'] for c in issue['candidates']], ['spack_build', 'forget'])
+        self.assertEqual(issue['recommended'], 'spack_build')
+        for text in (issue['question'], issue['hint']):
+            self.assertNotIn('jarvis ppl', text)
+            self.assertNotIn('--forget', text)
 
     def test_install_modules_in_the_config(self):
         site = sc.site_of({'config': {'install_method': 'site',
@@ -488,6 +500,237 @@ class TestSiteMethod(_Case):
                                       'install_modulepath': '/opt/modules'}})
         self.assertEqual(site['modules'], ['gcc/12', 'hdf5/1.14'])
         self.assertEqual(site['modulepath'], '/opt/modules')
+
+
+class TestUnusableAnswers(_Case):
+    """A chosen copy that does not load here: another copy, the Spack build, or forget."""
+
+    def choose(self, constraint, site):
+        package = spack_pkg('ior@3.3')
+        sc.apply_choice(package, constraint, site, 'the person', 'site_copy-x')
+        return package
+
+    def verify(self, ppl, context, returncode, stderr):
+        failed = subprocess.CompletedProcess([], returncode, '', stderr)
+        with mock.patch.object(sc.subprocess, 'run', return_value=failed), \
+                mock.patch.object(sc, '_login', side_effect=fake_login()), \
+                mock.patch.object(sc, '_run_spack', side_effect=fake_spack()), \
+                mock.patch.object(sc, 'site_spack_roots', return_value=SITE_SPACK):
+            return sc.verify_site_choices(ppl, context)
+
+    def spack_copy(self):
+        constraint = f'spack:/{IOR_HASH[:7]}'
+        return self.choose(constraint, {
+            'source': 'spack', 'spack_root': '/site/spack', 'spack_hash': IOR_HASH,
+            'constraint': constraint, 'label': 'ior 3.3.0 in the site Spack /site/spack'})
+
+    def test_a_spack_copy_says_spack_load_and_offers_the_other_copies(self):
+        ppl = FakePipeline(self.jarvis, [self.spack_copy()])
+        context = self.context()
+        error = '==> Error: cannot unpack non-iterable NoneType object'
+        summary = self.verify(ppl, context, 5, error)
+        self.assertEqual(summary['held'], ['bench'])
+        issue = context.issues[-1]
+        self.assertEqual((issue['kind'], issue['answerable'], issue['failing_kind']),
+                         ('site_copy_unusable', True, 'spack'))
+        self.assertIn(f'`spack load /{IOR_HASH[:7]}` with the site Spack /site/spack failed '
+                      'on this host: Error: cannot unpack', issue['question'])
+        self.assertNotIn('module load', issue['question'])
+        self.assertEqual([c['id'] for c in issue['candidates']],
+                         ['site-1', 'spack_build', 'forget'])
+        self.assertEqual(issue['candidates'][0]['constraint'], 'module:ior/3.3.0-fihmxeb')
+        self.assertEqual(issue['recommended'], 'site-1')
+        self.assertNotIn('jarvis ppl', issue['question'] + issue['hint'])
+
+        # another copy replaces the recorded choice, and is verified in turn
+        ppl = FakePipeline(self.jarvis, [self.spack_copy()])
+        context = self.context({issue['issue_id']: {'constraint': 'site-1'}})
+        before = {'PATH': '/usr/bin'}
+        after = {'PATH': f'{IOR_PREFIX}/bin:/usr/bin'}
+        loaded = subprocess.CompletedProcess(
+            [], 0, env0(before) + '\0@@SPLIT@@\0' + env0(after), '')
+        calls = iter([subprocess.CompletedProcess([], 5, '', error), loaded])
+        with mock.patch.object(sc.subprocess, 'run', side_effect=lambda *a, **k: next(calls)), \
+                mock.patch.object(sc, '_login', side_effect=fake_login()), \
+                mock.patch.object(sc, '_run_spack', side_effect=fake_spack()), \
+                mock.patch.object(sc, 'site_spack_roots', return_value=SITE_SPACK), \
+                mock.patch.object(sc.os.path, 'isdir', return_value=True):
+            summary = sc.verify_site_choices(ppl, context)
+        self.assertEqual(summary['held'], [])
+        self.assertEqual(summary['packages']['bench']['status'], 'loads')
+        config = ppl.packages[0]['config']
+        self.assertEqual(config['install_site']['constraint'], 'module:ior/3.3.0-fihmxeb')
+        entries = [e for e in Decisions(self.tmp / 'decisions.yaml').package_entries('ior')
+                   if e['kind'] == 'site_copy']
+        self.assertEqual([(e['constraint'], e['via']) for e in entries],
+                         [('module:ior/3.3.0-fihmxeb', 'site_copy_unusable')])
+        self.assertIn('bench', sc._site_loads(context))
+
+    def test_the_spack_build_answer_goes_back_to_spack(self):
+        ppl = FakePipeline(self.jarvis, [self.spack_copy()])
+        context = self.context()
+        self.verify(ppl, context, 5, '==> Error: boom')
+        issue_id = context.issues[-1]['issue_id']
+        ppl = FakePipeline(self.jarvis, [self.spack_copy()])
+        summary = self.verify(ppl, self.context({issue_id: {'constraint': 'spack_build'}}),
+                              5, '==> Error: boom')
+        self.assertEqual(summary['held'], [])
+        config = ppl.packages[0]['config']
+        self.assertEqual(config['install_method'], 'spack')
+        self.assertNotIn('install_site', config)
+        self.assertEqual(Installer.get_installers(ppl), {'spack': ppl.packages})
+        entry = Decisions(self.tmp / 'decisions.yaml').package_entries('ior')[0]
+        self.assertEqual((entry['kind'], entry['constraint']), ('site_copy', 'spack'))
+
+    def test_forget_asks_the_site_copy_question_again_with_the_copy_marked(self):
+        modules = ['openmpi/5.0.5-x2kvx5l', 'ior/3.3.0-fihmxeb']
+        ppl = FakePipeline(self.jarvis, [spack_pkg('ior@3.3')])
+        first = self.context()
+        with mock.patch.object(sc, '_login', side_effect=fake_login()), \
+                mock.patch.object(sc, '_run_spack', side_effect=fake_spack()), \
+                mock.patch.object(sc, 'site_spack_roots', return_value=SITE_SPACK):
+            sc.resolve_site_copies(ppl, first)
+        question = first.issues[-1]['issue_id']
+        ppl = FakePipeline(self.jarvis, [spack_pkg('ior@3.3')])
+        with mock.patch.object(sc, '_login', side_effect=fake_login()), \
+                mock.patch.object(sc, '_run_spack', side_effect=fake_spack()), \
+                mock.patch.object(sc, 'site_spack_roots', return_value=SITE_SPACK):
+            sc.resolve_site_copies(ppl, self.context({question: {'constraint': 'site-1'}}))
+        self.assertEqual(ppl.packages[0]['config']['install_site']['modules'], modules)
+        context = self.context()
+        self.verify(ppl, context, 3, 'Lmod has detected the following error')
+        unusable = context.issues[-1]
+        self.assertEqual(unusable['kind'], 'site_copy_unusable')
+
+        context = self.context({unusable['issue_id']: {'constraint': 'forget'}})
+        summary = self.verify(ppl, context, 3, 'Lmod has detected the following error')
+        self.assertEqual(summary['held'], ['bench'])
+        self.assertEqual([e for e in Decisions(self.tmp / 'decisions.yaml')
+                          .package_entries('ior') if e['kind'] == 'site_copy'], [])
+        again = context.issues[-1]
+        self.assertEqual(again['kind'], 'site_copy')
+        self.assertNotEqual(again['issue_id'], question)
+        copy = again['candidates'][0]
+        self.assertFalse(copy['fits'])
+        self.assertIn('it did not load on this host', copy['why'])
+        self.assertEqual(again['recommended'], 'spack_build')
+        self.assertEqual(ppl.packages[0]['config']['install_method'], 'spack')
+
+    def test_install_all_holds_a_site_package_that_does_not_load(self):
+        package = spack_pkg('ior@3.3')
+        sc.apply_choice(package, 'module:ior/3.3.0-fihmxeb',
+                        {'source': 'module', 'modules': ['ior/3.3.0-fihmxeb'],
+                         'constraint': 'module:ior/3.3.0-fihmxeb'}, 'the person', 'x')
+        ppl = FakePipeline(self.jarvis, [package])
+        failed = subprocess.CompletedProcess([], 3, '', 'Lmod has detected the following error')
+        with mock.patch.object(sc.subprocess, 'run', return_value=failed), \
+                mock.patch.object(sc, '_login', side_effect=fake_login()), \
+                mock.patch.object(sc, '_run_spack', side_effect=fake_spack()), \
+                mock.patch.object(sc, 'site_spack_roots', return_value=SITE_SPACK), \
+                mock.patch('jarvis_cd.core.installer.SiteInstaller.check',
+                           side_effect=AssertionError('held: the site method must not run')):
+            with self.assertRaises(InstallDecisionNeeded) as caught:
+                Installer.install_all(ppl, mode='check', context=self.context())
+        self.assertEqual(caught.exception.issues[0]['kind'], 'site_copy_unusable')
+        report = cast(Any, caught.exception).report
+        self.assertEqual(report['site_copies']['held'], ['bench'])
+
+    def test_a_copy_set_in_the_pipeline_config_is_a_fact(self):
+        package = {'pkg_type': 'builtin.bench', 'pkg_id': 'bench', 'pkg_name': 'bench',
+                   'config': {'install_method': 'site', 'install_modules': 'ior/9'}}
+        ppl = FakePipeline(self.jarvis, [package])
+        context = self.context()
+        summary = self.verify(ppl, context, 3, 'Lmod has detected the following error')
+        self.assertEqual(summary['held'], ['bench'])
+        issue = context.issues[-1]
+        self.assertFalse(issue['answerable'])
+        self.assertEqual(issue['candidates'], [])
+        self.assertIn('install_modules', issue['hint'])
+        self.assertNotIn('jarvis ppl', issue['hint'])
+
+
+def broken_spack_run(bad='/scratch/coeus'):
+    error = '==> Error: cannot unpack non-iterable NoneType object'
+
+    def run(executable, args, env, timeout=None):
+        args = list(args)
+        isolated = env.get('SPACK_DISABLE_LOCAL_CONFIG') == '1'
+        if args[:3] == ['config', 'blame', 'repos']:
+            return 0, f'/home/u/.spack/repos.yaml:2    - {bad}\n', ''
+        if args[:1] == ['-C']:
+            text = Path(args[1], 'repos.yaml').read_text(encoding='utf-8')
+            return (3, '', error) if bad in text else (0, 'mpi: openmpi\n', '')
+        return (0, 'mpi: openmpi\n', '') if isolated else (3, '', error)
+
+    return run
+
+
+class TestBrokenSiteSpack(_Case):
+    def setUp(self):
+        super().setUp()
+        from jarvis_cd.core import spack_health
+
+        self.health = spack_health
+        env = mock.patch.dict(os.environ, {'JARVIS_SPACK_HEALTH': 'on',
+                                           'SPACK_USER_CONFIG_PATH': '/home/u/.spack'})
+        env.start()
+        self.addCleanup(env.stop)
+        os.environ.pop('SPACK_DISABLE_LOCAL_CONFIG', None)
+
+    def test_a_broken_site_spack_holds_the_package_and_offers_nothing_from_it(self):
+        ppl = FakePipeline(self.jarvis, [spack_pkg('ior@3.3')])
+        context = self.context()
+        with mock.patch.object(self.health, '_run', side_effect=broken_spack_run()):
+            summary = self.resolve(ppl, context)
+        self.assertEqual(summary['held'], ['bench'])
+        self.assertEqual(summary['packages']['bench']['status'], 'blocked')
+        self.assertEqual([i['kind'] for i in context.issues], ['spack_broken'])
+        issue = context.issues[0]
+        self.assertEqual(issue['failing_repos'][0]['repo'], '/scratch/coeus')
+        self.assertEqual(issue['failing_scope'], 'user')
+        self.assertEqual(issue['recommended'], 'no_user_config')
+
+        # answered: the Spack runs isolated and the site_copy question follows
+        ppl = FakePipeline(self.jarvis, [spack_pkg('ior@3.3')])
+        context = self.context({issue['issue_id']: {'constraint': 'no_user_config'}})
+        with mock.patch.object(self.health, '_run', side_effect=broken_spack_run()):
+            summary = self.resolve(ppl, context)
+        self.assertEqual(summary['packages']['bench']['status'], 'question')
+        self.assertEqual([i['kind'] for i in context.issues], ['site_copy'])
+        self.assertTrue(self.health.isolated('/site/spack'))
+        self.assertEqual(self.health.environment('/site/spack')['SPACK_DISABLE_LOCAL_CONFIG'],
+                         '1')
+
+    def test_skip_searches_the_other_sources_only(self):
+        ppl = FakePipeline(self.jarvis, [spack_pkg('ior@3.3')])
+        context = self.context()
+        with mock.patch.object(self.health, '_run', side_effect=broken_spack_run()):
+            self.resolve(ppl, context)
+        issue_id = context.issues[0]['issue_id']
+        ppl = FakePipeline(self.jarvis, [spack_pkg('ior@3.3')])
+        context = self.context({issue_id: {'constraint': 'skip'}})
+        spack = mock.Mock(side_effect=AssertionError('a skipped Spack is not searched'))
+        with mock.patch.object(self.health, '_run', side_effect=broken_spack_run()):
+            summary = self.resolve(ppl, context, spack=spack)
+        self.assertEqual(summary['packages']['bench']['status'], 'question')
+        site_copy = context.issues[-1]
+        self.assertTrue(any('skipped' in item for item in site_copy['searched']))
+        self.assertEqual(site_copy['candidates'][0]['source'], 'module')
+
+    def test_a_spack_copy_of_a_broken_spack_is_held_before_loading(self):
+        constraint = f'spack:/{IOR_HASH[:7]}'
+        package = spack_pkg('ior@3.3')
+        sc.apply_choice(package, constraint, {
+            'source': 'spack', 'spack_root': '/site/spack', 'spack_hash': IOR_HASH,
+            'constraint': constraint}, 'the person', 'x')
+        ppl = FakePipeline(self.jarvis, [package])
+        context = self.context()
+        with mock.patch.object(self.health, '_run', side_effect=broken_spack_run()), \
+                mock.patch.object(sc.subprocess, 'run',
+                                  side_effect=AssertionError('not loaded while broken')):
+            summary = sc.verify_site_choices(ppl, context)
+        self.assertEqual(summary['packages']['bench']['status'], 'blocked')
+        self.assertEqual([i['kind'] for i in context.issues], ['spack_broken'])
 
 
 class TestResourceGraphSoftware(unittest.TestCase):

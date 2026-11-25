@@ -7,6 +7,14 @@ def _no_site_copy_search(monkeypatch):
     """Keep Spack package tests off the host's module system and site Spacks.
 
     The site-copy search (``jarvis_cd.core.site_copies``) runs real ``module``
-    and ``spack find`` calls; its own tests turn it back on with fakes.
+    and ``spack find`` calls, and the Spack health probe
+    (``jarvis_cd.core.spack_health``) runs ``spack providers mpi``; their own
+    tests turn them back on with fakes.
     """
+    from jarvis_cd.core import spack_health
+
     monkeypatch.setenv("JARVIS_SITE_COPIES", "off")
+    monkeypatch.setenv("JARVIS_SPACK_HEALTH", "off")
+    spack_health.reset()
+    yield
+    spack_health.reset()

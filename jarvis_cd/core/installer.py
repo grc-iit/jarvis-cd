@@ -167,26 +167,42 @@ class Installer(ABC):
                 report["installers"]["spack"] = captured["result"]
                 grouped = {m: pkgs for m, pkgs in grouped.items() if m != "spack"}
         site_summary: Optional[Dict[str, Any]] = None
-        if any(site_copies.needs_search(ppl, pkg_def) for pkg_def in grouped.get("spack") or []):
+        needs_site_search = any(site_copies.needs_search(ppl, pkg_def)
+                                for pkg_def in grouped.get("spack") or [])
+        if needs_site_search or grouped.get("site"):
             # Before Spack plans a build: does the site already have the package?
+            # And does each chosen site copy load here?
             if context is None:
                 context = install_context_for(ppl, mode)
                 context.open()
                 owns_context = True
             try:
-                site_summary = site_copies.resolve_site_copies(ppl, context)
+                site_summary = (site_copies.resolve_site_copies(ppl, context)
+                                if needs_site_search else
+                                {"schema_version": site_copies.SCHEMA, "packages": {},
+                                 "facts": [], "held": []})
+                verified = site_copies.verify_site_choices(ppl, context)
             except BaseException:
                 if owns_context:
                     context.close()
                 raise
-            report["site_copies"] = site_summary
-            held = set(site_summary["held"])
+            held = set(site_summary["held"]) | set(verified["held"])
+            for resolved in verified["resolved"]:
+                held |= set(resolved["held"])
+                site_summary["packages"].update(resolved["packages"])
+                site_summary["facts"].extend(resolved["facts"])
+            site_summary["held"] = sorted(held)
+            if verified["packages"]:
+                site_summary["verified"] = verified["packages"]
+            if needs_site_search or verified["packages"]:
+                report["site_copies"] = site_summary
             grouped = Installer.get_installers(ppl)
-            spack_pkgs = [pkg_def for pkg_def in grouped.get("spack") or []
-                          if site_copies.pkg_key(pkg_def) not in held]
-            grouped.pop("spack", None)
-            if spack_pkgs:
-                grouped["spack"] = spack_pkgs
+            for method in ("spack", "site"):
+                kept = [pkg_def for pkg_def in grouped.get(method) or []
+                        if site_copies.pkg_key(pkg_def) not in held]
+                grouped.pop(method, None)
+                if kept:
+                    grouped[method] = kept
         if "site" in grouped:
             # last: Spack's activation replaces ppl.env, the site's copy prepends to it
             grouped["site"] = grouped.pop("site")

@@ -316,7 +316,13 @@ def spack_subprocess_environment() -> Dict[str, str]:
     :func:`spack_config_scopes`).
     """
     environment = dict(os.environ)
-    if spack_local_config_disabled():
+    isolate = spack_local_config_disabled()
+    if not isolate:
+        from jarvis_cd.core import spack_health
+
+        # the site's `spack_broken` answer `no_user_config` for this Spack
+        isolate = spack_health.isolated(_resolved_spack_root())
+    if isolate:
         environment["SPACK_DISABLE_LOCAL_CONFIG"] = "1"
         config = spack_user_config_path()
         if config:
@@ -636,6 +642,61 @@ def recorded_spack_root(decisions: "Decisions") -> Optional[Path]:
         return None
     chosen = Path(str(recorded["constraint"])).expanduser().resolve()
     return chosen if spack_root_writable(chosen) else chained_spack_root(chosen)
+
+
+def ensure_build_spack_healthy(context: "InstallContext", decisions: "Decisions"
+                               ) -> Optional[Dict[str, Any]]:
+    """Probe the Spack jarvis builds with; the open ``spack_broken`` issue, or None.
+
+    A Spack whose config is broken apart from any package (see
+    :mod:`jarvis_cd.core.spack_health`) cannot plan anything. The site's
+    answer ``no_user_config`` runs it with ``SPACK_DISABLE_LOCAL_CONFIG=1``
+    (:func:`spack_subprocess_environment`); ``skip`` builds with jarvis's
+    own Spack, chained to this one's installs, as for a read-only site Spack.
+    """
+    from jarvis_cd.core import spack_health
+
+    root = _resolved_spack_root()
+    if root is None:
+        return None
+    executable = root / "bin" / "spack"
+    if not executable.is_file():
+        executable = Path(shutil.which("spack") or executable)
+    # probe it the way jarvis runs it (JARVIS_SPACK_ROOT runs it isolated)
+    unset = spack_local_config_disabled() and "SPACK_DISABLE_LOCAL_CONFIG" not in os.environ
+    if unset:
+        os.environ["SPACK_DISABLE_LOCAL_CONFIG"] = "1"
+    try:
+        state = spack_health.gate(root, str(executable), context, decisions,
+                                  builds_with=explicit_spack_root() is None)
+    finally:
+        if unset:
+            os.environ.pop("SPACK_DISABLE_LOCAL_CONFIG", None)
+    if state["status"] == "broken":
+        return state["issue"]
+    if state["status"] == "skipped":
+        if explicit_spack_root() is not None:
+            # jarvis's own Spack is skipped: there is nothing else to build with
+            issue = make_issue(
+                kind="spack_broken_skipped", package="*",
+                subject=spack_health.subject_for(root), scope="site",
+                question=(f"The site's answer skips the broken Spack {root}, and it is the "
+                          "Spack JARVIS builds with (JARVIS_SPACK_ROOT), so nothing can "
+                          "be planned."),
+                detail=str(root), answerable=False,
+                hint="forget the spack_broken answer to be asked again, or name another "
+                     "Spack root",
+            )
+            context.raise_issue(issue)
+            return issue
+        chained = chained_spack_root(root)
+        context.log(f"[{_utc_now()}] spack_broken answered skip for {root}: jarvis builds "
+                    f"with its own Spack {chained}, with it as an upstream\n")
+        opened = prepare_chained_spack(context, root, chained)
+        if opened is not None:
+            return opened
+        os.environ["JARVIS_SPACK_ROOT"] = str(chained)
+    return None
 
 
 def spack_root_writable(root: Path) -> bool:
@@ -3930,18 +3991,22 @@ def run_spack_install(
     planner = SpackPlanner(context, runner)
     if any(_package_query(pkg_def) for pkg_def in pkg_list):
         missing = ensure_spack_available(context, planner.decisions)
+        blocked_by = "spack_missing"
+        if missing is None:
+            missing = ensure_build_spack_healthy(context, planner.decisions)
+            blocked_by = "spack_broken"
         if missing is not None:
             record = {
                 "schema_version": RECORD_SCHEMA,
                 "mode": context.mode,
                 "spack_root": None,
-                "spack_missing": missing["issue_id"],
+                blocked_by: missing["issue_id"],
                 "decisions": str(context.decisions_path),
                 "started_at": _utc_now(),
                 "finished_at": _utc_now(),
                 "packages": {
                     str(d.get("pkg_id") or d.get("pkg_name") or "pkg"): {
-                        "status": "blocked", "blocked_by": "spack_missing",
+                        "status": "blocked", "blocked_by": blocked_by,
                     }
                     for d in pkg_list
                 },
