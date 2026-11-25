@@ -204,7 +204,8 @@ def test_read_install_check_tolerates_only_decisions_for_an_estimate(
 def _packages_digest(pkg_def):
     from jarvis_cd.core import installer
 
-    return installer._capture_inputs(SimpleNamespace(name="p"), [pkg_def])["packages"]
+    with patch("jarvis_cd.core.spack_install.spack_env_enabled", return_value=False):
+        return installer._capture_inputs(SimpleNamespace(name="p"), [pkg_def])["packages"]
 
 
 def test_packages_digest_ignores_replayed_site_copy_answers(site):
