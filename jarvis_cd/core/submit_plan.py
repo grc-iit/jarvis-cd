@@ -171,6 +171,11 @@ def build_submit_plan(
         answers_bytes=answers_bytes)
     sched = rendered["scheduler"]
     spec = rendered["scheduler_spec"]
+    walltime = getattr(ppl, "_install_walltime_last", None) if action == "install" else None
+    if walltime and walltime.get("issues") and exit_code == 0:
+        # an estimate past the partition's MaxTime: the person chooses
+        issues.extend(dict(issue) for issue in walltime["issues"])
+        exit_code = 3
     declared = dict(ppl.scheduler or {})
     overrides = declared.get("install") if action == "install" else None
     overrides = overrides if isinstance(overrides, Mapping) else {}
@@ -236,4 +241,6 @@ def build_submit_plan(
     }
     if rendered.get("install_job_shape"):
         document["install_job"] = rendered["install_job_shape"]
+    if walltime and walltime.get("source") == "jarvis_estimate":
+        document["sources"]["time"] = "jarvis_estimate"
     return document

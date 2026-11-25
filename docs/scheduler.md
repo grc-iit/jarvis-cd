@@ -255,7 +255,7 @@ submitting. A resource-graph collection job is a pipeline with
 | `schema_version` | `jarvis.submit-plan.v1` |
 | `pipeline_id`, `execution_id`, `action` | `action` is `run`, `install` or `install_check` |
 | `scheduler`, `partition`, `account`, `qos`, `time`, `time_limit_s`, `job_name`, `nodes` | the directives the script carries, and the total nodes |
-| `sources` | where each directive came from: `pipeline.scheduler`, `pipeline.scheduler.install` (an install job's override), `jarvis` (set by JARVIS, such as an install job's `nodes: 1`), or `unset`. JARVIS has no site-level directive defaults, so these come only from the pipeline's `scheduler:` block |
+| `sources` | where each directive came from: `pipeline.scheduler`, `pipeline.scheduler.install` (an install job's override), `jarvis` (set by JARVIS, such as an install job's `nodes: 1`), `jarvis_estimate` (an install job's `time` derived from the build estimate, see [Install job wall time](#install-job-wall-time)), or `unset`. JARVIS has no site-level directive defaults, so these come only from the pipeline's `scheduler:` block |
 | `components[]` | one per package: `id`, `package`, `label`, `nodes`, `ranks`, `host_slice`, `node_range` `{first, end}`, `role` (`service`/`batch`), `starts` (`background`/`foreground`), `after_steps`, `ports`, `readiness`. An install job has one component `install` (package `jarvis.install`, 1 node, `packages[]`) |
 | `couplings[]` | `{from, to, kind, label, source}`: the pipeline's [`couplings:`](pipelines.md#couplings-between-packages) (`source: pipeline`) plus interceptor edges (`source: derived`) |
 | `script` | `{path, text, sha256}`: the exact batch script the submit will send |
@@ -263,7 +263,7 @@ submitting. A resource-graph collection job is a pipeline with
 | `plan_sha256` | sha256 of `{schema, script_sha256, input_sha256}`; the value to submit with |
 | `issues`, `exit_code`, `would_submit` | what the submit would refuse with: `ppl check` errors (5), blocking site-fact questions (3), install decisions such as a placement question (3), or a build outside an allocation (4) |
 | `install` | `policy`, `runs_in`, `status`, the recorded `check` (when one matched), `placement`, and `at_submit`/`at_submit_limits` for a consented login check |
-| `install_job` | for an install job, the 1-node shape (`nodes`, `ntasks`, `exclusive`, `partition`, `account`, `time`, `overrides`) |
+| `install_job` | for an install job, the 1-node shape (`nodes`, `ntasks`, `exclusive`, `partition`, `account`, `time`, `overrides`) and `time_estimate`, how the wall time was chosen (see [Install job wall time](#install-job-wall-time)) |
 | `execution_root`, `hostfile`, `component_states` | where the record, the hostfile and [`components.jsonl`](executions.md#component-states-componentsjsonl) will be |
 | `warnings` | the `ppl check` warnings |
 | `submit_with`, `binding` | the bound submit command line, and how the binding works |
@@ -501,10 +501,56 @@ To build on nodes known to have the compiler a build needs, pin the job
 with `scheduler.install.nodelist` (or `constraint`), and add
 `exclusive: false` if those nodes are shared.
 
+#### Install job wall time
+
+An explicit `scheduler.install.time` (or `scheduler.time`) is used as given.
+Without one, JARVIS sets the install job's `time` from its own build
+estimate instead of leaving it to the partition's default, which can be
+too short, or `MaxTime` when `DefaultTime=NONE`:
+
+```
+time = ceil((startup + estimate) × factor / 5 min) × 5 min, capped at MaxTime
+```
+
+- `estimate` is the time for what is still missing. For Spack packages it
+  is the install check's estimate plus the build: a package the recorded
+  install check (`install-check.json`) found installed counts as nothing;
+  a missing one uses the measured `build_seconds` of a previous build
+  (`install-costs.json`), scaled to the nodes still missing, or else the
+  per-node estimate the placement question uses. Nodes a previous attempt
+  already built are subtracted. pip, conda and container installs get a
+  fixed allowance (15, 30 and 20 min; 1 min for a `+check`). When a
+  package has neither a check record nor a measured build, and is not a
+  known-heavy package, the estimate is unknown: `time` stays unset and the
+  plan says to run `ppl install +check +submit` first.
+- `startup` is 10 min (`JARVIS_INSTALL_STARTUP_SECONDS`) and `factor` is
+  1.5 (`JARVIS_INSTALL_TIME_FACTOR`, at least 1).
+- `MaxTime` is the partition's limit, read with `scontrol show partition`
+  (the job's `partition`, or the default partition). When only the factor
+  pushes the time past it, the time is set to `MaxTime` and
+  `capped_at_max_time` is recorded.
+- When `startup + estimate` alone is past `MaxTime`, JARVIS does not cut the
+  build short. The plan and the submit stop with exit 3 and an
+  `install_time_exceeds_partition` issue (`field: scheduler.install`). Its
+  candidates are the partitions whose `MaxTime` fits, setting
+  `scheduler.install.time` to `MaxTime` to build in parts, and re-running
+  the install check.
+
+When an earlier install job of the pipeline ended without finishing (for
+example it timed out, which kills it before it can update its record), the
+resubmit reports it on stderr and in `time_estimate.previous_attempts`
+(execution, state, phase, the nodes it built) and `already_built`. Spack
+keeps what was built, so those nodes are not rebuilt and are not counted in
+the estimate. The document (`jarvis.install.walltime.v1`) is in the submit
+plan's `install_job.time_estimate` and the record's
+`metadata.install_job.time_estimate`, with `source` (`explicit`,
+`jarvis_estimate` or `unset`), `time`, `formula`, `estimate`,
+`partition_limit`, `previous_attempts`, `already_built` and `issue_kinds`.
+
 The record's `metadata.install_job` shows the shape JARVIS submitted:
 `nodes`, `ntasks`, `cpus_per_task`, `mem`, `exclusive`, `time`,
-`partition`, `account`, `qos` (when set), and `overrides`, the keys taken
-from `scheduler.install`. Run jobs ignore `scheduler.install`. The answers
+`partition`, `account`, `qos` (when set), `overrides`, the keys taken
+from `scheduler.install`, and `time_estimate`. Run jobs ignore `scheduler.install`. The answers
 file is sealed into `input/answers.json`. Inside the allocation the script
 runs `jarvis ppl install yaml <runtime>/pipeline.yaml [+check] [--answers …]
 +json` in place of `ppl run`. The execution record carries

@@ -295,6 +295,33 @@ def _component_states_metadata() -> Dict[str, Any]:
             "path": COMPONENT_STATES_FILE, "states": list(COMPONENT_STATES)}
 
 
+def _report_install_walltime(walltime: Mapping[str, Any]) -> None:
+    """Say on stderr where an install job's time came from and what is built."""
+    source = walltime.get("source")
+    if source == "jarvis_estimate":
+        limit = walltime.get("partition_limit") or {}
+        print(f"install job time {walltime.get('time')} = {walltime.get('formula')}"
+              + (f" (partition {limit.get('partition')} MaxTime "
+                 f"{limit.get('max_time') or 'unknown'})" if limit else ""),
+              file=sys.stderr)
+    elif source == "unset":
+        print(f"install job time not set: {walltime.get('why')}", file=sys.stderr)
+    previous = walltime.get("previous") or {}
+    for attempt in previous.get("attempts") or []:
+        print(f"install: previous attempt {attempt.get('execution_id')} "
+              f"(job {attempt.get('native_id')}, "
+              f"{attempt.get('provider_state') or attempt.get('state')}, phase "
+              f"{attempt.get('phase')}) built {attempt.get('built')} Spack node(s)",
+              file=sys.stderr)
+    built = previous.get("already_built") or []
+    if built:
+        print(f"install: {len(built)} Spack node(s) already built by earlier attempts "
+              "are kept and not rebuilt: "
+              + ", ".join(node["name"] for node in built[:20])
+              + (f", ... (+{len(built) - 20})" if len(built) > 20 else ""),
+              file=sys.stderr)
+
+
 def _require_bound_plan(
     rendered: Mapping[str, Any], expected: str, execution_id: str,
 ) -> None:
@@ -1295,6 +1322,15 @@ class Pipeline:
             if "nodes" in overrides and int(overrides["nodes"]) != 1:
                 raise ValueError("scheduler.install.nodes must be 1")
             scheduler_spec.update(overrides)
+            from jarvis_cd.core import install_walltime
+
+            # With no explicit time the job gets JARVIS's own estimate, at
+            # most the partition's MaxTime.
+            walltime = self._install_walltime(install_check,
+                                              exclude=execution_root.name)
+            self._install_walltime_last = walltime
+            if walltime.get("source") == "jarvis_estimate":
+                scheduler_spec["time"] = walltime["time"]
             install_job_shape = {
                 key: scheduler_spec.get(key)
                 for key in ("nodes", "ntasks", "cpus_per_task", "mem",
@@ -1302,6 +1338,7 @@ class Pipeline:
                 if scheduler_spec.get(key) is not None
             }
             install_job_shape["overrides"] = sorted(overrides)
+            install_job_shape["time_estimate"] = install_walltime.summary(walltime)
         else:
             scheduler_spec.pop("install", None)
         scheduler_spec["hostfile"] = str(execution_root / "hostfile.txt")
@@ -1314,6 +1351,32 @@ class Pipeline:
         # Directive order must not depend on how the pipeline was loaded (a
         # YAML keeps its order, the saved config is sorted): +plan binds to it.
         return dict(sorted(scheduler_spec.items())), install_job_shape
+
+    def _install_walltime(self, install_check: bool,
+                          exclude: Optional[str] = None) -> Dict[str, Any]:
+        """The install job's time limit and its basis (``jarvis.install.walltime.v1``).
+
+        ``scheduler.install.time`` or ``scheduler.time`` wins; otherwise
+        :func:`jarvis_cd.core.install_walltime.resolve` derives it from the
+        build estimate and the partition's MaxTime.
+        """
+        from jarvis_cd.core import install_walltime
+        from jarvis_cd.core.scheduler import resolve_scheduler_name
+
+        declared = dict(self.scheduler or {})
+        overrides = declared.get("install")
+        overrides = overrides if isinstance(overrides, dict) else {}
+        explicit = overrides.get("time")
+        if explicit is None:
+            explicit = declared.get("time")
+        try:
+            provider: Optional[str] = resolve_scheduler_name(declared)
+        except Exception:
+            provider = None
+        return install_walltime.resolve(
+            self, provider=provider,
+            partition=overrides.get("partition") or declared.get("partition"),
+            install_check=install_check, explicit_time=explicit, exclude=exclude)
 
     @staticmethod
     def _submission_action_args(
@@ -1526,6 +1589,18 @@ class Pipeline:
         shared_dir.mkdir(parents=True, exist_ok=True)
         resolved_execution_id = _validated_execution_id(execution_id)
         store = self._execution_store()
+        if action == "install":
+            walltime = self._install_walltime(install_check,
+                                              exclude=resolved_execution_id)
+            _report_install_walltime(walltime)
+            if walltime.get("issues"):
+                from jarvis_cd.core.install_walltime import summary
+                from jarvis_cd.core.issues import JarvisIssueError
+
+                # Longer than the partition allows: the person chooses (a
+                # partition, or an explicit time); never a silent cut.
+                raise JarvisIssueError(walltime["issues"], exit_code=3,
+                                       document={"install_time": summary(walltime)})
         bound_plan = None
         if expect_plan_sha256 is not None:
             # The person's yes binds to one plan: refuse before anything is

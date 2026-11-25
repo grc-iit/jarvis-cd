@@ -2362,6 +2362,12 @@ class JarvisCLI(ArgParse):
                 print(f"  {edge['from']} -> {edge['to']} [{edge['kind']}] {edge['label']}")
             print(f"  script {document['script']['path']} sha256 "
                   f"{document['script']['sha256']}")
+            estimate = (document.get("install_job") or {}).get("time_estimate") or {}
+            if estimate.get("formula") or estimate.get("why"):
+                print(f"  install time: {estimate.get('formula') or estimate.get('why')}")
+            if estimate.get("already_built"):
+                print(f"  already built by earlier attempts: "
+                      f"{len(estimate['already_built'])} Spack node(s)")
             for issue in document["issues"]:
                 print(f"  issue {issue.get('kind')}: {issue.get('message')}")
             print("  submit with: " + " ".join(document["submit_with"]))
