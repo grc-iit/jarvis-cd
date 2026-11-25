@@ -46,6 +46,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -1556,30 +1557,29 @@ _READY_PROBE = (
     'echo "JARVIS_MISSING:$missing"'
 )
 
-_READY_LAYER = r"""# written by JARVIS: what it needs to run {image} as SSH-ready containers
-FROM {image}
-RUN set -e; \
-    if command -v apk >/dev/null 2>&1; then \
-      apk add --no-cache bash openssh-server openssh-client openssh-keygen; \
-    elif command -v apt-get >/dev/null 2>&1; then \
-      apt-get update; \
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        bash openssh-server openssh-client; \
-      rm -rf /var/lib/apt/lists/*; \
-    elif command -v dnf >/dev/null 2>&1; then \
-      dnf install -y bash openssh-server openssh-clients; dnf clean all; \
-    elif command -v microdnf >/dev/null 2>&1; then \
-      microdnf install -y bash openssh-server openssh-clients; microdnf clean all; \
-    elif command -v yum >/dev/null 2>&1; then \
-      yum install -y bash openssh-server openssh-clients; yum clean all; \
-    elif command -v zypper >/dev/null 2>&1; then \
-      zypper --non-interactive install bash openssh; \
-    else \
-      echo "JARVIS: {image} has no package manager JARVIS knows (apk, apt-get, dnf, microdnf, yum, zypper) to add:{missing}" >&2; \
-      exit 3; \
-    fi; \
-    mkdir -p /run/sshd /var/run/sshd /root/.ssh; \
-    ssh-keygen -A
+_READY_SCRIPT = r"""# written by JARVIS: what it needs to run {image} as SSH-ready containers
+set -e
+if command -v apk >/dev/null 2>&1; then
+  apk add --no-cache bash openssh-server openssh-client openssh-keygen
+elif command -v apt-get >/dev/null 2>&1; then
+  apt-get update
+  DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    bash openssh-server openssh-client
+  rm -rf /var/lib/apt/lists/*
+elif command -v dnf >/dev/null 2>&1; then
+  dnf install -y bash openssh-server openssh-clients; dnf clean all
+elif command -v microdnf >/dev/null 2>&1; then
+  microdnf install -y bash openssh-server openssh-clients; microdnf clean all
+elif command -v yum >/dev/null 2>&1; then
+  yum install -y bash openssh-server openssh-clients; yum clean all
+elif command -v zypper >/dev/null 2>&1; then
+  zypper --non-interactive install bash openssh
+else
+  echo "JARVIS: {image} has no package manager JARVIS knows (apk, apt-get, dnf, microdnf, yum, zypper) to add:{missing}" >&2
+  exit 3
+fi
+mkdir -p /run/sshd /var/run/sshd /root/.ssh
+ssh-keygen -A
 """
 
 
@@ -1621,6 +1621,26 @@ def _missing_tools(engine: str, image: str, context) -> Tuple[Optional[List[str]
     return None, probe.stdout or ""
 
 
+def _commit_ready(engine: str, image: str, derived: str, script: str, context):
+    """Run ``script`` as root in a container of ``image`` and commit it as ``derived``.
+
+    The compose file sets the entrypoint and command, so the committed ones
+    (``/bin/sh -c <script>``) never run.
+    """
+    name = f"jarvis-ready-{os.getpid()}-{int(time.time())}"
+    try:
+        made = run_logged([engine, "run", "--name", name, "--user", "0", "--network=host",
+                           "--entrypoint", "/bin/sh", image, "-c", script], context)
+        if made.returncode != 0:
+            return made
+        committed = run_logged([engine, "commit", name, derived], context)
+        if committed.returncode != 0:
+            committed.stdout = (made.stdout or "") + (committed.stdout or "")
+        return committed
+    finally:
+        run_logged([engine, "rm", "-f", name], context)
+
+
 def make_ready(ppl, pkg_list, engine: str, image: str, context) -> str:
     """The image that runs for ``image``: itself when it has what JARVIS needs
     (sh, bash, sshd, ssh), else a local image built on it that adds them.
@@ -1650,13 +1670,14 @@ def make_ready(ppl, pkg_list, engine: str, image: str, context) -> str:
         context.report_progress(phase="building", current_package=derived)
         build_dir = env_prefix(ppl, "container", pkg_list) / "ready"
         build_dir.mkdir(parents=True, exist_ok=True)
-        containerfile = build_dir / "Containerfile"
-        containerfile.write_text(_READY_LAYER.format(image=image,
-                                                     missing=" " + " ".join(missing)))
-        context.log(f"[{_utc_now()}] {image} lacks {', '.join(missing)}; building "
+        script = _READY_SCRIPT.format(image=image, missing=" " + " ".join(missing))
+        (build_dir / "ready.sh").write_text(script)
+        context.log(f"[{_utc_now()}] {image} lacks {', '.join(missing)}; making "
                     f"{derived} with them\n")
-        built = run_logged([engine, "build", "--network=host", "-t", derived,
-                            "-f", containerfile, build_dir], context)
+        # `run` then `commit`, not `build`: a build's RUN step needs more of the
+        # host (rootless podman 3 asks systemd for its cgroup there and fails
+        # without a user session) than the plain `run` the containers use
+        built = _commit_ready(engine, image, derived, script, context)
         still, more = (None, "")
         if built.returncode == 0:
             still, more = _missing_tools(engine, derived, context)

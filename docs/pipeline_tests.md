@@ -316,9 +316,12 @@ A prebuilt image runs as SSH-ready containers, one per node: JARVIS starts
 them with `/bin/sh` and runs `sshd` in each, and packages reach them over
 SSH or `podman exec` (`bash -c`). At install, JARVIS probes the image for
 `bash`, `sshd`, `ssh` and `ssh-keygen`. An image that lacks any of them
-(plain `alpine`, say) gets a local image built on it,
+(plain `alpine`, say) gets a local image made from it,
 `localhost/jarvis-ready/<image>`, that adds them with the image's own
-package manager (apk, apt-get, dnf, microdnf, yum or zypper). That image is
+package manager (apk, apt-get, dnf, microdnf, yum or zypper). JARVIS makes
+it with `run` then `commit`, not `build` (rootless podman 3 cannot run a
+build step without a systemd user session), and keeps the script it ran in
+`<container env>/ready/ready.sh`. That image is
 the one the nodes run and the one archived. The install records which image
 runs in `<container env>/deploy.json`, so the check knows it without running
 a container. An image installed before this record existed is

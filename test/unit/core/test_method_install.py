@@ -398,7 +398,7 @@ class TestContainer(_Case):
         calls = []
 
         def built():
-            return any(call[1] == 'build' for call in calls) and build_rc == 0
+            return any(call[1] == 'commit' for call in calls) and build_rc == 0
 
         def run(argv, context, env=None, timeout=None):
             argv = [str(item) for item in argv]
@@ -406,12 +406,14 @@ class TestContainer(_Case):
             if argv[1] == 'save':
                 Path(argv[3]).write_text('image bytes')
                 return done(argv)
+            if argv[1] == 'run' and '--name' in argv:
+                return done(argv, 'apk output', build_rc)
             if argv[1] == 'run':
                 image = argv[argv.index('--entrypoint') + 2]
                 ready = image.startswith('localhost/jarvis-ready/') and built()
                 return done(argv, f"JARVIS_MISSING:{'' if ready else ' ' + lacks}\n")
-            if argv[1] == 'build':
-                return done(argv, 'build output', build_rc)
+            if argv[1] in ('commit', 'rm'):
+                return done(argv)
             return done(argv, pull_out, pull_rc)
 
         state = {'present': present}
@@ -477,13 +479,18 @@ class TestContainer(_Case):
                                      node_store=True)
         derived = 'localhost/jarvis-ready/docker.io/library/alpine:3.20'
         self.assertEqual(result['deploy_image'], derived)
-        self.assertEqual([call[1] for call in calls], ['pull', 'run', 'build', 'run', 'save'])
-        build = calls[2]
-        self.assertEqual(build[2:5], ['--network=host', '-t', derived])
-        containerfile = Path(build[6]).read_text()
-        self.assertIn('FROM docker.io/library/alpine:3.20', containerfile)
-        self.assertIn('apk add', containerfile)
-        self.assertIn('ssh-keygen -A', containerfile)
+        self.assertEqual([call[1] for call in calls],
+                         ['pull', 'run', 'run', 'commit', 'rm', 'run', 'save'])
+        make, commit, remove = calls[2], calls[3], calls[4]
+        name = make[make.index('--name') + 1]
+        self.assertEqual(make[make.index('--user') + 1], '0')
+        self.assertEqual(commit[2:], [name, derived])
+        self.assertEqual(remove[2:], ['-f', name])
+        script = make[-1]
+        self.assertEqual(script, (mi.env_prefix(ppl, 'container', packages)
+                                  / 'ready' / 'ready.sh').read_text())
+        self.assertIn('apk add', script)
+        self.assertIn('ssh-keygen -A', script)
         self.assertEqual(ppl.container_image, derived)
         # the run nodes load the derived image, and the check knows it from the marker
         self.assertTrue(mi.archived(mi.image_archive(ppl, packages), derived))
