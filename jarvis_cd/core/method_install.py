@@ -1069,8 +1069,8 @@ def resolve_method_choices(ppl, context) -> Dict[str, Any]:
         ]
         issue = _issue(
             "install_method", package, "install_method",
-            f"{package} can be installed with {', '.join(c['id'] for c in candidates)} "
-            "on this site. Which should JARVIS use?",
+            f"{pkg_def.get('pkg_type') or package} can be installed with "
+            f"{', '.join(c['id'] for c in candidates)} on this site. Which should JARVIS use?",
             method="choice", candidates=candidates, evidence=evidence, answerable=True,
             hint="answer with one method (recorded for this package)",
         )

@@ -511,6 +511,7 @@ class TestMethodChoice(_Case):
         issue = self.context.issues[0]
         self.assertEqual((issue['kind'], issue['scope'], issue['package']),
                          ('install_method', 'package', 'tool'))
+        self.assertTrue(issue['question'].startswith('builtin.tool can be installed with'))
         self.assertEqual([c['id'] for c in issue['candidates']], ['spack', 'pip'])
 
         answered = self.new_context({issue['issue_id']: {'constraint': 'spack'}})
