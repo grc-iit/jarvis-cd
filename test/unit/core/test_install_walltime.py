@@ -36,7 +36,8 @@ def site(tmp_path, monkeypatch):
     decisions = tmp_path / "install" / "decisions.yaml"
     decisions.parent.mkdir(parents=True)
     monkeypatch.setenv("JARVIS_SPACK_DECISIONS", str(decisions))
-    for name in ("JARVIS_INSTALL_STARTUP_SECONDS", "JARVIS_INSTALL_TIME_FACTOR"):
+    for name in ("JARVIS_INSTALL_STARTUP_SECONDS", "JARVIS_INSTALL_TIME_FACTOR",
+                 "JARVIS_INSTALL_UNKNOWN_BUILD_SECONDS"):
         monkeypatch.delenv(name, raising=False)
 
     def costs(packages):
@@ -123,11 +124,81 @@ def test_explicit_time_wins(site):
                         "source": "explicit", "time": "01:00:00", "issues": []}
 
 
-def test_unknown_estimate_leaves_time_unset_and_says_why(site):
-    document = _resolve(_ppl([OTHER]), None)
-    assert document["source"] == "unset" and document["time"] is None
+def test_unknown_estimate_gets_a_default_allowance_never_the_partition_max(site):
+    # never built here, not known-heavy, no check record: the time still
+    # comes from an estimate, so Slurm never applies DefaultTime / MaxTime
+    document = _resolve(_ppl([OTHER]), None, partition="long")
+    assert document["source"] == "jarvis_estimate"
+    assert document["estimate"]["allowance"] == ["tool"]
+    # (600 startup + 60 check + 3600 allowance) x 1.5 = 6390 s, up to 5 min
+    assert document["needed_seconds"] == 600 + 60 + walltime.UNKNOWN_BUILD_SECONDS
+    assert document["time"] == "01:50:00" and not document["capped_at_max_time"]
     assert "tool" in document["why"] and "+check +submit" in document["why"]
+    [build] = [item for item in document["estimate"]["packages"]
+               if item["phase"] == "build"]
+    assert build["allowance"] and "no_record" in build["basis"]
+    assert walltime.summary(document)["estimate"]["allowance"] == ["tool"]
     assert document["issues"] == []
+
+
+def test_unknown_build_allowance_is_configurable(site, monkeypatch):
+    monkeypatch.setenv("JARVIS_INSTALL_UNKNOWN_BUILD_SECONDS", "600")
+    document = _resolve(_ppl([OTHER]), None, partition="long")
+    assert document["needed_seconds"] == 600 + 60 + 600
+    assert document["time"] == "00:35:00"
+
+
+def test_record_stale_only_by_decisions_still_sizes_the_build(site):
+    # answers recorded after the check (often to its own questions)
+    with patch("jarvis_cd.core.installer.Installer.get_installers",
+               return_value={"spack": [OTHER]}), \
+            patch("jarvis_cd.core.installer.read_install_check",
+                  return_value=(_record({"tool": _missing(9)}),
+                                "inputs_changed: decisions")) as read, \
+            patch.object(walltime, "slurm_partitions", return_value=PARTITIONS):
+        document = walltime.resolve(_ppl([OTHER]), provider="slurm",
+                                    partition=None, install_check=False)
+    assert read.call_args.kwargs == {"for_estimate": True}
+    record = document["estimate"]["check_record"]
+    assert record["used"] and record["stale"] == "inputs_changed: decisions"
+    assert document["estimate"]["allowance"] == []
+    # (600 + 60 + 9 x 60) x 1.5 = 1800 s
+    assert document["time"] == "00:30:00"
+
+
+def _check_file(tmp_path, stored):
+    from jarvis_cd.core import installer
+
+    path = tmp_path / "install-check.json"
+    path.write_text(json.dumps({"schema_version": installer.INSTALL_CHECK_SCHEMA,
+                                "outcome": "missing", "inputs": stored}),
+                    encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize("changed,for_estimate,used,why", [
+    ({"decisions": "d2"}, True, True, "inputs_changed: decisions"),
+    ({"decisions": "d2", "spack_lock": "l2"}, True, True,
+     "inputs_changed: decisions, spack_lock"),
+    ({"decisions": "d2"}, False, False, "inputs_changed: decisions"),
+    ({"spack": "s2"}, True, False, "inputs_changed: spack"),
+    ({"packages": "p2", "decisions": "d2"}, True, False,
+     "inputs_changed: decisions, packages"),
+    ({}, True, True, ""),
+])
+def test_read_install_check_tolerates_only_decisions_for_an_estimate(
+        tmp_path, changed, for_estimate, used, why):
+    from jarvis_cd.core import installer
+
+    stored = {"packages": "p1", "decisions": "d1", "spack": "s1", "spack_lock": "l1"}
+    path = _check_file(tmp_path, stored)
+    with patch.object(installer, "install_check_path", return_value=path), \
+            patch.object(installer, "_capture_inputs",
+                         return_value={**stored, **changed}):
+        document, reason = installer.read_install_check(
+            None, [], for_estimate=for_estimate)
+    assert (document is not None) is used
+    assert reason == why
 
 
 def test_check_job_uses_check_estimates_only(site):
@@ -248,9 +319,14 @@ def test_install_job_gets_the_estimate_and_explicit_time_wins(tmp_path, monkeypa
         assert spec["time"] == "02:00:00"
         assert shape["time_estimate"] == {"source": "explicit"}
 
-        pipeline.scheduler = {"name": "slurm", "nodes": 1, "time": "00:30:00"}
+        # scheduler.time is the run job's limit: the install job keeps
+        # its own estimate (and never a partition maximum)
+        pipeline.scheduler = {"name": "slurm", "nodes": 1, "time": "2-00:00:00"}
         spec, shape = pipeline._submission_scheduler_spec(root, "install", False)
-        assert spec["time"] == "00:30:00"
+        assert spec["time"] == "00:15:00"
+        assert shape["time_estimate"]["source"] == "jarvis_estimate"
+        run_spec, _ = pipeline._submission_scheduler_spec(root, "run", False)
+        assert run_spec["time"] == "2-00:00:00"
 
 
 def test_submit_refuses_an_install_longer_than_max_time(tmp_path, monkeypatch):

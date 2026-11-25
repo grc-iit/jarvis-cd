@@ -1425,12 +1425,23 @@ def write_install_check(ppl, pkg_list, *, context, outcome: str, issues,
     return str(path)
 
 
-def read_install_check(ppl, pkg_list) -> Tuple[Optional[Dict[str, Any]], str]:
+#: inputs whose change leaves a check's missing nodes a fair build estimate:
+#: answers recorded after the check (often to its own questions) and the
+#: Spack env lock, not a different Spack or different package settings
+_ESTIMATE_TOLERATES = frozenset({"decisions", "spack_lock"})
+
+
+def read_install_check(ppl, pkg_list, *, for_estimate: bool = False
+                       ) -> Tuple[Optional[Dict[str, Any]], str]:
     """The last full check's record if it still applies, else ``(None, why)``.
 
     Stale when its inputs changed (packages' install settings, recorded
     decisions, the Spack root or ``spack.lock``), a package prefix it saw is
     gone, or it ended ``failed`` (a failure is rechecked, not replayed).
+
+    ``for_estimate`` (the install job's wall time) still returns a record
+    whose only changed inputs are the recorded decisions or ``spack.lock``,
+    with ``why`` naming them: its missing nodes still size the build.
     """
     path = install_check_path(ppl)
     try:
@@ -1444,6 +1455,9 @@ def read_install_check(ppl, pkg_list) -> Tuple[Optional[Dict[str, Any]], str]:
     stored = document.get("inputs") or {}
     current = _capture_inputs(ppl, pkg_list)
     changed = sorted(key for key in current if stored.get(key) != current[key])
+    tolerated = ""
+    if changed and for_estimate and set(changed) <= _ESTIMATE_TOLERATES:
+        tolerated, changed = "inputs_changed: " + ", ".join(changed), []
     if changed:
         return None, "inputs_changed: " + ", ".join(changed)
     gone = [entry for entry in document.get("watched_paths") or [] if not os.path.isdir(entry)]
@@ -1452,7 +1466,7 @@ def read_install_check(ppl, pkg_list) -> Tuple[Optional[Dict[str, Any]], str]:
     if document.get("outcome") == "failed":
         return None, ("last_check_failed: " + ", ".join(document.get("issue_kinds") or [])
                       + f" (log {document.get('log')})")
-    return document, ""
+    return document, tolerated
 
 
 def install_unchecked_issue(ppl, packages, reason: str, detail: str = "") -> Dict[str, Any]:

@@ -304,8 +304,12 @@ def _report_install_walltime(walltime: Mapping[str, Any]) -> None:
               + (f" (partition {limit.get('partition')} MaxTime "
                  f"{limit.get('max_time') or 'unknown'})" if limit else ""),
               file=sys.stderr)
-    elif source == "unset":
-        print(f"install job time not set: {walltime.get('why')}", file=sys.stderr)
+        if walltime.get("why"):
+            print(f"install job time: {walltime.get('why')}", file=sys.stderr)
+        stale = ((walltime.get("estimate") or {}).get("check_record") or {}).get("stale")
+        if stale:
+            print(f"install job time: last check's missing nodes used ({stale} since)",
+                  file=sys.stderr)
     previous = walltime.get("previous") or {}
     for attempt in previous.get("attempts") or []:
         print(f"install: previous attempt {attempt.get('execution_id')} "
@@ -1356,9 +1360,10 @@ class Pipeline:
                           exclude: Optional[str] = None) -> Dict[str, Any]:
         """The install job's time limit and its basis (``jarvis.install.walltime.v1``).
 
-        ``scheduler.install.time`` or ``scheduler.time`` wins; otherwise
+        ``scheduler.install.time`` wins; otherwise
         :func:`jarvis_cd.core.install_walltime.resolve` derives it from the
-        build estimate and the partition's MaxTime.
+        build estimate and the partition's MaxTime. ``scheduler.time`` is
+        the run job's limit and is not inherited by an install job.
         """
         from jarvis_cd.core import install_walltime
         from jarvis_cd.core.scheduler import resolve_scheduler_name
@@ -1367,8 +1372,6 @@ class Pipeline:
         overrides = declared.get("install")
         overrides = overrides if isinstance(overrides, dict) else {}
         explicit = overrides.get("time")
-        if explicit is None:
-            explicit = declared.get("time")
         try:
             provider: Optional[str] = resolve_scheduler_name(declared)
         except Exception:

@@ -1,7 +1,8 @@
 """Install job wall time from JARVIS's own build estimate.
 
-``jarvis ppl install +submit`` sets the job's time limit itself when neither
-``scheduler.install.time`` nor ``scheduler.time`` is given:
+``jarvis ppl install +submit`` sets the job's time limit itself unless
+``scheduler.install.time`` is given (``scheduler.time`` is the run job's
+limit; an install job never inherits it):
 
     time = (startup + estimate) x safety factor, rounded up to 5 min,
            at most the partition's MaxTime
@@ -10,6 +11,11 @@
 same per-package estimates install placement uses (:func:`install_placement.
 estimate`: the site's measured ``install-costs.json``, else missing Spack nodes
 from the last full check's ``install-check.json``, else known-heavy packages).
+A check record whose only changed inputs are the recorded decisions (answers
+given after the check, often to its own questions) or ``spack.lock`` still
+counts. A package with none of these gets a default build allowance
+(``JARVIS_INSTALL_UNKNOWN_BUILD_SECONDS``, 1 h), so the time is never left to
+the partition's DefaultTime, which is MaxTime when DefaultTime is NONE.
 Nodes a previous install job of this pipeline already built (a timed-out or
 failed attempt; Spack keeps them) are not counted again and are reported as
 ``already_built``.
@@ -18,9 +24,7 @@ MaxTime comes from the scheduler (Slurm ``scontrol show partition -o``; the
 resource graph does not record partition limits). When the estimate itself
 (before the safety factor) is longer than MaxTime, the submit is refused with
 an ``install_time_exceeds_partition`` issue (exit 3) naming partitions whose
-MaxTime fits: JARVIS never cuts a build short silently. With no estimate (no
-check record and a package never built here) no time is set and the
-partition default applies; the document says so.
+MaxTime fits: JARVIS never cuts a build short silently.
 
 Everything here is light (file reads, one ``scontrol``, ``sacct`` for a
 previous job still recorded as live) and writes nothing, so ``+plan`` uses it.
@@ -43,6 +47,10 @@ ROUND_SECONDS = 300
 #: allowance per non-Spack package (an install job creates the env or image)
 METHOD_INSTALL_SECONDS = {"pip": 900, "conda": 1800, "container": 1200}
 METHOD_CHECK_SECONDS = 60
+#: build allowance of a Spack package with no check record and no build
+#: measured here (not known-heavy): the estimate is never left unknown, so
+#: the job never falls back to the partition's DefaultTime or MaxTime
+UNKNOWN_BUILD_SECONDS = 3600
 #: previous install executions scanned for already-built nodes
 MAX_ATTEMPTS = 10
 
@@ -63,6 +71,10 @@ def startup_seconds() -> float:
 
 def safety_factor() -> float:
     return _env_number("JARVIS_INSTALL_TIME_FACTOR", SAFETY_FACTOR, 1.0)
+
+
+def unknown_build_seconds() -> float:
+    return _env_number("JARVIS_INSTALL_UNKNOWN_BUILD_SECONDS", UNKNOWN_BUILD_SECONDS, 60)
 
 
 def format_time(seconds: float, provider: Optional[str]) -> str:
@@ -249,10 +261,13 @@ def install_estimate(ppl, *, install_check: bool,
     record: Dict[str, Any] = {"used": False}
     missing_by_pkg: Optional[Dict[str, List[Dict[str, Any]]]] = None
     if spack_pkgs and not install_check:
-        document, why = read_install_check(ppl, spack_pkgs)
+        document, why = read_install_check(ppl, spack_pkgs, for_estimate=True)
         if document is not None:
             record = {"used": True, "checked_at": document.get("checked_at"),
                       "where": (document.get("where") or {}).get("host")}
+            if why:
+                # answers recorded after the check: its node count still holds
+                record["stale"] = why
             missing_by_pkg = {}
             for name, entry in (document.get("packages") or {}).items():
                 if isinstance(entry, Mapping) and entry.get("status") == "missing":
@@ -300,7 +315,17 @@ def install_estimate(ppl, *, install_check: bool,
                         missing=len(entries), already_built=skipped)
         else:
             full = placement.estimate("build", name, costs, None)
-            item.update(seconds=full["seconds"], basis=full["basis"])
+            if full["seconds"] is None:
+                allowance = unknown_build_seconds()
+                item.update(seconds=float(allowance), allowance=True,
+                            basis=(f"no check record and never built here: default "
+                                   f"allowance {_human(allowance)} "
+                                   "(JARVIS_INSTALL_UNKNOWN_BUILD_SECONDS); "
+                                   + (f"check record not used ({record['why']}); "
+                                      if record.get("why") else "")
+                                   + "a +check job first counts the missing nodes"))
+            else:
+                item.update(seconds=full["seconds"], basis=full["basis"])
         packages.append(item)
     for method, pkg_defs in sorted(groups.items()):
         if method == "spack":
@@ -314,9 +339,11 @@ def install_estimate(ppl, *, install_check: bool,
                              "basis": f"allowance for a {method} "
                                       f"{'check' if install_check else 'install'}"})
     unknown = [item["pkg_id"] for item in packages if item["seconds"] is None]
+    allowance = [item["pkg_id"] for item in packages if item.get("allowance")]
     total = None if unknown else round(sum(float(item["seconds"]) for item in packages), 1)
     return {"seconds": total, "human": _human(total), "known": not unknown,
-            "unknown": unknown, "packages": packages, "check_record": record}
+            "unknown": unknown, "allowance": allowance, "packages": packages,
+            "check_record": record}
 
 
 # ---------------------------------------------------------------------------
@@ -392,14 +419,15 @@ def resolve(ppl, *, provider: Optional[str], partition: Optional[str],
         "issues": [],
     }
     if not estimate["known"]:
-        document.update(
-            source="unset", time=None,
-            why=("no estimate for " + ", ".join(estimate["unknown"])
-                 + " (no full check recorded and never built here): no time is set, "
-                   "so the partition's DefaultTime applies (MaxTime when DefaultTime "
-                   "is NONE); run `jarvis ppl install yaml FILE +check +submit` first "
-                   "so JARVIS counts the missing nodes"))
-        return document
+        # every estimator above returns seconds; never hand the job to the
+        # partition's DefaultTime (MaxTime when it is NONE)
+        raise RuntimeError("install estimate unknown for " + ", ".join(estimate["unknown"]))
+    if estimate["allowance"]:
+        document["why"] = (
+            "default build allowance for " + ", ".join(estimate["allowance"])
+            + " (no check record and never built here); run "
+              "`jarvis ppl install yaml FILE +check +submit` first so JARVIS "
+              "counts the missing nodes")
     needed = startup + float(estimate["seconds"])
     wall = math.ceil(needed * factor / ROUND_SECONDS) * ROUND_SECONDS
     max_s = limit.get("max_time_s")
@@ -427,8 +455,8 @@ def summary(document: Mapping[str, Any]) -> Dict[str, Any]:
              "partition_limit") if document.get(key) is not None}
     estimate = document.get("estimate") or {}
     keep["estimate"] = {key: estimate.get(key) for key in
-                        ("seconds", "human", "known", "unknown", "packages",
-                         "check_record")}
+                        ("seconds", "human", "known", "unknown", "allowance",
+                         "packages", "check_record")}
     previous = document.get("previous") or {}
     keep["previous_attempts"] = previous.get("attempts") or []
     keep["already_built"] = [node["spec"] for node in previous.get("already_built") or []]

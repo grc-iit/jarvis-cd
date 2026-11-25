@@ -503,10 +503,11 @@ with `scheduler.install.nodelist` (or `constraint`), and add
 
 #### Install job wall time
 
-An explicit `scheduler.install.time` (or `scheduler.time`) is used as given.
-Without one, JARVIS sets the install job's `time` from its own build
-estimate instead of leaving it to the partition's default, which can be
-too short, or `MaxTime` when `DefaultTime=NONE`:
+An explicit `scheduler.install.time` is used as given. `scheduler.time` is
+the run job's limit: an install job does not inherit it. Otherwise JARVIS
+always sets the install job's `time` from its own build estimate, never
+leaving it to the partition's default, which can be too short, or `MaxTime`
+when `DefaultTime=NONE`:
 
 ```
 time = ceil((startup + estimate) × factor / 5 min) × 5 min, capped at MaxTime
@@ -519,11 +520,16 @@ time = ceil((startup + estimate) × factor / 5 min) × 5 min, capped at MaxTime
   missing (`node_build_seconds` in `install-costs.json`), else the measured
   `build_seconds` of a previous build, scaled to the nodes still missing,
   or else the per-node estimate the placement question uses. Nodes a
-  previous attempt already built are subtracted. pip, conda and container installs get a
+  previous attempt already built are subtracted. A check record whose only
+  changed inputs are the recorded decisions (answers given after the check,
+  often to its own questions) or `spack.lock` still counts, and
+  `estimate.check_record.stale` names them. pip, conda and container installs get a
   fixed allowance (15, 30 and 20 min; 1 min for a `+check`). When a
-  package has neither a check record nor a measured build, and is not a
-  known-heavy package, the estimate is unknown: `time` stays unset and the
-  plan says to run `ppl install +check +submit` first.
+  package has neither a usable check record nor a measured build, and is
+  not a known-heavy package, it gets a default build allowance of 1 h
+  (`JARVIS_INSTALL_UNKNOWN_BUILD_SECONDS`); it is listed in
+  `estimate.allowance`, and the plan's `why` says to run
+  `ppl install +check +submit` first so JARVIS counts the missing nodes.
 - `startup` is 10 min (`JARVIS_INSTALL_STARTUP_SECONDS`) and `factor` is
   1.5 (`JARVIS_INSTALL_TIME_FACTOR`, at least 1).
 - `MaxTime` is the partition's limit, read with `scontrol show partition`
@@ -544,8 +550,8 @@ resubmit reports it on stderr and in `time_estimate.previous_attempts`
 keeps what was built, so those nodes are not rebuilt and are not counted in
 the estimate. The document (`jarvis.install.walltime.v1`) is in the submit
 plan's `install_job.time_estimate` and the record's
-`metadata.install_job.time_estimate`, with `source` (`explicit`,
-`jarvis_estimate` or `unset`), `time`, `formula`, `estimate`,
+`metadata.install_job.time_estimate`, with `source` (`explicit` or
+`jarvis_estimate`), `time`, `formula`, `why`, `estimate`,
 `partition_limit`, `previous_attempts`, `already_built` and `issue_kinds`.
 
 The record's `metadata.install_job` shows the shape JARVIS submitted:
