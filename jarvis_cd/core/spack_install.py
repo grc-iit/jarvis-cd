@@ -320,8 +320,8 @@ def spack_subprocess_environment() -> Dict[str, str]:
     if not isolate:
         from jarvis_cd.core import spack_health
 
-        # the site's `spack_broken` answer `no_user_config` for this Spack
-        isolate = spack_health.isolated(_resolved_spack_root())
+        # the site's `spack_broken` answer (no_user_config, drop_failing_repos)
+        return spack_health.apply(environment, _resolved_spack_root())
     if isolate:
         environment["SPACK_DISABLE_LOCAL_CONFIG"] = "1"
         config = spack_user_config_path()
@@ -364,18 +364,19 @@ def spack_config_scopes(
     ``<platform>`` subdirectory; then jarvis's ``-C`` scopes and the
     ``-e`` environment manifest. Python entry-point scopes are not listed.
     """
-    disabled = spack_local_config_disabled() or "SPACK_DISABLE_LOCAL_CONFIG" in os.environ
+    environment = spack_subprocess_environment()
+    disabled = "SPACK_DISABLE_LOCAL_CONFIG" in environment
     root = _resolved_spack_root()
     etc = root / "etc" / "spack" if root is not None else None
     directories: List[tuple[str, Optional[Path]]] = [
         ("defaults", etc / "defaults" if etc is not None else None)
     ]
     if not disabled:
-        system = os.environ.get("SPACK_SYSTEM_CONFIG_PATH", "").strip() or "/etc/spack"
+        system = environment.get("SPACK_SYSTEM_CONFIG_PATH", "").strip() or "/etc/spack"
         directories.append(("system", Path(system)))
     directories.append(("site", etc))
     if not disabled:
-        user = os.environ.get("SPACK_USER_CONFIG_PATH", "").strip() or "~/.spack"
+        user = environment.get("SPACK_USER_CONFIG_PATH", "").strip() or "~/.spack"
         directories.append(("user", Path(user).expanduser()))
     platform = _spack_platform()
     scopes: List[Dict[str, Any]] = []
@@ -651,7 +652,8 @@ def ensure_build_spack_healthy(context: "InstallContext", decisions: "Decisions"
     A Spack whose config is broken apart from any package (see
     :mod:`jarvis_cd.core.spack_health`) cannot plan anything. The site's
     answer ``no_user_config`` runs it with ``SPACK_DISABLE_LOCAL_CONFIG=1``
-    (:func:`spack_subprocess_environment`); ``skip`` builds with jarvis's
+    and ``drop_failing_repos`` with JARVIS's scope copy without the failing
+    repos (:func:`spack_subprocess_environment`); ``skip`` builds with jarvis's
     own Spack, chained to this one's installs, as for a read-only site Spack.
     """
     from jarvis_cd.core import spack_health

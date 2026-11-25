@@ -47,6 +47,28 @@ class FakeSpack:
         return [call for call in self.calls if call[0] == sh.PROBE]
 
 
+class FakeRepoSpack(FakeSpack):
+    """The user scope lists a good repo and the bad one; scope copies are read."""
+
+    def __init__(self, user, bad_repo, good_repo, **kwargs):
+        super().__init__(user, bad_repo, **kwargs)
+        self.good_repo = good_repo
+
+    def __call__(self, executable, args, env, timeout=None):
+        args = list(args)
+        scope = env.get('SPACK_USER_CONFIG_PATH')
+        if args[:3] == ['config', 'blame', 'repos']:
+            self.calls.append((tuple(args), False))
+            return 0, (f'{self.user}/repos.yaml:2    - {self.good_repo}\n'
+                       f'{self.user}/repos.yaml:3    - {self.bad_repo}\n'), ''
+        if (tuple(args) == sh.PROBE and env.get('SPACK_DISABLE_LOCAL_CONFIG') != '1'
+                and scope and scope != self.user):
+            self.calls.append((tuple(args), 'scoped'))
+            text = Path(scope, 'repos.yaml').read_text(encoding='utf-8')
+            return (3, '', ERROR) if self.bad_repo in text else (0, 'mpi: openmpi\n', '')
+        return super().__call__(executable, args, env, timeout)
+
+
 class _Case(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
@@ -211,6 +233,145 @@ class TestAnswers(_Case):
         state, context = self.gate(fixed, {issue_id: {'constraint': 'recheck'}})
         self.assertEqual(state['status'], 'ok')
         self.assertIsNone(self.decisions().site(sh.subject_for(self.root)))
+
+
+class TestDropFailingRepos(_Case):
+    def setUp(self):
+        super().setUp()
+        self.good = self.tmp / 'mochi'
+        self.good.mkdir()
+        (self.good / 'repo.yaml').write_text('repo:\n  namespace: mochi\n', encoding='utf-8')
+        self.repos_text = f'repos:\n- {self.good}\n- {self.bad}\n'
+        (self.user / 'repos.yaml').write_text(self.repos_text, encoding='utf-8')
+        (self.user / 'linux').mkdir()
+        (self.user / 'linux' / 'compilers.yaml').write_text('compilers: []\n',
+                                                            encoding='utf-8')
+        (self.user / 'cache').mkdir()
+        (self.user / 'cache' / 'big.yaml').write_text('x: 1\n', encoding='utf-8')
+
+    def fake(self, **kwargs):
+        return FakeRepoSpack(str(self.user), str(self.bad), str(self.good), **kwargs)
+
+    def open_issue(self):
+        state, context = self.gate(self.fake())
+        self.assertEqual(state['status'], 'broken')
+        return context.issues[0]
+
+    def test_leaving_out_only_the_failing_repo_is_offered_first_and_recommended(self):
+        issue = self.open_issue()
+        self.assertEqual([c['id'] for c in issue['candidates']],
+                         ['drop_failing_repos', 'no_user_config', 'skip', 'recheck'])
+        self.assertEqual(issue['recommended'], 'drop_failing_repos')
+        drop = issue['candidates'][0]
+        self.assertTrue(drop['recommended'])
+        self.assertEqual([r['namespace'] for r in drop['leaves_out_repos']], ['coeus'])
+        self.assertEqual([r['namespace'] for r in drop['keeps_repos']], ['mochi'])
+        self.assertIn('leave out only the repo', drop['leaves_out'])
+        self.assertIn('is not edited', drop['leaves_out'])
+        copy = Path(drop['scopes']['SPACK_USER_CONFIG_PATH'])
+        self.assertEqual(copy.parent, Path(os.environ[sh.SCOPE_DIR_ENV]))
+        text = (copy / 'repos.yaml').read_text(encoding='utf-8')
+        self.assertIn(str(self.good), text)
+        self.assertNotIn(str(self.bad), text)
+        self.assertTrue((copy / 'packages.yaml').is_file())
+        self.assertTrue((copy / 'linux' / 'compilers.yaml').is_file())
+        self.assertFalse((copy / 'cache').exists())
+        # the person's scope is only read
+        self.assertEqual((self.user / 'repos.yaml').read_text(encoding='utf-8'),
+                         self.repos_text)
+        # the fallback says what it throws away
+        no_user = issue['candidates'][1]
+        self.assertFalse(no_user['recommended'])
+        self.assertIn('including mochi, which work: only coeus fails', no_user['leaves_out'])
+        self.assertIn('Leave out only the failing repos', issue['question'])
+        self.assertEqual(issue['without_failing_repos']['ok'], True)
+        self.assertIn('drop_failing_repos', issue['hint'])
+
+    def test_the_answer_is_recorded_and_runs_with_the_copy(self):
+        issue = self.open_issue()
+        state, context = self.gate(self.fake(),
+                                   {issue['issue_id']: {'constraint': 'drop_failing_repos'}})
+        self.assertEqual(state['status'], 'filtered')
+        self.assertEqual(context.issues, [])
+        recorded = self.decisions().site(sh.subject_for(self.root))
+        assert recorded is not None
+        self.assertEqual(recorded['constraint'], 'drop_failing_repos')
+        self.assertEqual([r['repo'] for r in recorded['dropped_repos']], [str(self.bad)])
+        copy = state['scopes']['SPACK_USER_CONFIG_PATH']
+        env = sh.environment(self.root)
+        self.assertEqual(env['SPACK_USER_CONFIG_PATH'], copy)
+        self.assertNotIn('SPACK_DISABLE_LOCAL_CONFIG', env)
+        self.assertFalse(sh.isolated(self.root))
+        with mock.patch.object(si, '_resolved_spack_root', return_value=self.root):
+            env = si.spack_subprocess_environment()
+            self.assertEqual(env['SPACK_USER_CONFIG_PATH'], copy)
+            self.assertNotIn('SPACK_DISABLE_LOCAL_CONFIG', env)
+            scopes = {s['name']: s['path'] for s in si.spack_config_scopes()}
+            self.assertEqual(scopes['user'], copy)
+
+        # a later run replays it: one probe, with the copy
+        sh.reset()
+        spack = self.fake()
+        state, context = self.gate(spack)
+        self.assertEqual(state['status'], 'filtered')
+        self.assertEqual(context.issues, [])
+        self.assertEqual(spack.probes(), [(sh.PROBE, 'scoped')])
+        self.assertEqual(sh.filtered_scopes(self.root), {'SPACK_USER_CONFIG_PATH': copy})
+
+    def test_the_copy_follows_later_edits_of_the_persons_scope(self):
+        issue = self.open_issue()
+        state, _ = self.gate(self.fake(),
+                             {issue['issue_id']: {'constraint': 'drop_failing_repos'}})
+        first = state['scopes']['SPACK_USER_CONFIG_PATH']
+        (self.user / 'packages.yaml').write_text('packages: {all: {target: [x86_64]}}\n',
+                                                 encoding='utf-8')
+        sh.reset()
+        state, _ = self.gate(self.fake())
+        second = state['scopes']['SPACK_USER_CONFIG_PATH']
+        self.assertNotEqual(first, second)
+        self.assertIn('x86_64', Path(second, 'packages.yaml').read_text(encoding='utf-8'))
+
+    def test_a_repo_that_breaks_later_asks_again(self):
+        issue = self.open_issue()
+        self.gate(self.fake(), {issue['issue_id']: {'constraint': 'drop_failing_repos'}})
+        sh.reset()
+        # mochi now fails too: the recorded copy no longer works
+        spack = FakeRepoSpack(str(self.user), str(self.good), str(self.bad))
+        state, context = self.gate(spack)
+        self.assertEqual(state['status'], 'broken')
+        self.assertNotEqual(context.issues[0]['issue_id'], issue['issue_id'])
+
+    def test_plan_only_applies_the_recorded_copy_without_probing(self):
+        issue = self.open_issue()
+        self.gate(self.fake(), {issue['issue_id']: {'constraint': 'drop_failing_repos'}})
+        sh.reset()
+        spack = self.fake()
+        with mock.patch('jarvis_cd.core.installer.plan_only_active', return_value=True):
+            state, _ = self.gate(spack)
+        self.assertEqual(state['status'], 'filtered')
+        self.assertEqual(spack.probes(), [])
+
+
+class TestDropFromReposYaml(unittest.TestCase):
+    def test_list_override_key_spack_variable_and_relative_paths(self):
+        base = Path('/home/u/.spack')
+        text = 'repos::\n- $spack/var/repos/bad\n- ./good\n- /abs/keep\n'
+        out = sh._drop_from_repos_yaml(text, ['/opt/spack/var/repos/bad'], '/opt/spack', base)
+        assert out is not None
+        self.assertNotIn('bad', out)
+        self.assertIn('./good', out)
+        self.assertIn('/abs/keep', out)
+        out = sh._drop_from_repos_yaml(text, ['/home/u/.spack/good'], '/opt/spack', base)
+        assert out is not None
+        self.assertNotIn('good', out)
+
+    def test_named_repos_and_nothing_to_drop(self):
+        text = 'repos:\n  builtin: /a\n  coeus: /b\n'
+        out = sh._drop_from_repos_yaml(text, ['/b'], '/opt/spack', Path('/x'))
+        assert out is not None
+        self.assertIn('builtin', out)
+        self.assertNotIn('coeus', out)
+        self.assertIsNone(sh._drop_from_repos_yaml(text, ['/c'], '/opt/spack', Path('/x')))
 
 
 class TestBuildSpack(_Case):
