@@ -495,6 +495,8 @@ JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
 | `compiler_unavailable` | a compiler the install would use can't run on the build host (`subject: compiler`, `scope: site`): `compiler`, `host`, `missing_executables` (or `probe_failures` when it exists but can't build a test program), `usable_compilers`, `origin`, plus `to_build` and `reused_specs` when reused upstream specs pull the DAG onto it. With `compiler: null` and `missing_languages`/`needed_languages`, no usable compiler on the build host has every language (`c`, `cxx`, `fortran`) the nodes to build need; see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host) | yes, with one usable compiler (`candidates[]`), which becomes a binding `require`; the language form has no candidates (add a compiler, or pin the install job's nodes) |
 | `not_installed` | `+check` found nodes that still need building | no: run `jarvis ppl install` |
 | `site_copy` | the site already has a copy of the package (a module, a site Spack install or a resource graph `software` entry); see [Site copies](#site-copies-before-a-spack-build-site_copy) | yes: a site candidate's `id` or `constraint`, or `spack` |
+| `site_copy_unusable` | a site copy chosen for the package doesn't load on this host (`module load` or `spack load` fails, or its prefix is gone); `failing`, `failing_kind` (`module`, `spack` or `graph`), `why`, `needs`; see [The `site` install method](#the-site-install-method) | yes, when the copy came from a `site_copy` answer: another site copy, `spack_build` or `forget`; no, when the pipeline config sets the copy |
+| `spack_broken` | a Spack fails on its own, before any package: [`spack providers mpi`](#a-broken-spack-spack_broken) fails (`subject: spack:<root>`, `scope: site`, `package: "*"`); `spack_root`, `probe`, `without_user_config`, `failing_repos[]`, `failing_scope`, `failing_file`, `cause` | yes: `no_user_config`, `skip` or `recheck`; the first two are recorded per site |
 | `install_unchecked` | a scheduled pipeline's check on its submitting host found no matching `install-check.json` (JARVIS runs no Spack there); `packages`, `reason`, `record`, `remedy[]`; see [scheduler.md → Light checks](scheduler.md#light-checks-on-the-submitting-host) | no: check in a job, `jarvis ppl install +check +submit` (or `+submit` to also build) |
 | `install_placement` | where a scheduled pipeline's full check or build runs at this site is not chosen yet (or the site chose `ask_each_time`). One site question per phase (`install_placement.check` / `install_placement.build`) covers every package; `phase`, `cost_class` (the costliest package's), `cost_classes`, `covers`, `once`, `recommended`, `recommendation_reason`, `recommendation_basis` (a site answer recorded in this home or the resource graph's `install_placement`, with who, when and `basis`; else cost and load), `packages[]` (with `estimate`), `login_host`, `limits`, `queue`, `site_policy`, `package_overrides[]` (each with its own recommendation); see [scheduler.md → Install placement](scheduler.md#install-placement-where-checks-and-builds-run) | yes: `login_limited`, `compute_job` or `ask_each_time` (an `install_placement.<phase>.occasion` question: the first two, this run only); recorded per site, or per package for an override; `basis` records why |
 
@@ -801,6 +803,45 @@ Spack install. A fresh env capture (a load after an install) and a plan-only
 run search nothing. `install_site_search: false` in a package's config, or
 `JARVIS_SITE_COPIES=off`, turns the search off.
 
+#### A broken Spack (`spack_broken`)
+
+A Spack can fail for reasons that have nothing to do with the package. For
+example, a repo listed in the person's `~/.spack/repos.yaml` with an invalid
+package directory breaks the provider index. Then every `spack load /<hash>`
+and every concretize fails, while `spack find` still works. So before JARVIS
+offers copies from a site Spack, loads one, or plans a build with a Spack,
+it runs `spack providers mpi` once with that Spack. That command builds the
+provider index of every configured repo and needs no package.
+
+When that fails, JARVIS raises the answerable `spack_broken` issue
+(`scope: site`, `subject: spack:<root>`). It offers and plans nothing from
+that Spack until the issue is answered. A package whose site copy search
+needed it is held with `status: blocked`, `blocked_by: spack_broken`. The
+issue names the Spack (`spack_root`), the probe's exit and error, and the
+cause when JARVIS can isolate it. It probes again with
+`SPACK_DISABLE_LOCAL_CONFIG=1` (`without_user_config`). Then it probes each
+repo from the user and system scopes (`spack config blame repos`) alone in a
+temporary `-C` scope. `failing_repos[]` holds each repo that fails alone,
+with its namespace, the file and line that list it, the scope and the error.
+`failing_scope` and `failing_file` are the first one's.
+
+Candidates:
+
+| `id` | Offered | What JARVIS does |
+| --- | --- | --- |
+| `no_user_config` | only when the probe passes with `SPACK_DISABLE_LOCAL_CONFIG=1` (then it is `recommended`) | runs its own find, load and build commands for that Spack with `SPACK_DISABLE_LOCAL_CONFIG=1`. `leaves_out` says what that drops: the user scope (`~/.spack`, or `SPACK_USER_CONFIG_PATH`) and the system scope (`/etc/spack`), with the files in them and their repos, compilers, mirrors and package preferences. Installs built from a dropped repo's packages can't be loaded this way |
+| `skip` | always (`recommended` when the Spack fails in its own scopes) | offers no copies from that Spack. Modules, other site Spacks and the resource graph are still searched. If that Spack is the one JARVIS builds with, JARVIS builds with its own Spack under the site home, with that Spack's installs as an upstream (as for a read-only site Spack). If that Spack is `JARVIS_SPACK_ROOT`, nothing can be planned, and that is the non-answerable `spack_broken_skipped` |
+| `recheck` | always | records nothing. It probes again now and asks again while the probe still fails. Use it after fixing the config yourself |
+
+`no_user_config` and `skip` are recorded per site in `decisions.yaml`,
+keyed by `spack:<root>`, and later runs replay them. A Spack that fails
+differently later makes a new question, which carries `supersedes`.
+`jarvis ppl install --forget spack:<root>` forgets the answer. JARVIS never
+edits the person's `~/.spack`, and the person's own Spack commands still
+read it. A probe that can't run (a timeout, a missing executable) is not
+judged. `JARVIS_SPACK_HEALTH=off` turns the probe off; recorded answers
+still apply.
+
 #### The `site` install method
 
 A `site` package builds nothing. Its check and its install load the copy in
@@ -809,8 +850,29 @@ a login shell (`module use` of its `modulepath`, `module load` of its
 Spack copy without modules). What that changes goes on the pipeline's env:
 path lists are prepended, other variables are set. So the package's run sees
 the modules. The `site` group runs after Spack's, so a Spack activation
-doesn't replace it. A module that doesn't load, or a copy whose prefix is
-gone, fails as `site_copy_unusable` with the module system's error.
+doesn't replace it. Before the install groups run, JARVIS loads each `site`
+package's copy once. A Spack copy's Spack is checked first (see
+[A broken Spack](#a-broken-spack-spack_broken)).
+
+A copy that doesn't load, or whose prefix is gone, is `site_copy_unusable`,
+and the package is held. Its `why` matches the copy's kind:
+"`module load <modules>` failed in a login shell on this host: <error>", or
+"`spack load /<hash>` with the site Spack <root> failed on this host:
+<error>". When the copy came from a `site_copy` answer, the issue is
+answerable. Its candidates are:
+
+- the other copies of the package the site has. The failing copy is not
+  among them. `recommended` is the best fitting copy;
+- `spack_build`: build it with Spack instead;
+- `forget`: forget the recorded answer and ask the `site_copy` question
+  again, with the failing copy marked `fits: false` ("it did not load on
+  this host").
+
+Another copy or `spack_build` replaces the recorded `site_copy` answer
+(`via: site_copy_unusable`), and the new copy is loaded in turn. When the
+pipeline config sets the copy (`install_modules`), the issue is a fact
+(`answerable: false`); change the package's `install_modules` or
+`install_method`.
 
 A package can also name its modules directly:
 
