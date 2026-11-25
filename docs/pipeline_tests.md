@@ -336,7 +336,10 @@ path (that `bin` is not on a node's `PATH`), then from `PATH`, then
 `container_compose_missing`. A failed `up`, or a container that is not
 running on every node right after it, refuses the start as
 `container_start_failed`, with the engine's error or the container's last
-log, before any package starts.
+log, before any package starts. Each execution starts from its own compose
+file in its shared directory, which mounts that execution's shared and
+private directories; the start writes it when the install ran before the
+execution existed (`jarvis ppl run yaml`).
 
 A package that installs several ways lists them, and leaves `install_method`
 empty:

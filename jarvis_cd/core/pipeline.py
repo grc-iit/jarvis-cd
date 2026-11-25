@@ -6541,6 +6541,13 @@ class Pipeline:
             shared_dir = self.get_pipeline_shared_dir()
             compose_path = shared_dir / "docker-compose.yaml"
 
+            if not compose_path.exists() and self.container_image:
+                # the install wrote it where it ran (`ppl run yaml` installs
+                # before the execution's dirs exist); this execution's own
+                # file also mounts this execution's shared and private dirs
+                shared_dir.mkdir(parents=True, exist_ok=True)
+                self.get_pipeline_private_dir().mkdir(parents=True, exist_ok=True)
+                self._generate_pipeline_compose_file()
             if not compose_path.exists():
                 raise FileNotFoundError(
                     f"Compose file not found: {compose_path}. Did you load the pipeline?"

@@ -1563,6 +1563,51 @@ def test_container_start_failure_is_typed_before_any_package(
     assert pipeline._started_instances == []
 
 
+def test_container_start_writes_this_executions_compose_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """``ppl run yaml`` installs before the execution's dirs exist, so the
+    install's compose file is elsewhere; the start writes this execution's."""
+    from jarvis_cd.core.issues import JarvisIssueError
+
+    pipeline = _pipeline_double(tmp_path)
+    pipeline.container_engine = "docker"
+    pipeline.container_image = "example:latest"
+    pipeline._started_instances = []
+    pipeline._hostfile_is_local_only = Mock(return_value=True)
+    pipeline.get_hostfile = Mock(return_value=SimpleNamespace(hosts=["localhost"]))
+    private_dir = tmp_path / "private" / "example"
+    pipeline.get_pipeline_private_dir = Mock(return_value=private_dir)
+    shared_dir = pipeline.get_pipeline_shared_dir()
+
+    def generate() -> Path:
+        path = shared_dir / "docker-compose.yaml"
+        path.write_text("services: {}\n", encoding="utf-8")
+        return path
+
+    pipeline._generate_pipeline_compose_file = Mock(side_effect=generate)
+    commands: list[str] = []
+
+    class FailingUp:
+        def __init__(self, command: str, _exec_info: object) -> None:
+            commands.append(command)
+            self.exit_code = {"localhost": 1}
+            self.stderr = {"localhost": "stop here"}
+
+        def run(self) -> "FailingUp":
+            return self
+
+    monkeypatch.setattr(jarvis_cd.shell, "Exec", FailingUp)
+
+    with pytest.raises(JarvisIssueError):
+        pipeline._start_containerized_pipeline()
+
+    pipeline._generate_pipeline_compose_file.assert_called_once_with()
+    assert private_dir.is_dir()
+    assert f"-f {shared_dir / 'docker-compose.yaml'}" in commands[0]
+
+
 def test_scheduler_finalizer_covers_failures_before_pipeline_run(
     tmp_path: Path,
 ) -> None:
