@@ -148,6 +148,9 @@ class TestIorDockerCluster(DockerClusterTestBase):
         # POSIX sh: the image need not have bash
         self.assertEqual(compose['services']['ior_ssh']['entrypoint'], ['/bin/sh', '-c'])
         self.assertNotIn('bash', cmd)
+        # compose interpolates $VAR: the script's own $ must reach sh as $$
+        self.assertIn('"$$sshd_bin"', cmd)
+        self.assertNotIn('$', cmd.replace('$$', ''))
 
     def test_hostfile_in_shared_dir(self):
         pipeline = self._create_cluster_pipeline('ior_hfsd')

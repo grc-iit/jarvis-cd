@@ -6358,7 +6358,8 @@ class Pipeline:
             "container_name": container_name,
             "image": self.container_image,
             "entrypoint": ["/bin/sh", "-c"],
-            "command": [container_cmd],
+            # Compose interpolates $VAR in the file; $$ keeps the script's own.
+            "command": [container_cmd.replace("$", "$$")],
             "network_mode": "host",
             "ipc": "host",  # Share IPC namespace with host (removes shm limits)
             "volumes": volumes,
