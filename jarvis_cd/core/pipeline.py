@@ -6305,20 +6305,27 @@ class Pipeline:
                     shutil.rmtree(docker_ssh_dir)
                 shutil.copytree(ssh_dir, docker_ssh_dir)
             ssh_dir = docker_ssh_dir
-        container_cmd = (
-            f"set -e && "
-            f"cp -r /root/.ssh_host /root/.ssh && "
-            f"chmod 700 /root/.ssh && "
-            f"chmod 600 /root/.ssh/* 2>/dev/null || true && "
-            f"cat /root/.ssh/*.pub > /root/.ssh/authorized_keys 2>/dev/null && "
-            f"chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true && "
-            f'echo "Host *" > /root/.ssh/config && '
-            f'echo "    Port {ssh_port}" >> /root/.ssh/config && '
-            f'echo "    StrictHostKeyChecking no" >> /root/.ssh/config && '
-            f"chmod 600 /root/.ssh/config && "
-            f'sed -i "s/^#*Port .*/Port {ssh_port}/" /etc/ssh/sshd_config && '
-            f"/usr/sbin/sshd && "
-            f"sleep infinity"
+        # POSIX sh only: the deploy image may have no bash (the install adds
+        # bash and sshd to images that lack them, see method_install.make_ready).
+        container_cmd = "\n".join(
+            [
+                "set -e",
+                "mkdir -p /root/.ssh /run/sshd /var/run/sshd",
+                "cp -r /root/.ssh_host/. /root/.ssh/",
+                "chmod 700 /root/.ssh",
+                "chmod 600 /root/.ssh/* 2>/dev/null || true",
+                "cat /root/.ssh/*.pub >> /root/.ssh/authorized_keys 2>/dev/null || true",
+                "chmod 600 /root/.ssh/authorized_keys 2>/dev/null || true",
+                f"printf 'Host *\\n    Port {ssh_port}\\n    StrictHostKeyChecking no\\n'"
+                " > /root/.ssh/config",
+                "chmod 600 /root/.ssh/config",
+                "if [ -f /etc/ssh/sshd_config ]; then"
+                f' sed -i "s/^#*Port .*/Port {ssh_port}/" /etc/ssh/sshd_config; fi',
+                "ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1 || ssh-keygen -A",
+                "sshd_bin=$(command -v sshd || echo /usr/sbin/sshd)",
+                f'"$sshd_bin" -p {ssh_port} -o StrictModes=no -o UsePAM=no',
+                "sleep infinity || while :; do sleep 86400; done",
+            ]
         )
 
         # Create compose configuration using the global container image.
@@ -6350,7 +6357,7 @@ class Pipeline:
         service_config = {
             "container_name": container_name,
             "image": self.container_image,
-            "entrypoint": ["/bin/bash", "-c"],
+            "entrypoint": ["/bin/sh", "-c"],
             "command": [container_cmd],
             "network_mode": "host",
             "ipc": "host",  # Share IPC namespace with host (removes shm limits)
@@ -6539,10 +6546,7 @@ class Pipeline:
                     f"Compose file not found: {compose_path}. Did you load the pipeline?"
                 )
 
-            if engine == "podman":
-                up_cmd = self._podman_node(f"podman-compose -f {compose_path} up -d")
-            else:
-                up_cmd = f"docker compose -f {compose_path} up -d"
+            up_cmd = self._compose_node("up -d")
 
             self._load_archived_image()
             hostfile = self.get_hostfile()
@@ -6554,7 +6558,11 @@ class Pipeline:
                 self._distribute_image_to_hosts(hostfile)
                 exec_info = PsshExecInfo(hostfile=hostfile)
 
-            Exec(up_cmd, exec_info).run()
+            up = Exec(up_cmd, exec_info).run()
+            self._require_containers_running(
+                engine, _executor_status_error(up, operation="container start"),
+                exec_info,
+            )
             logger.success("Containers started (SSH ready)")
 
         # Now run each package via the normal per-package flow.
@@ -6589,6 +6597,76 @@ class Pipeline:
         method_install.prepare_engine("podman")
         script = method_install.podman_node_script(self.get_pipeline_shared_dir())
         return f"sh {script} {command}"
+
+    def _compose_node(self, arguments: str) -> str:
+        """The compose ``arguments`` on the pipeline's compose file, runnable on
+        every node (podman-compose by absolute path, through the node script)."""
+        import shlex
+
+        from jarvis_cd.core import method_install
+
+        engine = self.container_engine.lower()
+        compose_path = self.get_pipeline_shared_dir() / "docker-compose.yaml"
+        command = (
+            f"{method_install.compose_command(engine)} "
+            f"-f {shlex.quote(str(compose_path))} {arguments}"
+        )
+        return self._podman_node(command) if engine == "podman" else command
+
+    def _require_containers_running(
+        self, engine: str, up_error: Optional[Exception], exec_info: Any
+    ) -> None:
+        """Refuse the start, before any package runs, unless the pipeline's
+        container runs on every node: ``container_start_failed`` with the
+        engine's own error (the failed ``up``, or the container's last log)."""
+        import shlex
+
+        from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
+        from jarvis_cd.shell import Exec
+
+        name = f"{self.execution_container_name}_container"
+        diagnostic = str(up_error) if up_error is not None else ""
+        if up_error is None:
+            quoted = shlex.quote(name)
+            probe = (
+                "sleep 2; "
+                f"state=$({engine} inspect --format '{{{{.State.Running}}}}' "
+                f"{quoted} 2>&1) || true; "
+                '[ "$state" = true ] || { '
+                f'echo "container {name} is not running: $state" >&2; '
+                f"{engine} logs --tail 40 {quoted} >&2 || true; exit 1; }}"
+            )
+            command = f"sh -c {shlex.quote(probe)}"
+            if engine == "podman":
+                command = self._podman_node(command)
+            check = Exec(command, exec_info).run()
+            running_error = _executor_status_error(check, operation="container check")
+            if running_error is None:
+                return
+            diagnostic = str(running_error)
+        raise JarvisIssueError(
+            [
+                make_jarvis_issue(
+                    kind="container_start_failed",
+                    subject=name,
+                    message=(
+                        f"{engine} could not start the pipeline's container {name} "
+                        f"from {self.container_image} on every node, so no package "
+                        "was started."
+                    ),
+                    identity={
+                        "engine": engine,
+                        "image": str(self.container_image or ""),
+                        "container": name,
+                    },
+                    details={"error": diagnostic[-4096:]},
+                    remedy=(
+                        "read the engine's error above; an image without sh, bash "
+                        "or sshd is made ready by `jarvis ppl install`, then run again"
+                    ),
+                )
+            ]
+        )
 
     def _load_archived_image(self) -> None:
         """With a node-local podman store, load the deploy image on this host
@@ -6718,15 +6796,6 @@ class Pipeline:
 
         # Bring down the containers
         engine = self.container_engine.lower()
-        if engine == "apptainer":
-            stop_cmd = f"apptainer instance stop {self.execution_container_name}"
-        elif engine == "podman":
-            compose_path = self.get_pipeline_shared_dir() / "docker-compose.yaml"
-            stop_cmd = self._podman_node(f"podman-compose -f {compose_path} down")
-        else:
-            compose_path = self.get_pipeline_shared_dir() / "docker-compose.yaml"
-            stop_cmd = f"docker compose -f {compose_path} down"
-
         hostfile = self.get_hostfile()
         if self._hostfile_is_local_only(hostfile):
             exec_info = LocalExecInfo()
@@ -6734,6 +6803,10 @@ class Pipeline:
             exec_info = PsshExecInfo(hostfile=hostfile)
 
         try:
+            if engine == "apptainer":
+                stop_cmd = f"apptainer instance stop {self.execution_container_name}"
+            else:
+                stop_cmd = self._compose_node("down")
             result = Exec(stop_cmd, exec_info).run()
             status_error = _executor_status_error(
                 result,
@@ -6776,19 +6849,6 @@ class Pipeline:
 
         # Force-remove containers
         engine = self.container_engine.lower()
-        if engine == "apptainer":
-            kill_cmd = f"apptainer instance stop {self.execution_container_name}"
-        elif engine == "podman":
-            compose_path = self.get_pipeline_shared_dir() / "docker-compose.yaml"
-            kill_cmd = (
-                self._podman_node(f"podman-compose -f {compose_path} kill")
-                + " && "
-                + self._podman_node(f"podman-compose -f {compose_path} down")
-            )
-        else:
-            compose_path = self.get_pipeline_shared_dir() / "docker-compose.yaml"
-            kill_cmd = f"docker compose -f {compose_path} kill && docker compose -f {compose_path} down"
-
         hostfile = self.get_hostfile()
         if self._hostfile_is_local_only(hostfile):
             exec_info = LocalExecInfo()
@@ -6796,6 +6856,12 @@ class Pipeline:
             exec_info = PsshExecInfo(hostfile=hostfile)
 
         try:
+            if engine == "apptainer":
+                kill_cmd = f"apptainer instance stop {self.execution_container_name}"
+            else:
+                kill_cmd = (
+                    self._compose_node("kill") + " && " + self._compose_node("down")
+                )
             result = Exec(kill_cmd, exec_info).run()
             status_error = _executor_status_error(
                 result,

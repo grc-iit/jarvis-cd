@@ -8,6 +8,22 @@ from .core_exec import CoreExec, LocalExec
 from .exec_info import ExecInfo
 
 
+def _podman_compose() -> Optional[str]:
+    """``podman-compose`` on PATH, else the one installed with JARVIS (its
+    environment's ``bin`` need not be on PATH)."""
+    import os
+    import shlex
+    import shutil
+    import sys
+
+    if shutil.which('podman-compose'):
+        return 'podman-compose'
+    bundled = Path(sys.executable).parent / 'podman-compose'
+    if bundled.is_file() and os.access(bundled, os.X_OK):
+        return shlex.quote(str(bundled.absolute()))
+    return None
+
+
 class PodmanBuildExec(CoreExec):
     """
     Execute podman compose build command.
@@ -30,10 +46,10 @@ class PodmanBuildExec(CoreExec):
 
     def get_cmd(self) -> str:
         """Get the podman compose build command string"""
-        import shutil
         # Use podman-compose if available, otherwise use podman compose
-        if shutil.which('podman-compose'):
-            return f"podman-compose -f {self.compose_file} build"
+        compose = _podman_compose()
+        if compose:
+            return f"{compose} -f {self.compose_file} build"
         else:
             # Check if podman has compose subcommand
             from .exec_info import LocalExecInfo
@@ -174,10 +190,10 @@ class PodmanComposeExec(CoreExec):
 
     def get_cmd(self) -> str:
         """Get the podman compose command string"""
-        import shutil
         # Use podman-compose if available, otherwise use podman compose
-        if shutil.which('podman-compose'):
-            cmd = f"podman-compose -f {self.compose_file} {self.action}"
+        compose = _podman_compose()
+        if compose:
+            cmd = f"{compose} -f {self.compose_file} {self.action}"
         else:
             # Check if podman has compose subcommand
             from .exec_info import LocalExecInfo

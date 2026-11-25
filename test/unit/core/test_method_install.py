@@ -4,6 +4,7 @@ No tool runs: ``run_logged`` and the host probes are replaced by fakes that
 act on a temp directory the way pip, conda and podman would.
 """
 import os
+import json
 import shutil
 import subprocess
 import sys
@@ -392,8 +393,12 @@ class TestConda(_Case):
 
 class TestContainer(_Case):
     def install(self, ppl, mode='install', present=True, pull_rc=0, context=None,
-                engine_error=None, pull_out='pull output', node_store=False):
+                engine_error=None, pull_out='pull output', node_store=False,
+                lacks='', build_rc=0):
         calls = []
+
+        def built():
+            return any(call[1] == 'build' for call in calls) and build_rc == 0
 
         def run(argv, context, env=None, timeout=None):
             argv = [str(item) for item in argv]
@@ -401,11 +406,19 @@ class TestContainer(_Case):
             if argv[1] == 'save':
                 Path(argv[3]).write_text('image bytes')
                 return done(argv)
+            if argv[1] == 'run':
+                image = argv[argv.index('--entrypoint') + 2]
+                ready = image.startswith('localhost/jarvis-ready/') and built()
+                return done(argv, f"JARVIS_MISSING:{'' if ready else ' ' + lacks}\n")
+            if argv[1] == 'build':
+                return done(argv, 'build output', build_rc)
             return done(argv, pull_out, pull_rc)
 
         state = {'present': present}
 
         def image_present(ppl, engine, image):
+            if image.startswith('localhost/jarvis-ready/'):
+                return built()
             return state['present'] or (
                 any(call[1] == 'pull' for call in calls) and pull_rc == 0)
 
@@ -424,15 +437,118 @@ class TestContainer(_Case):
                 return installer.check(ppl, ppl.packages), calls
             return installer.install(ppl, ppl.packages), calls
 
+    def mark(self, ppl, source, image=None):
+        """The marker an install leaves once ``source`` is ready to run."""
+        marker = mi.deploy_marker(ppl, ppl.packages)
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({'source': source, 'image': image or source}))
+
     def test_present_image_is_satisfied_in_check(self):
         ppl = FakePipeline(self.jarvis, [pkg('container', '', 'app')],
                            container_uri='docker.io/example/foo:1')
+        self.mark(ppl, 'docker.io/example/foo:1')
         result, calls = self.install(ppl, 'check')
         self.assertEqual(result['status'], 'satisfied')
         self.assertEqual(calls, [])
         self.assertEqual(ppl.container_image, 'docker.io/example/foo:1')
         self.assertTrue(ppl.generated_compose)
         self.assertEqual(ppl.env['XDG_RUNTIME_DIR'], str(self.tmp))
+
+    def test_present_image_not_yet_made_ready_is_not_installed(self):
+        ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/example/foo:1', 'app')])
+        result, calls = self.install(ppl, 'check')
+        self.assertEqual(result['status'], 'missing')
+        self.assertEqual(calls, [])
+        self.assertIn('ready to run', self.context.issues[0]['detail'])
+
+    def test_ready_image_is_used_as_is(self):
+        ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/example/foo:1', 'app')])
+        result, calls = self.install(ppl)
+        self.assertEqual(result['status'], 'installed')
+        self.assertEqual([call[1] for call in calls], ['run'])
+        self.assertEqual(ppl.container_image, 'docker.io/example/foo:1')
+        self.assertEqual(mi.deploy_image(ppl, ppl.packages, 'docker.io/example/foo:1'),
+                         'docker.io/example/foo:1')
+
+    def test_image_without_bash_or_sshd_gets_a_ready_layer(self):
+        packages = [pkg('container', 'docker.io/library/alpine:3.20', 'app')]
+        ppl = FakePipeline(self.jarvis, packages)
+        result, calls = self.install(ppl, present=False, lacks='bash ssh sshd',
+                                     node_store=True)
+        derived = 'localhost/jarvis-ready/docker.io/library/alpine:3.20'
+        self.assertEqual(result['deploy_image'], derived)
+        self.assertEqual([call[1] for call in calls], ['pull', 'run', 'build', 'run', 'save'])
+        build = calls[2]
+        self.assertEqual(build[2:5], ['--network=host', '-t', derived])
+        containerfile = Path(build[6]).read_text()
+        self.assertIn('FROM docker.io/library/alpine:3.20', containerfile)
+        self.assertIn('apk add', containerfile)
+        self.assertIn('ssh-keygen -A', containerfile)
+        self.assertEqual(ppl.container_image, derived)
+        # the run nodes load the derived image, and the check knows it from the marker
+        self.assertTrue(mi.archived(mi.image_archive(ppl, packages), derived))
+        login = FakePipeline(self.jarvis, packages)
+        result, calls = self.install(login, 'check', present=False,
+                                     context=self.new_context())
+        self.assertEqual((result['status'], calls), ('satisfied', []))
+        self.assertEqual(login.container_image, derived)
+
+    def test_unbuildable_ready_layer_is_typed(self):
+        ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/example/foo:1', 'app')])
+        with self.assertRaises(InstallFailed) as caught:
+            self.install(ppl, lacks='sshd', build_rc=1)
+        issue = caught.exception.issues[0]
+        self.assertEqual(issue['kind'], 'container_image_not_ready')
+        self.assertIn('sshd', issue['message'])
+        self.assertIn('openssh-server', issue['remedy'])
+        self.assertIsNone(mi.deploy_image(ppl, ppl.packages, 'docker.io/example/foo:1'))
+
+    def test_image_without_a_shell_is_typed(self):
+        ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/example/foo:1', 'app')])
+        with mock.patch.object(mi, '_missing_tools', return_value=(None, 'no /bin/sh')), \
+                self.assertRaises(InstallFailed) as caught:
+            self.install(ppl)
+        self.assertEqual(caught.exception.issues[0]['kind'], 'container_image_not_ready')
+
+    def test_ready_image_names(self):
+        self.assertEqual(mi.ready_image('alpine:3.20'), 'localhost/jarvis-ready/alpine:3.20')
+        self.assertEqual(mi.ready_image('Reg.io:5000/a/b'),
+                         'localhost/jarvis-ready/reg.io-5000/a/b:latest')
+        self.assertEqual(mi.ready_image('x/y:1@sha256:abc'), 'localhost/jarvis-ready/x/y:1')
+
+    def test_compose_command_names_jarvis_podman_compose_by_path(self):
+        bin_dir = self.tmp / 'venv' / 'bin'
+        bin_dir.mkdir(parents=True)
+        compose = bin_dir / 'podman-compose'
+        compose.write_text('#!/bin/sh\n')
+        compose.chmod(0o755)
+        with mock.patch.object(sys, 'executable', str(bin_dir / 'python')), \
+                mock.patch('shutil.which', return_value=None):
+            self.assertEqual(mi.compose_command('podman'), str(compose.absolute()))
+        self.assertEqual(mi.compose_command('docker'), 'docker compose')
+
+    def test_compose_command_falls_back_then_is_typed(self):
+        from jarvis_cd.core.issues import JarvisIssueError
+
+        with mock.patch.object(sys, 'executable', str(self.tmp / 'none' / 'python')), \
+                mock.patch('shutil.which', return_value=None):
+            with mock.patch.object(mi, '_podman_has_compose', return_value=True):
+                self.assertEqual(mi.compose_command('podman'), 'podman compose')
+            with mock.patch.object(mi, '_podman_has_compose', return_value=False), \
+                    self.assertRaises(JarvisIssueError) as caught:
+                mi.compose_command('podman')
+        issue = caught.exception.issues[0]
+        self.assertEqual(issue['kind'], 'container_compose_missing')
+        self.assertIn('pip install podman-compose', issue['remedy'])
+
+    @unittest.skipUnless(os.name == 'posix', 'the node wrapper is POSIX only')
+    def test_engine_command_is_the_node_wrapper(self):
+        with mock.patch.object(mi, 'podman_wrapper_dir', return_value=self.tmp / 'bin'):
+            self.assertEqual(mi.engine_command('podman'), 'podman')
+            (self.tmp / 'bin').mkdir()
+            (self.tmp / 'bin' / 'podman').write_text('#!/bin/sh\n')
+            self.assertEqual(mi.engine_command('podman'), str(self.tmp / 'bin' / 'podman'))
+        self.assertEqual(mi.engine_command('docker'), 'docker')
 
     def test_missing_image_is_not_installed_in_check(self):
         ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/example/foo:1', 'app')])
@@ -445,7 +561,9 @@ class TestContainer(_Case):
         ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/example/foo:1', 'app')])
         result, calls = self.install(ppl, present=False)
         self.assertEqual(result['status'], 'installed')
-        self.assertEqual(calls, [['podman', 'pull', 'docker.io/example/foo:1']])
+        self.assertEqual([call[:3] for call in calls],
+                         [['podman', 'pull', 'docker.io/example/foo:1'],
+                          ['podman', 'run', '--rm']])
         self.assertEqual(ppl.container_image, 'docker.io/example/foo:1')
 
     def test_failed_pull_is_typed(self):
@@ -473,6 +591,7 @@ class TestContainer(_Case):
         self.assertEqual(self.kinds(), ['container_engine'])
         with mock.patch.object(mi, '_detect',
                                return_value=(both[1:], ['docker: rootful'], [])):
+            self.mark(ppl, 'docker.io/x/y:1')
             result, _ = self.install(ppl, 'check', context=self.new_context())
         self.assertEqual(result['status'], 'satisfied')
         self.assertEqual((ppl.container_engine, ppl.container_engine_source),
@@ -578,7 +697,7 @@ class TestContainer(_Case):
     def test_shared_store_keeps_no_archive(self):
         ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/example/foo:1', 'app')])
         _, calls = self.install(ppl, present=False)
-        self.assertEqual([call[1] for call in calls], ['pull'])
+        self.assertEqual([call[1] for call in calls], ['pull', 'run'])
         self.assertNotIn(mi.ARCHIVE_ENV, ppl.env)
 
     def test_archive_satisfies_a_host_with_the_default_store(self):

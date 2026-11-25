@@ -145,6 +145,9 @@ class TestIorDockerCluster(DockerClusterTestBase):
         cmd = compose['services']['ior_ssh']['command'][0]
         self.assertIn('/usr/sbin/sshd', cmd)
         self.assertIn('sleep infinity', cmd)
+        # POSIX sh: the image need not have bash
+        self.assertEqual(compose['services']['ior_ssh']['entrypoint'], ['/bin/sh', '-c'])
+        self.assertNotIn('bash', cmd)
 
     def test_hostfile_in_shared_dir(self):
         pipeline = self._create_cluster_pipeline('ior_hfsd')

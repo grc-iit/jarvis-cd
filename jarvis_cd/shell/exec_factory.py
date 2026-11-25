@@ -107,7 +107,13 @@ class Exec(CoreExec):
                 for k, v in env.items() if k not in _HOST_ONLY
             ]
             env_flag = (' '.join(env_flags_parts) + ' ') if env_flags_parts else ''
-            wrapped = f'{c} exec {env_flag}{container_name} {shell_cmd}'
+            engine = c
+            if c == 'podman':
+                # the node wrapper (node-local store, an OCI runtime the node
+                # has), also when this runs on another node through ssh
+                from jarvis_cd.core.method_install import engine_command
+                engine = engine_command(c)
+            wrapped = f'{engine} exec {env_flag}{container_name} {shell_cmd}'
 
         # Env vars are now carried via `-e` into the container; don't
         # also emit them as a prefix on the host shell in ssh_exec.

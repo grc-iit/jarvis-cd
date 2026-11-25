@@ -273,7 +273,7 @@ Every method has a check (`jarvis ppl install +check`) that reports what is
 missing as `not_installed` without installing, and an install that builds
 only that, inside an allocation. A failure is typed (`pip_install_failed`,
 `conda_install_failed`, `conda_bootstrap_failed`, `container_pull_failed`,
-`venv_failed`). What JARVIS cannot detect is a question in `issues.jsonl`,
+`container_image_not_ready`, `venv_failed`). What JARVIS cannot detect is a question in `issues.jsonl`,
 answered through `answers.json` and recorded in `decisions.yaml`, never a
 silent default:
 
@@ -311,6 +311,29 @@ node whose temp dir cannot hold the store (full, read-only, or missing, so
 that Python would fall back to the working directory on the shared file
 system) is `container_engine_unusable`, never a store in the working
 directory.
+
+A prebuilt image runs as SSH-ready containers, one per node: JARVIS starts
+them with `/bin/sh` and runs `sshd` in each, and packages reach them over
+SSH or `podman exec` (`bash -c`). At install, JARVIS probes the image for
+`bash`, `sshd`, `ssh` and `ssh-keygen`. An image that lacks any of them
+(plain `alpine`, say) gets a local image built on it,
+`localhost/jarvis-ready/<image>`, that adds them with the image's own
+package manager (apk, apt-get, dnf, microdnf, yum or zypper). That image is
+the one the nodes run and the one archived. The install records which image
+runs in `<container env>/deploy.json`, so the check knows it without running
+a container. An image installed before this record existed is
+`not_installed` ("make ... ready to run") until one install makes it. An
+image JARVIS cannot make ready (no `/bin/sh`, no known package manager, or
+no mirror) is `container_image_not_ready`, with a remedy, before any job
+runs.
+
+The nodes run `podman-compose` from JARVIS's own environment, by absolute
+path (that `bin` is not on a node's `PATH`), then from `PATH`, then
+`podman compose`. With none of these, the start is refused as
+`container_compose_missing`. A failed `up`, or a container that is not
+running on every node right after it, refuses the start as
+`container_start_failed`, with the engine's error or the container's last
+log, before any package starts.
 
 A package that installs several ways lists them, and leaves `install_method`
 empty:

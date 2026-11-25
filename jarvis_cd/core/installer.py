@@ -1759,10 +1759,26 @@ class ContainerInstaller(Installer):
             ppl, "check", lambda context: self._check(ppl, pkg_list, context))
 
     def _check(self, ppl, pkg_list, context):
+        from jarvis_cd.core import method_install
         from jarvis_cd.core.method_install import not_installed_issue
 
         engine, uri, result = self._prepare(ppl, pkg_list, context)
         if engine is None:
+            return result
+        if uri and engine != 'apptainer':
+            # the image that runs: the pulled one, or the one the install
+            # built on it with what JARVIS needs (sh, bash, sshd)
+            deploy = method_install.deploy_image(ppl, pkg_list, uri)
+            if deploy and self._image_ready(ppl, engine, deploy, pkg_list):
+                self._finish(ppl, deploy, pkg_list, context)
+                result.update(status="satisfied", deploy_image=deploy)
+                return result
+            what = (f"pull {uri}" if not self._image_ready(ppl, engine, uri, pkg_list)
+                    else f"make {uri} ready to run (sh, bash, sshd)")
+            context.raise_issue(not_installed_issue(
+                "container", str(pkg_list[0].get('pkg_id') or 'container'), uri, [what],
+                Path(f"{engine} image store")))
+            result["status"] = "missing"
             return result
         if self._image_ready(ppl, engine, uri, pkg_list):
             self._finish(ppl, uri or ppl.name, pkg_list, context)
@@ -1782,6 +1798,7 @@ class ContainerInstaller(Installer):
             ppl, "install", lambda context: self._install(ppl, pkg_list, context))
 
     def _install(self, ppl, pkg_list, context):
+        from jarvis_cd.core import method_install
         from jarvis_cd.core.method_install import (
             engine_fault, failed, image_present, run_logged)
 
@@ -1790,7 +1807,12 @@ class ContainerInstaller(Installer):
             return result
         package = str(pkg_list[0].get('pkg_id') or 'container')
         if uri:
-            if not self._image_ready(ppl, engine, uri, pkg_list):
+            deploy = None
+            if engine != 'apptainer':
+                deploy = method_install.deploy_image(ppl, pkg_list, uri)
+                if deploy and not self._image_ready(ppl, engine, deploy, pkg_list):
+                    deploy = None
+            if deploy is None and not self._image_ready(ppl, engine, uri, pkg_list):
                 context.ensure_may_build(f"pull the container image {uri}",
                                          [p.get('pkg_id') for p in pkg_list])
                 context.report_progress(phase="building", current_package=uri)
@@ -1808,8 +1830,13 @@ class ContainerInstaller(Installer):
                                  f"{engine} could not pull {uri}.", pulled.stdout,
                                  "check the image name and the host's registry access "
                                  "(proxy, login), then install again")
-            print(f"ContainerInstaller: using prebuilt deploy container: {uri}")
-            self._finish(ppl, uri, pkg_list, context)
+            if engine != 'apptainer' and deploy is None:
+                deploy = method_install.make_ready(ppl, pkg_list, engine, uri, context)
+            deploy = deploy or uri
+            if deploy != uri:
+                result["deploy_image"] = deploy
+            print(f"ContainerInstaller: using prebuilt deploy container: {deploy}")
+            self._finish(ppl, deploy, pkg_list, context)
         else:
             if not self._image_ready(ppl, engine, uri, pkg_list):
                 self._build_pipeline_container(ppl)

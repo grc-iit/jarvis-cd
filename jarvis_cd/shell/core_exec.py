@@ -495,7 +495,11 @@ class MpiVersion(LocalExec):
                 self.cmd = f"apptainer exec instance://{img} mpiexec --version"
             else:
                 container_name = f"{img}_container" if img else ""
-                self.cmd = f"{c} exec {container_name} mpiexec --version"
+                engine = c
+                if c == "podman":
+                    from jarvis_cd.core.method_install import engine_command
+                    engine = engine_command(c)
+                self.cmd = f"{engine} exec {container_name} mpiexec --version"
 
         # Create modified exec_info for introspection
         # CRITICAL: Must set exec_async=False to ensure we wait for output

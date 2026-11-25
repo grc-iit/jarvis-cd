@@ -1489,6 +1489,193 @@ def _engine_env(ppl, archive: Optional[Path] = None) -> None:
         env[ARCHIVE_ENV] = str(archive)
 
 
+def engine_command(engine: str) -> str:
+    """The command that runs ``engine`` on a pipeline node.
+
+    For podman it is the node wrapper's absolute path (the run writes it on
+    every node), so a command reached through ssh gets the node's store and
+    OCI runtime and not the default store under the home.
+    """
+    if engine != "podman" or os.name != "posix":
+        return engine
+    try:
+        wrapper = podman_wrapper_dir() / "podman"
+    except OSError:
+        return engine
+    return shlex.quote(str(wrapper)) if wrapper.is_file() else engine
+
+
+def _podman_has_compose() -> bool:
+    try:
+        result = subprocess.run(["podman", "compose", "--help"], stdout=subprocess.DEVNULL,
+                                stderr=subprocess.DEVNULL, timeout=60, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def compose_command(engine: str) -> str:
+    """The compose command for ``engine``, runnable on every pipeline node.
+
+    ``podman-compose`` is installed with JARVIS, in its own environment's
+    ``bin``, which is not on a node's PATH: it is named by absolute path (the
+    environment is on the shared file system the nodes run JARVIS from). Then
+    ``podman-compose`` on PATH, then ``podman compose``. With none, the start
+    is refused with a typed ``container_compose_missing`` issue.
+    """
+    if engine != "podman":
+        return "docker compose"
+    found = [Path(sys.executable).parent / "podman-compose"]
+    on_path = shutil.which("podman-compose")
+    if on_path:
+        found.append(Path(on_path))
+    for candidate in found:
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return shlex.quote(str(candidate.absolute()))
+    if _podman_has_compose():
+        return "podman compose"
+    from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
+
+    raise JarvisIssueError([make_jarvis_issue(
+        kind="container_compose_missing", subject="podman-compose",
+        message=(f"JARVIS starts podman containers with podman-compose, which is not in "
+                 f"JARVIS's environment ({Path(sys.executable).parent}) or on PATH, and "
+                 "this podman has no `podman compose`."),
+        identity={"python": sys.executable},
+        remedy=("install podman-compose into JARVIS's Python environment "
+                f"(`{sys.executable} -m pip install podman-compose`), then run again"))])
+
+
+#: What JARVIS needs in a deploy image: a shell for the entrypoint, sshd for the
+#: SSH-ready containers, ssh for MPI between them, and bash for ``exec``.
+_READY_PROBE = (
+    'missing=; '
+    'for tool in bash ssh ssh-keygen; do command -v "$tool" >/dev/null 2>&1 '
+    '|| missing="$missing $tool"; done; '
+    '{ command -v sshd >/dev/null 2>&1 || [ -x /usr/sbin/sshd ]; } || missing="$missing sshd"; '
+    'echo "JARVIS_MISSING:$missing"'
+)
+
+_READY_LAYER = r"""# written by JARVIS: what it needs to run {image} as SSH-ready containers
+FROM {image}
+RUN set -e; \
+    if command -v apk >/dev/null 2>&1; then \
+      apk add --no-cache bash openssh-server openssh-client openssh-keygen; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+      apt-get update; \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        bash openssh-server openssh-client; \
+      rm -rf /var/lib/apt/lists/*; \
+    elif command -v dnf >/dev/null 2>&1; then \
+      dnf install -y bash openssh-server openssh-clients; dnf clean all; \
+    elif command -v microdnf >/dev/null 2>&1; then \
+      microdnf install -y bash openssh-server openssh-clients; microdnf clean all; \
+    elif command -v yum >/dev/null 2>&1; then \
+      yum install -y bash openssh-server openssh-clients; yum clean all; \
+    elif command -v zypper >/dev/null 2>&1; then \
+      zypper --non-interactive install bash openssh; \
+    else \
+      echo "JARVIS: {image} has no package manager JARVIS knows (apk, apt-get, dnf, microdnf, yum, zypper) to add:{missing}" >&2; \
+      exit 3; \
+    fi; \
+    mkdir -p /run/sshd /var/run/sshd /root/.ssh; \
+    ssh-keygen -A
+"""
+
+
+def ready_image(image: str) -> str:
+    """The local name of ``image`` with what JARVIS adds to run it."""
+    ref = image.split("@", 1)[0]
+    name, tag = ref, "latest"
+    if ":" in ref.rsplit("/", 1)[-1]:
+        name, tag = ref.rsplit(":", 1)
+    name = re.sub(r"[^a-z0-9._/-]+", "-", name.lower()).strip("/-") or "image"
+    tag = re.sub(r"[^A-Za-z0-9._-]+", "-", tag)[:128] or "latest"
+    return f"localhost/jarvis-ready/{name}:{tag}"
+
+
+def deploy_marker(ppl, pkg_list: Sequence[Mapping[str, Any]]) -> Path:
+    """``<container env>/deploy.json``: which image runs for the pulled one."""
+    return env_prefix(ppl, "container", pkg_list) / "deploy.json"
+
+
+def deploy_image(ppl, pkg_list: Sequence[Mapping[str, Any]], source: str) -> Optional[str]:
+    """The image that runs for ``source``, once an install made it ready, else None."""
+    try:
+        meta = json.loads(deploy_marker(ppl, pkg_list).read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(meta, dict) or meta.get("source") != source:
+        return None
+    image = meta.get("image")
+    return image if isinstance(image, str) and image else None
+
+
+def _missing_tools(engine: str, image: str, context) -> Tuple[Optional[List[str]], str]:
+    """``(missing, output)``: the tools ``image`` lacks, None when it cannot run a shell."""
+    probe = run_logged([engine, "run", "--rm", "--network=host", "--entrypoint", "/bin/sh",
+                        image, "-c", _READY_PROBE], context)
+    for line in (probe.stdout or "").splitlines():
+        if line.startswith("JARVIS_MISSING:"):
+            return [str(tool) for tool in line.split(":", 1)[1].split()], probe.stdout or ""
+    return None, probe.stdout or ""
+
+
+def make_ready(ppl, pkg_list, engine: str, image: str, context) -> str:
+    """The image that runs for ``image``: itself when it has what JARVIS needs
+    (sh, bash, sshd, ssh), else a local image built on it that adds them.
+
+    It runs where the install runs (the image is in this store or its archive),
+    and records the answer in :func:`deploy_marker` for the check and the runs.
+    A gap JARVIS cannot fill is a typed ``container_image_not_ready`` failure
+    before any run.
+    """
+    package = str(pkg_list[0].get("pkg_id") or "container") if pkg_list else "container"
+    if not image_present(ppl, engine, image):
+        archive = archive_of(ppl, pkg_list, engine, image)
+        if archive is not None:
+            load_archived(engine, image, str(archive))
+    remedy = ("use an image that has /bin/sh, bash and sshd (openssh-server), or let "
+              "this node reach the image's package mirror, then install again")
+    missing, output = _missing_tools(engine, image, context)
+    if missing is None:
+        raise failed(context, "container_image_not_ready", "container", package, image,
+                     f"{engine} could not run /bin/sh in {image}, and JARVIS needs a "
+                     "shell in it to start sshd.", output, remedy)
+    deploy = image
+    if missing:
+        derived = ready_image(image)
+        context.ensure_may_build(f"add {', '.join(missing)} to the container image {image}",
+                                 [p.get("pkg_id") for p in pkg_list])
+        context.report_progress(phase="building", current_package=derived)
+        build_dir = env_prefix(ppl, "container", pkg_list) / "ready"
+        build_dir.mkdir(parents=True, exist_ok=True)
+        containerfile = build_dir / "Containerfile"
+        containerfile.write_text(_READY_LAYER.format(image=image,
+                                                     missing=" " + " ".join(missing)))
+        context.log(f"[{_utc_now()}] {image} lacks {', '.join(missing)}; building "
+                    f"{derived} with them\n")
+        built = run_logged([engine, "build", "--network=host", "-t", derived,
+                            "-f", containerfile, build_dir], context)
+        still, more = (None, "")
+        if built.returncode == 0:
+            still, more = _missing_tools(engine, derived, context)
+        if built.returncode != 0 or still:
+            engine_fault(context, engine, package, built.stdout)
+            raise failed(context, "container_image_not_ready", "container", package, image,
+                         f"{image} lacks {', '.join(missing)}, which JARVIS needs to run it "
+                         f"on the nodes, and {engine} could not build {derived} with them.",
+                         (built.stdout or "") + more, remedy)
+        deploy = derived
+    marker = deploy_marker(ppl, pkg_list)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(json.dumps({
+        "source": image, "image": deploy, "added": missing, "engine": engine,
+        "host": socket.gethostname(), "made_at": _utc_now(),
+    }, indent=2) + "\n")
+    return deploy
+
+
 def method_fits(method: str) -> Tuple[bool, str]:
     """Whether ``method`` can install on this host now, and why."""
     if method == "spack":

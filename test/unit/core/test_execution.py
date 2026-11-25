@@ -1510,6 +1510,59 @@ def test_container_start_forwards_execution_owned_progress(
     assert pipeline._started_instances
 
 
+@pytest.mark.parametrize(
+    ("failing", "error"),
+    [
+        (" up -d", "exec: podman-compose: not found"),
+        ("inspect", "container demo is not running: false\nsh: /usr/sbin/sshd: not found"),
+    ],
+)
+def test_container_start_failure_is_typed_before_any_package(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failing: str,
+    error: str,
+) -> None:
+    """A failed ``up``, or a container not running after it, refuses the start."""
+    from jarvis_cd.core.issues import JarvisIssueError
+
+    pipeline = _pipeline_double(tmp_path)
+    pipeline.container_engine = "docker"
+    pipeline.container_image = "example:latest"
+    pipeline.packages = [{"pkg_id": "app", "pkg_type": "builtin.example"}]
+    pipeline._started_instances = []
+    pipeline._hostfile_is_local_only = Mock(return_value=True)
+    pipeline.get_hostfile = Mock(return_value=SimpleNamespace(hosts=["localhost"]))
+    shared_dir = pipeline.get_pipeline_shared_dir()
+    shared_dir.mkdir(parents=True)
+    (shared_dir / "docker-compose.yaml").write_text("services: {}\n", encoding="utf-8")
+    commands: list[str] = []
+
+    class FailingExec:
+        def __init__(self, command: str, _exec_info: object) -> None:
+            commands.append(command)
+            failed = failing in command
+            self.exit_code = {"localhost": 1 if failed else 0}
+            self.stderr = {"localhost": error if failed else ""}
+
+        def run(self) -> "FailingExec":
+            return self
+
+    pipeline._load_package_instance = Mock()
+    monkeypatch.setattr(jarvis_cd.shell, "Exec", FailingExec)
+
+    with pytest.raises(JarvisIssueError) as caught:
+        pipeline._start_containerized_pipeline()
+
+    issue = caught.value.issues[0]
+    assert issue["kind"] == "container_start_failed"
+    assert error.splitlines()[-1] in issue["details"]["error"]
+    assert issue["remedy"]
+    assert "docker compose -f" in commands[0]
+    pipeline._load_package_instance.assert_not_called()
+    assert pipeline._started_instances == []
+
+
 def test_scheduler_finalizer_covers_failures_before_pipeline_run(
     tmp_path: Path,
 ) -> None:
