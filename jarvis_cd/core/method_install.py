@@ -35,6 +35,7 @@ Pip installs into a venv and conda into an env, both under
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import platform
@@ -826,12 +827,29 @@ def _uid() -> int:
     return getattr(os, "getuid", lambda: 0)()
 
 
+def _node_tmp() -> Path:
+    """This node's temp dir for podman's runtime dir and store.
+
+    With no usable temp dir Python falls back to the working directory, which in
+    a job is usually on the shared file system: refuse that rather than put the
+    node-local store there.
+    """
+    path = tempfile.gettempdir()
+    named = {os.path.abspath(value) for value in
+             (os.environ.get(name, "") for name in ("TMPDIR", "TEMP", "TMP")) if value}
+    if (path not in named | {"/tmp", "/var/tmp", "/usr/tmp"}
+            and os.path.realpath(path) == os.path.realpath(os.getcwd())):
+        raise FileNotFoundError(errno.ENOENT, "No usable temporary directory on this node "
+                                "(Python fell back to the working directory)", path)
+    return Path(path)
+
+
 def _runtime_base() -> Path:
-    return Path(tempfile.gettempdir()) / f"jarvis-podman-{_uid()}"
+    return _node_tmp() / f"jarvis-podman-{_uid()}"
 
 
 def _store_base() -> Path:
-    return Path(tempfile.gettempdir()) / f"jarvis-podman-{_uid()}-store"
+    return _node_tmp() / f"jarvis-podman-{_uid()}-store"
 
 
 def podman_runtime_dir() -> Optional[str]:
@@ -912,7 +930,10 @@ def _storage_conf(base: Path) -> str:
 
 def node_store_conf() -> Optional[str]:
     """The node-local store's ``storage.conf`` when JARVIS gave podman one, else None."""
-    conf = str(_store_base() / "storage.conf")
+    try:
+        conf = str(_store_base() / "storage.conf")
+    except OSError:
+        return None
     return conf if os.environ.get("CONTAINERS_STORAGE_CONF", "").strip() == conf else None
 
 
@@ -1181,9 +1202,10 @@ def engine_error(executable: str) -> Optional[str]:
 
 _ENGINE_FAULTS = (
     (re.compile(r"No space left on device|Read-only file system|No usable temporary "
-                r"directory|could not set up", re.I),
-     "this node's temp dir has no room (or no write access) for podman's node-local store: "
-     "free it, or set TMPDIR to a node-local disk with space"),
+                r"directory|could not set up|runroot is longer than", re.I),
+     "this node's temp dir cannot hold podman's node-local store (full, read-only, missing, "
+     "or a path too long for podman): free it, or set TMPDIR to a short node-local path "
+     "with space"),
     (re.compile(r"database configuration mismatch|pivot|graphroot|overlay", re.I),
      "podman's image store cannot work here: it is on a network file system, or another "
      "host made it. Set JARVIS_PODMAN_STORE=node so JARVIS gives each node its own store, "

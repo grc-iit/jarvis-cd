@@ -536,6 +536,18 @@ class TestContainer(_Case):
         self.assertIn('TMPDIR', issue['remedy'])
         self.assertIn('cannot set it up', issue['message'])
 
+    def test_store_never_falls_back_to_the_working_directory(self):
+        cwd = os.getcwd()
+        clean = {k: v for k, v in os.environ.items() if k not in ('TMPDIR', 'TEMP', 'TMP')}
+        with mock.patch('tempfile.gettempdir', return_value=cwd), \
+                mock.patch.dict(os.environ, clean, clear=True):
+            with self.assertRaises(OSError):
+                mi._store_base()
+            self.assertIsNone(mi.node_store_conf())
+        with mock.patch('tempfile.gettempdir', return_value=cwd), \
+                mock.patch.dict(os.environ, {**clean, 'TMPDIR': cwd}, clear=True):
+            self.assertEqual(mi._store_base().parent, Path(cwd))
+
     def test_pull_failing_on_the_store_is_unusable(self):
         ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/example/foo:1', 'app')])
         out = 'Error: creating overlay mount: pivot dir: mkdir: operation not permitted'

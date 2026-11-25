@@ -303,7 +303,11 @@ wrapper first on `PATH`. It passes the store as `--root`, `--runroot`,
 `--storage-driver` and `--tmpdir`. When podman's default OCI runtime is
 missing on a node (a login node may have `crun` while compute nodes only
 have `runc`), the wrapper finds one that node has and passes `--runtime`.
-It probes once per node and caches the result in the node's store dir.
+It probes once per node and caches the result in the node's store dir. A
+node whose temp dir cannot hold the store (full, read-only, or missing, so
+that Python would fall back to the working directory on the shared file
+system) is `container_engine_unusable`, never a store in the working
+directory.
 
 A package that installs several ways lists them, and leaves `install_method`
 empty:
