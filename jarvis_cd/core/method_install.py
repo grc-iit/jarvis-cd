@@ -1104,8 +1104,9 @@ def _prepare_error(engine: str) -> Optional[str]:
     try:
         prepare_engine(engine)
     except OSError as exc:
-        return (f"JARVIS could not set up {engine}'s runtime dir, store or wrapper under "
-                f"{tempfile.gettempdir()} on {socket.gethostname()}: {exc}")
+        # not tempfile.gettempdir(): it raises itself when no temp dir is usable
+        return (f"JARVIS could not set up {engine}'s runtime dir, store or wrapper in "
+                f"this node's temp dir on {socket.gethostname()}: {exc}")
     return None
 
 
@@ -1179,7 +1180,8 @@ def engine_error(executable: str) -> Optional[str]:
 
 
 _ENGINE_FAULTS = (
-    (re.compile(r"No space left on device|Read-only file system|could not set up", re.I),
+    (re.compile(r"No space left on device|Read-only file system|No usable temporary "
+                r"directory|could not set up", re.I),
      "this node's temp dir has no room (or no write access) for podman's node-local store: "
      "free it, or set TMPDIR to a node-local disk with space"),
     (re.compile(r"database configuration mismatch|pivot|graphroot|overlay", re.I),

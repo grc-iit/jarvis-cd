@@ -523,16 +523,16 @@ class TestContainer(_Case):
         def which(name):
             return '/usr/bin/podman' if name == 'podman' else None
 
-        full = OSError(28, 'No space left on device')
+        full = FileNotFoundError(2, "No usable temporary directory found in ['/tmp']")
         with mock.patch('shutil.which', side_effect=which), \
-                mock.patch.object(mi, 'podman_runtime_dir', side_effect=full), \
+                mock.patch('tempfile.gettempdir', side_effect=full), \
                 mock.patch.object(mi, 'engine_error') as info:
             engine = mi.resolve_engine(ppl, self.context)
         self.assertIsNone(engine)
         info.assert_not_called()
         issue = self.context.issues[0]
         self.assertEqual(issue['kind'], 'container_engine_unusable')
-        self.assertIn('No space left on device', issue['detail'])
+        self.assertIn('No usable temporary directory', issue['detail'])
         self.assertIn('TMPDIR', issue['remedy'])
         self.assertIn('cannot set it up', issue['message'])
 
