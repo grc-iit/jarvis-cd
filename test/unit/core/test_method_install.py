@@ -642,6 +642,30 @@ class TestContainer(_Case):
         self.assertEqual(self.kinds(), ['container_engine_unusable'])
         self.assertIn('/etc/subuid', self.context.issues[0]['remedy'])
 
+    def test_node_without_podman_is_missing_despite_jarvis_wrapper(self):
+        """JARVIS's own wrapper, first on PATH, is not the node's podman."""
+        ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/x/y:1', 'app')])
+        wrapper_dir = self.tmp / 'store' / 'bin'
+        wrapper_dir.mkdir(parents=True)
+        wrapper = wrapper_dir / 'podman'
+        wrapper.write_text('#!/bin/sh\n')
+        wrapper.chmod(0o755)
+        real_dir = self.tmp / 'usr-bin'
+        real_dir.mkdir()
+        with mock.patch.object(mi, 'podman_wrapper_dir', return_value=wrapper_dir), \
+                mock.patch('shutil.which', return_value=str(wrapper)), \
+                mock.patch.dict(os.environ, {'PATH': os.pathsep.join(
+                    [str(wrapper_dir), str(real_dir)])}), \
+                mock.patch.object(mi, '_prepare_error') as prepare:
+            self.assertIsNone(mi.engine_on_path('podman'))
+            self.assertIsNone(mi.resolve_engine(ppl, self.context))
+            real = real_dir / 'podman'
+            real.write_text('#!/bin/sh\n')
+            real.chmod(0o755)
+            self.assertEqual(mi.engine_on_path('podman'), str(real))
+        prepare.assert_not_called()
+        self.assertEqual(self.kinds(), ['container_engine_missing'])
+
     def test_full_temp_dir_is_unusable_not_a_crash(self):
         ppl = FakePipeline(self.jarvis, [pkg('container', 'docker.io/x/y:1', 'app')],
                            source='default')

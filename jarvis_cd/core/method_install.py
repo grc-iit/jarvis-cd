@@ -1244,6 +1244,27 @@ def unusable_issue(engine: str, error: str, evidence: Sequence[str] = ()) -> Dic
     return issue
 
 
+def engine_on_path(engine: str) -> Optional[str]:
+    """``engine`` as this host has it: JARVIS's own podman wrapper (first on
+    PATH once prepared) does not count, so a node without podman says so."""
+    found = shutil.which(engine)
+    if engine != "podman" or not found:
+        return found
+    try:
+        wrapper_dir = podman_wrapper_dir().resolve()
+    except OSError:
+        return found
+    if Path(found).resolve().parent != wrapper_dir:
+        return found
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry or Path(entry).resolve() == wrapper_dir:
+            continue
+        candidate = Path(entry) / engine
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
 def _detect() -> Tuple[List[Dict[str, Any]], List[str], List[Dict[str, str]]]:
     found: List[Dict[str, Any]] = []
     excluded: List[str] = []
@@ -1252,7 +1273,7 @@ def _detect() -> Tuple[List[Dict[str, Any]], List[str], List[Dict[str, str]]]:
     if apptainer:
         found.append({"id": "apptainer", "constraint": "apptainer", "executable": apptainer,
                       "source": apptainer, "does": "runs as this user"})
-    podman = shutil.which("podman")
+    podman = engine_on_path("podman")
     if podman:
         error = _prepare_error("podman")
         podman = shutil.which("podman") or podman  # the wrapper, now first on PATH
@@ -1297,15 +1318,15 @@ def resolve_engine(ppl, context) -> Optional[str]:
     explicit = getattr(ppl, "container_engine_source", "yaml") == "yaml"
     engine = str(getattr(ppl, "container_engine", "") or "")
     if explicit and engine:
-        setup_error = _prepare_error(engine)
-        if shutil.which(engine) is None:
+        if engine_on_path(engine) is None:
             context.raise_issue(_issue(
                 "container_engine_missing", "*", "container_engine",
-                f"The pipeline names container_engine {engine!r}, which this host does "
-                "not have.",
+                f"The pipeline names container_engine {engine!r}, which this host "
+                f"({socket.gethostname()}) does not have.",
                 method="container", scope="site", evidence=[f"`command -v {engine}`"],
                 hint="install the engine or name another container_engine"))
             return None
+        setup_error = _prepare_error(engine)
         error = setup_error or (engine_error(engine) if engine == "podman" else None)
         if error:
             context.raise_issue(unusable_issue(engine, error))
