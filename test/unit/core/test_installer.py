@@ -1,11 +1,9 @@
 """
-Tests for the Installer factory and the concrete pip / conda / spack /
-container installers.
+Tests for the Installer factory, its grouping, and the spack installer.
 
-The pip / conda / spack tests stub out subprocess execution so they run
-fast and don't need the underlying tooling present. The container test
-exercises ``Installer.get_installers()`` grouping plus the prebuilt-uri
-fast path (no real ``docker build`` invoked).
+The pip, conda and container installers are covered in
+``test_method_install.py``. These tests stub out subprocess execution so
+they run fast and don't need the underlying tooling present.
 """
 import os
 import sys
@@ -161,59 +159,6 @@ class TestAggregateQueries(unittest.TestCase):
         self.assertEqual(Installer._aggregate_queries([empty]), [])
 
 
-class _BaseRunMock(unittest.TestCase):
-    """Patches the Exec/LocalExecInfo helper inside installer.py so
-    concrete installers can be exercised without invoking real tools."""
-
-    def setUp(self):
-        import tempfile
-        patcher = mock.patch('jarvis_cd.core.installer._run_local',
-                             return_value=0)
-        self.addCleanup(patcher.stop)
-        self.mock_run = patcher.start()
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.jarvis = FakeJarvis(tmp.name)
-
-
-class TestPipInstaller(_BaseRunMock):
-
-    def test_runs_aggregated_pip_install(self):
-        ppl = FakePipeline(jarvis=self.jarvis)
-        pkgs = [pkg('pip', 'numpy', 'a'), pkg('pip', 'pandas==2.1', 'b')]
-        PipInstaller().install(ppl, pkgs)
-        self.mock_run.assert_called_once()
-        cmd = self.mock_run.call_args[0][0]
-        self.assertIn('pip install', cmd)
-        self.assertIn('numpy', cmd)
-        self.assertIn('pandas==2.1', cmd)
-
-    def test_no_queries_is_noop(self):
-        ppl = FakePipeline(jarvis=self.jarvis)
-        PipInstaller().install(ppl, [])
-        self.mock_run.assert_not_called()
-
-    def test_failure_raises(self):
-        self.mock_run.return_value = 1
-        ppl = FakePipeline(jarvis=self.jarvis)
-        with self.assertRaises(RuntimeError):
-            PipInstaller().install(ppl, [pkg('pip', 'numpy')])
-
-
-class TestCondaInstaller(_BaseRunMock):
-
-    def test_runs_aggregated_conda_install(self):
-        ppl = FakePipeline(jarvis=self.jarvis)
-        CondaInstaller().install(
-            ppl, [pkg('conda', 'numpy'), pkg('conda', 'scipy')]
-        )
-        self.mock_run.assert_called_once()
-        cmd = self.mock_run.call_args[0][0]
-        self.assertTrue(cmd.startswith('conda install -y'))
-        self.assertIn('numpy', cmd)
-        self.assertIn('scipy', cmd)
-
-
 _SPEC_ALL_PRESENT = (
     "[+]  aaaaaaa  lammps@2023%gcc@11 arch=linux\n"
     "[^]  bbbbbbb      ^fftw@3.3%gcc@11 arch=linux\n"
@@ -352,64 +297,15 @@ class TestSpackInstaller(unittest.TestCase):
             self.assertIn('^mpich/fffffff', stream.read())
 
 
-class TestContainerInstaller(unittest.TestCase):
-    """ContainerInstaller exercise that avoids real builds.
-
-    The prebuilt-URI path is the easiest to verify end-to-end without a
-    container engine present: with a uri set and the image flagged as
-    locally available, install() just sets ppl.container_image and
-    generates the runtime artifacts.
-    """
-
-    def test_prebuilt_uri_path(self):
-        ppl = FakePipeline(
-            container_uri='docker.io/example/foo:latest',
-            container_engine='podman',
-            packages=[pkg('container', '', 'app')],
-        )
-        with mock.patch.object(
-            ContainerInstaller, '_ensure_container_uri_available',
-            return_value=True,
-        ) as mock_ensure:
-            ContainerInstaller().install(ppl, ppl.packages)
-        mock_ensure.assert_called_once_with(ppl)
-        self.assertEqual(ppl.container_image,
-                         'docker.io/example/foo:latest')
-        self.assertTrue(ppl.saved)
-        self.assertTrue(ppl.generated_yaml)
-        self.assertTrue(ppl.generated_compose)
-
-    def test_apptainer_skips_compose_generation(self):
-        ppl = FakePipeline(
-            container_uri='oras://example/foo.sif',
-            container_engine='apptainer',
-            packages=[pkg('container', '', 'app')],
-        )
-        with mock.patch.object(
-            ContainerInstaller, '_ensure_container_uri_available',
-            return_value=True,
-        ):
-            ContainerInstaller().install(ppl, ppl.packages)
-        self.assertTrue(ppl.generated_yaml)
-        self.assertFalse(ppl.generated_compose)
-
-    def test_prebuilt_uri_unavailable_raises(self):
-        ppl = FakePipeline(
-            container_uri='docker.io/nope/missing:tag',
-            container_engine='podman',
-            packages=[pkg('container', '', 'app')],
-        )
-        with mock.patch.object(
-            ContainerInstaller, '_ensure_container_uri_available',
-            return_value=False,
-        ):
-            with self.assertRaises(RuntimeError):
-                ContainerInstaller().install(ppl, ppl.packages)
-
-
-class TestInstallAll(_BaseRunMock):
+class TestInstallAll(unittest.TestCase):
     """Integration smoke test: install_all routes packages to each
     installer and updates env."""
+
+    def setUp(self):
+        import tempfile
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.jarvis = FakeJarvis(tmp.name)
 
     def test_dispatch_runs_pip_and_spack(self):
         import subprocess
@@ -436,7 +332,10 @@ class TestInstallAll(_BaseRunMock):
         ) as MockEM, mock.patch(
             'jarvis_cd.core.spack_install.SpackRunner.run',
             autospec=True, side_effect=fake_spack,
-        ):
+        ), mock.patch(
+            'jarvis_cd.core.method_install.pip_run',
+            return_value={'method': 'pip', 'status': 'installed'},
+        ) as pip_run:
             MockEM.return_value.capture_spack_environment.return_value = {}
             context = InstallContext(
                 install_dir=tmp, decisions_path=os.path.join(tmp, 'd.yaml'))
@@ -447,8 +346,9 @@ class TestInstallAll(_BaseRunMock):
                 context.close()
 
         # pip runs its install; spack only resolves (everything is present)
-        self.assertEqual(self.mock_run.call_count, 1)
-        self.assertIn('pip install', self.mock_run.call_args[0][0])
+        pip_run.assert_called_once()
+        self.assertEqual(pip_run.call_args[0][3], 'install')
+        self.assertEqual(report['installers']['pip']['status'], 'installed')
         # spack only reads its config and resolves (everything is present)
         self.assertTrue(all(c[:2] == ['config', 'get']
                             for c in spack_calls if c[0] == 'config'))

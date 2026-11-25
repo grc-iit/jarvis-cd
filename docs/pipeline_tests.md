@@ -265,12 +265,46 @@ The thing to install is named by **`install_query`** (the legacy alias
 | `install_method` | `install_query` is …                    | Action |
 |------------------|------------------------------------------|--------|
 | `spack`          | a Spack spec, e.g. `ior@3.3.0 +hdf5`     | find-first: reuse what Spack already has, build only missing nodes, then `spack load /<hash>` its env into the run |
-| `pip`            | one or more pip requirement specs        | `python3 -m pip install <specs>` |
-| `conda`          | conda package specs                      | `conda install <specs>` |
-| `container`      | (n/a — built from the package Dockerfiles) | builds/pulls the deploy image |
+| `pip`            | one or more pip requirements             | find-first into a venv at `<jarvis root>/envs/pip/<install_env or pipeline>`; its `bin` goes first on `PATH` |
+| `conda`          | conda package specs                      | find-first into an env at `<jarvis root>/envs/conda/<install_env or pipeline>`, from `install_channels` |
+| `container`      | the image to pull (or empty: built from the package Dockerfiles) | find-first: reuse the image if the engine has it, else pull or build it |
 
-Pip, conda and container packages sharing an installer are batched into a
-single command. Spack packages are resolved one by one (below).
+Every method has a check (`jarvis ppl install +check`) that reports what is
+missing as `not_installed` without installing, and an install that builds
+only that, inside an allocation. A failure is typed (`pip_install_failed`,
+`conda_install_failed`, `conda_bootstrap_failed`, `container_pull_failed`,
+`venv_failed`). What JARVIS cannot detect is a question in `issues.jsonl`,
+answered through `answers.json` and recorded in `decisions.yaml`, never a
+silent default:
+
+| Issue | When | Answer |
+|-------|------|--------|
+| `python_missing` | no `python3` with `venv` and `ensurepip` for the pip venv | a Python (or set `install_python`) |
+| `conda_select` | several condas | one of them (or set `install_conda`) |
+| `conda_missing` | no conda | `miniforge`: JARVIS installs Miniforge into the site home (`<site>/miniforge3`) in the install job |
+| `container_engine` | the pipeline names no `container_engine` and several engines run as this user | one of them |
+| `container_engine_missing` | no apptainer, rootless podman or rootless docker | none: install one, or name `container_engine` |
+| `install_method` | the package lists several `install_methods` and more than one fits this site | one of the fitting methods |
+
+Pip and conda never install an MPI: a query naming one (conda's `mpi4py`
+too) is refused as `mpi_from_package_manager`. MPI codes use Spack, which
+reuses the site's MPI. A shared rootful docker daemon is never picked on its
+own; podman gets a private `XDG_RUNTIME_DIR` on batch nodes that have none.
+
+A package that installs several ways lists them, and leaves `install_method`
+empty:
+
+```yaml
+install_methods:
+  - {method: spack, query: py-rich}
+  - {method: pip, query: "rich==13.7"}
+```
+
+JARVIS uses the one whose tool this site has (Spack, a `python3`, a conda, a
+container engine), asks when several do, and records the answer for the
+package.
+
+Spack packages are resolved one by one (below).
 
 ### Spack example
 

@@ -1180,6 +1180,9 @@ class Pipeline:
             ""  # Pre-built deploy image URI (skips build+deploy when set)
         )
         self.container_engine = "podman"  # Default container engine
+        #: "yaml" when the pipeline names container_engine, "default" when it
+        #: does not (the installer then detects or asks), "detected" after that
+        self.container_engine_source = "default"
         self.container_base = "iowarp/iowarp-build:latest"  # Base image
         self.container_ssh_port = 2222  # Default SSH port for containers
         self.container_extensions = {}  # Custom extensions to Docker compose file
@@ -3344,6 +3347,7 @@ class Pipeline:
         pipeline_config["container_image"] = self.container_image
         pipeline_config["container_uri"] = self.container_uri
         pipeline_config["container_engine"] = self.container_engine
+        pipeline_config["container_engine_source"] = self.container_engine_source
         pipeline_config["container_base"] = self.container_base
         pipeline_config["container_ssh_port"] = self.container_ssh_port
         if self.container_extensions:
@@ -5209,6 +5213,9 @@ class Pipeline:
         self.container_image = pipeline_config.get("container_image", "")
         self.container_uri = pipeline_config.get("container_uri", "")
         self.container_engine = pipeline_config.get("container_engine", "podman")
+        self.container_engine_source = pipeline_config.get(
+            "container_engine_source", "yaml"
+        )
         self.container_base = pipeline_config.get(
             "container_base", "iowarp/iowarp-build:latest"
         )
@@ -5499,6 +5506,9 @@ class Pipeline:
         self.container_image = pipeline_def.get("container_image", "")
         self.container_uri = pipeline_def.get("container_uri", "")
         self.container_engine = pipeline_def.get("container_engine", "podman")
+        self.container_engine_source = (
+            "yaml" if pipeline_def.get("container_engine") else "default"
+        )
         self.container_base = pipeline_def.get(
             "container_base", "iowarp/iowarp-build:latest"
         )

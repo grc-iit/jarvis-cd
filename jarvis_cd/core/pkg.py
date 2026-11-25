@@ -882,20 +882,60 @@ class Pkg:
                 "name": "install_method",
                 "msg": "Installer to use for this package "
                 "('pip', 'conda', 'spack', 'container'). Empty "
-                "string defers to the pipeline's base_deploy_mode.",
+                "string uses install_methods, else the pipeline's "
+                "base_deploy_mode.",
                 "type": str,
                 "default": "",
             },
             {
                 "name": "install_query",
-                "msg": "Package spec consumed by the installer (e.g. spack "
-                "spec, pip requirement, conda package name).",
+                "msg": "Package spec consumed by the installer (a spack "
+                "spec, pip requirements, conda package specs, or the "
+                "container image to pull).",
                 "type": str,
                 "default": "",
             },
             {
                 "name": "install",
                 "msg": "Deprecated alias for install_query. Prefer install_query.",
+                "type": str,
+                "default": "",
+            },
+            {
+                "name": "install_methods",
+                "msg": "Methods this package can be installed with, used when "
+                "install_method is empty: a list of {method, query, repos, "
+                "channels, python, conda, env}. JARVIS uses the one that fits "
+                "this site, or asks (install_method question) when several do.",
+                "type": list,
+                "default": [],
+            },
+            {
+                "name": "install_env",
+                "msg": "pip/conda: name of the env under <jarvis root>/envs/<method>/ "
+                "(default: the pipeline's name).",
+                "type": str,
+                "default": "",
+            },
+            {
+                "name": "install_channels",
+                "msg": "conda: channels to install from (replacing the defaults), "
+                "e.g. conda-forge.",
+                "type": list,
+                "default": [],
+                "args": [{"name": "channel", "msg": "A conda channel", "type": str}],
+            },
+            {
+                "name": "install_python",
+                "msg": "pip: the Python that makes the venv (default: python3 on "
+                "PATH; JARVIS asks when there is none).",
+                "type": str,
+                "default": "",
+            },
+            {
+                "name": "install_conda",
+                "msg": "conda: the conda executable (default: the one this host has; "
+                "JARVIS asks when there are several or none).",
                 "type": str,
                 "default": "",
             },

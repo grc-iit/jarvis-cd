@@ -29,7 +29,7 @@ class Installer(ABC):
     install_method: str = ""  # Subclasses set this to register with the factory.
 
     @abstractmethod
-    def install(self, ppl, pkg_list: List[Dict[str, Any]]) -> None:
+    def install(self, ppl, pkg_list: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Run the installer over ``pkg_list`` (the packages from ``ppl``
         whose ``install_method`` matches this class) and update ``ppl.env``
         with the resulting environment.
@@ -126,7 +126,23 @@ class Installer(ABC):
 
         if mode not in ("install", "check"):
             raise ValueError("install mode must be 'install' or 'check'")
+        from jarvis_cd.core.method_install import needs_method_choice, resolve_method_choices
+
         started = time.monotonic()
+        given_context = context is not None
+        owns_context = False
+        method_choices: Optional[Dict[str, Any]] = None
+        if any(needs_method_choice(pkg_def) for pkg_def in getattr(ppl, 'packages', []) or []):
+            if context is None:
+                context = install_context_for(ppl, mode)
+                context.open()
+                owns_context = True
+            try:
+                method_choices = resolve_method_choices(ppl, context)
+            except BaseException:
+                if owns_context:
+                    context.close()
+                raise
         grouped = Installer.get_installers(ppl)
         report: Dict[str, Any] = {
             "schema_version": REPORT_SCHEMA,
@@ -134,17 +150,18 @@ class Installer(ABC):
             "mode": mode,
             "installers": {},
         }
+        if method_choices:
+            report["method_choices"] = method_choices
         activation: Optional[Dict[str, Any]] = None
         # Both load policies (install and check) apply a fresh capture: it was
         # written by an install that ended satisfied, so it is what a check
         # would confirm, without minutes of spack spec/find/load.
-        if use_capture and context is None and grouped.get("spack"):
+        if use_capture and not given_context and grouped.get("spack"):
             captured = SpackInstaller.activate_captured(ppl, grouped["spack"])
             activation = captured["activation"]
             if captured["result"] is not None:
                 report["installers"]["spack"] = captured["result"]
                 grouped = {m: pkgs for m, pkgs in grouped.items() if m != "spack"}
-        owns_context = False
         if context is None and grouped:
             context = install_context_for(ppl, mode)
             context.open()
@@ -262,6 +279,16 @@ class Installer(ABC):
         context = self.context or install_context_for(ppl, "install")
         context.ensure_may_build(what, packages)
 
+    def _with_context(self, ppl, mode: str, run):
+        """``run(context)`` with ``install_all``'s context, else an opened one."""
+        if self.context is not None:
+            return run(self.context)
+        context = install_context_for(ppl, mode).open()
+        try:
+            return run(context)
+        finally:
+            context.close()
+
     def check(self, ppl, pkg_list: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Verify without building. Backends without a check report 'unchecked'."""
         return {"status": "unchecked", "packages": [p.get('pkg_id') for p in pkg_list]}
@@ -289,66 +316,49 @@ class Installer(ABC):
 # ---------------------------------------------------------------------------
 
 
-def _run_local(cmd: str) -> int:
-    """Run ``cmd`` via the project's Exec on localhost; return exit code."""
-    from jarvis_cd.shell import Exec, LocalExecInfo
-    result = Exec(cmd, LocalExecInfo()).run()
-    return result.exit_code.get('localhost', 1)
+class _MethodInstaller(Installer):
+    """Shared find-first check/install for the pip and conda backends."""
+
+    def _run(self, ppl, pkg_list, mode):
+        from jarvis_cd.core import method_install
+
+        runner = (method_install.pip_run if self.install_method == "pip"
+                  else method_install.conda_run)
+        return self._with_context(
+            ppl, mode, lambda context: runner(ppl, pkg_list, context, mode))
+
+    def check(self, ppl, pkg_list):
+        return self._run(ppl, pkg_list, "check")
+
+    def install(self, ppl, pkg_list):
+        return self._run(ppl, pkg_list, "install")
 
 
-class PipInstaller(Installer):
-    """Install packages via ``pip install <install_query ...>``.
+class PipInstaller(_MethodInstaller):
+    """Install packages with pip into a venv JARVIS owns.
 
-    Each package's ``install_query`` is treated as one or more pip
-    requirement specs (anything ``pip install`` accepts).
+    Each package's ``install_query`` is one or more pip requirements
+    (anything ``pip install`` accepts). The venv is
+    ``<jarvis root>/envs/pip/<install_env or pipeline name>``; a check reads
+    the installed versions there and only a missing or mismatched
+    requirement is installed. The venv's ``bin`` goes first on the
+    pipeline's ``PATH``. A query naming an MPI is refused.
     """
 
     install_method = "pip"
 
-    def install(self, ppl, pkg_list):
-        queries = self._aggregate_queries(pkg_list)
-        if not queries:
-            print("PipInstaller: no install_query entries; nothing to do")
-            return
-        spec_str = ' '.join(queries)
-        self._ensure_may_build(ppl, "pip install", queries)
-        cmd = f"python3 -m pip install {spec_str}"
-        print(f"PipInstaller: {cmd}")
-        rc = _run_local(cmd)
-        if rc != 0:
-            raise RuntimeError(
-                f"pip install failed (exit {rc}). Specs: {spec_str}"
-            )
-        # pip writes into the active interpreter; the host environment
-        # already covers it. Merge current os.environ so downstream
-        # exec_info inherits any updated PATH / VIRTUAL_ENV.
-        ppl.env.update(dict(os.environ))
 
+class CondaInstaller(_MethodInstaller):
+    """Install packages with conda into an env JARVIS owns.
 
-class CondaInstaller(Installer):
-    """Install packages via ``conda install -y <install_query ...>``.
-
-    All packages are installed into the currently-active conda env.
-    Set ``CONDA_PREFIX`` in the pipeline env to pick a different one.
+    The env is ``<jarvis root>/envs/conda/<install_env or pipeline name>``,
+    with ``install_channels`` as its channels. The conda is the one this
+    host has; several are a ``conda_select`` question, and none is a
+    ``conda_missing`` question whose answer installs Miniforge into the site
+    home. A query naming an MPI (or mpi4py) is refused.
     """
 
     install_method = "conda"
-
-    def install(self, ppl, pkg_list):
-        queries = self._aggregate_queries(pkg_list)
-        if not queries:
-            print("CondaInstaller: no install_query entries; nothing to do")
-            return
-        spec_str = ' '.join(queries)
-        self._ensure_may_build(ppl, "conda install", queries)
-        cmd = f"conda install -y {spec_str}"
-        print(f"CondaInstaller: {cmd}")
-        rc = _run_local(cmd)
-        if rc != 0:
-            raise RuntimeError(
-                f"conda install failed (exit {rc}). Specs: {spec_str}"
-            )
-        ppl.env.update(dict(os.environ))
 
 
 class SpackInstaller(Installer):
@@ -1626,22 +1636,39 @@ class ContainerInstaller(Installer):
 
     install_method = "container"
 
-    def install(self, ppl, pkg_list):
-        # When a prebuilt deploy URI is configured, pull it and we're done.
-        if getattr(ppl, 'container_uri', ''):
-            if not self._ensure_container_uri_available(ppl):
-                raise RuntimeError(
-                    f"container_uri '{ppl.container_uri}' is not available "
-                    f"locally and could not be pulled with engine "
-                    f"'{ppl.container_engine}'."
-                )
-            ppl.container_image = ppl.container_uri
-            print(f"ContainerInstaller: using prebuilt deploy container: "
-                  f"{ppl.container_uri}")
-        elif not ppl.container_image:
-            self._build_pipeline_container(ppl)
-            ppl.container_image = ppl.name
+    def _prepare(self, ppl, pkg_list, context):
+        """``(engine, uri, result)``; ``engine`` is None when the engine or
+        the image is a question first."""
+        from jarvis_cd.core import method_install
 
+        result: Dict[str, Any] = {"method": "container", "packages":
+                                  [p.get('pkg_id') for p in pkg_list]}
+        engine = method_install.resolve_engine(ppl, context)
+        if engine is None:
+            result["status"] = "needs_decision"
+            return None, "", result
+        ok, uri = method_install.container_image(ppl, pkg_list, context)
+        result.update(engine=engine, image=uri or ppl.name,
+                      engine_source=getattr(ppl, 'container_engine_source', 'yaml'))
+        if not ok:
+            result["status"] = "blocked"
+            return None, "", result
+        return engine, uri, result
+
+    def _image_ready(self, ppl, engine, uri) -> bool:
+        from jarvis_cd.core import method_install
+        from jarvis_cd.core.pkg import Pkg
+
+        if uri:
+            return method_install.image_present(ppl, engine, uri)
+        return Pkg._image_exists(engine, ppl.name,
+                                 sif_dir=str(ppl.jarvis.get_containers_dir()))
+
+    def _finish(self, ppl, image) -> None:
+        from jarvis_cd.core.method_install import _engine_env
+
+        ppl.container_image = image
+        _engine_env(ppl)
         # Save side-effects (container_image was just set) and emit the
         # runtime artifacts (compose file / container-side pipeline yaml).
         ppl.save()
@@ -1650,6 +1677,66 @@ class ContainerInstaller(Installer):
             ppl._generate_pipeline_container_yaml()
             if ppl.container_engine != 'apptainer':
                 ppl._generate_pipeline_compose_file()
+
+    def check(self, ppl, pkg_list):
+        """Find-first: is the deploy image (pulled or built) already here?"""
+        return self._with_context(
+            ppl, "check", lambda context: self._check(ppl, pkg_list, context))
+
+    def _check(self, ppl, pkg_list, context):
+        from jarvis_cd.core.method_install import not_installed_issue
+
+        engine, uri, result = self._prepare(ppl, pkg_list, context)
+        if engine is None:
+            return result
+        if self._image_ready(ppl, engine, uri):
+            self._finish(ppl, uri or ppl.name)
+            result["status"] = "satisfied"
+            return result
+        image = uri or ppl.name
+        what = f"pull {uri}" if uri else f"build the deploy image {ppl.name}"
+        context.raise_issue(not_installed_issue(
+            "container", str(pkg_list[0].get('pkg_id') or 'container'), image, [what],
+            Path(str(ppl.jarvis.get_containers_dir()))
+            if engine == 'apptainer' else Path(f"{engine} image store")))
+        result["status"] = "missing"
+        return result
+
+    def install(self, ppl, pkg_list):
+        return self._with_context(
+            ppl, "install", lambda context: self._install(ppl, pkg_list, context))
+
+    def _install(self, ppl, pkg_list, context):
+        from jarvis_cd.core.method_install import failed, run_logged
+
+        engine, uri, result = self._prepare(ppl, pkg_list, context)
+        if engine is None:
+            return result
+        if uri:
+            if not self._image_ready(ppl, engine, uri):
+                context.ensure_may_build(f"pull the container image {uri}",
+                                         [p.get('pkg_id') for p in pkg_list])
+                context.report_progress(phase="building", current_package=uri)
+                if engine == 'apptainer':
+                    containers_dir = ppl.jarvis.get_containers_dir()
+                    containers_dir.mkdir(parents=True, exist_ok=True)
+                    argv = ['apptainer', 'pull', str(containers_dir / f'{ppl.name}.sif'), uri]
+                else:
+                    argv = [engine, 'pull', uri]
+                pulled = run_logged(argv, context)
+                if pulled.returncode != 0 or not self._image_ready(ppl, engine, uri):
+                    raise failed(context, "container_pull_failed", "container",
+                                 str(pkg_list[0].get('pkg_id') or 'container'), uri,
+                                 f"{engine} could not pull {uri}.", pulled.stdout,
+                                 "check the image name and the host's registry access "
+                                 "(proxy, login), then install again")
+            print(f"ContainerInstaller: using prebuilt deploy container: {uri}")
+            self._finish(ppl, uri)
+        else:
+            self._build_pipeline_container(ppl)
+            self._finish(ppl, ppl.name)
+        result["status"] = "installed"
+        return result
 
     # ------------------------------------------------------------------
     # Image lookup / pull
