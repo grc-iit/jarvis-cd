@@ -284,7 +284,7 @@ silent default:
 | `conda_missing` | no conda | `miniforge`: JARVIS installs Miniforge into the site home (`<site>/miniforge3`) in the install job |
 | `container_engine` | the pipeline names no `container_engine` and several engines run as this user | one of them |
 | `container_engine_missing` | no apptainer, rootless podman or rootless docker | none: install one, or name `container_engine` |
-| `install_method` | the package lists several `install_methods` and more than one fits this site | one of the fitting methods |
+| `install_method` | the package lists several `install_methods` and more than one fits this site. A method fits when its tool is here: for Spack, a Spack JARVIS already uses or a site Spack it finds (then a `spack_missing` question, or the site's recorded answer, picks which) | one of the fitting methods |
 
 Pip and conda never install an MPI: a query naming one (conda's `mpi4py`
 too) is refused as `mpi_from_package_manager`. MPI codes use Spack, which

@@ -965,10 +965,16 @@ def _engine_env(ppl) -> None:
 def method_fits(method: str) -> Tuple[bool, str]:
     """Whether ``method`` can install on this host now, and why."""
     if method == "spack":
-        from jarvis_cd.core.spack_install import spack_unavailable_reason
+        from jarvis_cd.core.spack_install import discover_site_spacks, spack_unavailable_reason
 
         reason = spack_unavailable_reason()
-        return (reason is None, reason or "Spack is available")
+        if reason is None:
+            return True, "Spack is available"
+        # spack_missing then offers these, or replays the site's recorded answer
+        site_spacks = discover_site_spacks()
+        if site_spacks:
+            return True, "site Spack " + ", ".join(str(item["root"]) for item in site_spacks)
+        return False, reason
     if method == "pip":
         pythons = find_pythons()
         return (bool(pythons), f"python3 {pythons[0]['version']}" if pythons

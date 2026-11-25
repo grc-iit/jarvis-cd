@@ -540,6 +540,19 @@ class TestMethodChoice(_Case):
         with self.assertRaises(ValueError):
             mi.method_options({'pkg_id': 'x', 'config': {'install_methods': ['brew']}})
 
+    def test_a_site_spack_jarvis_can_find_fits(self):
+        from jarvis_cd.core import spack_install
+
+        site = [{'root': '/site/spack'}]
+        with mock.patch.object(spack_install, 'spack_unavailable_reason',
+                               return_value='no spack on PATH'), \
+                mock.patch.object(spack_install, 'discover_site_spacks', return_value=site):
+            self.assertEqual(mi.method_fits('spack'), (True, 'site Spack /site/spack'))
+        with mock.patch.object(spack_install, 'spack_unavailable_reason',
+                               return_value='no spack on PATH'), \
+                mock.patch.object(spack_install, 'discover_site_spacks', return_value=[]):
+            self.assertEqual(mi.method_fits('spack'), (False, 'no spack on PATH'))
+
 
 class TestHelpers(unittest.TestCase):
     def test_mpi_named(self):
