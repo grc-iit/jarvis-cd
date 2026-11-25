@@ -1099,6 +1099,16 @@ def prepare_engine(engine: str) -> None:
         podman_wrapper()
 
 
+def _prepare_error(engine: str) -> Optional[str]:
+    """None when :func:`prepare_engine` worked, else why (a full or read-only temp dir)."""
+    try:
+        prepare_engine(engine)
+    except OSError as exc:
+        return (f"JARVIS could not set up {engine}'s runtime dir, store or wrapper under "
+                f"{tempfile.gettempdir()} on {socket.gethostname()}: {exc}")
+    return None
+
+
 def podman_node_script(directory: Path) -> Path:
     """Write a wrapper that gives podman on another node what it has here.
 
@@ -1169,6 +1179,9 @@ def engine_error(executable: str) -> Optional[str]:
 
 
 _ENGINE_FAULTS = (
+    (re.compile(r"No space left on device|Read-only file system|could not set up", re.I),
+     "this node's temp dir has no room (or no write access) for podman's node-local store: "
+     "free it, or set TMPDIR to a node-local disk with space"),
     (re.compile(r"database configuration mismatch|pivot|graphroot|overlay", re.I),
      "podman's image store cannot work here: it is on a network file system, or another "
      "host made it. Set JARVIS_PODMAN_STORE=node so JARVIS gives each node its own store, "
@@ -1195,7 +1208,9 @@ def engine_remedy(engine: str, error: str) -> str:
 def unusable_issue(engine: str, error: str, evidence: Sequence[str] = ()) -> Dict[str, Any]:
     """``container_engine_unusable``: the engine is installed but cannot run here."""
     host = socket.gethostname()
-    question = f"{engine} is installed on {host} but cannot run: `{engine} info` fails."
+    cause = ("JARVIS cannot set it up here" if "could not set up" in error
+             else f"`{engine} info` fails")
+    question = f"{engine} is installed on {host} but cannot run: {cause}."
     hint = engine_remedy(engine, error)
     issue = _issue("container_engine_unusable", "*", "container_engine", question,
                    method="container", scope="site", detail=_tail(error),
@@ -1214,9 +1229,9 @@ def _detect() -> Tuple[List[Dict[str, Any]], List[str], List[Dict[str, str]]]:
                       "source": apptainer, "does": "runs as this user"})
     podman = shutil.which("podman")
     if podman:
-        prepare_engine("podman")
+        error = _prepare_error("podman")
         podman = shutil.which("podman") or podman  # the wrapper, now first on PATH
-        error = engine_error(podman)
+        error = error or engine_error(podman)
         rootless = None if error else _engine_field(podman, "{{.Host.Security.Rootless}}")
         if error:
             broken.append({"engine": "podman", "executable": podman, "error": error})
@@ -1257,7 +1272,7 @@ def resolve_engine(ppl, context) -> Optional[str]:
     explicit = getattr(ppl, "container_engine_source", "yaml") == "yaml"
     engine = str(getattr(ppl, "container_engine", "") or "")
     if explicit and engine:
-        prepare_engine(engine)
+        setup_error = _prepare_error(engine)
         if shutil.which(engine) is None:
             context.raise_issue(_issue(
                 "container_engine_missing", "*", "container_engine",
@@ -1266,7 +1281,7 @@ def resolve_engine(ppl, context) -> Optional[str]:
                 method="container", scope="site", evidence=[f"`command -v {engine}`"],
                 hint="install the engine or name another container_engine"))
             return None
-        error = engine_error(engine) if engine == "podman" else None
+        error = setup_error or (engine_error(engine) if engine == "podman" else None)
         if error:
             context.raise_issue(unusable_issue(engine, error))
             return None
