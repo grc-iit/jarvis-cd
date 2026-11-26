@@ -165,20 +165,24 @@ builds, before any `spack install`:
    each compiler that passed: in a temp dir it compiles, links and runs a
    trivial program per language (C with `cc`, C++ with `cxx`, Fortran with
    `fc`), with the compiler entry's `environment` applied. This is the
-   check a configure or CMake step makes. A driver that exists over an
-   incomplete toolchain (no crt files, no `cc1`, no libstdc++, a missing
-   assembler) fails it, with the reason per language in `failures`. A
-   compiler whose C test fails is unusable on this host. A C++ or Fortran
-   failure only removes that language from the compiler's `languages`
-   (see step 3). A compiler's `languages` are those with a configured path
-   that, when probed, passed. A compiler loaded through `modules` is not
+   check a configure or CMake step makes. Each language's result is in
+   `probe_results`: `ok`, the `step` that ran last (`setup`,
+   `write_source`, `compile` or `run`), its `command`, `cwd`,
+   `exit_code`, `output` and `error`. Languages that failed are listed in
+   `probe_failed`. The probe is evidence, not a verdict: a test program can
+   fail for many reasons (the toolchain, the node's disk, its environment),
+   so it changes neither usability nor `languages`. Only a missing
+   executable makes a compiler unusable. A compiler's `languages` are those
+   with a configured path. A compiler loaded through `modules` is not
    checked. Set
    `JARVIS_COMPILER_PROBE=off` to keep only the existence check. The result
-   (`jarvis.build-compilers.v1`, with `probed`, and `probe`/`failures`/
-   `languages` per compiler) goes to `<install>/build-compilers.json`
-   and to `<JARVIS_SPACK_ROOT>/var/jarvis/build-compilers.json`. A
-   `+check` on the login node uses that last build-host result
-   (`source: recorded`) rather than the login node's compilers. For a
+   (`jarvis.build-compilers.v1`, with `probed`, `probe_failed`, and
+   `missing`/`probe_results`/`languages` per compiler) goes to
+   `<install>/build-compilers.json` and to
+   `<JARVIS_SPACK_ROOT>/var/jarvis/build-compilers/<host>.json`, one file
+   per node. A `+check` on the login node uses the newest node's
+   missing-executable facts
+   (`source: recorded`) rather than   (`source: recorded`) rather than the login node's compilers. For a
    scheduled pipeline it runs no Spack at all and reports the compilers
    from the last full check's `install-check.json` (see
    [scheduler.md → Light checks](scheduler.md#light-checks-on-the-submitting-host)). With no
@@ -230,14 +234,24 @@ builds, before any `spack install`:
    the binding compiler (step 5) lacks a needed language, the install
    asks `compiler_unavailable` over the compilers that have them all.
 4. **Guard.** After `spack spec`, and again after the environment's
-   `concretize`, any node still to build with an unusable compiler stops the
-   install with a `compiler_unavailable` issue (exit `3`). No
-   `spack install` runs. The issue names the host, the compiler, its
-   `missing_executables` (or, for a compiler that failed the probe,
-   `probe_failures` per language), the nodes `to_build`, and the
-   `reused_specs` built
-   with that compiler that pulled the DAG there. This happens when the Spack
-   predates reuse filters, or when a requirement forces that compiler.
+   `concretize`, any node still to build with a compiler whose executables
+   are missing on the build host stops the install with a
+   `compiler_unavailable` issue (exit `3`). No `spack install` runs. The
+   issue names the host, the compiler, its `missing_executables`, the
+   nodes `to_build`, and the `reused_specs` built with that compiler that
+   pulled the DAG there. This happens when the Spack predates reuse
+   filters, or when a requirement forces that compiler. A node to build
+   whose compiler failed the C test program on this host (in the install
+   job, `source: verified`) stops the install with a `failure` record
+   instead (exit `6`, `stage: compiler_probe`): the `compiler`, `language`,
+   `probe_step`, the `node`, the probe's `command`, `exit_code` and
+   `error`, and its full output in a file (see
+   [Install failures](pipeline_tests.md#install-failures)). JARVIS asks no
+   compiler question for it. A C++ or Fortran failure, or one on a
+   compiler nothing to build uses, stays evidence in `build_compilers`. A
+   check reads probe results as evidence only, so a retry whose install
+   job lands on another node probes that node and goes ahead when it
+   passes.
 5. **Bind.** A person's compiler (site prep `--compiler`, an
    `ambiguous_compiler` answer, or an answer to `compiler_unavailable`) is a
    `require`, not a preference. If that compiler is itself unusable on the
@@ -245,16 +259,11 @@ builds, before any `spack install`:
    (`origin: build host check`), with the usable compilers as candidates.
    An answer to `compiler_unavailable` is recorded in `decisions.yaml` and
    becomes the binding `require`.
-6. **Learn from a failed build.** If a build still fails because a compiler
-   "cannot create executables" (the probe was off, or the failure depends on
-   flags the probe doesn't use), the failure is `compiler_unavailable`, not
-   `build_failed` (see [Install failures](pipeline_tests.md#install-failures)).
-   Its candidates are the usable compilers minus the failed node's one. On
-   the next run, the answer to that issue (from `answers.json` or
-   `decisions.yaml`) is applied even if the probe passes that compiler
-   again: the compiler is marked unusable (`demoted`, with
-   `failures.build`) and stays out of the scope, so the install doesn't
-   ask the same question every round.
+6. **A failed build.** If a build fails anyway, the failure is the
+   `failure` record of that `spack install`, with its output and the
+   package's build log (see
+   [Install failures](pipeline_tests.md#install-failures)). JARVIS does not
+   read a compiler into it or take a compiler out because of it.
 
 `install-record.json` carries the outcome as `build_compilers`:
 
@@ -263,9 +272,9 @@ builds, before any `spack install`:
 | `source` | `verified` (checked on this host) or `recorded` (the last build-host check) |
 | `host`, `checked_at`, `allocation` | where and when the compilers were checked |
 | `probed` | whether the build-test probe ran (`false` with `JARVIS_COMPILER_PROBE=off`, or for a recorded check from before the probe) |
-| `usable`, `unusable[]` | specs; `unusable[]` is `{spec, missing, failures?}`, where `failures` maps a language (`cc`, `cxx`, `fc`, or `build`) to why it failed |
-| `demoted` | `{spec, issue_id, source}` when an answer to a failed-build `compiler_unavailable` took a compiler out, or `null` |
-| `excluded`, `reuse_excluded` | compilers left out of the scope (unusable ones, and those missing a language this build needs), and the `concretizer:reuse` excludes |
+| `usable`, `unusable[]` | specs; `unusable[]` is `{spec, missing}` (its missing executables) |
+| `probe_failed[]` | `{spec, languages}` for each usable compiler whose test program failed on that host; the per-language `probe_results` are in `path` |
+| `excluded`, `reuse_excluded` | compilers left out of the scope (those with missing executables, and those missing a language this build needs), and the `concretizer:reuse` excludes |
 | `languages` | each compiler's languages (`c`, `cxx`, `fortran`) on the checked host |
 | `build_languages` | `{method, error, needed: {lang: [nodes]}, unknown: [nodes], prefer_full, allowed, excluded}` from the language step (install mode, when something is missing) |
 | `language_excluded[]` | `{spec, missing_languages, reason, needed_by, note?}`; `reason` is `<spec>: no <lang> compiler on <host>` |
@@ -273,9 +282,9 @@ builds, before any `spack install`:
 | `per_node` | why the shown usability holds for one node (`host`, `checked_at`), not as a promise for others |
 | `required` | `{spec, source, require}` for the binding compiler, or `null` |
 | `blocked_by` | the `compiler_unavailable` `issue_id` that stopped the install, or `null` |
-| `scope`, `path` | the `-C` scope dir and the `build-compilers.json` used |
+| `scope`, `path` | the `-C` scope dir and the build-compilers file used |
 
-A build that fails anyway is reported as a typed failure (exit `6`); see
+A build that fails anyway is reported as a `failure` record (exit `6`); see
 [Install failures](pipeline_tests.md#install-failures).
 
 ### Finding a site Spack

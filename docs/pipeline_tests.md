@@ -483,20 +483,17 @@ job they live in `<execution>/install/` (see
 
 JARVIS doesn't guess choices it can't resolve. Each one becomes a line in
 `issues.jsonl` (`jarvis.install-issue.v1`), and the command exits with code
-`3`:
+`3`. These are decisions on known facts only; anything JARVIS ran that
+failed (a concretize, a build, a probe, a load) is a `failure` record and
+exits `6` (see [Install failures](#install-failures)):
 
 | `kind` | When | Answerable |
 |--------|------|------------|
 | `ambiguous_provider` | several MPI candidates (installed, upstream or `packages.yaml` externals) and neither the query nor a recorded answer pins one (`subject: mpi`, `scope: site`); `candidates[]` lists `{id, key, constraint, aliases, source, prefix, hashes, implies}` (`hashes` puts the pinned real install first), plus `modules` for module externals; see [Stable MPI candidates](#stable-mpi-candidates) | yes, with one candidate's `constraint` (or an `aliases` entry, its `id` or its `key`) |
 | `spack_missing` | the pipeline has Spack packages but JARVIS has no Spack to run (`subject: spack`, `scope: site`, `package: "*"`); `site_spacks[]` (also `candidates[]`) lists the Spack checkouts found on the host, see [Missing Spack](#missing-spack-spack_missing) | yes, with one `site_spacks` `root` |
-| `variant_conflict` | the concretizer reports a conflict | yes, with a spec constraint (e.g. `~cuda`) |
-| `concretize_failed` | any other concretizer error (`detail` holds the excerpt) | yes, with a spec constraint |
-| `no_recipe` | Spack has no recipe for the package | no: add `install_repos` or change `install_query` |
-| `compiler_unavailable` | a compiler the install would use can't run on the build host (`subject: compiler`, `scope: site`): `compiler`, `host`, `missing_executables` (or `probe_failures` when it exists but can't build a test program), `usable_compilers`, `origin`, plus `to_build` and `reused_specs` when reused upstream specs pull the DAG onto it. With `compiler: null` and `missing_languages`/`needed_languages`, no usable compiler on the build host has every language (`c`, `cxx`, `fortran`) the nodes to build need; see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host) | yes, with one usable compiler (`candidates[]`), which becomes a binding `require`; the language form has no candidates (add a compiler, or pin the install job's nodes) |
+| `compiler_unavailable` | a compiler the install would use can't run on the build host (`subject: compiler`, `scope: site`): `compiler`, `host`, `missing_executables` (the paths that are not executable files there), `usable_compilers`, `origin`, plus `to_build` and `reused_specs` when reused upstream specs pull the DAG onto it. With `compiler: null` and `missing_languages`/`needed_languages`, no usable compiler on the build host has every language (`c`, `cxx`, `fortran`) the nodes to build need; see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host) | yes, with one usable compiler (`candidates[]`), which becomes a binding `require`; the language form has no candidates (add a compiler, or pin the install job's nodes) |
 | `not_installed` | `+check` found nodes that still need building | no: run `jarvis ppl install` |
 | `site_copy` | the site already has a copy of the package (a module, a site Spack install or a resource graph `software` entry); see [Site copies](#site-copies-before-a-spack-build-site_copy) | yes: a site candidate's `id` or `constraint`, or `spack` |
-| `site_copy_unusable` | a site copy chosen for the package doesn't load on this host (`module load` or `spack load` fails, or its prefix is gone); `failing`, `failing_kind` (`module`, `spack` or `graph`), `why`, `needs`; see [The `site` install method](#the-site-install-method) | yes, when the copy came from a `site_copy` answer: another site copy, `spack_build` or `forget`; no, when the pipeline config sets the copy |
-| `spack_broken` | a Spack fails on its own, before any package: [`spack providers mpi`](#a-broken-spack-spack_broken) fails (`subject: spack:<root>`, `scope: site`, `package: "*"`); `spack_root`, `probe`, `without_user_config`, `without_failing_repos`, `failing_repos[]`, `failing_scope`, `failing_file`, `cause` | yes: `drop_failing_repos`, `no_user_config`, `skip` or `recheck`; the first three are recorded per site |
 | `install_unchecked` | a scheduled pipeline's check on its submitting host found no matching `install-check.json` (JARVIS runs no Spack there); `packages`, `reason`, `record`, `remedy[]`; see [scheduler.md → Light checks](scheduler.md#light-checks-on-the-submitting-host) | no: check in a job, `jarvis ppl install +check +submit` (or `+submit` to also build) |
 | `install_placement` | where a scheduled pipeline's full check or build runs at this site is not chosen yet (or the site chose `ask_each_time`). One site question per phase (`install_placement.check` / `install_placement.build`) covers every package; `phase`, `cost_class` (the costliest package's), `cost_classes`, `covers`, `once`, `recommended`, `recommendation_reason`, `recommendation_basis` (a site answer recorded in this home or the resource graph's `install_placement`, with who, when and `basis`; else cost and load), `packages[]` (with `estimate`), `login_host`, `limits`, `queue`, `site_policy`, `package_overrides[]` (each with its own recommendation); see [scheduler.md → Install placement](scheduler.md#install-placement-where-checks-and-builds-run) | yes: `login_limited`, `compute_job` or `ask_each_time` (an `install_placement.<phase>.occasion` question: the first two, this run only); recorded per site, or per package for an override; `basis` records why |
 
@@ -643,27 +640,51 @@ Provenance reads the same record.
 
 #### Install failures
 
-When `spack concretize` or `spack install` itself fails, JARVIS doesn't
-leave a bare exit code and a log tail. It classifies the output into one
-typed issue, appends it to `issues.jsonl`, marks the package `status:
-failed` with its `issue_id`, and exits `6`:
+When something JARVIS runs fails (a `spack spec`, `concretize` or
+`install`, the compiler probe, the Spack check, a site copy's load, the
+verify after an install), JARVIS returns the error itself. It doesn't read
+a cause into it, offer fixed choices or suggest a remedy. It appends one
+`failure` record to `issues.jsonl`, marks the package `status: failed`
+with its `issue_id`, and exits `6`. A failure wins over open questions: the
+install exits `6` with every issue. A failure record is never answerable,
+so it is not asked as a question. The caller reads the evidence, finds out
+why (on the node, in the logs), and acts through the usual verbs and
+config: excluding a node (`scheduler.install.exclude`), Spack's own config
+variables, `JARVIS_SPACK_ROOT`, a changed spec, or
+`jarvis ppl install --forget`. Then it retries.
 
-| `kind` | Matched by | `remedy` |
-|--------|------------|----------|
-| `compiler_unavailable` | `CompilerAccessError: Compiler '…' has executables that are missing…` (`origin: spack install`); `missing_executables` are the paths Spack named, and that compiler is dropped from `usable_compilers` | answer with a usable compiler, or re-run `jarvis spack prepare --compiler` inside a job |
-| `compiler_unavailable` | a compiler that exists but can't build: `C compiler cannot create executables` (autoconf), `The C compiler "…" is not able to compile a simple test program` (CMake), `no acceptable C compiler found`, `cannot run C compiled programs`, in Spack's output or its build log. `compiler` is the failed node's compiler (from the concretized spec, `compiler_identified: true`); `build_failure` and `probe_failures` quote the line; `candidates` are the usable compilers minus that one. Checked before `build_failed`, so this never surfaces as a generic build failure | answer with a usable compiler; the next run takes the failed one out and binds the answer (see [spack.md → Compilers on the build host](spack.md#compilers-on-the-build-host)) |
-| `fetch_failed` | `FetchError`, `All fetchers failed`, `ChecksumError`, `Manual download is required`, … | fix the build node's network or proxy, or add a mirror |
-| `build_failed` | `ProcessError`, `InstallError`, `Command exited with status`, … | read `build_log`, then change the spec or the recipe |
-| `variant_conflict`, `no_recipe`, `concretize_failed` | a failed environment `concretize` | answer with a spec constraint |
-| `install_failed` | anything else | read `log_tail` and `install.log` |
+A record (`kind: failure`, `failure_schema: jarvis.failure.v1`,
+`answerable: false`, `scope: run`) carries:
 
-Every failure issue carries `host`, `stage` (`install` or `concretize`),
-`packages`, `failed_node` (the last `==> Installing` line), `log`,
-`log_tail` (the last 40 lines), `build_log` when Spack named one,
-`message` and `remedy`. In a `ppl install +submit` job the execution ends
-`failed` with return code `6`, and its `metadata.install` progress has
-`phase: failed`, `open_issues` and `issue_kinds`, so a caller can turn the
-issue into an ask without reading the log.
+| Field | Meaning |
+|-------|---------|
+| `stage` | what failed: `spec`, `concretize`, `install`, `verify`, `compiler_probe`, `spack_health` or `site_copy_load` |
+| `doing` | what JARVIS was doing, in words (`message` and `question` say it with the host, the command and where the output is) |
+| `host` | the node it ran on |
+| `command`, `cwd` | the command line and its working directory (`null` when nothing ran, e.g. a missing prefix) |
+| `exit_code`, `error` | the exit code; `null` with `error` when it could not start, timed out, or did not run |
+| `packages` | the packages it concerned |
+| `output_path`, `output_bytes` | the full output, in `<install>/failures/<stage>-<host>-<id>.log`, with a header naming the command, host and exit code. When it could not be written (a full disk), `output_path` is `null`, `output_write_error` says why, and `output` holds up to 64 KiB of it |
+| `output_tail` | a preview: the last 40 lines (4 KiB at most). Nothing is lost; the file has it all |
+| `paths` | the files involved: `install_log`, `issues`, plus `build_log` (a Spack build log), `probe_dir` and `build_compilers` (a probe), `spack_root` and `scopes` (a Spack check), `prefix` (a site copy) |
+
+Some stages add their own facts: `failed_node` (the last `==> Installing`
+line) for `install`; `compiler`, `language`, `probe_step`, `node` and
+`origin` for `compiler_probe`; `spack_root`, `config_env` and `seconds`
+for `spack_health`; `failing_kind` (`module`, `spack` or `other`),
+`load_step` and `site` for `site_copy_load`. The `issue_id` digests the
+stage, host, command, exit code, error and packages, so the same failure on
+two nodes gives two records.
+
+One failure stays a question: a `CompilerAccessError` (Spack says a
+compiler's executables are missing) is `compiler_unavailable` (exit `3`)
+with the usable compilers as candidates, and it carries the raw error too
+(`command`, `exit_code`, `output_tail`, `output_path`, `build_log`).
+
+In a `ppl install +submit` job the execution ends `failed` with return code
+`6`, and its `metadata.install` progress has `phase: failed`,
+`open_issues` and `issue_kinds`, so a caller can pass the record on
+without reading the log.
 
 #### Missing Spack (`spack_missing`)
 
@@ -803,7 +824,7 @@ Spack install. A fresh env capture (a load after an install) and a plan-only
 run search nothing. `install_site_search: false` in a package's config, or
 `JARVIS_SITE_COPIES=off`, turns the search off.
 
-#### A broken Spack (`spack_broken`)
+#### A broken Spack
 
 A Spack can fail for reasons that have nothing to do with the package. For
 example, a repo listed in the person's `~/.spack/repos.yaml` with an invalid
@@ -813,40 +834,25 @@ offers copies from a site Spack, loads one, or plans a build with a Spack,
 it runs `spack providers mpi` once with that Spack. That command builds the
 provider index of every configured repo and needs no package.
 
-When that fails, JARVIS raises the answerable `spack_broken` issue
-(`scope: site`, `subject: spack:<root>`). It offers and plans nothing from
-that Spack until the issue is answered. A package whose site copy search
-needed it is held with `status: blocked`, `blocked_by: spack_broken`. The
-issue names the Spack (`spack_root`), the probe's exit and error, and the
-cause when JARVIS can isolate it. It probes again with
-`SPACK_DISABLE_LOCAL_CONFIG=1` (`without_user_config`). Then it probes each
-repo from the user and system scopes (`spack config blame repos`) alone in a
-temporary `-C` scope. `failing_repos[]` holds each repo that fails alone,
-with its namespace, the file and line that list it, the scope and the error.
-`failing_scope` and `failing_file` are the first one's. When the failing
-repos are named, JARVIS also builds a copy of each scope that lists them,
-with those repos removed, and probes with it (`without_failing_repos`).
+When that fails, JARVIS returns a `failure` record (`stage:
+spack_health`, exit `6`; see [Install failures](#install-failures)) with
+the Spack (`spack_root`), the command, its exit code and full output, the
+config variables in effect (`config_env`), and the Spack's config scope
+directories (`paths.scopes`: `defaults`, `site`, `user`, `system`). It uses
+nothing from that Spack while the check fails: a package whose site copy
+search needed it is `status: failed`, `blocked_by: spack_health`. JARVIS
+does not work around the failure or edit the person's `~/.spack`.
 
-Candidates:
-
-| `id` | Offered | What JARVIS does |
-| --- | --- | --- |
-| `drop_failing_repos` | only when the failure is confined to the named repos: the probe passes with JARVIS's copy of the scopes without them (then it is `recommended`) | runs its own find, load and build commands for that Spack with JARVIS's copy of each scope that lists a failing repo: the same config files, with only the failing repos removed from `repos.yaml`. It points `SPACK_USER_CONFIG_PATH` (or `SPACK_SYSTEM_CONFIG_PATH`) at the copy; the other scopes are read as they are. `leaves_out_repos[]` names the repos it drops, `keeps_repos[]` the repos it keeps, and `scopes` the copies. The copies live in `$JARVIS_SPACK_SCOPE_DIR`, by default `spack-scopes/` in the site home, in a directory named by their content. They are rebuilt from the person's scope on every run, so later edits to it are followed. Installs built from a dropped repo's packages can't be loaded this way |
-| `no_user_config` | only when the probe passes with `SPACK_DISABLE_LOCAL_CONFIG=1` (`recommended` when `drop_failing_repos` isn't offered) | runs its own find, load and build commands for that Spack with `SPACK_DISABLE_LOCAL_CONFIG=1`. `leaves_out` says what that drops: the user scope (`~/.spack`, or `SPACK_USER_CONFIG_PATH`) and the system scope (`/etc/spack`), with the files in them and their repos, compilers, mirrors and package preferences. It names the dropped repos that work. Installs built from a dropped repo's packages can't be loaded this way |
-| `skip` | always (`recommended` when the Spack fails in its own scopes) | offers no copies from that Spack. Modules, other site Spacks and the resource graph are still searched. If that Spack is the one JARVIS builds with, JARVIS builds with its own Spack under the site home, with that Spack's installs as an upstream (as for a read-only site Spack). If that Spack is `JARVIS_SPACK_ROOT`, nothing can be planned, and that is the non-answerable `spack_broken_skipped` |
-| `recheck` | always | records nothing. It probes again now and asks again while the probe still fails. Use it after fixing the config yourself |
-
-`drop_failing_repos`, `no_user_config` and `skip` are recorded per site in
-`decisions.yaml`, keyed by `spack:<root>`, and later runs replay them. A
-recorded `drop_failing_repos` keeps the dropped repos (`dropped_repos`).
-Each run rebuilds the copy and probes with it; if the Spack fails even
-without them, JARVIS asks again. A Spack that fails
-differently later makes a new question, which carries `supersedes`.
-`jarvis ppl install --forget spack:<root>` forgets the answer. JARVIS never
-edits the person's `~/.spack`, and the person's own Spack commands still
-read it. A probe that can't run (a timeout, a missing executable) is not
-judged. `JARVIS_SPACK_HEALTH=off` turns the probe off; recorded answers
-still apply.
+Every Spack command JARVIS runs inherits its environment, so Spack's own
+variables are the levers: `SPACK_DISABLE_LOCAL_CONFIG=1` (leave out the user
+and system scopes), `SPACK_USER_CONFIG_PATH` (another user scope, such as a
+copy without a broken repo), and `SPACK_SYSTEM_CONFIG_PATH`. So are
+JARVIS's `JARVIS_SPACK_ROOT` and `JARVIS_SITE_SPACKS`. In an install job,
+`scheduler.install.pre_cmds` can export them. The check is cached per Spack
+and per value of those variables, so a changed variable is checked again. A
+check that can't run (a timeout, a missing executable) is not judged.
+`JARVIS_SPACK_HEALTH=off` turns it off. Answers recorded for the
+`spack_broken` question of 1.9.8 to 1.9.11 are no longer read.
 
 #### The `site` install method
 
@@ -858,26 +864,18 @@ path lists are prepended, other variables are set. So the package's run sees
 the modules. The `site` group runs after Spack's, so a Spack activation
 doesn't replace it. Before the install groups run, JARVIS loads each `site`
 package's copy once. A Spack copy's Spack is checked first (see
-[A broken Spack](#a-broken-spack-spack_broken)).
+[A broken Spack](#a-broken-spack)).
 
-A copy that doesn't load, or whose prefix is gone, is `site_copy_unusable`,
-and the package is held. Its `why` matches the copy's kind:
-"`module load <modules>` failed in a login shell on this host: <error>", or
-"`spack load /<hash>` with the site Spack <root> failed on this host:
-<error>". When the copy came from a `site_copy` answer, the issue is
-answerable. Its candidates are:
-
-- the other copies of the package the site has. The failing copy is not
-  among them. `recommended` is the best fitting copy;
-- `spack_build`: build it with Spack instead;
-- `forget`: forget the recorded answer and ask the `site_copy` question
-  again, with the failing copy marked `fits: false` ("it did not load on
-  this host").
-
-Another copy or `spack_build` replaces the recorded `site_copy` answer
-(`via: site_copy_unusable`), and the new copy is loaded in turn. When the
-pipeline config sets the copy (`install_modules`), the issue is a fact
-(`answerable: false`); change the package's `install_modules` or
+A copy that doesn't load, or whose prefix is gone, is a `failure` record
+(`stage: site_copy_load`, exit `6`; see [Install failures](#install-failures)),
+and the package is held. It carries the load's command (for example
+`bash -lc 'module use X && module load A B'`, or `spack load /<hash>` with
+the site Spack for a Spack copy), its exit code, its full output,
+`failing_kind` (`module` or `spack`, matching the copy), `load_step`, and
+the copy (`site`). The recorded `site_copy` choice stays until
+`jarvis ppl install --forget <package>` forgets it; then the `site_copy`
+question is asked again. When the pipeline config sets the copy
+(`install_modules`), change the package's `install_modules` or
 `install_method`.
 
 A package can also name its modules directly:

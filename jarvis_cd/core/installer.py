@@ -122,6 +122,7 @@ class Installer(ABC):
         of an ``install_unchecked`` issue.
         """
         from jarvis_cd.core.spack_install import (
+            FAILURE_KIND,
             REPORT_SCHEMA,
             InstallDecisionNeeded,
             InstallFailed,
@@ -219,18 +220,18 @@ class Installer(ABC):
                 installer.defer_unchecked = defer_unchecked
                 if mode == "check":
                     print(f"Installer '{method}': checking {len(pkg_list)} pkg(s)")
-                    result = installer.check(ppl, pkg_list)
                 else:
                     print(f"Installer '{method}': installing {len(pkg_list)} pkg(s)")
-                    try:
-                        result = installer.install(ppl, pkg_list)
-                    except InstallFailed as failed:
-                        failure = failed
-                        report["installers"][method] = {
-                            "status": "failed",
-                            "issues": [issue["issue_id"] for issue in failed.issues],
-                        }
-                        break
+                try:
+                    result = (installer.check(ppl, pkg_list) if mode == "check"
+                              else installer.install(ppl, pkg_list))
+                except InstallFailed as failed:
+                    failure = failed
+                    report["installers"][method] = {
+                        "status": "failed",
+                        "issues": [issue["issue_id"] for issue in failed.issues],
+                    }
+                    break
                 report["installers"][method] = result or {"status": "done"}
         finally:
             if owns_context:
@@ -243,6 +244,8 @@ class Installer(ABC):
             report["open_issues"] = [issue["issue_id"] for issue in context.issues]
             report["applied_decisions"] = list(context.applied_decisions)
             report["stale_decisions"] = list(context.stale_decisions)
+            if context.rejected_answers:
+                report["rejected_answers"] = list(context.rejected_answers)
             report["decisions_path"] = str(context.decisions_path)
             if mode == "check":
                 try:
@@ -319,8 +322,15 @@ class Installer(ABC):
         elif not Installer.get_installers(ppl).get("spack"):
             report["activation"] = {"method": "none",
                                     "why_not_loaded": "no Spack packages"}
+        if failure is None and context is not None:
+            failed_records = [issue for issue in context.issues
+                              if issue.get("kind") == FAILURE_KIND]
+            if failed_records:
+                # something JARVIS ran failed: the error goes back as it is
+                # (exit 6), never as a question
+                failure = InstallFailed(failed_records, context.issues_path)
         if failure is not None:
-            # A failed build wins over open questions: exit 6 with all issues.
+            # A failure wins over open questions: exit 6 with all issues.
             failure.report = report
             raise failure
         if (context is not None and context.issues) or held_questions:
@@ -696,7 +706,7 @@ class SpackInstaller(Installer):
         for excluded in compilers.get("language_excluded") or []:
             print(f"SpackInstaller: compiler {excluded['reason']}; left out of this build")
         if failed:
-            from jarvis_cd.core.spack_install import classify_install_failure
+            from jarvis_cd.core.spack_install import failure_record
 
             details = "; ".join(
                 f"{name}: {record['packages'][name].get('error', '')}" for name in failed
@@ -705,12 +715,14 @@ class SpackInstaller(Installer):
             for name in failed:
                 entry = record["packages"][name]
                 if not entry.get("issue_id"):
-                    issue = classify_install_failure(
-                        str(entry.get("error") or ""), stage="verify", packages=[name],
-                        log_path=context.log_path,
+                    issue = failure_record(
+                        context, stage="verify", doing=f"verifying the install of {name}",
+                        command=entry.get("spec"), exit_code=None,
+                        output=str(entry.get("error") or ""), packages=[name],
+                        error=str(entry.get("error") or "") or None,
                     )
                     context.raise_issue(issue)
-                    entry["issue_id"], entry["failure_kind"] = issue["issue_id"], issue["kind"]
+                    entry["issue_id"] = issue["issue_id"]
                 if entry["issue_id"] not in failure_ids:
                     failure_ids.append(entry["issue_id"])
             failures = [i for i in context.issues if i["issue_id"] in failure_ids]
