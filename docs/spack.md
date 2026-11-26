@@ -49,7 +49,10 @@ the Spack root, so a relay can run it before `jarvis init`.
    - `upstreams.yaml`: the site Spack's install tree, plus its `lmod` and
      `tcl` module trees when they exist;
    - `config.yaml`: `misc_cache`, `test_stage` and the bootstrap root under
-     `<root>/var/jarvis`, `build_stage` under `$tempdir/$user`, and
+     `<root>/var/jarvis`, `build_stage` under `$tempdir/$user` (the site's
+     recorded `install_tmpdir`, when the person chose one, overrides it in
+     the pipeline's environment; see
+     [Install temp dir](pipeline_tests.md#install-temp-dir-install_tmpdir)), and
      `build_jobs`;
    - `concretizer.yaml`: `reuse: true`;
    - `bootstrap.yaml`: a private bootstrap root.

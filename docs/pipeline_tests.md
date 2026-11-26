@@ -689,6 +689,41 @@ without reading the log. Key on `failures` or `kind: failure`, not on
 `answerable: false`: a check also writes unanswerable facts such as
 `not_installed`.
 
+#### Install temp dir (`install_tmpdir`)
+
+The directory an install job uses for temporary files is an install
+setting the person chooses per site. That covers JARVIS's compiler check,
+the compilers Spack runs, and Spack's unpack and build directory
+(`config:build_stage`). JARVIS never decides it from free space or a
+guess, and never writes it into the person's Spack scopes (`~/.spack`, the
+Spack's `etc/spack`). Every failure record of the install job (a compiler
+check, `spack spec` or `spack install`) carries a `settings` list offering
+it, whatever the error says. The caller reads the compiler's or Spack's own
+text and, if the temp dir is the cause, asks the person for a directory:
+
+| Field | Meaning |
+|-------|---------|
+| `setting` | `install_tmpdir` |
+| `issue_id` | the stable id to answer in `--answers` (`{"<issue_id>": "/scratch/$USER/tmp"}`) |
+| `question`, `answer` | what to ask, and what the answer is: an absolute directory; `~` and `$VARS` are expanded on the build node |
+| `value`, `tmpdir`, `build_stage` | the recorded answer, its expansion here, and the Spack stage derived from it (`<tmpdir>/spack-stage`) |
+| `source` | where it came from (`decisions_file` or `answers_file`); `null` with `unset` when the job's own `TMPDIR` and Spack's own `config:build_stage` apply |
+| `recorded_in`, `forget` | the site's `decisions.yaml`, and the command that clears it |
+
+The answer is recorded in the site's `decisions.yaml` (`site:
+install_tmpdir`), like the build-placement choice; resending it leaves the
+entry as it is. In every later install JARVIS creates the directory, sets
+`TMPDIR` to it for the Spack part of the job (and restores it afterwards),
+and writes `build_stage:: [<tmpdir>/spack-stage]` (an override, so Spack
+cannot fall back to its default `$tempdir` entries) into the pipeline's
+Spack environment (`spack.yaml`) and into a JARVIS-owned scope
+`<install>/spack-stage-scope` for per-package builds
+(`JARVIS_SPACK_ENV=off`). If the directory cannot be created or written
+there, the error itself comes back as a failure record (`stage:
+install_tmpdir`) and nothing else runs. The install record shows the setting under
+`install_settings`. Changing only the temp dir does not re-concretize a
+locked environment; the next build reads it. `jarvis ppl install --forget
+install_tmpdir` clears it.
 #### Missing Spack (`spack_missing`)
 
 Before planning, JARVIS checks that it has a Spack to run. These are light

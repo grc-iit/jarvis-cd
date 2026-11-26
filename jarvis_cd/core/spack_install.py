@@ -1031,6 +1031,10 @@ def failure_record(
     )
     if written["output_path"] is None:
         issue["output"] = (output or "")[-_UNWRITTEN_CHARS:]
+    settings = getattr(context, "install_settings", None)
+    if settings:
+        # the install settings the person can change, not a reading of the error
+        issue["settings"] = [dict(item) for item in settings]
     for key, value in (extra or {}).items():
         if value is not None:
             issue[key] = value
@@ -1601,6 +1605,138 @@ def write_compiler_scope(scope_dir: Path, sections: Mapping[str, Any]) -> Path:
         elif path.exists():
             path.unlink()
     return scope_dir
+
+
+#: the site's temp dir for install jobs: an install setting (``TMPDIR`` for
+#: the job, and Spack's ``config:build_stage`` derived from it)
+INSTALL_TMPDIR_SETTING = "install_tmpdir"
+#: the ``spack -C`` scope holding the stage for per-package builds (no environment)
+STAGE_SCOPE_NAME = "spack-stage-scope"
+
+
+def install_tmpdir_issue() -> Dict[str, Any]:
+    """The site's install temp dir, as a site question with a stable id.
+
+    Never raised on its own (no free-space probe, no guess): a failure
+    record of the install job offers it under ``settings``. The answer, a
+    directory, is recorded for the site. JARVIS then sets ``TMPDIR`` to it
+    for the install job (its compiler check and Spack's build) and writes
+    ``config:build_stage`` (``<dir>/spack-stage``) into the pipeline's
+    Spack environment, never into the person's scopes.
+    """
+    return make_issue(
+        kind=INSTALL_TMPDIR_SETTING, package="*", subject=INSTALL_TMPDIR_SETTING, scope="site",
+        question="Which directory should this site's install jobs use for temporary "
+                 "files (TMPDIR for the compiler check and Spack's build stage)?",
+        detail="TMPDIR of the install job; config:build_stage of the pipeline's Spack "
+               "environment",
+        answerable=True,
+    )
+
+
+def _tmpdir_value(value: Any) -> Optional[str]:
+    """An absolute directory, or one with ``~``/``$VAR`` expanded where the job runs."""
+    text = str(value or "").strip()
+    return text if text.startswith(("/", "$", "~")) else None
+
+
+def apply_install_tmpdir(
+    planner: "SpackPlanner", context: "InstallContext", record: Dict[str, Any]
+) -> Optional[Dict[str, Any]]:
+    """Apply the site's recorded install temp dir; return its env sections.
+
+    An answer to :func:`install_tmpdir_issue` is recorded per site (resending
+    it changes nothing). With one recorded, this process's ``TMPDIR`` becomes
+    it (so the compiler check, Spack and the compilers Spack runs write
+    there; :func:`run_spack_install` restores it) and Spack's build stage is
+    ``<dir>/spack-stage``, as an override, in the pipeline's Spack
+    environment (the returned ``config`` section) and a JARVIS-owned
+    ``spack -C`` scope for per-package builds. If the directory cannot be
+    used here, the error itself is raised as a failure record and None is
+    returned: nothing else runs. With none
+    recorded, the job's own ``TMPDIR`` and Spack's ``config:build_stage``
+    apply.
+    """
+    issue = install_tmpdir_issue()
+    answer = context.answer_for(issue)
+    if answer is not None:
+        if _tmpdir_value(answer["constraint"]) is None:
+            rejected = {
+                "issue_id": issue["issue_id"],
+                "kind": INSTALL_TMPDIR_SETTING,
+                "constraint": answer["constraint"],
+                "reason": "the install temp dir is an absolute directory "
+                          "(~ and $VARS are expanded where the job runs)",
+            }
+            if rejected not in context.rejected_answers:
+                context.rejected_answers.append(rejected)
+        else:
+            planner.decisions.record(issue, answer)
+    recorded = planner.decisions.site(INSTALL_TMPDIR_SETTING)
+    value: Optional[str] = None
+    source: Optional[str] = None
+    if recorded is not None and _tmpdir_value(recorded.get("constraint")):
+        value = str(recorded["constraint"]).strip()
+        source = "answers_file" if answer is not None and _tmpdir_value(
+            answer["constraint"]) == value else "decisions_file"
+        if source == "decisions_file":
+            context.note_decision(issue, recorded, source=source, path=planner.decisions.path)
+    tmpdir = os.path.expandvars(os.path.expanduser(value)) if value else None
+    stage = f"{tmpdir.rstrip('/')}/spack-stage" if tmpdir else None
+    setting = {
+        "setting": INSTALL_TMPDIR_SETTING,
+        "issue_id": issue["issue_id"],
+        "scope": "site",
+        "question": issue["question"],
+        "answer": "a directory with room for the build's temporary files (absolute; ~ "
+                  "and $VARS are expanded on the build node); recorded for this site. "
+                  "JARVIS sets TMPDIR to it for the install job and Spack's "
+                  "config:build_stage to <dir>/spack-stage in the pipeline's Spack "
+                  "environment",
+        "value": value,
+        "tmpdir": tmpdir,
+        "build_stage": stage,
+        "source": source,
+        "unset": None if value else "the job's own TMPDIR and Spack's own "
+                                    "config:build_stage apply",
+        "recorded_in": str(planner.decisions.path),
+        "forget": f"jarvis ppl install --forget {INSTALL_TMPDIR_SETTING}",
+    }
+    context.install_settings = [setting]
+    record["install_settings"] = {INSTALL_TMPDIR_SETTING: setting}
+    scope_dir = context.install_dir / STAGE_SCOPE_NAME
+    config_path = scope_dir / "config.yaml"
+    if tmpdir is None or stage is None:
+        if config_path.exists():
+            config_path.unlink()
+        return {}
+    error = None if os.path.isabs(tmpdir) and "$" not in tmpdir else (
+        f"{value!r} expands to {tmpdir!r} here, not an absolute directory")
+    if error is None:
+        try:
+            Path(tmpdir).mkdir(parents=True, exist_ok=True)
+            probe = tempfile.NamedTemporaryFile(dir=tmpdir, prefix=".jarvis-tmpdir-")
+            probe.close()
+        except OSError as exc:
+            error = f"{type(exc).__name__}: {exc}"
+    if error is not None:
+        if config_path.exists():
+            config_path.unlink()
+        context.raise_issue(failure_record(
+            context, stage=INSTALL_TMPDIR_SETTING,
+            doing=f"using the site's install temp dir {tmpdir}", command=None,
+            exit_code=None, output=error, error=error, paths={"tmpdir": tmpdir},
+        ))
+        return None
+    os.environ["TMPDIR"] = tmpdir
+    tempfile.tempdir = None
+    sections: Dict[str, Any] = {"config": {"build_stage:": [stage]}}
+    scope_dir.mkdir(parents=True, exist_ok=True)
+    _atomic_write_text(config_path, yaml.safe_dump(sections, sort_keys=True))
+    if str(scope_dir) not in planner.runner.config_scopes:
+        planner.runner.config_scopes.append(str(scope_dir))
+    context.log(f"TMPDIR {tmpdir} (site install_tmpdir); Spack build_stage {stage}\n")
+    return sections
 
 
 #: per-host build-compiler checks under ``<JARVIS_SPACK_ROOT>/var/jarvis``
@@ -2625,6 +2761,8 @@ class InstallContext:
         self.rejected_answers: List[Dict[str, Any]] = []
         #: ``{pkg_id: text}``: the site has no copy of this package (site_copies)
         self.site_copy_facts: Dict[str, str] = {}
+        #: the site's install settings a failure record offers (see apply_install_tmpdir)
+        self.install_settings: List[Dict[str, Any]] = []
         self._log_stream: Optional[IO[str]] = None
 
     @property
@@ -3588,13 +3726,17 @@ class SpackEnvironment:
         repos = section.get("repos") if section is not None else None
         return [str(repo) for repo in repos] if isinstance(repos, list) else []
 
-    def _manifest_matches(self, specs: Sequence[str]) -> bool:
+    def _manifest_matches(self, specs: Sequence[str], ignore: Sequence[str] = ()) -> bool:
         if self.manifest_specs() != list(specs) or self.manifest_repos() != self.repos:
             return False
         if self.sections is None:
             return True
-        expected = self.manifest_for(specs, self.repos, self.sections)["spack"]
-        return json.loads(json.dumps(self._manifest(), default=str)) == json.loads(
+        expected = dict(self.manifest_for(specs, self.repos, self.sections)["spack"])
+        current = dict(self._manifest() or {})
+        for key in ignore:
+            expected.pop(key, None)
+            current.pop(key, None)
+        return json.loads(json.dumps(current, default=str)) == json.loads(
             json.dumps(expected, default=str)
         )
 
@@ -3612,8 +3754,9 @@ class SpackEnvironment:
 
     def current_roots(self, specs: Sequence[str]) -> Optional[List[Dict[str, str]]]:
         """Lock roots when the lock was concretized from exactly ``specs``
-        (and this environment's recipe repos and compiler sections)."""
-        if not self._manifest_matches(specs):
+        (and this environment's recipe repos and compiler sections; its
+        ``config`` section, the build stage, does not change what is built)."""
+        if not self._manifest_matches(specs, ignore=("config",)):
             return None
         roots = self.lock_roots()
         if roots is None or len(roots) != len(specs):
@@ -4005,12 +4148,31 @@ def run_spack_install(
     With ``env_dir`` the missing nodes are built through that per-pipeline
     Spack environment and its ``spack.lock`` becomes the install record
     (see :class:`SpackEnvironment`); without it each package gets its own
-    ``spack install``.
+    ``spack install``. The site's ``install_tmpdir`` (see
+    :func:`apply_install_tmpdir`) is this process's ``TMPDIR`` meanwhile.
 
     Returns the ``jarvis.install-record.v1`` document (also written to
     ``install-record.json``). Issues are appended to ``context.issues``; the
     caller decides whether to raise :class:`InstallDecisionNeeded`.
     """
+    saved = os.environ.get("TMPDIR")
+    try:
+        return _run_spack_install(pkg_list, context, runner, env_dir)
+    finally:
+        if os.environ.get("TMPDIR") != saved:
+            if saved is None:
+                os.environ.pop("TMPDIR", None)
+            else:
+                os.environ["TMPDIR"] = saved
+            tempfile.tempdir = None
+
+
+def _run_spack_install(
+    pkg_list: Sequence[Mapping[str, Any]],
+    context: InstallContext,
+    runner: Optional[SpackRunner],
+    env_dir: Optional[Path],
+) -> Dict[str, Any]:
     planner = SpackPlanner(context, runner)
     if any(_package_query(pkg_def) for pkg_def in pkg_list):
         missing = ensure_spack_available(context, planner.decisions)
@@ -4069,6 +4231,26 @@ def run_spack_install(
     from jarvis_cd.core.spack_site import site_prep_record
 
     record["spack_site_prep"] = site_prep_record(explicit_spack_root())
+    stage_sections = apply_install_tmpdir(planner, context, record)
+    if stage_sections is None:
+        # The person's temp dir cannot be used here: nothing runs without it.
+        record.update(
+            finished_at=_utc_now(),
+            packages={
+                str(d.get("pkg_id") or d.get("pkg_name") or "pkg"): {
+                    "status": "blocked", "blocked_by": INSTALL_TMPDIR_SETTING,
+                }
+                for d in pkg_list
+            },
+            packages_total=len(pkg_list),
+            issues=[issue["issue_id"] for issue in context.issues],
+            applied_decisions=list(context.applied_decisions),
+            stale_decisions=list(context.stale_decisions),
+        )
+        _atomic_write_text(
+            context.record_path, json.dumps(record, indent=2, sort_keys=True) + "\n"
+        )
+        return record
     compiler_state = apply_build_compilers(planner, context, record)
     record["spack_config_scopes"] = spack_config_scopes(
         planner.runner.config_scopes, env_dir
@@ -4176,7 +4358,8 @@ def run_spack_install(
             sync_started = time.monotonic()
             _sync_spack_environment(
                 planner, context, record, resolved, Path(env_dir),
-                sections=compiler_state["sections"] if context.mode == "install" else None,
+                sections={**compiler_state["sections"], **stage_sections}
+                if context.mode == "install" else None,
             )
             if any(entry.get("status") == "installed" for _p, entry in resolved):
                 record["env_build_seconds"] = round(time.monotonic() - sync_started, 3)
