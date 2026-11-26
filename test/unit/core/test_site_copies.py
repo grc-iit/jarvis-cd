@@ -412,6 +412,55 @@ class TestResolution(_Case):
         self.assertIn('lammps', context.site_copy_facts['md'])
         self.assertEqual(ppl.packages[0]['config'], spack_pkg('lammps', name='md')['config'])
 
+    def test_a_root_of_the_pipelines_spack_lock_is_jarvis_own_build(self):
+        env_dir = self.tmp / 'env'
+        env_dir.mkdir()
+        (env_dir / 'spack.lock').write_text(json.dumps(
+            {'roots': [{'hash': IOR_HASH, 'spec': 'ior@3.3'}]}), encoding='utf-8')
+        ppl = FakePipeline(self.jarvis, [spack_pkg('ior@3.3')])
+        context = self.context()
+        with mock.patch.dict(os.environ, {'JARVIS_SPACK_ENV_DIR': str(env_dir)}):
+            summary = self.resolve(ppl, context, fake_login(avail='', spider=''))
+        self.assertEqual(context.issues, [])
+        self.assertEqual(summary['held'], [])
+        entry = summary['packages']['bench']
+        self.assertEqual((entry['status'], entry['hash'], entry['spack_root']),
+                         ('own_build', IOR_HASH, '/site/spack'))
+        self.assertEqual(entry['recorded_in'], str(env_dir / 'spack.lock'))
+        self.assertEqual(ppl.packages[0]['config'], spack_pkg('ior@3.3')['config'])
+        self.assertEqual(Decisions(self.tmp / 'decisions.yaml').package_entries('ior'), [])
+
+    def test_a_root_in_the_last_install_record_is_jarvis_own_build(self):
+        execution = self.tmp / 'shared' / 'demo' / 'executions' / 'job1' / 'install'
+        execution.mkdir(parents=True)
+        record = execution / 'install-record.json'
+        record.write_text(json.dumps({'mode': 'install', 'packages': {
+            'bench': {'status': 'installed', 'lock_hash': IOR_HASH}}}), encoding='utf-8')
+        shared = self.tmp / 'shared' / 'demo' / 'install'
+        shared.mkdir(parents=True)
+        (shared / 'last-install.json').write_text(json.dumps({'record': str(record)}),
+                                                  encoding='utf-8')
+        ppl = FakePipeline(self.jarvis, [spack_pkg('ior@3.3')])
+        context = self.context()
+        with mock.patch.dict(os.environ, {'JARVIS_SPACK_ENV_DIR': ''}):
+            # the module a site Spack wrote for it is the same install
+            summary = self.resolve(ppl, context)
+        self.assertEqual(context.issues, [])
+        entry = summary['packages']['bench']
+        self.assertEqual((entry['status'], entry['recorded_in']), ('own_build', str(record)))
+
+    def test_another_hash_in_the_lock_still_asks(self):
+        env_dir = self.tmp / 'env'
+        env_dir.mkdir()
+        (env_dir / 'spack.lock').write_text(json.dumps(
+            {'roots': [{'hash': MPI_HASH, 'spec': 'openmpi'}]}), encoding='utf-8')
+        ppl = FakePipeline(self.jarvis, [spack_pkg('ior@3.3')])
+        context = self.context()
+        with mock.patch.dict(os.environ, {'JARVIS_SPACK_ENV_DIR': str(env_dir)}):
+            summary = self.resolve(ppl, context)
+        self.assertEqual(summary['held'], ['bench'])
+        self.assertEqual(context.issues[0]['kind'], 'site_copy')
+
     def test_the_search_can_be_turned_off(self):
         package = spack_pkg('ior')
         self.assertTrue(sc.needs_search(None, package))

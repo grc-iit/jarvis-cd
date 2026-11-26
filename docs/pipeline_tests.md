@@ -816,6 +816,16 @@ a site copy sets the package's `install_method: site` (below). Choosing
 the chosen `constraint`) forgets the answer, resets a saved pipeline's
 choice, and asks again.
 
+JARVIS's own builds are not site copies. A found install whose hash is a
+root of the pipeline's `spack.lock` (`JARVIS_SPACK_ENV_DIR`, or
+`<pipeline shared>/spack-env`), or a root in the last install's
+`install-record.json` (`packages.*.lock_hash`, `spack_env.roots`), is what
+JARVIS built for this pipeline, for example into a site Spack it was told to
+use. Nothing is asked about it. The report's `site_copies.packages` entry
+has `status: own_build`, with `hash`, `spack_root` and `recorded_in` (the
+file that records the hash), and the package stays on the Spack path, so a
+check after an install finds it installed.
+
 When nothing is found, nothing is asked. The install report's
 `site_copies.facts[]` holds a `site_copy_none` fact (`answerable: false`,
 `fact: true`, `method: spack`, `searched[]`), and the Spack path runs as

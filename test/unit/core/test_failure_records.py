@@ -135,6 +135,16 @@ class TestCompilerProbe(_Case):
         self.assertEqual((results['cc']['step'], results['cc']['exit_code']), ('setup', None))
         self.assertIn('No space left on device', results['cc']['error'])
 
+    def test_no_usable_temp_dir_at_all_is_returned_too(self):
+        cc = self.script('cc', 'exit 0\n')
+        gone = FileNotFoundError(2, 'No usable temporary directory found in /full/tmp')
+        with mock.patch.object(si.tempfile, 'TemporaryDirectory', side_effect=gone), \
+                mock.patch.object(si.tempfile, 'gettempdir', side_effect=gone), \
+                mock.patch.dict(os.environ, {'TMPDIR': '/full/tmp'}):
+            results = si.probe_compiler({'cc': cc}, {})
+        self.assertEqual((results['cc']['step'], results['cc']['cwd']), ('setup', '/full/tmp'))
+        self.assertIn('No usable temporary directory', results['cc']['error'])
+
     def test_a_missing_executable_is_the_fact(self):
         doc = si.verify_compilers([{'spec': 'gcc@11.4.0',
                                     'paths': {'cc': str(self.tmp / 'gone')}}])

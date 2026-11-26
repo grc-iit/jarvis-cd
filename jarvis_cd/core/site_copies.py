@@ -1185,14 +1185,38 @@ def _record_site_choice(decisions: Decisions, package: str, needs: Needs,
         decisions.save()
 
 
+def _copy_hash(copy: Mapping[str, Any]) -> str:
+    raw = copy.get("spack")
+    spack: Mapping[str, Any] = raw if isinstance(raw, Mapping) else {}
+    return str(copy.get("spack_hash") or spack.get("hash") or "")
+
+
+def _own_build(copy: Mapping[str, Any], own_hashes: Mapping[str, str]) -> Optional[str]:
+    """Where ``copy``'s hash is recorded as JARVIS's own build, if it is.
+
+    A short hash (a resource graph entry's) matches a full one it starts;
+    7 characters at least, as ``spack find`` prints.
+    """
+    value = _copy_hash(copy)
+    if len(value) < 7:
+        return None
+    for full, where in own_hashes.items():
+        if full.startswith(value) or (len(full) >= 7 and value.startswith(full)):
+            return where
+    return None
+
+
 def resolve_site_copies(ppl, context) -> Dict[str, Any]:
     """Find site copies for each Spack package and apply the recorded answer.
 
     Returns ``{"packages": {pkg_id: summary}, "facts": [...], "held": [pkg_id]}``:
     ``held`` packages have an open ``site_copy`` question (raised on
-    ``context``) and are not planned with Spack this run.
+    ``context``) and are not planned with Spack this run. A found install
+    whose hash is a root of the pipeline's ``spack.lock`` or of the last
+    install's record is JARVIS's own build (``status: own_build``): it is
+    not asked about, and the package stays on the Spack path.
     """
-    from jarvis_cd.core.installer import plan_only_active
+    from jarvis_cd.core.installer import own_build_hashes, plan_only_active
     from jarvis_cd.core.install_placement import spec_name
 
     summary: Dict[str, Any] = {"schema_version": SCHEMA, "packages": {}, "facts": [],
@@ -1203,6 +1227,7 @@ def resolve_site_copies(ppl, context) -> Dict[str, Any]:
         return summary
     decisions = Decisions(context.decisions_path)
     gate = spack_gate(context)
+    own_hashes = own_build_hashes(ppl)
     site_mpi_entry = decisions.site("mpi") or {}
     groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
     for pkg_def in wanted:
@@ -1237,6 +1262,20 @@ def resolve_site_copies(ppl, context) -> Dict[str, Any]:
             found, searched_where = find_site_copies(package, gate=gate, blocked=blocked)
             searches[package] = (found, searched_where, blocked)
         copies, searched, blocked = searches[package]
+        own = [(copy, where) for copy in copies
+               for where in [_own_build(copy, own_hashes)] if where]
+        if own:
+            # JARVIS built (or locked) this install for the pipeline: it is the
+            # Spack path's own result, not a copy the site offers
+            copy, where = own[0]
+            for pkg_id in pkg_ids:
+                summary["packages"][pkg_id] = {
+                    "status": "own_build", "spec_name": package,
+                    "hash": _copy_hash(copy), "spack_root": copy.get("spack_root"),
+                    "recorded_in": where}
+            context.log(f"[{_utc_now()}] site copies: {package} /{_copy_hash(copy)[:7]} "
+                        f"is JARVIS's own build ({where}); not asked as a site copy\n")
+            continue
         if blocked:
             # a site Spack whose check failed: nothing is recommended while it fails
             summary["held"].extend(pkg_ids)

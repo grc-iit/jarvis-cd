@@ -1677,16 +1677,12 @@ def _classify_last_issues(issue_ids, record, decisions_path, context, held=()):
     return open_ids, resolved
 
 
-def read_last_install(ppl, context=None) -> Optional[Dict[str, Any]]:
-    """The last install's pointer plus a summary of the record it wrote.
+def last_install_pointer(ppl) -> Optional[Dict[str, Any]]:
+    """The last install's pointer (``record``, ``install_dir``, ...), or ``None``.
 
     Without a pointer (an install from an older jarvis) the newest
     ``<shared>/executions/*/install/install-record.json`` in install mode is
-    used. Returns ``None`` when no install has run. ``open_issues`` holds only
-    the record's questions that are still open (see
-    :func:`_classify_last_issues`); the others are in ``resolved_issues``.
-    ``context`` is the running check, whose own questions decide what is
-    still open.
+    used.
     """
     import json
 
@@ -1722,6 +1718,63 @@ def read_last_install(ppl, context=None) -> Optional[Dict[str, Any]]:
             "pointer": None,
             "found_by": "scan",
         }
+    return pointer
+
+
+def own_build_hashes(ppl) -> Dict[str, str]:
+    """The Spack hashes JARVIS built or locked for ``ppl``, with where each is recorded.
+
+    These are the roots of the pipeline's ``spack.lock`` and the roots in the
+    last install's ``install-record.json`` (``lock_hash``, ``spack_env.roots``).
+    A site copy with one of these hashes is JARVIS's own build, not a site copy.
+    """
+    import json
+
+    found: Dict[str, str] = {}
+    lock = spack_env_dir_for(ppl) / "spack.lock"
+    try:
+        roots = json.loads(lock.read_text(encoding="utf-8")).get("roots") or []
+    except (OSError, ValueError, AttributeError):
+        roots = []
+    for root in roots if isinstance(roots, list) else []:
+        if isinstance(root, dict) and isinstance(root.get("hash"), str) and root["hash"]:
+            found.setdefault(root["hash"], str(lock))
+    pointer = last_install_pointer(ppl)
+    record_path = (pointer or {}).get("record")
+    try:
+        record = json.loads(Path(str(record_path)).read_text(encoding="utf-8")) \
+            if record_path else None
+    except (OSError, ValueError):
+        record = None
+    if isinstance(record, dict):
+        hashes = [entry.get("lock_hash") for entry in (record.get("packages") or {}).values()
+                  if isinstance(entry, dict)]
+        raw_env = record.get("spack_env")
+        env: Dict[str, Any] = raw_env if isinstance(raw_env, dict) else {}
+        hashes += [root.get("hash") for root in env.get("roots") or []
+                   if isinstance(root, dict)]
+        for value in hashes:
+            if isinstance(value, str) and value:
+                found.setdefault(value, str(record_path))
+    return found
+
+
+def read_last_install(ppl, context=None) -> Optional[Dict[str, Any]]:
+    """The last install's pointer plus a summary of the record it wrote.
+
+    Without a pointer (an install from an older jarvis) the newest
+    ``<shared>/executions/*/install/install-record.json`` in install mode is
+    used. Returns ``None`` when no install has run. ``open_issues`` holds only
+    the record's questions that are still open (see
+    :func:`_classify_last_issues`); the others are in ``resolved_issues``.
+    ``context`` is the running check, whose own questions decide what is
+    still open.
+    """
+    import json
+
+    pointer = last_install_pointer(ppl)
+    if pointer is None:
+        return None
     try:
         record = json.loads(Path(pointer["record"]).read_text(encoding="utf-8"))
     except (OSError, ValueError, KeyError, TypeError):

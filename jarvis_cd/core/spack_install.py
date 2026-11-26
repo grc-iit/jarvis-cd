@@ -1312,7 +1312,11 @@ def probe_compiler(paths: Mapping[str, str], entry: Mapping[str, Any]) -> Dict[s
     try:
         tmp_dir = tempfile.TemporaryDirectory(prefix="jarvis-compiler-probe-")
     except OSError as exc:
-        where = tempfile.gettempdir()
+        try:
+            where = tempfile.gettempdir()
+        except OSError:
+            # no usable temp dir at all: Python's own error names the dirs it tried
+            where = os.environ.get("TMPDIR") or "/tmp"
         for lang, _item in wanted:
             results[lang] = {"ok": False, "step": "setup", "command": None, "cwd": where,
                              "exit_code": None, "output": "",
