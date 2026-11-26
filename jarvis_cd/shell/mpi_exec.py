@@ -71,6 +71,9 @@ class LocalMpiExec(LocalExec):
             if isinstance(self.network, dict) else []
         self.launch_json = None
         self.placement = self._resolve_placement()
+        self.threads = self._apply_rank_threads()
+        if isinstance(self.placement, dict) and self.threads is not None:
+            self.placement['threads'] = self.threads
 
         from ..core.provenance import capture_launch
         capture_launch(self, cwd=getattr(exec_info, 'cwd', None))
@@ -110,8 +113,33 @@ class LocalMpiExec(LocalExec):
             'advisories': list(self.advisories or []),
             'site_facts': self.site_facts,
             'placement': self.placement,
+            'threads': getattr(self, 'threads', None),
             'launch_json': self.launch_json,
         }
+
+    def _apply_rank_threads(self):
+        """Thread counts per rank from the allocation's CPUs per rank.
+
+        Sets OMP/OPENBLAS/MKL_NUM_THREADS in the rank env unless the rank
+        env or the launcher's environment has them; see
+        ``jarvis_cd.util.placement.rank_threads``.
+        """
+        import os
+        import sys
+        from ..util.placement import rank_threads
+
+        rank_env = dict(self.mpi_env or {})
+        record = rank_threads(self.nprocs, self.ppn, list(self.hostfile.hosts),
+                              rank_env, os.environ)
+        if record is None:
+            return None
+        self.mpi_env = rank_env
+        if record.get('set'):
+            values = ' '.join(f"{k}={v}" for k, v in record['set'].items())
+            print(f"jarvis: {values} per rank ({record['ranks_per_node']} ranks/node, "
+                  f"cpus from {(record.get('cpus') or {}).get('source')})",
+                  file=sys.stderr)
+        return record
 
     def _resolve_placement(self):
         """Bound ranks per node by the allocation's task geometry.

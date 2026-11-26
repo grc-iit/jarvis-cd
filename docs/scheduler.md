@@ -1157,7 +1157,42 @@ in `provenance/launch-NNN/launch.json` and `provenance.json`:
 ```
 
 `source` is `scheduler_geometry`, `physical_cores` (with `physical_cores`),
-or `package` when neither is known. and pipeline destruction
+or `package` when neither is known.
+
+## Threads per rank
+
+A rank that links a threaded library (OpenMP, OpenBLAS with pthreads, MKL)
+starts one thread per CPU it sees unless told otherwise, so 16 ranks on a
+40-CPU node can run 600+ threads. Inside an allocation, every MPI exec sets
+`OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS` and `MKL_NUM_THREADS` in each
+rank's env to the CPUs the allocation gives one rank:
+
+- Slurm `SLURM_CPUS_PER_TASK` when the job asked for it (`cpus_per_task`);
+- else the CPUs per node (`SLURM_JOB_CPUS_PER_NODE` with
+  `SLURM_JOB_NODELIST`, the smallest among the launch's hosts; under other
+  schedulers the launcher's CPU affinity) divided by the ranks per node
+  (the launch's `ppn`, else `ceil(nprocs / hosts)`), at least 1.
+
+A variable already in the rank env (the package's or pipeline's env) is
+kept, and one set in the launcher's environment is kept and forwarded to
+every rank, so a package or a person overrides it by setting it.
+`JARVIS_MPI_THREADS=off` in the environment or the package's env sets none.
+Outside an allocation nothing is set.
+
+A launch that sets values prints `jarvis: OMP_NUM_THREADS=2 ... per rank`
+on stderr and records the decision as `threads` (`jarvis.launch-threads.v1`)
+in `provenance/launch-NNN/launch.json` (and inside `placement`):
+
+```json
+{"schema_version": "jarvis.launch-threads.v1", "ranks_per_node": 16,
+ "cpus": {"per_node": 40, "source": "SLURM_JOB_CPUS_PER_NODE", "value": "40(x2)"},
+ "threads_per_rank": 2,
+ "set": {"OMP_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2", "MKL_NUM_THREADS": "2"},
+ "kept": {}, "override": "..."}
+```
+
+`kept` names each variable left as found and `from` (`rank_env` or
+`environment`).
 
 ## Execution cleanup and pipeline destruction
 

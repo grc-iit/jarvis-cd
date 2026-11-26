@@ -269,3 +269,106 @@ def resolve_ppn(
     if over_grant:
         record["warning"] = "oversubscribed: nprocs exceeds the tasks the allocation granted"
     return resolved, record
+
+
+#: the thread-count variables a launch sets per rank (OpenMP, OpenBLAS, MKL)
+THREAD_VARIABLES = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
+
+
+def _expand_counts_per_host(value: str, environ: Mapping[str, str]) -> Optional[Dict[str, int]]:
+    counts = _expand_tasks_per_node(value)
+    hosts = expand_nodelist(environ.get("SLURM_JOB_NODELIST", ""))
+    if not counts or len(hosts) != len(counts):
+        return None
+    return {_short(h): c for h, c in zip(hosts, counts)}
+
+
+def allocation_cpus(
+    environ: Mapping[str, str], hosts: List[str]
+) -> Optional[Dict[str, Any]]:
+    """CPUs per rank (``SLURM_CPUS_PER_TASK``) or per node the allocation gives.
+
+    Slurm: ``SLURM_CPUS_PER_TASK`` when the job asked for it, else
+    ``SLURM_JOB_CPUS_PER_NODE`` paired with ``SLURM_JOB_NODELIST`` (the
+    smallest count among the launch hosts). Otherwise the CPUs this process
+    may run on (its affinity), as the launch host's share.
+    """
+    per_task = environ.get("SLURM_CPUS_PER_TASK", "")
+    if environ.get("SLURM_JOB_ID") and per_task.isdigit() and int(per_task) > 0:
+        return {"per_rank": int(per_task), "source": "SLURM_CPUS_PER_TASK",
+                "value": per_task}
+    raw = environ.get("SLURM_JOB_CPUS_PER_NODE", "")
+    if environ.get("SLURM_JOB_ID") and raw:
+        per_host = _expand_counts_per_host(raw, environ)
+        if per_host:
+            bound = _geometry_bound({"per_host": per_host, "min": min(per_host.values())},
+                                    hosts)
+            return {"per_node": bound, "source": "SLURM_JOB_CPUS_PER_NODE", "value": raw}
+        counts = _expand_tasks_per_node(raw)
+        if counts:
+            return {"per_node": min(counts), "source": "SLURM_JOB_CPUS_PER_NODE",
+                    "value": raw}
+    try:
+        cpus = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        cpus = os.cpu_count() or 0
+    if cpus > 0:
+        return {"per_node": cpus, "source": "launcher_affinity", "value": str(cpus)}
+    return None
+
+
+def rank_threads(
+    nprocs: Optional[int],
+    ppn: Optional[int],
+    hosts: List[str],
+    rank_env: Dict[str, Any],
+    environ: Mapping[str, str],
+) -> Optional[Dict[str, Any]]:
+    """Set each rank's thread counts to the CPUs the allocation gives it.
+
+    Inside an allocation, ``OMP_NUM_THREADS``, ``OPENBLAS_NUM_THREADS`` and
+    ``MKL_NUM_THREADS`` go into ``rank_env`` as the allocation's CPUs per
+    rank: ``SLURM_CPUS_PER_TASK``, else CPUs per node divided by the ranks
+    per node (``ppn``, else ``ceil(nprocs / hosts)``), at least 1. A value
+    already in the rank env (the package's or pipeline's env) is kept; one
+    set in the launcher's environment is kept and forwarded to every rank.
+    ``JARVIS_MPI_THREADS=off`` (rank env or environment) sets nothing.
+    Returns the record of what was set and why (None outside an allocation).
+    """
+    job = allocation(environ)
+    if job is None:
+        return None
+    switch = str(rank_env.get("JARVIS_MPI_THREADS") or environ.get("JARVIS_MPI_THREADS")
+                 or "").strip().lower()
+    record: Dict[str, Any] = {"schema_version": "jarvis.launch-threads.v1"}
+    if switch in {"off", "0", "false", "no"}:
+        record.update(disabled=True, reason="JARVIS_MPI_THREADS=off")
+        return record
+    n_hosts = max(1, len(hosts))
+    if ppn:
+        ranks_per_node = int(ppn)
+    elif isinstance(nprocs, int) and nprocs > 0:
+        ranks_per_node = math.ceil(nprocs / n_hosts)
+    else:
+        ranks_per_node = 1
+    cpus = allocation_cpus(environ, hosts)
+    threads: Optional[int] = None
+    if cpus is not None:
+        if "per_rank" in cpus:
+            threads = int(cpus["per_rank"])
+        else:
+            threads = max(1, int(cpus["per_node"]) // max(1, ranks_per_node))
+    record.update(ranks_per_node=ranks_per_node, cpus=cpus, threads_per_rank=threads,
+                  set={}, kept={})
+    for name in THREAD_VARIABLES:
+        if rank_env.get(name) not in (None, ""):
+            record["kept"][name] = {"value": str(rank_env[name]), "from": "rank_env"}
+        elif environ.get(name):
+            rank_env[name] = environ[name]
+            record["kept"][name] = {"value": environ[name], "from": "environment"}
+        elif threads is not None:
+            rank_env[name] = str(threads)
+            record["set"][name] = str(threads)
+    record["override"] = ("set the variable in the package's or pipeline's env, or "
+                          "JARVIS_MPI_THREADS=off to set none")
+    return record

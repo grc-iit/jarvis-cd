@@ -227,6 +227,9 @@ def capture_launch(launch: Any, cwd: Optional[str] = None) -> None:
             "advisories": launch_advisories(launch_facts),
             "site_facts": launch_facts if isinstance(launch_facts, dict) else None,
             "placement": getattr(launch, "placement", None),
+            # Thread counts each rank got (OMP/OPENBLAS/MKL_NUM_THREADS)
+            # and where they came from; see util.placement.rank_threads.
+            "threads": getattr(launch, "threads", None),
             "rank_env": redact_environment(env),
         }
         (launch_dir / "launch.json").write_text(
