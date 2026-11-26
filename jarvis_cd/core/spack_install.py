@@ -688,15 +688,14 @@ def spack_root_writable(root: Path) -> bool:
 def chained_spack_root(site_root: Path) -> Path:
     """Where jarvis keeps its own Spack chained to the read-only ``site_root``.
 
-    It lives with the site record (the directory of ``JARVIS_RESOURCE_GRAPH``,
-    else ``JARVIS_ROOT``, else ``~/.ppi-jarvis``), one per site root and
-    release, outside the locations probed for Spack candidates.
+    It lives in JARVIS's site home (``util.site_state``: ``JARVIS_SITE_HOME``
+    or ``~/.ppi-jarvis/site`` with a site graph, else the JARVIS root), one
+    per site root and release, outside the locations probed for Spack
+    candidates. Never beside a site-named graph, which JARVIS only reads.
     """
-    graph = os.environ.get("JARVIS_RESOURCE_GRAPH", "").strip()
-    if graph:
-        home = Path(graph).expanduser().resolve().parent
-    else:
-        home = Path(os.environ.get("JARVIS_ROOT", "").strip() or "~/.ppi-jarvis").expanduser()
+    from jarvis_cd.util.site_state import site_home
+
+    home = site_home()
     version = spack_checkout_version(site_root) or "unknown"
     digest = hashlib.sha256(str(site_root).encode("utf-8")).hexdigest()[:12]
     return home / "spacks" / f"{version}-{digest}"
@@ -2652,12 +2651,15 @@ def forget_decisions(decisions_path: Path, selectors: Sequence[str]) -> Dict[str
     decisions = Decisions(Path(decisions_path))
     with decisions.locked():
         report = _forget_locked(decisions, decisions_path, selectors)
-    from jarvis_cd.core.install_placement import forget_graph_answers
+    from jarvis_cd.core.install_placement import forget_graph_answers, site_graph_answers_kept
 
     # the resource graph's copy of a forgotten placement answer goes with it
     dropped = forget_graph_answers(report["forgotten"])
     if dropped:
         report["graph_forgotten"] = dropped
+    kept = site_graph_answers_kept(report["forgotten"])
+    if kept:
+        report["site_graph_kept"] = kept
     return report
 
 

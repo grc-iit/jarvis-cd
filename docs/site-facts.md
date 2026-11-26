@@ -159,7 +159,7 @@ The report is:
 {
   "schema_version": "jarvis.site-facts.v1",
   "stage": "check",
-  "answers_path": "<graph dir>/site-facts/answers.yaml",
+  "answers_path": "<site home>/site-facts/answers.yaml",
   "issues": [],
   "confirmed": [{"fact": "net.launch", "issue_id": "sha256:...", "evidence_digest": "sha256:...",
                  "value": "accept", "reason": "...", "set_by": "...", "set_at": "...",
@@ -202,6 +202,8 @@ jarvis rg facts forget <fact> [+json]
   - `--answers` takes `{"<issue_id>": {"value", "reason", "set_by", "proposed_by"}}`.
 - `forget` removes the recorded answer for a fact, so JARVIS asks again. An
   override the answer set stays in the graph until `jarvis rg net clear`.
+  When the site also publishes an answer for the fact, the report names it
+  under `published_still_applies`.
 
 Every command with `+json` prints only the document.
 
@@ -210,14 +212,17 @@ Every command with `+json` prints only the document.
 | `site_fact_unknown` | the `issue_id` was never asked, or `forget` found nothing |
 | `site_fact_answer_stale` | the evidence changed since the question was asked; `details.current_issue_id` names the current one |
 | `site_fact_answer_invalid` | no `--reason`, a malformed value, or a value the graph excludes |
+| `site_fact_published` | `forget` of a fact whose only answer is the one the site publishes, which JARVIS only reads |
 
 ## The store
 
-Answers live per site, next to the graph (`JARVIS_RESOURCE_GRAPH`, else the
-JARVIS root's graph):
+Answers live per site, in JARVIS's site home (see
+[Site-level graph](resource_graph.md#site-level-graph-jarvis_resource_graph)):
+`JARVIS_SITE_HOME`, else `~/.ppi-jarvis/site` when `JARVIS_RESOURCE_GRAPH`
+names a site graph, else the JARVIS root:
 
 ```text
-<graph dir>/site-facts/
+<site home>/site-facts/
   answers.yaml     # per fact: value, reason, source: person, set_by, set_at,
                    # proposed_by, issue_id, evidence_digest, validation
   asked/<hex>.json # each question asked, with the inputs that produced it
@@ -228,6 +233,11 @@ An answer suppresses its question only while the current evidence digest
 equals the recorded one. When the evidence changes, the new question carries
 `details.previous_answer` and `supersedes`, and the old `issue_id` is
 refused as stale.
+
+A site may publish confirmed answers beside its graph, in
+`<dir of JARVIS_RESOURCE_GRAPH>/site-facts/answers.yaml` (same layout).
+JARVIS reads them, tagged `published_in`, and never writes there. An answer
+in JARVIS's own store for the same fact wins.
 
 ## For callers (relay, CLIO)
 

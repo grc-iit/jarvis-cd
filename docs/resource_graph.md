@@ -28,23 +28,63 @@ The Resource Graph provides:
 
 ### Site-level graph (`JARVIS_RESOURCE_GRAPH`)
 
-Set `JARVIS_RESOURCE_GRAPH=<path>` to use one site-level graph file instead of
-`<JARVIS_ROOT>/resource_graph.yaml`. Every JARVIS root on the site then reads
-and writes the same graph, including the per-job roots a relay creates.
-`jarvis init` never overwrites it, and `rg build` and `rg net set|clear`
-write to it. `jarvis rg path` prints the active file.
+Set `JARVIS_RESOURCE_GRAPH=<path>` to name a graph the site publishes, shared
+by every JARVIS root on the site (including the per-job roots a relay
+creates). JARVIS treats it as **read-only input**: it may live in a shared
+admin location the person can't or shouldn't write to, so JARVIS never
+writes the file or anything in its directory (no lock, temporary or state
+files).
 
-The graph's directory also holds the site's [skills](site-skills.md)
-(`<graph dir>/skills/`, managed with `jarvis rg skill`) and may hold a site
-Spack (`<graph dir>/spack`), which a `spack_missing` question offers as a
-candidate (see [Missing Spack](pipeline_tests.md#missing-spack-spack_missing)).
+What JARVIS records goes to its own **site home** instead:
+
+| Setting | Site home |
+|---------|-----------|
+| `JARVIS_SITE_HOME=<dir>` (with a site graph) | `<dir>`. It must not be the site graph's directory; JARVIS refuses that. |
+| site graph named, `JARVIS_SITE_HOME` unset | `~/.ppi-jarvis/site`, shared by every JARVIS root of this person |
+| no site graph | the JARVIS root (`JARVIS_ROOT`, default `~/.ppi-jarvis`), as before. `JARVIS_SITE_HOME` is ignored. |
+
+The site home holds JARVIS's own graph (`<site home>/resource_graph.yaml`),
+its [skills](site-skills.md) (`skills/`), the confirmed
+[site-fact answers](site-facts.md) (`site-facts/`), the Miniforge it installs
+(`miniforge3/`) and the Spacks it chains to a read-only site Spack
+(`spacks/`).
+
+JARVIS acts on its own graph overlaid on the site's, one top-level section
+at a time. A section JARVIS wrote (`rg build`, `rg load`, `rg net set|clear`,
+a net collection) wins. Every other section comes from the site graph, so a
+later update the site publishes still applies. JARVIS saves only the
+sections that differ from the site's. `install_placement` answers merge per
+phase, the newer `answered_at` winning. `jarvis rg path` prints JARVIS's own
+file, or the site file while JARVIS has none. `jarvis rg show` names both
+files and prints the effective graph.
+
+The site may also publish, beside its graph and read-only:
+
+- `skills/` (same layout as JARVIS's own), listed with `source: site`;
+- `site-facts/answers.yaml`, confirmed answers tagged `published_in`;
+- `spack/`, a site Spack, which a `spack_missing` question offers as a
+  candidate (see [Missing Spack](pipeline_tests.md#missing-spack-spack_missing)).
+
+A skill or answer JARVIS has with the same name wins. Removing a published
+skill or forgetting a published fact is refused (`skill_published`,
+`site_fact_published`): change it where the site publishes it.
+
+Migration from 1.9.15: earlier releases wrote JARVIS's state into the site
+graph and beside it (`skills/`, `site-facts/`, `miniforge3/`, `spacks/`).
+JARVIS now reads only what the site publishes there (the graph, `skills/`,
+`site-facts/answers.yaml`, `spack/`) and no longer uses the Miniforge or
+chained Spacks it left in that directory. A conda or chained-Spack install
+asks again and installs into the site home.
 
 The graph may also carry an `install_placement` section: the person's
 confirmed answers to where Spack checks and builds run at this site, per
-phase, with `basis`, `answered_by` and `answered_at`. JARVIS writes it when
-the person answers, and recommends it (it never applies it unasked) to any
-home that reads this graph. `rg build`, `rg load` and `rg net set|clear`
-keep it. See [scheduler.md → Install placement](scheduler.md#install-placement-where-checks-and-builds-run).
+phase, with `basis`, `answered_by` and `answered_at`. JARVIS writes it into
+its own graph when the person answers, and recommends it (it never applies
+it unasked) to any home that reads this graph. Answers the site graph holds
+are read too, marked `site_graph: true`. `forget-decisions` drops only
+JARVIS's own copy and reports the site graph's answers it keeps under
+`site_graph_kept`. `rg build`, `rg load` and `rg net set|clear` keep the
+section. See [scheduler.md → Install placement](scheduler.md#install-placement-where-checks-and-builds-run).
 
 ### Key Components
 
@@ -93,7 +133,7 @@ localhost
 3. **Device Analysis**: Determines device type, model, and capacity
 4. **Performance Benchmarking**: Measures I/O performance (optional)
 5. **Common Storage Analysis**: Identifies shared mount points across nodes
-6. **Persistent Storage**: Saves results to `~/.ppi-jarvis/resource_graph.yaml`, or to `$JARVIS_RESOURCE_GRAPH` when it is set. If any node returns no data, nothing is saved and the build fails with a typed issue (`resource_graph_collect_failed` or `resource_graph_collect_partial`, see [Collection failures](resource-graph-network.md#collection-failures))
+6. **Persistent Storage**: Saves results to `~/.ppi-jarvis/resource_graph.yaml`, or, when `JARVIS_RESOURCE_GRAPH` names a site graph, to JARVIS's own graph in the site home (never to the site graph; see [Site-level graph](#site-level-graph-jarvis_resource_graph)). If any node returns no data, nothing is saved and the build fails with a typed issue (`resource_graph_collect_failed` or `resource_graph_collect_partial`, see [Collection failures](resource-graph-network.md#collection-failures))
 
 ## Querying Storage Devices
 

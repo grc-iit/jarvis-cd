@@ -317,6 +317,7 @@ class _Case(unittest.TestCase):
         env = mock.patch.dict(os.environ, {
             'JARVIS_SITE_COPIES': 'on',
             'JARVIS_RESOURCE_GRAPH': str(self.tmp / 'site' / 'resource_graph.yaml'),
+            'JARVIS_SITE_HOME': str(self.tmp / 'home'),
         })
         env.start()
         self.addCleanup(env.stop)

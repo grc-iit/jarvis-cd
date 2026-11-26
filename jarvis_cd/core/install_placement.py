@@ -733,16 +733,9 @@ def _graph_file(path: Optional[Path] = None) -> Path:
     return active_graph_file()
 
 
-def graph_answers(path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
-    """The person-confirmed placement answers in the resource graph, per phase.
-
-    The graph is the active one (``JARVIS_RESOURCE_GRAPH``, which names a
-    graph the site publishes, else this root's own graph). Each answer
-    carries ``graph`` (the file it came from). Unreadable graphs give none.
-    """
+def _file_answers(graph_path: Path) -> Dict[str, Dict[str, Any]]:
     import yaml
 
-    graph_path = _graph_file(path)
     try:
         graph = yaml.safe_load(graph_path.read_text(encoding="utf-8")) or {}
     except (OSError, ValueError, yaml.YAMLError):
@@ -755,6 +748,30 @@ def graph_answers(path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
         entry = section.get(phase)
         if isinstance(entry, Mapping) and entry.get("constraint") in STANDING:
             found[phase] = {**_provenance(entry), "graph": str(graph_path)}
+    return found
+
+
+def graph_answers(path: Optional[Path] = None) -> Dict[str, Dict[str, Any]]:
+    """The person-confirmed placement answers in the resource graph, per phase.
+
+    Without ``path``: JARVIS's own graph and, when ``JARVIS_RESOURCE_GRAPH``
+    names one, the graph the site publishes; per phase the newer answer
+    wins. Each answer carries ``graph`` (the file it came from) and, from
+    the site's graph, ``site_graph: true``. Unreadable graphs give none.
+    """
+    if path is not None:
+        return _file_answers(Path(path))
+    from jarvis_cd.util.site_state import site_graph_file
+
+    found = _file_answers(_graph_file())
+    site_file = site_graph_file()
+    if site_file is None:
+        return found
+    for phase, entry in _file_answers(site_file).items():
+        current = found.get(phase)
+        if (current is None or str(entry.get("answered_at") or "")
+                > str(current.get("answered_at") or "")):
+            found[phase] = {**entry, "site_graph": True}
     return found
 
 
@@ -799,25 +816,44 @@ def _graph_locked(graph_path: Path) -> Iterator[Dict[str, Any]]:
 def persist_graph_answer(phase: str, entry: Mapping[str, Any], *,
                          recorded_in: Optional[Path] = None,
                          path: Optional[Path] = None) -> Dict[str, Any]:
-    """Write a person-confirmed site answer into the graph's ``install_placement``.
+    """Write a person-confirmed site answer into JARVIS's own graph.
 
     Only standing constraints (``login_limited``, ``compute_job``) are site
     facts; ``ask_each_time`` is not written. An answer already in the graph
-    that is newer is kept. The graph's directory must exist (it is never
-    created here). Never raises: the decision is recorded either way.
+    (JARVIS's own or the site's) that is newer is kept. The site graph is
+    never written. Without a site graph the root's directory must exist (it
+    is never created here); the site home is created. Never raises: the
+    decision is recorded either way.
     """
-    graph_path = _graph_file(path)
-    result: Dict[str, Any] = {"graph": str(graph_path), "phase": phase,
-                              "persisted": False}
+    from jarvis_cd.util.site_state import site_graph_file
+
+    result: Dict[str, Any] = {"phase": phase, "persisted": False}
+    try:
+        graph_path = _graph_file(path)
+    except ValueError as error:
+        result["error"] = str(error)[:500]
+        return result
+    result["graph"] = str(graph_path)
     if phase not in PHASES or entry.get("constraint") not in STANDING:
         result["skipped"] = "not a standing constraint"
         return result
+    if path is None and site_graph_file() is not None:
+        try:
+            graph_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            result["error"] = str(error)[:500]
+            return result
     if not graph_path.parent.is_dir():
         result["skipped"] = "the graph's directory does not exist"
         return result
     record = _provenance(entry)
     if recorded_in is not None:
         record["recorded_in"] = str(recorded_in)
+    published = (graph_answers() if path is None else {}).get(phase)
+    if (published and published.get("site_graph")
+            and str(published.get("answered_at") or "") > str(record.get("answered_at") or "")):
+        result["skipped"] = "the site graph holds a newer answer"
+        return result
     try:
         with _graph_locked(graph_path) as graph:
             section = graph.get(GRAPH_SECTION)
@@ -843,14 +879,14 @@ def forget_graph_answers(forgotten: Sequence[Mapping[str, Any]], *,
 
     A graph answer is dropped only when it is the same record (``issue_id``
     and ``answered_at``) as a forgotten per-phase site decision, so another
-    person's answer in a published graph stays. Never raises.
+    person's answer in a published graph stays. Only JARVIS's own graph is
+    changed; see :func:`site_graph_answers_kept`. Never raises.
     """
-    graph_path = _graph_file(path)
-    targets = {}
-    for entry in forgotten:
-        for phase in PHASES:
-            if entry.get("scope") == "site" and entry.get("subject") == site_subject(phase):
-                targets[phase] = (entry.get("issue_id"), entry.get("answered_at"))
+    try:
+        graph_path = _graph_file(path)
+    except ValueError:
+        return []
+    targets = _forget_targets(forgotten)
     dropped: List[Dict[str, Any]] = []
     if not targets or not graph_path.is_file():
         return dropped
@@ -874,6 +910,30 @@ def forget_graph_answers(forgotten: Sequence[Mapping[str, Any]], *,
     except Exception:
         return []
     return dropped
+
+
+def _forget_targets(forgotten: Sequence[Mapping[str, Any]]) -> Dict[str, Tuple[Any, Any]]:
+    targets: Dict[str, Tuple[Any, Any]] = {}
+    for entry in forgotten:
+        for phase in PHASES:
+            if entry.get("scope") == "site" and entry.get("subject") == site_subject(phase):
+                targets[phase] = (entry.get("issue_id"), entry.get("answered_at"))
+    return targets
+
+
+def site_graph_answers_kept(forgotten: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Answers for the forgotten phases that the site's graph still holds.
+
+    The site graph is read-only to JARVIS, so these stay in effect; the
+    report names them so the person knows the site's record still applies.
+    """
+    targets = _forget_targets(forgotten)
+    if not targets:
+        return []
+    return [{"phase": phase, **entry,
+             "note": "the site graph is read-only to JARVIS; its answer still applies"}
+            for phase, entry in graph_answers().items()
+            if phase in targets and entry.get("site_graph")]
 
 
 class PlacementResolver:

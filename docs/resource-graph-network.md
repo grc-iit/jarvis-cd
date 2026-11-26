@@ -10,11 +10,12 @@ override keeps its provenance.
 
 | Setting | Graph file |
 |---------|------------|
-| `JARVIS_RESOURCE_GRAPH=<path>` | `<path>`: one site-level graph shared by every JARVIS root on the site, such as the per-job roots a relay creates. `jarvis init` never overwrites it. |
+| `JARVIS_RESOURCE_GRAPH=<path>` | `<path>` is the site's graph, shared by every JARVIS root on the site, such as the per-job roots a relay creates. JARVIS only reads it. What JARVIS collects or sets goes to its own graph in the site home (`JARVIS_SITE_HOME`, else `~/.ppi-jarvis/site`), which overlays the site's one section at a time. See [Site-level graph](resource_graph.md#site-level-graph-jarvis_resource_graph). |
 | unset | `<JARVIS_ROOT>/resource_graph.yaml` (default `~/.ppi-jarvis/resource_graph.yaml`) |
 
-`jarvis rg path` prints the active file. `rg build`, `rg net set` and
-`rg net clear` write to it atomically.
+`jarvis rg path` prints the file JARVIS writes. `rg build`, `rg net set` and
+`rg net clear` write to it atomically. With a site graph, a `net` section the
+site publishes is the starting point until JARVIS collects or sets its own.
 
 `rg net show|set|clear` need no initialized root when
 `JARVIS_RESOURCE_GRAPH` is set. Without it, on a root that has no
@@ -166,7 +167,8 @@ net:
 
 A net-only collection (`rg build +net_only`, `builtin.resource_graph`, or a
 [launch-time collect](#collected-at-launch)) merges into the stored section,
-per host, under a lock on the graph's directory:
+per host, under a lock on the directory of the graph JARVIS writes (never the
+site graph's):
 
 - the collected hosts' entries in `nodes` are replaced;
 - hosts it did not collect keep their stored facts, together with their
@@ -206,8 +208,8 @@ jarvis rg net clear [+json]
 
 All three print a `jarvis.resource-graph.net-report.v1` document. It has:
 
-- `graph`, the active file, and `site_graph`, which is true under
-  `JARVIS_RESOURCE_GRAPH`;
+- `graph`, the file JARVIS writes; `site_graph`, which is true under
+  `JARVIS_RESOURCE_GRAPH`; and `site_graph_file`, the site's read-only graph;
 - `present`;
 - `collected_at`, `collected_on` and `collected_in`;
 - `selected` and `override`;
@@ -289,8 +291,8 @@ when any of these holds:
 It does not collect for Cray MPICH, under `JARVIS_MPI_NETWORK=off`, for a
 single-node launch, or when a person's override sets both data and control.
 
-The fresh facts are [merged per host](#merging-collections) into the graph's
-`net` section, under a lock on the graph's directory: the launch hosts'
+The fresh facts are [merged per host](#merging-collections) into the `net`
+section of the graph JARVIS writes, under a lock on its directory: the launch hosts'
 entries are replaced, other hosts and a person's override are kept, and the
 selection is recomputed across the union. The launch applies that merged
 selection. So a later launch on other nodes adds to the graph instead of

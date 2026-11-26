@@ -108,14 +108,21 @@ class ResourceGraphManager:
         self.jarvis = Jarvis.get_instance()
         self.resource_graph = ResourceGraph()
 
-        # Try to load existing resource graph if available
-        default_path = self.jarvis.resource_graph_file
-        if default_path.exists():
-            try:
-                self.resource_graph.load_from_file(default_path, quiet=True)
-            except Exception:
-                # Silently continue if load fails
-                pass
+        # Load the graph JARVIS acts on: its own over the site's, when named
+        try:
+            self._load_effective(self.resource_graph)
+        except Exception:
+            # Silently continue if load fails
+            pass
+
+    def _load_effective(self, graph: ResourceGraph) -> None:
+        """Fill ``graph`` from the effective view (own file over the site's)."""
+        own = self.jarvis.resource_graph_file
+        site = getattr(self.jarvis, "site_graph_file", None)
+        if not own.exists() and (site is None or not Path(site).exists()):
+            raise FileNotFoundError(f"Resource graph file not found: {own}")
+        graph.load_from_dict(self.jarvis.load_resource_graph(), hostname=own.stem,
+                             source=str(own if site is None else f"{own} over {site}"))
 
     def build(
         self,
@@ -406,31 +413,34 @@ class ResourceGraphManager:
     def _stored_software(
         self, fallback: Optional[ResourceGraph] = None
     ) -> Optional[List[Dict[str, Any]]]:
-        """The active file's confirmed ``software`` copies (kept across rebuilds)."""
-        try:
-            with open(self.jarvis.resource_graph_file, "r", encoding="utf-8") as stream:
-                stored = yaml.safe_load(stream) or {}
-        except (OSError, ValueError, yaml.YAMLError):
-            stored = None
+        """The graph's confirmed ``software`` copies (kept across rebuilds)."""
+        stored = self._stored_document()
         if isinstance(stored, dict):
             section = stored.get("software")
             return ([dict(item) for item in section if isinstance(item, dict)]
                     if isinstance(section, list) else None)
         return fallback.software if fallback is not None else None
 
+    def _stored_document(self) -> Optional[Dict[str, Any]]:
+        """The stored effective graph (own file over the site's), or None."""
+        from jarvis_cd.util.site_state import merge_graphs, read_graph_file
+
+        own = read_graph_file(self.jarvis.resource_graph_file)
+        site_file = getattr(self.jarvis, "site_graph_file", None)
+        if site_file is None:
+            return own
+        site = read_graph_file(site_file)
+        return None if own is None and site is None else merge_graphs(site, own)
+
     def _stored_install_placement(
         self, fallback: Optional[ResourceGraph] = None
     ) -> Optional[Dict[str, Any]]:
-        """The active file's confirmed placement answers (kept across rebuilds).
+        """The graph's confirmed placement answers (kept across rebuilds).
 
         Read at save time, so an answer recorded while a build collected is
         kept; ``fallback``'s copy applies when the file has none.
         """
-        try:
-            with open(self.jarvis.resource_graph_file, "r", encoding="utf-8") as stream:
-                stored = yaml.safe_load(stream) or {}
-        except (OSError, ValueError, yaml.YAMLError):
-            stored = None
+        stored = self._stored_document()
         if isinstance(stored, dict):
             section = stored.get("install_placement")
             return section if isinstance(section, dict) else None
@@ -453,7 +463,7 @@ class ResourceGraphManager:
             # so this manager cannot remain a third, stale live view.
             active_graph = ResourceGraph()
             try:
-                active_graph.load_from_file(self.jarvis.resource_graph_file)
+                self._load_effective(active_graph)
             except Exception as recovery_error:
                 # A failure before replace leaves this manager's previous view
                 # correct. Preserve the publication error, adding recovery
@@ -474,15 +484,16 @@ class ResourceGraphManager:
         Load resource graph from file.
 
         :param file_path: Source graph, or the configured active graph when omitted
+            (with a site graph: JARVIS's own graph over the site's)
         """
+        loaded_graph = ResourceGraph()
         if file_path is None:
             file_path = self.jarvis.resource_graph_file
-
-        if not file_path.exists():
-            raise FileNotFoundError(f"Resource graph file not found: {file_path}")
-
-        loaded_graph = ResourceGraph()
-        loaded_graph.load_from_file(file_path)
+            self._load_effective(loaded_graph)
+        else:
+            if not file_path.exists():
+                raise FileNotFoundError(f"Resource graph file not found: {file_path}")
+            loaded_graph.load_from_file(file_path)
         self._activate(loaded_graph)
         logger.success(
             f"Loaded resource graph from {file_path} and activated it at "
@@ -518,6 +529,8 @@ class ResourceGraphManager:
             "schema_version": "jarvis.resource-graph.net-report.v1",
             "graph": str(self.jarvis.resource_graph_file),
             "site_graph": bool(getattr(self.jarvis, "resource_graph_is_site", False)),
+            "site_graph_file": (str(self.jarvis.site_graph_file)
+                                if getattr(self.jarvis, "site_graph_file", None) else None),
             "present": bool(net),
         }
         if not net:
@@ -606,8 +619,23 @@ class ResourceGraphManager:
         return self.net_report()
 
     def show(self):
-        """Display the current resource graph YAML file."""
+        """Display the current resource graph YAML.
+
+        With a site graph this is the effective view: JARVIS's own graph over
+        the site's, with a comment naming both files.
+        """
         default_path = self.jarvis.resource_graph_file
+        site_file = getattr(self.jarvis, "site_graph_file", None)
+
+        if site_file is not None:
+            if not default_path.exists() and not Path(site_file).exists():
+                logger.warning("No resource graph found. Run 'jarvis rg build' first.")
+                return
+            print(f"# site graph (read-only): {site_file}")
+            print(f"# JARVIS's own graph: {default_path}")
+            print(yaml.safe_dump(self.jarvis.load_resource_graph(),
+                                 default_flow_style=False, sort_keys=False), end="")
+            return
 
         if not default_path.exists():
             logger.warning("No resource graph found. Run 'jarvis rg build' first.")
@@ -687,8 +715,15 @@ class ResourceGraphManager:
         return list(self.resource_graph.get_common_storage().keys())
 
     def show_path(self):
-        """Show the path to the current resource graph file."""
+        """Show the path to the current resource graph file.
+
+        JARVIS's own graph; with a site graph and nothing of JARVIS's own yet,
+        the site graph (read-only).
+        """
         default_path = self.jarvis.resource_graph_file
+        site_file = getattr(self.jarvis, "site_graph_file", None)
+        if not default_path.exists() and site_file is not None and Path(site_file).exists():
+            default_path = Path(site_file)
 
         if default_path.exists():
             # Print only the path for shell command substitution

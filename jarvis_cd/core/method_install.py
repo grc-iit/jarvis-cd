@@ -139,11 +139,13 @@ def jarvis_root(ppl) -> Path:
 
 
 def site_home() -> Path:
-    """The site record's directory (where JARVIS keeps its own Spack and Miniforge)."""
-    graph = os.environ.get("JARVIS_RESOURCE_GRAPH", "").strip()
-    if graph:
-        return Path(graph).expanduser().resolve().parent
-    return Path(os.environ.get("JARVIS_ROOT", "").strip() or "~/.ppi-jarvis").expanduser()
+    """Where JARVIS keeps its own Spack and Miniforge (see util.site_state).
+
+    Never the directory of a site-named graph, which JARVIS only reads.
+    """
+    from jarvis_cd.util.site_state import site_home as state_home
+
+    return state_home()
 
 
 def env_prefix(ppl, method: str, pkg_list: Sequence[Mapping[str, Any]]) -> Path:

@@ -282,7 +282,7 @@ silent default:
 |-------|------|--------|
 | `python_missing` | no Python with `venv` and `ensurepip` for the pip venv. JARVIS tries the Python it runs on first (it is on every node JARVIS runs on), then `python3` on `PATH` | a Python (or set `install_python`) |
 | `conda_select` | several condas | one of them (or set `install_conda`) |
-| `conda_missing` | no conda | `miniforge`: JARVIS installs Miniforge into the site home (`<site>/miniforge3`) in the install job |
+| `conda_missing` | no conda | `miniforge`: JARVIS installs Miniforge into its site home (`<site home>/miniforge3`; never the site graph's directory, see [Site-level graph](resource_graph.md#site-level-graph-jarvis_resource_graph)) in the install job |
 | `container_engine` | the pipeline names no `container_engine` and several engines run as this user | one of them |
 | `container_engine_missing` | no apptainer, rootless podman or rootless docker | none: install one, or name `container_engine` |
 | `container_engine_unusable` | the engine is installed but cannot run here (`podman info` fails, or a pull fails on its store); the engine's own error is the detail | none: the remedy says what to fix on the node |
@@ -740,8 +740,8 @@ same list is in `candidates[]`). They are probed in this order, and each one
 must have `bin/spack`:
 
 1. `JARVIS_SITE_SPACKS`, an `os.pathsep`-separated list a site sets;
-2. `<dir of JARVIS_RESOURCE_GRAPH>/spack`, a Spack kept next to the site
-   resource graph;
+2. `<dir of JARVIS_RESOURCE_GRAPH>/spack`, a Spack the site keeps next to
+   its published resource graph;
 3. the Spack behind each Spack module tree (`<root>/share/spack/lmod` or
    `<root>/share/spack/modules`) on the login `MODULEPATH`, which is how a
    site publishes the software it built with Spack;
@@ -774,9 +774,10 @@ process, so the install, the run's `spack load` and the provenance record all
 use it. A shared site Spack is usually read-only, and Spack cannot run from a
 root whose site scope (`etc/spack`) or install tree (`opt/spack`) this user
 cannot write. When the answer is such a root, JARVIS keeps the answer and
-uses its own Spack instead: `<site record>/spacks/<release>-<digest>`, where
-the site record is the directory of `JARVIS_RESOURCE_GRAPH`, else
-`JARVIS_ROOT`, else `~/.ppi-jarvis`. It prepares that root once, as
+uses its own Spack instead: `<site home>/spacks/<release>-<digest>`, where
+the site home is `JARVIS_SITE_HOME`, else `~/.ppi-jarvis/site` when
+`JARVIS_RESOURCE_GRAPH` names a site graph (never that graph's directory),
+else `JARVIS_ROOT`, else `~/.ppi-jarvis`. It prepares that root once, as
 `jarvis spack prepare --site_spack <answer>` would, with the answer as its
 upstream, so find-first reuses what the site built. Concurrent installs wait
 on one lock, and later ones find `site-prep.json` and skip the work. An

@@ -838,10 +838,11 @@ its own `question`, `candidates`, `recommended`, `recommendation_reason` and
 `recommendation_basis`, from that package's estimate.
 
 **Confirmed answers in the resource graph.** A person's per-phase site
-answer of `login_limited` or `compute_job` is also written to the active
-resource graph (`JARVIS_RESOURCE_GRAPH`, else the root's graph) as a typed
-`install_placement` section, so a fresh home that reads the same graph (a
-new user, a new relay home, or after its decisions were cleaned) is
+answer of `login_limited` or `compute_job` is also written to JARVIS's own
+resource graph (in the site home when `JARVIS_RESOURCE_GRAPH` names a site
+graph, else the root's graph; the site graph itself is never written) as a
+typed `install_placement` section, so a fresh home that reads the same graph
+(a new user, a new relay home, or after its decisions were cleaned) is
 recommended the site's answer:
 
 ```yaml
@@ -856,15 +857,18 @@ install_placement:
     recorded_in: /home/me/.jarvis-site/decisions.yaml
 ```
 
-- A site publishes its answers by publishing that graph through the usual
-  site graph path, and homes point `JARVIS_RESOURCE_GRAPH` at it.
+- A site publishes its answers by publishing a graph that carries the
+  section through the usual site graph path, and homes point
+  `JARVIS_RESOURCE_GRAPH` at it. JARVIS reads the site's answers (marked
+  `site_graph: true`) together with its own; per phase the newer one wins.
 - Answers recorded before the graph held them are copied in on the next
-  placement resolve. A newer answer already in the graph is kept.
+  placement resolve. A newer answer already in either graph is kept.
 - `ask_each_time` and "this time" answers are not written.
 - `rg build`, `rg load` and `rg net set|clear` keep the section.
-- `--forget install_placement.<phase>` also drops the graph's copy of that
-  same answer (same `issue_id` and `answered_at`); someone else's answer in
-  a published graph stays.
+- `--forget install_placement.<phase>` also drops JARVIS's own graph copy of
+  that same answer (same `issue_id` and `answered_at`); someone else's
+  answer, and any answer in the site graph, stays. The report lists the site
+  graph's answers it kept under `site_graph_kept`.
 - Graph answers are never standing answers: with no decision in this home,
   the question is asked and the graph answer is its recommendation.
 

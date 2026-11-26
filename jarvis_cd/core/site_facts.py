@@ -90,7 +90,7 @@ def mpi_flavour(name: Optional[str]) -> Optional[str]:
 
 
 # --------------------------------------------------------------------------
-# The answer store, next to the resource graph
+# The answer store, in JARVIS's site home (next to JARVIS's own graph)
 # --------------------------------------------------------------------------
 
 
@@ -99,13 +99,23 @@ def site_facts_dir(resource_graph_file: Path) -> Path:
 
 
 class SiteFactStore:
-    """``answers.yaml`` (confirmed answers) and ``asked/`` (raised issues)."""
+    """``answers.yaml`` (confirmed answers) and ``asked/`` (raised issues).
+
+    ``resource_graph_file`` is JARVIS's own graph; the store sits beside it.
+    Answers the site publishes beside its graph (``JARVIS_RESOURCE_GRAPH``)
+    are read too, JARVIS's own winning; they are never written.
+    """
 
     def __init__(self, resource_graph_file: Path):
+        from jarvis_cd.util.site_state import published_dir
+
         self.graph = Path(resource_graph_file)
         self.directory = site_facts_dir(self.graph)
         self.answers_path = self.directory / "answers.yaml"
         self.asked_dir = self.directory / "asked"
+        published = published_dir("site-facts")
+        self.published_answers_path = (published / "answers.yaml"
+                                       if published is not None else None)
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
@@ -120,11 +130,28 @@ class SiteFactStore:
             yield
 
     def answers(self) -> Dict[str, Dict[str, Any]]:
+        """JARVIS's own answers over the ones the site publishes."""
+        published = self._read_answers(self.published_answers_path)
+        for entry in published.values():
+            if isinstance(entry, dict):
+                entry.setdefault("published_in", str(self.published_answers_path))
+        return {**published, **self.own_answers()}
+
+    def own_answers(self) -> Dict[str, Dict[str, Any]]:
+        return self._read_answers(self.answers_path)
+
+    def published_answers(self) -> Dict[str, Dict[str, Any]]:
+        return self._read_answers(self.published_answers_path)
+
+    @staticmethod
+    def _read_answers(path: Optional[Path]) -> Dict[str, Dict[str, Any]]:
         import yaml
 
+        if path is None:
+            return {}
         try:
-            document = yaml.safe_load(self.answers_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+            document = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, yaml.YAMLError):
             return {}
         facts = (document or {}).get("facts") if isinstance(document, dict) else None
         return dict(facts) if isinstance(facts, dict) else {}
@@ -138,8 +165,8 @@ class SiteFactStore:
         import yaml
 
         with self._locked():
-            facts = self.answers()
-            previous = facts.get(fact)
+            facts = self.own_answers()
+            previous = facts.get(fact) or self.published_answers().get(fact)
             if previous:
                 entry = dict(entry)
                 entry["previous"] = {
@@ -159,7 +186,7 @@ class SiteFactStore:
         import yaml
 
         with self._locked():
-            facts = self.answers()
+            facts = self.own_answers()
             removed = facts.pop(fact, None)
             if removed is not None:
                 self._write(
@@ -889,12 +916,19 @@ def forget_site_fact(manager: Any, fact: str) -> Dict[str, Any]:
     """``rg facts forget``: drop a recorded answer so JARVIS asks again."""
     store = SiteFactStore(Path(manager.jarvis.resource_graph_file))
     removed = store.forget(fact)
+    if removed is None and fact in store.published_answers():
+        raise _refuse("site_fact_published", f"the answer for {fact!r} is the one the "
+                      "site publishes beside its graph, which JARVIS only reads; answer "
+                      "the question again to record your own over it",
+                      fact=fact, published_answers_path=str(store.published_answers_path))
     if removed is None:
         raise _refuse("site_fact_unknown", f"no answer is recorded for {fact!r}",
                       fact=fact, answers_path=str(store.answers_path),
                       recorded=sorted(store.answers()))
     return {"schema_version": ANSWER_SCHEMA, "forgotten": removed,
             "answers_path": str(store.answers_path),
+            **({"published_still_applies": store.published_answers()[fact]}
+               if fact in store.published_answers() else {}),
             "note": "an override the answer set stays in the graph; "
                     "`jarvis rg net clear` drops it"}
 

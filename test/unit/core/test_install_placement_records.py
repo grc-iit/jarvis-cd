@@ -114,25 +114,31 @@ class TestGraphAnswers(unittest.TestCase):
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
-        self.graph = self.tmp / "resource_graph.yaml"
-        self.graph.write_text(yaml.safe_dump({"net": {"selected": {}},
-                                              "storage": {}}))
-        self._env = os.environ.get("JARVIS_RESOURCE_GRAPH")
-        os.environ["JARVIS_RESOURCE_GRAPH"] = str(self.graph)
+        # the graph the site publishes (read-only) and JARVIS's own, in its home
+        self.site = self.tmp / "resource_graph.yaml"
+        self.site.write_text(yaml.safe_dump({"net": {"selected": {}},
+                                             "storage": {}}))
+        self.graph = self.tmp / "home" / "resource_graph.yaml"
+        self._env = {key: os.environ.get(key)
+                     for key in ("JARVIS_RESOURCE_GRAPH", "JARVIS_SITE_HOME")}
+        os.environ["JARVIS_RESOURCE_GRAPH"] = str(self.site)
+        os.environ["JARVIS_SITE_HOME"] = str(self.graph.parent)
 
     def tearDown(self):
-        if self._env is None:
-            os.environ.pop("JARVIS_RESOURCE_GRAPH", None)
-        else:
-            os.environ["JARVIS_RESOURCE_GRAPH"] = self._env
+        for key, value in self._env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_persist_read_and_keep_other_sections(self):
+        before = self.site.read_bytes()
         result = placement.persist_graph_answer(
             "check", _entry("compute_job", basis="docs"), recorded_in=self.tmp / "d.yaml")
         self.assertTrue(result["persisted"])
+        self.assertEqual(self.site.read_bytes(), before)
         data = yaml.safe_load(self.graph.read_text())
-        self.assertIn("net", data)
         self.assertEqual(data["install_placement"]["schema_version"],
                          placement.GRAPH_SCHEMA)
         answers = placement.graph_answers()

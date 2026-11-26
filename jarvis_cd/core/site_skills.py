@@ -1,11 +1,16 @@
-"""Site skills: notes for CLIO (or a person) stored next to the site graph.
+"""Site skills: notes for CLIO (or a person) about the site.
 
 A skill is one Markdown document about the site (how its queues, MPI or
-filesystems behave), kept beside the resource graph so every JARVIS root
-that shares the graph (``JARVIS_RESOURCE_GRAPH``) shares its skills:
+filesystems behave). JARVIS keeps the skills it is given in its site home,
+beside its own graph, so every JARVIS root that shares the home shares them:
 
-``<dir of the resource graph>/skills/<name>.md``   the document
-``<dir of the resource graph>/skills/index.json``  ``jarvis.site-skills.v1``
+``<site home>/skills/<name>.md``   the document
+``<site home>/skills/index.json``  ``jarvis.site-skills.v1``
+
+When ``JARVIS_RESOURCE_GRAPH`` names a graph the site publishes, skills the
+site publishes beside it (``<dir of that graph>/skills``, same layout) are
+read too, with ``source: site``. JARVIS never writes there; a skill of
+JARVIS's own with the same name wins.
 
 The index records each skill's description, sha256, size, when and by whom
 it was set. Writes are atomic and serialized by a flock on the index.
@@ -36,7 +41,7 @@ def _now() -> str:
 
 
 def skills_dir(resource_graph_file: Path) -> Path:
-    """``<dir of the resource graph>/skills``."""
+    """``<dir of JARVIS's own graph>/skills``."""
     return Path(resource_graph_file).expanduser().resolve().parent / "skills"
 
 
@@ -65,13 +70,17 @@ def _write_atomic(path: Path, data: bytes) -> None:
 
 
 class SiteSkills:
-    """The skills directory next to one resource graph file."""
+    """The skills directory next to JARVIS's own graph, over the site's."""
 
     def __init__(self, resource_graph_file: Path, *, site: bool = False):
+        from jarvis_cd.util.site_state import published_dir, site_graph_file
+
         self.graph = Path(resource_graph_file).expanduser().resolve()
         self.directory = skills_dir(self.graph)
         self.index_path = self.directory / "index.json"
         self.site = site
+        self.site_graph = site_graph_file() if site else None
+        self.published = published_dir("skills") if site else None
 
     @contextlib.contextmanager
     def _locked(self) -> Iterator[None]:
@@ -83,45 +92,69 @@ class SiteSkills:
             finally:
                 fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
 
-    def _index(self) -> Dict[str, Any]:
+    def _index(self, directory: Optional[Path] = None) -> Dict[str, Any]:
+        path = (directory / "index.json") if directory is not None else self.index_path
         try:
-            loaded = json.loads(self.index_path.read_text(encoding="utf-8"))
+            loaded = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             loaded = {}
         skills = loaded.get("skills") if isinstance(loaded, dict) else None
         return {"schema_version": SKILLS_SCHEMA,
                 "skills": dict(skills) if isinstance(skills, dict) else {}}
 
-    def _entry(self, name: str, meta: Dict[str, Any]) -> Dict[str, Any]:
-        path = self.directory / f"{name}.md"
-        entry = {"name": name, "path": str(path), "present": path.is_file()}
+    def _entry(self, name: str, meta: Dict[str, Any],
+               directory: Optional[Path] = None) -> Dict[str, Any]:
+        published = directory is not None and directory != self.directory
+        path = (directory or self.directory) / f"{name}.md"
+        entry = {"name": name, "path": str(path), "present": path.is_file(),
+                 "source": "site" if published else "jarvis"}
         entry.update({key: meta.get(key) for key in
                       ("description", "sha256", "bytes", "updated_at", "updated_by")})
         return entry
 
-    def listing(self) -> Dict[str, Any]:
-        index = self._index()
+    def _names(self, directory: Optional[Path]) -> Dict[str, Dict[str, Any]]:
+        if directory is None:
+            return {}
+        index = self._index(directory)
         names = set(index["skills"])
-        if self.directory.is_dir():
-            names.update(path.stem for path in self.directory.glob("*.md")
+        if directory.is_dir():
+            names.update(path.stem for path in directory.glob("*.md")
                          if _NAME.fullmatch(path.stem))
+        return {name: index["skills"].get(name) or {} for name in names}
+
+    def _where(self, name: str) -> Optional[Path]:
+        """The directory whose ``<name>.md`` applies (JARVIS's own first)."""
+        for directory in (self.directory, self.published):
+            if directory is not None and (directory / f"{name}.md").is_file():
+                return directory
+        return None
+
+    def listing(self) -> Dict[str, Any]:
+        entries = {name: self._entry(name, meta, self.published)
+                   for name, meta in self._names(self.published).items()}
+        entries.update({name: self._entry(name, meta)
+                        for name, meta in self._names(self.directory).items()})
         return {
             "schema_version": SKILLS_SCHEMA,
             "graph": str(self.graph),
             "site_graph": self.site,
+            "site_graph_file": str(self.site_graph) if self.site_graph else None,
             "directory": str(self.directory),
-            "skills": [self._entry(name, index["skills"].get(name) or {})
-                       for name in sorted(names)],
+            "published_directory": str(self.published) if self.published else None,
+            "skills": [entries[name] for name in sorted(entries)],
         }
 
     def show(self, name: str) -> Dict[str, Any]:
         name = _valid_name(name)
-        path = self.directory / f"{name}.md"
-        if not path.is_file():
-            raise _refuse("skill_not_found", f"no site skill {name} in {self.directory}",
+        directory = self._where(name)
+        if directory is None:
+            raise _refuse("skill_not_found", f"no site skill {name} in {self.directory}"
+                          + (f" or {self.published}" if self.published else ""),
                           name=name)
+        path = directory / f"{name}.md"
         data = path.read_bytes()[:MAX_SKILL_BYTES]
-        entry = self._entry(name, self._index()["skills"].get(name) or {})
+        entry = self._entry(name, self._index(directory)["skills"].get(name) or {},
+                            directory)
         entry.update({"schema_version": SKILL_SCHEMA,
                       "content": data.decode("utf-8", errors="replace"),
                       "sha256_actual": "sha256:" + hashlib.sha256(data).hexdigest()})
@@ -157,6 +190,12 @@ class SiteSkills:
 
     def remove(self, name: str) -> Dict[str, Any]:
         name = _valid_name(name)
+        if (self.published is not None and (self.published / f"{name}.md").is_file()
+                and not (self.directory / f"{name}.md").is_file()
+                and name not in self._index()["skills"]):
+            raise _refuse("skill_published", f"site skill {name} is the one the site "
+                          f"publishes in {self.published}, which JARVIS only reads",
+                          name=name, published_directory=str(self.published))
         with self._locked():
             index = self._index()
             path = self.directory / f"{name}.md"
@@ -166,9 +205,13 @@ class SiteSkills:
             _write_atomic(self.index_path, (json.dumps(index, indent=2, sort_keys=True)
                                             + "\n").encode("utf-8"))
         return {"name": name, "action": "removed" if existed else "absent",
-                "directory": str(self.directory)}
+                "directory": str(self.directory),
+                **({"published_still_applies": str(self.published / f"{name}.md")}
+                   if self.published is not None
+                   and (self.published / f"{name}.md").is_file() else {})}
 
     def summary(self) -> List[Dict[str, Any]]:
-        """Names, descriptions and paths only (for ``sched info``)."""
-        return [{key: entry[key] for key in ("name", "description", "path", "sha256")}
+        """Names, descriptions, paths and source only (for ``sched info``)."""
+        return [{key: entry[key] for key in ("name", "description", "path", "sha256",
+                                             "source")}
                 for entry in self.listing()["skills"]]

@@ -3823,11 +3823,14 @@ class JarvisCLI(ArgParse):
         )
 
     def rg_skill_list(self):
-        """List the site skills next to the resource graph."""
+        """List the site skills: JARVIS's own, and any the site publishes."""
         def text(document):
-            print(f"skills: {document['directory']} (site graph: {document['site_graph']})")
+            print(f"skills: {document['directory']}")
+            if document.get("published_directory"):
+                print(f"published by the site (read-only): {document['published_directory']}")
             for entry in document["skills"]:
-                print(f"  {entry['name']:<24} {entry.get('updated_at') or '-':<28} "
+                print(f"  {entry['name']:<24} {entry.get('source') or '-':<7} "
+                      f"{entry.get('updated_at') or '-':<28} "
                       f"{entry.get('description') or ''}")
 
         self._json_call(lambda: self._site_skills().listing(), text,

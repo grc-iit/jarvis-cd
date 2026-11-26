@@ -253,7 +253,13 @@ class ResourceGraph:
                 data = json.load(f)
             else:  # Default to YAML
                 data = yaml.safe_load(f)
+        self.load_from_dict(data, hostname=input_path.stem, source=str(input_path))
+        if not quiet:
+            logger.success(f"Resource graph loaded from {input_path}")
 
+    def load_from_dict(self, data: Optional[Dict[str, Any]], *, hostname: str,
+                       source: str = "the resource graph"):
+        """Load a parsed graph document (``hostname`` names its ``fs`` node)."""
         # Clear existing data
         self.nodes = {}
         self.common_mounts = {}
@@ -272,7 +278,6 @@ class ResourceGraph:
         if ('fs' in data or self.net is not None or self.install_placement is not None
                 or self.software is not None or self.cpu is not None):
             # Determine hostname for resource graph files
-            hostname = input_path.stem  # Use filename as hostname
             self.nodes[hostname] = []
 
             for device_data in data.get('fs') or []:
@@ -300,13 +305,10 @@ class ResourceGraph:
                 device.setdefault('1m_seqwrite_bw', 'unknown')
                 self.nodes[hostname].append(device)
         else:
-            raise ValueError(f"Invalid resource graph format in {input_path}. Expected an 'fs' or 'net' section.")
+            raise ValueError(f"Invalid resource graph format in {source}. Expected an 'fs' or 'net' section.")
 
         # Reanalyze common mounts
         self._analyze_common_mounts()
-
-        if not quiet:
-            logger.success(f"Resource graph loaded from {input_path}")
         
     def print_summary(self):
         """Print a summary of the resource graph."""

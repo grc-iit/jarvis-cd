@@ -189,14 +189,17 @@ class Jarvis:
 
         self.config_file = self.jarvis_root / "jarvis_config.yaml"
         self.repos_file = self.jarvis_root / "repos.yaml"
-        # JARVIS_RESOURCE_GRAPH names one site-level graph shared by every
-        # JARVIS root on the site (for example a per-job root a relay
-        # creates), so the graph is the site record rather than per root.
-        site_graph = os.environ.get(RESOURCE_GRAPH_ENVIRONMENT, "").strip()
-        self.resource_graph_is_site = bool(site_graph)
+        # JARVIS_RESOURCE_GRAPH names a graph the site publishes, shared by
+        # every JARVIS root on the site (for example a relay's per-job roots).
+        # JARVIS only reads it; what JARVIS records goes to its own graph in
+        # the site home (util.site_state), which overlays the site's.
+        from jarvis_cd.util import site_state
+
+        self.site_graph_file: Optional[Path] = site_state.site_graph_file()
+        self.resource_graph_is_site = self.site_graph_file is not None
         self.resource_graph_file = (
-            Path(site_graph).expanduser().resolve()
-            if site_graph
+            site_state.own_graph_file()
+            if self.resource_graph_is_site
             else self.jarvis_root / "resource_graph.yaml"
         )
 
@@ -308,10 +311,11 @@ class Jarvis:
 
         # Handle resource_graph.yaml
         resource_graph_exists = self.resource_graph_file.exists()
-        if resource_graph_exists and self.resource_graph_is_site:
+        if self.resource_graph_is_site:
             logger.info(
-                f"Using the site resource graph {self.resource_graph_file} "
-                f"({RESOURCE_GRAPH_ENVIRONMENT}); init never overwrites it"
+                f"Using the site resource graph {self.site_graph_file} "
+                f"({RESOURCE_GRAPH_ENVIRONMENT}, read-only); JARVIS records its "
+                f"own facts in {self.resource_graph_file}"
             )
         elif resource_graph_exists and not force:
             logger.warning(
@@ -442,12 +446,13 @@ class Jarvis:
         return self._effective_repositories(repositories)
 
     def load_resource_graph(self) -> Dict[str, Any]:
-        """Load resource graph from file"""
-        if not self.resource_graph_file.exists():
-            return {"storage": {}, "network": {}}
+        """Load the graph JARVIS acts on (its own graph over the site's)."""
+        from jarvis_cd.util.site_state import merge_graphs, read_graph_file
 
-        with open(self.resource_graph_file, "r") as f:
-            return yaml.safe_load(f) or {"storage": {}, "network": {}}
+        own = read_graph_file(self.resource_graph_file)
+        if self.site_graph_file is not None:
+            own = merge_graphs(read_graph_file(self.site_graph_file), own)
+        return own or {"storage": {}, "network": {}}
 
     def save_config(self, config: Dict[str, Any]):
         """Save jarvis configuration with canonical state-root paths."""
@@ -477,7 +482,22 @@ class Jarvis:
         }
 
     def save_resource_graph(self, resource_graph: Dict[str, Any]):
-        """Atomically save the active graph (the site graph when configured)."""
+        """Atomically save JARVIS's own graph (never the site graph).
+
+        With a site graph, only what differs from it is written, so a later
+        update the site publishes still reaches every section JARVIS left
+        alone.
+        """
+        from jarvis_cd.util.site_state import own_sections, read_graph_file
+
+        if self.site_graph_file is not None:
+            if self.resource_graph_file.resolve() == self.site_graph_file:
+                raise ValueError(
+                    f"refusing to write the site graph {self.site_graph_file}; "
+                    f"it is read-only ({RESOURCE_GRAPH_ENVIRONMENT})"
+                )
+            resource_graph = own_sections(read_graph_file(self.site_graph_file),
+                                          resource_graph)
         graph_dir = self.resource_graph_file.parent
         graph_dir.mkdir(parents=True, exist_ok=True)
         persisted_graph = copy.deepcopy(resource_graph)
@@ -496,7 +516,7 @@ class Jarvis:
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary_path, self.resource_graph_file)
-            self._resource_graph = persisted_graph
+            self._resource_graph = None  # the next read overlays it on the site's again
             _fsync_directory(graph_dir)
         finally:
             temporary_path.unlink(missing_ok=True)

@@ -87,6 +87,7 @@ class _Case(unittest.TestCase):
         self.jarvis = FakeJarvis(tmp.name)
         env = mock.patch.dict(os.environ, {
             'JARVIS_RESOURCE_GRAPH': str(self.tmp / 'site' / 'resource_graph.yaml'),
+            'JARVIS_SITE_HOME': str(self.tmp / 'home'),
             'XDG_RUNTIME_DIR': str(self.tmp),
         })
         env.start()
@@ -336,8 +337,9 @@ class TestConda(_Case):
         self.assertEqual((issue['kind'], issue['scope']), ('conda_missing', 'site'))
         candidate = issue['candidates'][0]
         self.assertEqual(candidate['id'], 'miniforge')
+        # JARVIS's own site home, never the site graph's directory
         self.assertEqual(Path(candidate['root']),
-                         (self.tmp / 'site').resolve() / 'miniforge3')
+                         (self.tmp / 'home').resolve() / 'miniforge3')
         self.assertIn('Miniforge3-', candidate['url'])
 
         # the person confirms: the check then asks for an install job ...

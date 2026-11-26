@@ -43,7 +43,7 @@ becomes an entry in `issues`, never a failure, and the command exits `0`.
 | `mpi` | see below (absent with `+no_mpi`) |
 | `net` | the resource graph's network: `graph`, `site_graph`, `present`, `effective` (`data` and `control`), `override`, `collected_at`, `collected_in` (see [resource-graph-network.md](resource-graph-network.md)) |
 | `cpu` | the resource graph's `cpu` section (`jarvis.resource-graph.cpu.v1`): the topology the collector read on each node it ran on, or `null` before a collection (see [Whole cores per rank](scheduler.md#whole-cores-per-rank)) |
-| `site_skills[]` | the skills stored next to the graph: `name`, `description`, `path`, `sha256` (see [site-skills.md](site-skills.md)) |
+| `site_skills[]` | the site's skills: `name`, `description`, `path`, `sha256`, `source` (`site` when the site publishes it beside its graph, `jarvis` for JARVIS's own; see [site-skills.md](site-skills.md)) |
 | `issues[]` | what is missing, see below |
 
 Each `partitions[]` entry (Slurm) comes from `sinfo`, with the per-node rows
@@ -86,8 +86,10 @@ The `mpi` block:
 | `jarvis_not_initialized` | `jarvis.issue.v1` | `JARVIS_ROOT` has no `jarvis_config.yaml`. The rest of the document is still filled in, and the command still exits 0; `field` is `JARVIS_ROOT` and `remedy` says to run `jarvis init` once on that root. Pipeline commands refuse until then |
 
 `sched info` does not need an initialized root. It reads the site graph
-named by `JARVIS_RESOURCE_GRAPH` when that is set, and otherwise
-`<JARVIS_ROOT>/resource_graph.yaml` if it exists.
+named by `JARVIS_RESOURCE_GRAPH` when that is set, overlaid with JARVIS's
+own graph in the site home (see
+[Site-level graph](resource_graph.md#site-level-graph-jarvis_resource_graph)),
+and otherwise `<JARVIS_ROOT>/resource_graph.yaml` if it exists.
 
 The `spack_missing` issue can be answered here too. Write the answer to
 `answers.json` and pass it to `ppl install --answers`, or prepare a JARVIS

@@ -565,7 +565,11 @@ def module_copies(name: str, searched: List[str]) -> List[Dict[str, Any]]:
 
 
 def site_spack_roots() -> List[Dict[str, Any]]:
-    """The site's Spacks: the ones JARVIS found, without those JARVIS owns."""
+    """The site's Spacks: the ones JARVIS found, without those JARVIS owns.
+
+    A Spack the site keeps beside its graph (``resource_graph_site``) is the
+    site's: JARVIS keeps its own state in its site home, never there.
+    """
     from jarvis_cd.core.method_install import site_home
     from jarvis_cd.core.spack_install import discover_site_spacks
 
@@ -578,8 +582,6 @@ def site_spack_roots() -> List[Dict[str, Any]]:
     roots = []
     for item in discover_site_spacks():
         root = str(item["root"])
-        if item.get("source") == "resource_graph_site":
-            continue
         if any(root == mine or root.startswith(mine + os.sep) for mine in owned):
             continue
         roots.append(item)

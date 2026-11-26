@@ -718,22 +718,27 @@ def persist_net_section(
     *,
     facts: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    """Save net facts into the active graph's net section, under a lock.
+    """Save net facts into JARVIS's own graph's net section, under a lock.
 
     With ``facts`` (per-host collector output) the save merges per host:
     the collected hosts' entries are replaced, all other hosts are kept,
     and the selection is recomputed over the union (``merge_net_facts``);
     the merged section is returned as ``net``. Without ``facts``, ``net``
     replaces the section. A person's override already in the file is
-    kept either way. Never raises: the launch has its facts either way.
+    kept either way. With a site graph, a net section the site publishes is
+    the starting point until JARVIS has one of its own; the site graph is
+    never written. Never raises: the launch has its facts either way.
     """
     import tempfile
 
     import yaml
 
-    path = active_graph_file()
-    result: Dict[str, Any] = {"path": str(path), "persisted": False}
+    from jarvis_cd.util.site_state import read_graph_file, site_graph_file
+
+    result: Dict[str, Any] = {"persisted": False}
     try:
+        path = active_graph_file()
+        result["path"] = str(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path.parent / ".resource_graph.lock", "a+") as lock:
             try:
@@ -749,6 +754,9 @@ def persist_net_section(
             if not isinstance(graph, dict):
                 graph = {}
             previous = graph.get("net") if isinstance(graph.get("net"), dict) else None
+            if previous is None:
+                published = (read_graph_file(site_graph_file()) or {}).get("net")
+                previous = published if isinstance(published, dict) else None
             if facts is not None:
                 section, merge = merge_net_facts(
                     previous, facts,
@@ -1030,35 +1038,28 @@ def network_disabled(*envs: Optional[Dict[str, Any]]) -> bool:
 
 
 def active_graph_file() -> Path:
-    """The active resource graph file, without initializing JARVIS."""
-    site = os.environ.get("JARVIS_RESOURCE_GRAPH", "").strip()
-    if site:
-        return Path(site).expanduser()
-    try:
-        from jarvis_cd.core.config import Jarvis
+    """JARVIS's own (writable) graph file, without initializing JARVIS.
 
-        instance = Jarvis._instance
-        if instance is not None and getattr(instance, "_initialized", False):
-            return Path(instance.resource_graph_file)
-    except Exception:
-        pass
-    root = os.environ.get("JARVIS_ROOT")
-    return (
-        Path(root).expanduser() if root else Path.home() / ".ppi-jarvis"
-    ) / "resource_graph.yaml"
+    With ``JARVIS_RESOURCE_GRAPH`` this is the graph in the site home, never
+    the site graph, which JARVIS only reads (:mod:`jarvis_cd.util.site_state`).
+    """
+    from jarvis_cd.util.site_state import own_graph_file
+
+    return own_graph_file()
 
 
 def load_net_section() -> Optional[Dict[str, Any]]:
-    """Load the active graph's ``net`` section without initializing JARVIS."""
-    import yaml
+    """Load the graph's ``net`` section without initializing JARVIS.
 
-    path = active_graph_file()
+    JARVIS's own section when it has one, else the site graph's.
+    """
+    from jarvis_cd.util.site_state import effective_graph
+
     try:
-        with open(path, "r", encoding="utf-8") as stream:
-            graph = yaml.safe_load(stream) or {}
+        graph = effective_graph()
     except (OSError, ValueError):
         return None
-    net = graph.get("net") if isinstance(graph, dict) else None
+    net = graph.get("net")
     return net if isinstance(net, dict) else None
 
 
