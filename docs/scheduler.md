@@ -572,7 +572,7 @@ runs `jarvis ppl install yaml <runtime>/pipeline.yaml [+check] [--answers …]
 | `missing` | names Spack is building for the current package |
 | `log` | `<execution>/install/install.log`: append-only, stream it while the job runs |
 | `issues` | `<execution>/install/issues.jsonl`: questions when `phase` is `needs_decision`, `failure` records when it is `failed` |
-| `open_issues`, `issue_kinds` | on `phase: failed`, the failure issues' `issue_id`s and kinds (`failure` for anything JARVIS ran that failed, or `compiler_unavailable`) |
+| `failures`, `open_issues`, `issue_kinds` | on `phase: failed`, the failure issues' `issue_id`s (both lists) and kinds (`failure` for anything JARVIS ran that failed, or `compiler_unavailable`) |
 | `record` | `<execution>/install/install-record.json`: final per-package result, with `build_compilers` (the compilers verified on the job's node) |
 
 Because an install job's files live under its execution, the job also writes
@@ -618,7 +618,8 @@ Inside a run job the load's install phase mirrors its progress into the
 execution record's `metadata.install` (`jarvis.install.progress.v1`, with
 `trigger: install_on_load`, `mode` = the policy, `phase` `starting` →
 `resolving`/… → `done`, `needs_decision`, `refused` or `failed`, plus
-`open_issues`, `issue_kinds`, `log`, `issues` and `check_record`). A run job
+`open_issues`, `issue_kinds`, `failures` on `failed`, `log`, `issues` and
+`check_record`). A run job
 that stops on an install question (exit 3) or a failure (exit 6)
 therefore reports it the way an install job does.
 

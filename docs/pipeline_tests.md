@@ -683,8 +683,11 @@ with the usable compilers as candidates, and it carries the raw error too
 
 In a `ppl install +submit` job the execution ends `failed` with return code
 `6`, and its `metadata.install` progress has `phase: failed`,
+`failures` (the failure records' `issue_id`s, as in the report),
 `open_issues` and `issue_kinds`, so a caller can pass the record on
-without reading the log.
+without reading the log. Key on `failures` or `kind: failure`, not on
+`answerable: false`: a check also writes unanswerable facts such as
+`not_installed`.
 
 #### Missing Spack (`spack_missing`)
 

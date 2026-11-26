@@ -2592,6 +2592,7 @@ class Pipeline:
                 error=str(failed)[:2000],
                 open_issues=[issue["issue_id"] for issue in failed.issues],
                 issue_kinds=sorted({str(issue.get("kind")) for issue in failed.issues}),
+                failures=[issue["issue_id"] for issue in failed.issues],
             )
             raise
         except BaseException as exc:
@@ -5858,6 +5859,7 @@ class Pipeline:
                     phase="failed", error=str(failed)[:2000],
                     open_issues=[issue.get("issue_id") for issue in failed.issues],
                     issue_kinds=sorted({str(issue.get("kind")) for issue in failed.issues}),
+                    failures=[issue.get("issue_id") for issue in failed.issues],
                 )
                 raise
             finally:

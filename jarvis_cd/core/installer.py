@@ -708,9 +708,6 @@ class SpackInstaller(Installer):
         if failed:
             from jarvis_cd.core.spack_install import failure_record
 
-            details = "; ".join(
-                f"{name}: {record['packages'][name].get('error', '')}" for name in failed
-            )
             failure_ids = []
             for name in failed:
                 entry = record["packages"][name]
@@ -726,6 +723,14 @@ class SpackInstaller(Installer):
                 if entry["issue_id"] not in failure_ids:
                     failure_ids.append(entry["issue_id"])
             failures = [i for i in context.issues if i["issue_id"] in failure_ids]
+            by_id = {i["issue_id"]: i for i in failures}
+            details = "; ".join(
+                f"{name}: " + str(
+                    record["packages"][name].get("error")
+                    or by_id.get(record["packages"][name].get("issue_id"), {}).get("message")
+                    or "failed")
+                for name in failed
+            )
             print(
                 f"SpackInstaller: spack install failed for {', '.join(failed)}. {details} "
                 f"(log: {context.log_path})"
