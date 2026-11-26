@@ -7,7 +7,10 @@ so it is safe on a login node:
 * ``provider``: the scheduler (``--provider``, else the client on PATH);
 * ``partitions``: state, default, node counts (allocated/idle/other/total),
   CPUs and memory per node, gres, and limits (max/default time, min/max
-  nodes, QoS, allowed accounts) from ``scontrol show partition -o``;
+  nodes, QoS, allowed accounts). Slurm reads ``sinfo`` and ``scontrol show
+  partition -o``; PBS ``qstat -Qf``/``-Bf``, LSF ``bqueues -l``/``bparams``
+  and Flux ``flux queue list`` give their queues the same ``limits`` keys
+  (see :mod:`jarvis_cd.core.queue_limits`);
 * ``account``: what jarvis would submit with (``SBATCH_ACCOUNT``...);
 * ``mpi``: the Spack MPI candidates the installer would offer, the MPI
   launchers jarvis supports, and ``mpiexec`` on PATH;
@@ -24,31 +27,12 @@ import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 SCHED_INFO_SCHEMA = "jarvis.sched-info.v1"
 
 #: scheduler client on PATH -> jarvis provider name
 _CLIENTS = (("sbatch", "slurm"), ("qsub", "pbs"), ("bsub", "lsf"), ("flux", "flux"))
-_PARTITION_LIMITS = {
-    "MaxTime": "max_time",
-    "DefaultTime": "default_time",
-    "MinNodes": "min_nodes",
-    "MaxNodes": "max_nodes",
-    "MaxCPUsPerNode": "max_cpus_per_node",
-    "DefMemPerCPU": "default_mem_per_cpu_mb",
-    "MaxMemPerNode": "max_mem_per_node_mb",
-    "QoS": "qos",
-    "AllowAccounts": "allow_accounts",
-    "AllowQos": "allow_qos",
-    "AllowGroups": "allow_groups",
-    "State": "state",
-    "TotalNodes": "total_nodes",
-    "TotalCPUs": "total_cpus",
-    "PriorityTier": "priority_tier",
-    "OverSubscribe": "oversubscribe",
-    "ExclusiveUser": "exclusive_user",
-}
 
 
 def detect_provider() -> Optional[str]:
@@ -58,52 +42,18 @@ def detect_provider() -> Optional[str]:
     return None
 
 
-def _int_or_text(value: str) -> Any:
-    if value.isdigit():
-        return int(value)
-    if value in ("UNLIMITED", "NONE", "N/A", "(null)", ""):
-        return None if value != "UNLIMITED" else "UNLIMITED"
-    return value
-
-
-def slurm_partition_limits() -> Dict[str, Dict[str, Any]]:
-    """``scontrol show partition -o``: one ``Key=Value`` line per partition."""
-    from jarvis_cd.core.scheduler import _parse_slurm_duration, _run_scheduler_query
-
-    completed, _diagnostic = _run_scheduler_query(["scontrol", "show", "partition", "-o"])
-    if completed is None or completed.returncode != 0:
-        return {}
-    limits: Dict[str, Dict[str, Any]] = {}
-    for line in completed.stdout.splitlines():
-        fields = dict(
-            token.split("=", 1) for token in line.split() if "=" in token
-        )
-        name = fields.get("PartitionName")
-        if not name:
-            continue
-        entry: Dict[str, Any] = {}
-        for key, target in _PARTITION_LIMITS.items():
-            if key in fields:
-                entry[target] = _int_or_text(fields[key])
-        for key in ("max_time", "default_time"):
-            if isinstance(entry.get(key), str) and entry[key] != "UNLIMITED":
-                entry[f"{key}_s"] = _parse_slurm_duration(entry[key])
-        for key in ("allow_accounts", "allow_qos", "allow_groups"):
-            if isinstance(entry.get(key), str):
-                entry[key] = entry[key].split(",")
-        limits[name] = entry
-    return limits
-
-
-def partitions(provider: str) -> List[Dict[str, Any]]:
+def partitions(provider: str) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """Partitions (queues) with their limits, and the raw error of a failed read."""
+    from jarvis_cd.core.queue_limits import QUEUE_READERS, attach_slurm_limits
     from jarvis_cd.core.scheduler import scheduler_partition_facts
 
-    facts = scheduler_partition_facts(provider)
     if provider == "slurm":
-        limits = slurm_partition_limits()
-        for entry in facts:
-            entry["limits"] = limits.get(entry["partition"], {})
-    return facts
+        facts = scheduler_partition_facts(provider)
+        if not facts:
+            return [], None
+        return facts, attach_slurm_limits(facts)
+    reader = QUEUE_READERS.get(provider)
+    return reader() if reader else ([], None)
 
 
 def account_facts() -> Dict[str, Any]:
@@ -163,6 +113,7 @@ def mpi_facts(issues: List[Dict[str, Any]]) -> Dict[str, Any]:
 def sched_info(jarvis: Any, provider: Optional[str] = None, *, include_mpi: bool = True,
                extra_issues: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     from jarvis_cd.core.issues import make_jarvis_issue
+    from jarvis_cd.core.queue_limits import QUEUE_READERS
     from jarvis_cd.core.scheduler import _SCHEDULERS
 
     issues: List[Dict[str, Any]] = list(extra_issues or [])
@@ -173,6 +124,7 @@ def sched_info(jarvis: Any, provider: Optional[str] = None, *, include_mpi: bool
         "host": os.uname().nodename if hasattr(os, "uname") else None,
         "provider": chosen,
         "providers_supported": sorted(_SCHEDULERS),
+        "providers_queues_readable": sorted(set(_SCHEDULERS) | set(QUEUE_READERS)),
         "in_allocation": None,
         "partitions": [],
         "account": account_facts(),
@@ -185,15 +137,29 @@ def sched_info(jarvis: Any, provider: Optional[str] = None, *, include_mpi: bool
             kind="scheduler_missing", subject="scheduler",
             message="no scheduler client (sbatch, qsub, bsub, flux) on PATH",
             field="--provider"))
-    elif chosen not in _SCHEDULERS:
+    elif chosen not in _SCHEDULERS and chosen not in QUEUE_READERS:
         issues.append(make_jarvis_issue(
             kind="scheduler_unsupported", subject="scheduler",
             message=f"jarvis has no {chosen} scheduler provider yet",
             identity={"provider": chosen}, field="--provider",
-            details={"supported": sorted(_SCHEDULERS)}))
+            details={"supported": sorted(_SCHEDULERS),
+                     "queues_readable": sorted(QUEUE_READERS)}))
     else:
-        document["partitions"] = partitions(chosen)
-        if not document["partitions"]:
+        if chosen not in _SCHEDULERS:
+            issues.append(make_jarvis_issue(
+                kind="scheduler_unsupported", subject="scheduler",
+                message=(f"jarvis reads {chosen} queues and their limits, "
+                         f"but cannot submit to {chosen} yet"),
+                identity={"provider": chosen}, field="--provider",
+                details={"supported": sorted(_SCHEDULERS), "queues_read": True}))
+        document["partitions"], error = partitions(chosen)
+        if error is not None:
+            issues.append(make_jarvis_issue(
+                kind="scheduler_query_failed", subject="scheduler",
+                message=f"{error['command']} failed: {error.get('output') or ''}".strip(),
+                identity={"provider": chosen, "command": error["command"]},
+                details=error))
+        elif not document["partitions"]:
             issues.append(make_jarvis_issue(
                 kind="scheduler_query_failed", subject="scheduler",
                 message=f"{chosen} reported no partitions", identity={"provider": chosen}))

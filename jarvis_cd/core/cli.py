@@ -3881,12 +3881,17 @@ class JarvisCLI(ArgParse):
                   f"in_allocation: {document['in_allocation']}")
             for part in document["partitions"]:
                 limits = part.get("limits") or {}
-                print(f"  {part['partition']:<14} default={part.get('default')} "
+                unknown = set(part.get("limits_unknown") or [])
+
+                def limit(key, limits=limits, unknown=unknown):
+                    return "unknown" if key in unknown else limits.get(key)
+
+                print(f"  {str(part['partition']):<14} default={part.get('default')} "
                       f"idle={part.get('idle_nodes')}/{part.get('total_nodes')} "
                       f"cpus/node={part.get('cpus_per_node')} "
                       f"cores/node={part.get('physical_cores_per_node')} "
                       f"max_time={part.get('max_time')} "
-                      f"max_nodes={limits.get('max_nodes')}")
+                      f"nodes={limit('min_nodes')}-{limit('max_nodes')}")
             mpi = document.get("mpi") or {}
             for candidate in mpi.get("spack_candidates") or []:
                 print(f"  mpi: {candidate['id']} {candidate['constraint']} {candidate['prefix']}")

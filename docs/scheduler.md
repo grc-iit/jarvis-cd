@@ -459,6 +459,8 @@ JARVIS: finalizing execution record (exit 0)
 
 PBS and LSF have no backend in this release. `cancel`/`stop` against them
 fail with a typed "not supported" error instead of guessing a command.
+`jarvis sched info` still reads their queues and per-job limits (and Flux's),
+read-only; see [sched.md](sched.md#jarvis-sched-info).
 
 ## Install jobs
 

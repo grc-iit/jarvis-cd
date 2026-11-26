@@ -23,8 +23,10 @@ jarvis sched info --provider slurm +no_mpi +json
 | `+no_mpi` | Skip the MPI discovery (`spack find`) |
 | `+json` | Print the document as one JSON line |
 
-It runs only light, short reads, so it is safe on a login node: `sinfo`,
-`scontrol show partition -o`, one `spack find` (kept to the MPI providers) and
+It runs only light, short reads, so it is safe on a login node: on Slurm
+`sinfo` and `scontrol show partition -o`; on PBS `qstat -Qf` and `qstat -Bf`;
+on LSF `bqueues -l` and `bparams`; on Flux `flux queue list`. It also runs one
+`spack find` (kept to the MPI providers) and
 `spack config get packages`, plus file reads of the resource graph and the
 site skills. It never submits, concretizes or builds. A missing piece
 becomes an entry in `issues`, never a failure, and the command exits `0`.
@@ -35,7 +37,8 @@ becomes an entry in `issues`, never a failure, and the command exits `0`.
 |-------|---------|
 | `schema_version` | `jarvis.sched-info.v1` |
 | `provider` | the provider used, or `null` when none was found |
-| `providers_supported` | the providers JARVIS has (`slurm`, …) |
+| `providers_supported` | the providers JARVIS can submit to (`slurm`, …) |
+| `providers_queues_readable` | the providers whose queues and limits `sched info` reads (`flux`, `lsf`, `pbs`, `slurm`) |
 | `host`, `observed_at` | where and when it was read |
 | `in_allocation` | the allocation this process runs in (the same check the [login-node build guard](scheduler.md#install-jobs) uses), or `null` on a login node |
 | `account` | the submit defaults set in the environment: `SBATCH_ACCOUNT`, `SLURM_ACCOUNT`, `SBATCH_QOS`, `SBATCH_PARTITION`, `PBS_ACCOUNT`, `LSB_DEFAULTPROJECT` |
@@ -58,7 +61,59 @@ of one partition merged:
 | `sockets_per_node`, `cores_per_socket`, `threads_per_core` | the node layout (`sinfo` `%X`, `%Y`, `%Z`) |
 | `physical_cores_per_node` | `sockets_per_node` × `cores_per_socket`: physical cores, without hyperthreads. Size one MPI rank per core from this, not from `cpus_per_node` |
 | `heterogeneous` | `true` when the partition's nodes differ. The per-node fields then give the smallest node, so a job sized from them fits on any node of the partition |
-| `limits` | from `scontrol show partition -o`: `max_time`, `default_time` (with `_s` seconds), `min_nodes`, `max_nodes`, `max_cpus_per_node`, `default_mem_per_cpu_mb`, `max_mem_per_node_mb`, `qos`, `allow_accounts`, `allow_qos`, `allow_groups` (lists), `state`, `total_nodes`, `total_cpus`, `priority_tier`, `oversubscribe`, `exclusive_user`. `UNLIMITED` is kept as that string |
+| `limits` | the per-job limits, with the same keys for every scheduler (see [Queue limits](#queue-limits)) |
+| `limits_unknown` | the `limits` keys the scheduler did not report |
+| `limits_source` | where the limits came from: `provider`, `command`, `fields` (each known key's native field) and, when the read failed, `error` (`command`, `exit_code`, `output`) |
+
+#### PBS, LSF and Flux queues
+
+JARVIS cannot submit to PBS, LSF or Flux yet, but `sched info` reads their
+queues. Each queue is one `partitions[]` entry with the same fields. Only
+`partition`, `default`, `available`, `total_nodes`, `max_time` and the three
+`limits` fields are filled; the per-node fields are `null`.
+
+| Scheduler | Queues and limits from | Default queue from | Extra fields |
+|-----------|------------------------|--------------------|--------------|
+| PBS Pro, OpenPBS, Torque | `qstat -Qf` (a queue limit the queue leaves unset falls back to the server's in `qstat -Bf`) | `qstat -Bf` `default_queue` | `queue_type` (`Execution` or `Route`), `route_destinations`, `from_route_only` |
+| LSF | `bqueues -l` | `bparams` `Default Queues` (it can name several) | none |
+| Flux | `flux queue list` with an explicit format (older flux-core: the `policy` format, then the default table, whose node range is the effective one) | the `*` on the queue name | `parent` (virtual queues) |
+
+`default` is `null` when the default queue could not be read. Flux without
+named queues has a single anonymous queue: `partition` is `null` and
+`default` is `true`.
+
+#### Queue limits
+
+Every `limits` holds all of these keys:
+
+| Key | Slurm (`scontrol`) | PBS (`qstat -Qf`) | LSF (`bqueues -l`) | Flux (`flux queue list`) |
+|-----|--------------------|-------------------|--------------------|--------------------------|
+| `max_time`, `max_time_s` | `MaxTime` | `resources_max.walltime` | `MAXIMUM LIMITS` `RUNLIMIT` (as printed, e.g. `2880.0 min of HOST_MODEL`) | `TLIMIT` |
+| `default_time`, `default_time_s` | `DefaultTime` | `resources_default.walltime` | `DEFAULT LIMITS` `RUNLIMIT` | `TDEFAULT` |
+| `min_nodes` | `MinNodes` | `resources_min.nodect` | unknown | `NNODES` low end |
+| `max_nodes` | `MaxNodes` | `resources_max.nodect` (Torque: the count in `resources_max.nodes`) | `HOSTLIMIT_PER_JOB` | `NNODES` high end |
+| `state` | `State` | `enabled` and `started` | `STATUS` | `EN` and `ST` |
+| `priority_tier` | `PriorityTier` | `Priority` | `PRIO` | unknown |
+| `allow_groups` | `AllowGroups` | `acl_groups` when `acl_group_enable` is set, else `["ALL"]` | `USERS` when it is `all` or only groups | unknown |
+| `total_nodes`, `total_cpus` | `TotalNodes`, `TotalCPUs` | `resources_available.nodect`, `.ncpus` | unknown | unknown |
+| `max_cpus_per_node`, `default_mem_per_cpu_mb`, `max_mem_per_node_mb`, `qos`, `allow_accounts`, `allow_qos`, `oversubscribe`, `exclusive_user` | the `scontrol` field of that name | unknown | unknown | unknown |
+
+The values mean:
+
+* A number or a string is the scheduler's value. `_s` keys are seconds.
+* `UNLIMITED` means unlimited (Slurm `UNLIMITED`, Flux `inf`).
+* `null` with the key **not** in `limits_unknown` means the scheduler reports
+  no value (Slurm `NONE` or `N/A`).
+* `null` with the key in `limits_unknown` means unknown, never unlimited. The
+  scheduler does not expose it, or printed nothing for it, or the read
+  failed (`limits_source.error`). PBS and LSF print only the limits a queue
+  sets, so an unknown there is often unset, but other site policy (hooks,
+  application profiles, QoS) may still limit jobs.
+
+`state` uses Slurm's words: `UP` (accepts and runs jobs), `DOWN` (accepts, does
+not run), `DRAIN` (runs, does not accept new jobs), `INACTIVE`. PBS and Flux
+map enabled/started, and LSF maps `Open`/`Closed` and `Active`/`Inact`.
+`available` is the same state in lower case (`up`, `down`, `drain`, `inact`).
 
 The `mpi` block:
 
@@ -79,8 +134,8 @@ The `mpi` block:
 | `kind` | Schema | When |
 |--------|--------|------|
 | `scheduler_missing` | `jarvis.issue.v1` | no scheduler client on `PATH` and no `--provider` |
-| `scheduler_unsupported` | `jarvis.issue.v1` | the provider is not one JARVIS has (`details.supported` lists them) |
-| `scheduler_query_failed` | `jarvis.issue.v1` | the provider reported no partitions |
+| `scheduler_unsupported` | `jarvis.issue.v1` | JARVIS cannot submit to this provider (`details.supported` lists the ones it can). For PBS, LSF and Flux the queues are still read, and `details.queues_read` is `true` |
+| `scheduler_query_failed` | `jarvis.issue.v1` | the provider reported no partitions, or a queue or limits read failed (`details` holds the raw `command`, `exit_code` and `output`) |
 | `resource_graph_net_missing` (and the other network issues) | `jarvis.issue.v1` | the resource graph has no usable `net` section, as `jarvis rg net +json` reports it |
 | `spack_missing` | `jarvis.install-issue.v1` | JARVIS has no Spack. It is the same issue, with the same `issue_id` and `site_spacks[]`, that `ppl install +check` raises (see [Missing Spack](pipeline_tests.md#missing-spack-spack_missing)) |
 | `jarvis_not_initialized` | `jarvis.issue.v1` | `JARVIS_ROOT` has no `jarvis_config.yaml`. The rest of the document is still filled in, and the command still exits 0; `field` is `JARVIS_ROOT` and `remedy` says to run `jarvis init` once on that root. Pipeline commands refuse until then |
