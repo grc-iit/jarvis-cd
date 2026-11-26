@@ -108,7 +108,9 @@ class ExecInfo:
         :param exec_async: Whether to execute program asynchronously
         :param stdin: Any input needed by the program. Only local
         :param strict_ssh: Strict ssh host key verification
-        :param timeout: Timeout subprocess within timeframe
+        :param timeout: Stall window in seconds, not a time limit: the
+            command is stopped (exit 124) only after this long with no output,
+            CPU time or I/O in its local process tree. None: no watch.
         :param container: Container engine to wrap command with. One of
             'none', 'docker', 'podman', 'apptainer'. Defaults to 'none'.
         :param gpu: Enable GPU passthrough into the container. Uses --nv for

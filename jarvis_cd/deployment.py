@@ -8,11 +8,12 @@ do not need application-specific prompt instructions.
 from __future__ import annotations
 
 import re
-import subprocess
 from dataclasses import dataclass
 from pathlib import PurePosixPath, PureWindowsPath
 from shutil import which
-from typing import Any, Literal, Mapping, Sequence, cast
+from typing import Any, Literal, Mapping, Optional, Sequence, cast
+
+from jarvis_cd.util import stall as _stall
 
 PACKAGE_DEPLOYMENT_SCHEMA_VERSION = "jarvis.package-deployment.v1"
 CONFIGURATION_INPUT_BINDING_SCHEMA_VERSION = "jarvis.configuration-input-binding.v1"
@@ -292,13 +293,16 @@ def probe_program(
     environment: Mapping[str, str],
     arguments: Sequence[str] = ("--help",),
     accepted_return_codes: Sequence[int] = (0,),
-    timeout_seconds: float = 15,
+    timeout_seconds: Optional[float] = None,
 ) -> ProgramProbeResult:
     """Probe a program through ``PATH`` without exposing its resolved location.
 
     Packages choose the semantic program and interpret any advertised
-    capabilities.  This helper only performs bounded, side-effect-free process
-    discovery and execution.
+    capabilities.  This helper only performs side-effect-free process
+    discovery and execution. The probe has no time limit: one that shows no
+    output, CPU time or I/O for the stall window (:mod:`jarvis_cd.util.stall`)
+    is stopped and counts as failed. ``timeout_seconds`` is accepted for
+    compatibility and no longer limits the probe.
     """
     _validate_text(program, "runtime program")
     if _looks_absolute(program):
@@ -311,25 +315,17 @@ def probe_program(
         raise ValueError("accepted runtime probe return codes must be bounded integers")
     if len(set(accepted)) != len(accepted):
         raise ValueError("accepted runtime probe return codes must be unique")
-    if timeout_seconds <= 0:
+    if timeout_seconds is not None and timeout_seconds <= 0:
         raise ValueError("runtime probe timeout must be positive")
     resolved = which(program, path=environment.get("PATH"))
     if resolved is None:
         return ProgramProbeResult(RuntimeStatus("unavailable", "software_not_found"))
     try:
-        completed = subprocess.run(
-            [resolved, *arguments],
-            check=False,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=dict(environment),
-            timeout=timeout_seconds,
-        )
-    except (OSError, subprocess.SubprocessError):
+        completed = _stall.run([resolved, *arguments], env=environment,
+                               what=f"{program} probe")
+    except OSError:
         return ProgramProbeResult(RuntimeStatus("unavailable", "runtime_probe_failed"))
-    if completed.returncode not in accepted:
+    if completed.returncode not in accepted or _stall.stall_error(completed):
         return ProgramProbeResult(RuntimeStatus("unavailable", "runtime_probe_failed"))
     return ProgramProbeResult(
         RuntimeStatus("ready", "runtime_probe_succeeded"),

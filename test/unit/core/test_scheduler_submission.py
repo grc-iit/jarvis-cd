@@ -928,7 +928,7 @@ def test_slurm_query_uses_accounting_for_completed_job() -> None:
     )
 
     with patch(
-        "jarvis_cd.core.scheduler.subprocess.run",
+        "jarvis_cd.core.scheduler._stall.run",
         side_effect=[scheduler_queue, scheduler_accounting],
     ) as execute:
         observation = SlurmScheduler.query_execution("24680")
@@ -951,7 +951,7 @@ def test_slurm_query_reports_missing_only_after_authoritative_empty_accounting()
     )
 
     with patch(
-        "jarvis_cd.core.scheduler.subprocess.run",
+        "jarvis_cd.core.scheduler._stall.run",
         side_effect=[empty_queue, empty_accounting],
     ):
         observation = SlurmScheduler.query_execution("24680")
@@ -976,7 +976,7 @@ def test_slurm_query_reports_missing_when_queue_rejects_id_without_accounting() 
     )
 
     with patch(
-        "jarvis_cd.core.scheduler.subprocess.run",
+        "jarvis_cd.core.scheduler._stall.run",
         side_effect=[missing_queue, disabled_accounting],
     ):
         observation = SlurmScheduler.query_execution("22646")
@@ -1003,7 +1003,7 @@ def test_slurm_query_reports_missing_when_queue_is_empty_and_accounting_is_disab
     )
 
     with patch(
-        "jarvis_cd.core.scheduler.subprocess.run",
+        "jarvis_cd.core.scheduler._stall.run",
         side_effect=[empty_queue, disabled_accounting],
     ):
         observation = SlurmScheduler.query_execution("24680")

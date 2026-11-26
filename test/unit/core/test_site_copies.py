@@ -509,7 +509,7 @@ class TestSiteMethod(_Case):
         self.assertEqual(Installer.get_installers(ppl), {'site': ppl.packages})
         installer = SiteInstaller()
         installer.context = cast(Any, self.context())
-        with mock.patch.object(sc.subprocess, 'run',
+        with mock.patch.object(sc._stall, 'run',
                                return_value=subprocess.CompletedProcess([], 0, out, '')) as run:
             result = installer.check(ppl, ppl.packages)
         argv = run.call_args.args[0]
@@ -526,7 +526,7 @@ class TestSiteMethod(_Case):
         installer.context = cast(Any, context)
         failed = subprocess.CompletedProcess(
             [], 3, '', 'Lmod has detected the following error: ior/3.3.0 not found\n')
-        with mock.patch.object(sc.subprocess, 'run', return_value=failed):
+        with mock.patch.object(sc._stall, 'run', return_value=failed):
             result = installer.install(ppl, ppl.packages)
         self.assertEqual(result['status'], 'failed')
         issue = context.issues[-1]
@@ -563,7 +563,7 @@ class TestSiteCopyLoadFailure(_Case):
 
     def verify(self, ppl, context, returncode, stderr):
         failed = subprocess.CompletedProcess([], returncode, '', stderr)
-        with mock.patch.object(sc.subprocess, 'run', return_value=failed):
+        with mock.patch.object(sc._stall, 'run', return_value=failed):
             return sc.verify_site_choices(ppl, context)
 
     def spack_copy(self):
@@ -608,7 +608,7 @@ class TestSiteCopyLoadFailure(_Case):
             'prefix': str(self.tmp / 'gone'), 'constraint': 'module:ior/3.3.0-fihmxeb'})
         ppl = FakePipeline(self.jarvis, [package])
         context = self.context()
-        with mock.patch.object(sc.subprocess, 'run',
+        with mock.patch.object(sc._stall, 'run',
                                side_effect=AssertionError('not loaded')):
             summary = sc.verify_site_choices(ppl, context)
         self.assertEqual(summary['held'], ['bench'])
@@ -624,7 +624,7 @@ class TestSiteCopyLoadFailure(_Case):
                          'constraint': 'module:ior/3.3.0-fihmxeb'}, 'the person', 'x')
         ppl = FakePipeline(self.jarvis, [package])
         failed = subprocess.CompletedProcess([], 3, '', 'Lmod has detected the following error')
-        with mock.patch.object(sc.subprocess, 'run', return_value=failed), \
+        with mock.patch.object(sc._stall, 'run', return_value=failed), \
                 mock.patch('jarvis_cd.core.installer.SiteInstaller.check',
                            side_effect=AssertionError('held: the site method must not run')):
             with self.assertRaises(InstallFailed) as caught:
@@ -708,7 +708,7 @@ class TestBrokenSiteSpack(_Case):
         ppl = FakePipeline(self.jarvis, [package])
         context = self.context()
         with mock.patch.object(self.health, '_run', side_effect=broken_spack_run()), \
-                mock.patch.object(sc.subprocess, 'run',
+                mock.patch.object(sc._stall, 'run',
                                   side_effect=AssertionError('not loaded while broken')):
             summary = sc.verify_site_choices(ppl, context)
         self.assertEqual(summary['packages']['bench']['status'], 'failed')

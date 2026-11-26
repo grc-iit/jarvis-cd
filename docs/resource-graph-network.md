@@ -71,7 +71,7 @@ count). Each RDMA interface gets a `ucx_status`:
 | `port_not_active` | the port state isn't ACTIVE |
 | `not_listed_by_ucx` | the port is ACTIVE, but this UCX lists no RDMA transport for it |
 | `ucx_info_missing` | no `ucx_info` to ask |
-| `ucx_info_failed` | `ucx_info` exited non-zero or timed out (`ucx.error`) |
+| `ucx_info_failed` | `ucx_info` exited non-zero or stalled (`ucx.error`; no time limit, see [Long commands and stalls](spack.md#long-commands-and-stalls)) |
 
 The interface's `ucx_device` is set only when the status is `usable`, and the
 network's `ucx_device` only when every member is usable on the same device

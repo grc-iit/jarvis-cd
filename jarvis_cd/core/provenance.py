@@ -30,10 +30,11 @@ import os
 import re
 import shlex
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional
+
+from jarvis_cd.util import stall as _stall
 
 PROVENANCE_SCHEMA = "jarvis.provenance.v1"
 PROVENANCE_FILE = "provenance.json"
@@ -140,16 +141,14 @@ def _ldd(binary: str, env: Mapping[str, str]) -> Dict[str, Any]:
         if env.get(name):
             run_env[name] = str(env[name])
     try:
-        completed = subprocess.run(
-            ["ldd", binary], capture_output=True, text=True, timeout=60,
-            env=run_env, check=False,
-        )
-    except (OSError, subprocess.SubprocessError) as error:
+        completed = _stall.run(["ldd", binary], env=run_env, what=f"ldd {binary}")
+    except OSError as error:
         return {"returncode": None, "lines": [], "error": str(error)}
+    stalled = _stall.stall_error(completed)
     return {
         "returncode": completed.returncode,
         "lines": completed.stdout.splitlines(),
-        "error": completed.stderr.strip() or None,
+        "error": "\n".join(item for item in (completed.stderr.strip(), stalled) if item) or None,
     }
 
 

@@ -165,7 +165,7 @@ def test_program_probe_can_accept_a_documented_usage_exit(
         lambda _program, *, path: "/runtime/bin/mExec" if path else None,
     )
     monkeypatch.setattr(
-        deployment_module.subprocess,
+        deployment_module._stall,
         "run",
         lambda *_args, **_kwargs: SimpleNamespace(
             returncode=1,

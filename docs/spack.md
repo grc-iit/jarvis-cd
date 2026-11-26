@@ -107,23 +107,37 @@ a JARVIS-submitted job.
 
 ### Long commands and stalls
 
-No Spack command that prepare runs (nor its `git clone`) has a time limit.
+No command JARVIS runs for itself has a time limit. That covers every Spack
+command prepare runs (and its `git clone`), the build-host compiler probe
+(compile and run a hello world with each compiler), the Spack health check,
+`spack load` of a site copy, the login-shell module reads, the pip/conda/
+container probes, `ldd`, `ucx_info`, `ip addr`, `probe_program` and the
+scheduler's queries, cancels, stops, moves and `sbatch --test-only`.
+
 The first `compiler find` in a new root can take minutes with no output:
 Spack builds its package indexes into `misc_cache` first, reading every
 `package.py`. On Ares, against an NFS upstream on a compute node, that took
-about 4 minutes, and 20 s once the cache was warm. Instead of a limit, each
-command is watched:
+about 4 minutes, and 20 s once the cache was warm. A compiler on a cold NFS
+mount is slow the same way. Instead of a limit, each command is watched
+(`jarvis_cd/util/stall.py`):
 
 - Activity is any output, or a change in the CPU time or I/O bytes
   (`/proc/<pid>/stat` and `/proc/<pid>/io`) of any process in its tree.
 - Every 60 s a running command reports `<command> still running (<s>s,
   attempt N; <lines> output line(s), <n> process(es), cpu <ticks> ticks,
   io <bytes> bytes; last progress <s>s ago)`. These lines go to stderr for
-  `jarvis spack prepare` and to `install.log` during an install.
-- A command with no activity for `JARVIS_SPACK_STALL_SECONDS` (default
-  600, at least 30) is stalled. Its process group is stopped, and it is
-  retried once, with a line saying so.
-- If it stalls on both attempts, prepare refuses with the command's own
+  `jarvis spack prepare` and to `install.log` during an install (stderr
+  for the other commands).
+- A command with no activity for `JARVIS_STALL_SECONDS` (default 600, at
+  least 30; `JARVIS_SPACK_STALL_SECONDS` is still read) is stalled. Its
+  process group is stopped, and it is retried once, with a line saying so.
+  Scheduler commands are not retried: the poll that follows is the retry,
+  and a cancel, stop or move is reported rather than repeated.
+- A command that stalled every time returns its own failure with the stall
+  named: a compiler probe result gets `exit_code: null`, an `error` naming
+  the stall, its output and the `stall` record; a scheduler query reports
+  `<command> query stalled: ...`.
+- If a Spack command stalls on both attempts, prepare refuses with the command's own
   refusal kind (`spack_compiler_find_failed`, say). The message names the
   stall and quotes Spack's output so far. The issue's `details` carry
   `exit_code` (124), `output` (its last 4 KiB) and `stall`:

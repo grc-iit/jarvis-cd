@@ -45,11 +45,11 @@ import json
 import os
 import re
 import shlex
-import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from jarvis_cd.util import stall as _stall
 from jarvis_cd.core.spack_install import (
     MPI_PROVIDERS,
     Decisions,
@@ -68,8 +68,6 @@ SWITCH_ENV = "JARVIS_SITE_COPIES"
 #: the resource graph section listing confirmed site copies
 GRAPH_SECTION = "software"
 _MAX_MODULES = 12
-_LOGIN_TIMEOUT = 90
-_SPACK_TIMEOUT = 180
 _MPI_NAMES = set(MPI_PROVIDERS) | {"impi", "intelmpi", "intel-mpi", "mvapich", "mpt"}
 #: a Spack module name's trailing ``-<7 char hash>``
 _SPACK_HASH_SUFFIX = re.compile(r"^(?P<version>.+?)-(?P<hash>[a-z0-9]{7})$")
@@ -308,17 +306,19 @@ printf '\n@@END\n'
 '''
 
 
-def _login(script: str, args: Sequence[str], timeout: float = _LOGIN_TIMEOUT
-           ) -> Tuple[int, str]:
-    """Run ``script`` in a throwaway login shell (where ``module`` is defined)."""
+def _login(script: str, args: Sequence[str]) -> Tuple[int, str]:
+    """Run ``script`` in a throwaway login shell (where ``module`` is defined).
+
+    No time limit; a shell that stalls (see :mod:`jarvis_cd.util.stall`)
+    returns 124 with what it printed and the stall.
+    """
     try:
-        completed = subprocess.run(
-            ["bash", "-lc", script, "_", *args], capture_output=True, text=True,
-            timeout=timeout, stdin=subprocess.DEVNULL,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        completed = _stall.run(["bash", "-lc", script, "_", *args], what="module query")
+    except OSError as exc:
         return 127, str(exc)
-    return completed.returncode, (completed.stdout or "") + (completed.stderr or "")
+    output = (completed.stdout or "") + (completed.stderr or "")
+    stalled = _stall.stall_error(completed)
+    return completed.returncode, output + (f"\n{stalled}\n" if stalled else "")
 
 
 def _sections(output: str) -> Dict[str, List[str]]:
@@ -628,12 +628,14 @@ def _run_spack(executable: str, args: Sequence[str], root: Any = None) -> Tuple[
     from jarvis_cd.core import spack_health
 
     try:
-        completed = subprocess.run(
-            [executable, *args], capture_output=True, text=True, timeout=_SPACK_TIMEOUT,
-            stdin=subprocess.DEVNULL, env=spack_health.environment(root),
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        completed = _stall.run([executable, *args], env=spack_health.environment(root),
+                               what="spack " + " ".join(args[:1]))
+    except OSError as exc:
         return 127, str(exc)
+    stalled = _stall.stall_error(completed)
+    if stalled is not None:
+        return completed.returncode, ((completed.stderr or "") + (completed.stdout or "")
+                                      + f"\n{stalled}\n")
     return completed.returncode, completed.stdout or ""
 
 
@@ -1413,19 +1415,16 @@ def load_env_delta(site: Mapping[str, Any]) -> Tuple[Optional[Dict[str, Any]], D
     ran: Dict[str, Any] = {"command": f"bash -lc '{shown}'", "exit_code": None,
                            "output": "", "error": None}
     try:
-        completed = subprocess.run(
+        completed = _stall.run(
             ["bash", "-lc", _LOAD_SCRIPT, "_", " ".join(uses), " ".join(modules),
-             executable, spack_hash],
-            capture_output=True, text=True, timeout=_LOGIN_TIMEOUT, stdin=subprocess.DEVNULL,
-            env=dict(os.environ),
-        )
-    except subprocess.TimeoutExpired as exc:
-        ran["error"] = f"timed out after {_LOGIN_TIMEOUT} s"
-        err = exc.stderr or b""
-        ran["output"] = err.decode("utf-8", "replace") if isinstance(err, bytes) else err
-        return None, ran
+             executable, spack_hash], env=dict(os.environ), what="site copy load")
     except OSError as exc:
         ran["error"] = f"could not start: {exc}"
+        return None, ran
+    stalled = _stall.stall_error(completed)
+    if stalled is not None:
+        ran.update(error=stalled, output=completed.stderr or "",
+                   stall=getattr(completed, "stall"))
         return None, ran
     ran["exit_code"] = completed.returncode
     if completed.returncode != 0 or "\0@@SPLIT@@\0" not in completed.stdout:

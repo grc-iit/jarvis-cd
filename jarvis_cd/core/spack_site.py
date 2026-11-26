@@ -20,7 +20,7 @@ shallow clone when the root is absent, config writes, ``compiler find``,
 ``external find`` and a ``module load`` probe in a throwaway login shell.
 A first ``compiler find`` against a large upstream on NFS can take minutes,
 so no Spack command has a time limit; each is watched for a stall instead
-(see :class:`_Spack`, ``JARVIS_SPACK_STALL_SECONDS``). The result is
+(see :class:`_Spack`, ``JARVIS_STALL_SECONDS``). The result is
 ``<root>/var/jarvis/site-prep.json`` (``jarvis.spack-site-prep.v1``), which
 install records and provenance reference.
 """
@@ -31,13 +31,13 @@ import contextlib
 import json
 import os
 import re
-import shlex
 import subprocess
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence
 
 import yaml
 
+from jarvis_cd.util import stall as _stall
 from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
 from jarvis_cd.core.spack_install import (
     BINDING_COMPILER_SOURCES,
@@ -100,106 +100,26 @@ def _version_key(version: str) -> tuple:
     )
 
 
-#: seconds a jarvis Spack command may go without output, CPU time or I/O in its
-#: process tree before it counts as stalled (``JARVIS_SPACK_STALL_SECONDS``).
-#: Not a time limit: a command that keeps working runs as long as it needs.
-STALL_SECONDS_ENV = "JARVIS_SPACK_STALL_SECONDS"
-DEFAULT_STALL_SECONDS = 600
-#: how often a running command reports that it is still working
-PROGRESS_SECONDS = 60
-#: attempts of a command that stalls before site preparation refuses
-STALL_ATTEMPTS = 2
-_POLL_SECONDS = 5.0
-_OUTPUT_TAIL_CHARS = 4096
-
-
-def stall_seconds() -> int:
-    raw = os.environ.get(STALL_SECONDS_ENV, "").strip()
-    try:
-        value = int(raw) if raw else DEFAULT_STALL_SECONDS
-    except ValueError:
-        value = DEFAULT_STALL_SECONDS
-    return max(value, 30)
-
-
-def _process_tree(root_pid: int) -> List[int]:
-    """``root_pid`` and its live descendants (from ``/proc``)."""
-    children: Dict[int, List[int]] = {}
-    try:
-        entries = os.listdir("/proc")
-    except OSError:
-        return [root_pid]
-    for entry in entries:
-        if not entry.isdigit():
-            continue
-        try:
-            with open(f"/proc/{entry}/stat", "rb") as stream:
-                fields = stream.read().rsplit(b")", 1)[1].split()
-        except (OSError, IndexError):
-            continue
-        children.setdefault(int(fields[1]), []).append(int(entry))
-    tree, pending = [], [root_pid]
-    while pending:
-        pid = pending.pop()
-        tree.append(pid)
-        pending.extend(children.get(pid, ()))
-    return tree
-
-
-def _tree_activity(root_pid: int) -> Optional[Dict[str, int]]:
-    """CPU ticks and I/O bytes of the process tree, or None without ``/proc``."""
-    if not os.path.isdir("/proc/self"):
-        return None
-    cpu = io_bytes = 0
-    pids = _process_tree(root_pid)
-    for pid in pids:
-        try:
-            with open(f"/proc/{pid}/stat", "rb") as stream:
-                fields = stream.read().rsplit(b")", 1)[1].split()
-            cpu += int(fields[11]) + int(fields[12]) + int(fields[13]) + int(fields[14])
-        except (OSError, IndexError, ValueError):
-            pass
-        try:
-            with open(f"/proc/{pid}/io", "rb") as stream:
-                for line in stream:
-                    if line.startswith((b"rchar:", b"wchar:")):
-                        io_bytes += int(line.split()[1])
-        except (OSError, IndexError, ValueError):
-            pass
-    return {"cpu_ticks": cpu, "io_bytes": io_bytes, "processes": len(pids)}
-
-
-def _stop_group(process: subprocess.Popen) -> None:
-    import signal
-
-    killpg = getattr(os, "killpg", None)
-    for sig, grace in ((signal.SIGTERM, 10), (getattr(signal, "SIGKILL", signal.SIGTERM), 10)):
-        try:
-            if killpg is None:
-                raise OSError("no process groups")
-            killpg(process.pid, sig)
-        except OSError:
-            try:
-                process.kill()
-            except OSError:
-                pass
-        try:
-            process.wait(timeout=grace)
-            return
-        except subprocess.TimeoutExpired:
-            continue
+#: the watcher is shared (:mod:`jarvis_cd.util.stall`); these names stay here
+STALL_SECONDS_ENV = _stall.STALL_SECONDS_ENV
+DEFAULT_STALL_SECONDS = _stall.DEFAULT_STALL_SECONDS
+PROGRESS_SECONDS = _stall.PROGRESS_SECONDS
+STALL_ATTEMPTS = _stall.STALL_ATTEMPTS
+_OUTPUT_TAIL_CHARS = _stall.OUTPUT_TAIL_CHARS
+stall_seconds = _stall.stall_seconds
+run_watched = _stall.run_watched
 
 
 class _Spack:
     """Runs one Spack by path, isolated like every jarvis Spack call.
 
     No time limit: a command runs while it shows progress (output, or CPU
-    time or I/O anywhere in its process tree). Every
-    :data:`PROGRESS_SECONDS` it reports that it is still working; one that
-    shows none for :func:`stall_seconds` is stopped and retried, visibly,
-    up to :data:`STALL_ATTEMPTS` times. The result of a command that
-    stalled every time has ``returncode`` 124, Spack's own output so far,
-    and a ``stall`` record.
+    time or I/O anywhere in its process tree; see :mod:`jarvis_cd.util.stall`).
+    Every :data:`PROGRESS_SECONDS` it reports that it is still working; one
+    that shows none for :func:`stall_seconds` is stopped and retried,
+    visibly, up to :data:`STALL_ATTEMPTS` times. The result of a command
+    that stalled every time has ``returncode`` 124, Spack's own output so
+    far, and a ``stall`` record.
     """
 
     def __init__(self, root: Path, log: List[str],
@@ -221,101 +141,8 @@ class _Spack:
     def run(self, arguments: Sequence[str]) -> subprocess.CompletedProcess:
         with _jarvis_root(self.root):
             environment = spack_subprocess_environment()
-        return run_watched([self.executable, *arguments], environment, self._say,
-                           what="spack " + " ".join(arguments[:2]))
-
-
-def run_watched(command: Sequence[str], environment: Optional[Mapping[str, str]],
-                say: Callable[..., None], *, what: str) -> subprocess.CompletedProcess:
-    """Run ``command`` with stall detection and visible retries (see :class:`_Spack`)."""
-    import threading
-    import time
-
-    window = stall_seconds()
-    say("$ " + shlex.join(command))
-    stalls: List[Dict[str, Any]] = []
-    for attempt in range(1, STALL_ATTEMPTS + 1):
-        try:
-            process = subprocess.Popen(
-                list(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
-                env=dict(environment) if environment is not None else None,
-                start_new_session=True,
-            )
-        except OSError as error:
-            say(f"could not start: {error}")
-            return subprocess.CompletedProcess(list(command), 127, "", str(error))
-        streams: Dict[str, List[str]] = {"stdout": [], "stderr": []}
-        last_output = [time.monotonic()]
-
-        def pump(name: str, stream: Any) -> None:
-            for line in stream:
-                streams[name].append(line)
-                last_output[0] = time.monotonic()
-
-        readers = [threading.Thread(target=pump, args=(name, getattr(process, name)),
-                                    daemon=True) for name in streams]
-        for reader in readers:
-            reader.start()
-        started = last_active = time.monotonic()
-        last_report = started
-        previous = _tree_activity(process.pid)
-        watched = previous is not None
-        stalled: Optional[Dict[str, Any]] = None
-        while True:
-            try:
-                process.wait(timeout=_POLL_SECONDS)
-                break
-            except subprocess.TimeoutExpired:
-                pass
-            now = time.monotonic()
-            sample = _tree_activity(process.pid)
-            if last_output[0] > last_active:
-                last_active = last_output[0]
-            if sample is not None and previous is not None and (
-                    sample["cpu_ticks"] != previous["cpu_ticks"]
-                    or sample["io_bytes"] != previous["io_bytes"]):
-                last_active = now
-            if sample is not None:
-                previous = sample
-            if now - last_report >= PROGRESS_SECONDS:
-                last_report = now
-                lines = sum(len(item) for item in streams.values())
-                say(f"{what} still running ({int(now - started)}s, attempt {attempt}; "
-                    f"{lines} output line(s), "
-                    + (f"{previous['processes']} process(es), cpu "
-                       f"{previous['cpu_ticks']} ticks, io {previous['io_bytes']} bytes; "
-                       if previous is not None else "")
-                    + f"last progress {int(now - last_active)}s ago)", record=False)
-            if watched and now - last_active >= window:
-                stalled = {"attempt": attempt, "after_s": int(now - started),
-                           "idle_s": int(now - last_active), "activity": previous}
-                _stop_group(process)
-                break
-        for reader in readers:
-            reader.join(timeout=10)
-        stdout, stderr = "".join(streams["stdout"]), "".join(streams["stderr"])
-        if stalled is None:
-            say(f"exit {process.returncode}")
-            completed = subprocess.CompletedProcess(list(command), process.returncode,
-                                                    stdout, stderr)
-            if stalls:
-                completed.stall = {"stalls": stalls, "recovered": True}  # type: ignore[attr-defined]
-            return completed
-        stalled["output_tail"] = (stderr + stdout)[-_OUTPUT_TAIL_CHARS:]
-        stalls.append(stalled)
-        if attempt < STALL_ATTEMPTS:
-            say(f"{what} stalled: no output, CPU time or I/O for {stalled['idle_s']}s "
-                f"(window {window}s); stopped and retrying "
-                f"(attempt {attempt + 1}/{STALL_ATTEMPTS})")
-            continue
-        say(f"{what} stalled: no output, CPU time or I/O for {stalled['idle_s']}s "
-            f"(window {window}s) on all {STALL_ATTEMPTS} attempts")
-        completed = subprocess.CompletedProcess(list(command), 124, stdout, stderr)
-        completed.stall = {"stalls": stalls, "recovered": False,  # type: ignore[attr-defined]
-                           "window_s": window, "attempts": STALL_ATTEMPTS}
-        return completed
-    raise AssertionError("unreachable")
+        return _stall.run_watched([self.executable, *arguments], environment, self._say,
+                                  what="spack " + " ".join(arguments[:2]))
 
 
 def _failed_detail(completed: subprocess.CompletedProcess) -> Dict[str, Any]:
@@ -391,11 +218,9 @@ def site_install_tree(site: Path, log: List[str],
 def login_module_path() -> str:
     """``$MODULEPATH`` as a login shell sets it."""
     try:
-        completed = subprocess.run(
-            ["bash", "-lc", 'printf "\\n@@MP=%s\\n" "${MODULEPATH-}"'],
-            capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL,
-        )
-    except (OSError, subprocess.TimeoutExpired):
+        completed = _stall.run(["bash", "-lc", 'printf "\\n@@MP=%s\\n" "${MODULEPATH-}"'],
+                               what="login shell MODULEPATH")
+    except OSError:
         return ""
     for line in completed.stdout.splitlines():
         if line.startswith("@@MP="):
@@ -417,11 +242,9 @@ printf "\n@@PREFIX=%s\n" "${exe%/bin/*}"
 def module_mpi_prefix(directory: str, module: str) -> Optional[str]:
     """The prefix a module MPI puts first on PATH (a throwaway login shell)."""
     try:
-        completed = subprocess.run(
-            ["bash", "-lc", _MPI_PREFIX_SCRIPT, "_", directory, module],
-            capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL,
-        )
-    except (OSError, subprocess.TimeoutExpired):
+        completed = _stall.run(["bash", "-lc", _MPI_PREFIX_SCRIPT, "_", directory, module],
+                               what=f"module load {module}")
+    except OSError:
         return None
     prefixes = [line[9:] for line in completed.stdout.splitlines() if line.startswith("@@PREFIX=")]
     return prefixes[-1] if prefixes and os.path.isdir(prefixes[-1]) else None
@@ -648,9 +471,9 @@ def _clone(root: Path, version: str, log: List[str],
 
 def _git_commit(root: Path) -> Optional[str]:
     try:
-        completed = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
-                                   capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired):
+        completed = _stall.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                               what="git rev-parse")
+    except OSError:
         return None
     return completed.stdout.strip() or None if completed.returncode == 0 else None
 

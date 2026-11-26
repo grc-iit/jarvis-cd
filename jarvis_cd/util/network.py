@@ -23,10 +23,11 @@ import os
 import re
 import shutil
 import socket
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
+
+from jarvis_cd.util import stall as _stall
 
 NET_SCHEMA = "jarvis.resource-graph.net.v1"
 LAUNCH_NETWORK_SCHEMA = "jarvis.mpi-network.v1"
@@ -151,7 +152,7 @@ def parse_ucx_info_devices(text: str) -> Dict[str, List[str]]:
     return {device: sorted(transports) for device, transports in sorted(devices.items())}
 
 
-def probe_ucx(timeout: int = 30) -> Dict[str, Any]:
+def probe_ucx() -> Dict[str, Any]:
     """Ask this node's UCX which devices it can drive over RDMA.
 
     ``$JARVIS_UCX_INFO`` names the ``ucx_info`` of the UCX the MPI uses when
@@ -162,17 +163,16 @@ def probe_ucx(timeout: int = 30) -> Dict[str, Any]:
         return {"ucx_info": None, "status": "ucx_info_missing"}
     result: Dict[str, Any] = {"ucx_info": path}
     try:
-        version = subprocess.run([path, "-v"], capture_output=True, text=True,
-                                 timeout=timeout, check=False).stdout
+        version = _stall.run([path, "-v"], what="ucx_info -v").stdout
         match = re.search(r"version=(\S+)", version or "")
         result["version"] = match.group(1) if match else None
-        listed = subprocess.run([path, "-d"], capture_output=True, text=True,
-                                timeout=timeout, check=False)
-    except (OSError, subprocess.SubprocessError) as error:
+        listed = _stall.run([path, "-d"], what="ucx_info -d")
+    except OSError as error:
         return dict(result, status="ucx_info_failed", error=str(error)[-500:])
     if listed.returncode != 0:
+        stalled = _stall.stall_error(listed) or ""
         return dict(result, status="ucx_info_failed",
-                    error=(listed.stderr or listed.stdout or "")[-500:])
+                    error=((listed.stderr or listed.stdout or "") + stalled)[-500:])
     return dict(result, status="ok", rdma_devices=parse_ucx_info_devices(listed.stdout))
 
 
@@ -232,14 +232,8 @@ def collect_local_interfaces() -> Dict[str, Any]:
         "interfaces": [],
     }
     try:
-        output = subprocess.run(
-            ["ip", "-o", "-4", "addr", "show"],
-            capture_output=True,
-            text=True,
-            timeout=20,
-            check=False,
-        ).stdout
-    except (OSError, subprocess.SubprocessError) as error:
+        output = _stall.run(["ip", "-o", "-4", "addr", "show"], what="ip addr show").stdout
+    except OSError as error:
         result["error"] = f"ip -o -4 addr show failed: {error}"
         return result
     ucx: Optional[Dict[str, Any]] = None

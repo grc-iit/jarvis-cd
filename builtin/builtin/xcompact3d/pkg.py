@@ -127,7 +127,6 @@ class Xcompact3d(Application):
                     environment=self._deployment_environment(),
                     arguments=("--version",),
                     accepted_return_codes=(0, 1, 2),
-                    timeout_seconds=5,
                 )
                 status = probe.status
                 capabilities = (

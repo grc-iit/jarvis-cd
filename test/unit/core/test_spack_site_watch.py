@@ -1,4 +1,5 @@
-"""Stall watching of jarvis Spack commands, and refusals in issues.jsonl."""
+"""Stall watching of jarvis commands (Spack, the compiler probe), and
+refusals in issues.jsonl."""
 
 import json
 import os
@@ -9,19 +10,42 @@ from pathlib import Path
 from unittest import mock
 
 from jarvis_cd.core import spack_site
-from jarvis_cd.core.spack_install import InstallContext, InstallFailed, prepare_chained_spack
+from jarvis_cd.core.spack_install import (
+    InstallContext,
+    InstallFailed,
+    prepare_chained_spack,
+    probe_compiler,
+)
+from jarvis_cd.util import stall
 
 HAS_PROC = os.path.isdir("/proc/self")
 
 
+def _short_window():
+    return mock.patch.multiple(stall, stall_seconds=mock.Mock(return_value=1),
+                               POLL_SECONDS=0.2, PROGRESS_SECONDS=1)
+
+
 def _watch(command):
     said = []
-    with mock.patch.object(spack_site, "stall_seconds", return_value=1), \
-            mock.patch.object(spack_site, "_POLL_SECONDS", 0.2), \
-            mock.patch.object(spack_site, "PROGRESS_SECONDS", 1):
+    with _short_window():
         completed = spack_site.run_watched(command, None, lambda text, **_: said.append(text),
                                            what="probe")
     return completed, said
+
+
+def _stub_compiler(directory, body):
+    """A ``cc`` that runs ``body`` and then writes a runnable hello program."""
+    path = Path(directory) / "cc"
+    path.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys, time\n"
+        f"{body}\n"
+        "out = sys.argv[sys.argv.index('-o') + 1]\n"
+        "open(out, 'w').write('#!/bin/sh\\necho hello\\n')\n"
+        "os.chmod(out, 0o755)\n")
+    path.chmod(0o755)
+    return str(path)
 
 
 @unittest.skipUnless(HAS_PROC, "stall detection reads /proc")
@@ -50,6 +74,33 @@ class TestRunWatched(unittest.TestCase):
         self.assertEqual(completed.stdout.strip(), "done")
         self.assertIsNone(getattr(completed, "stall", None))
         self.assertTrue(any("still running" in line for line in said))
+
+
+@unittest.skipUnless(HAS_PROC, "stall detection reads /proc")
+class TestCompilerProbeWatch(unittest.TestCase):
+    def test_busy_silent_compile_runs_past_the_window(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cc = _stub_compiler(temp, "end = time.time() + 3\nwhile time.time() < end: pass")
+            with _short_window():
+                result = probe_compiler({"cc": cc}, {})["cc"]
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["step"], "run")
+        self.assertIn("hello", result["output"])
+        self.assertNotIn("stall", result)
+
+    def test_stalled_compile_is_reported_with_its_output(self):
+        with tempfile.TemporaryDirectory() as temp:
+            cc = _stub_compiler(temp, "print('cc1: reading', flush=True); time.sleep(600)")
+            with _short_window():
+                result = probe_compiler({"cc": cc}, {})["cc"]
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["step"], "compile")
+        self.assertIsNone(result["exit_code"])
+        self.assertIn("stalled", result["error"])
+        self.assertIn("cc1: reading", result["output"])
+        self.assertEqual(len(result["stall"]["stalls"]), stall.STALL_ATTEMPTS)
 
 
 class TestRefusalReachesIssues(unittest.TestCase):

@@ -29,11 +29,12 @@ import os
 import re
 import shutil
 import socket
-import subprocess
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Tuple
+
+from jarvis_cd.util import stall as _stall
 
 PLACEMENT_KIND = "install_placement"
 LOGIN_LIMITED = "login_limited"
@@ -553,9 +554,8 @@ def queue_evidence(scheduler: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
             argv.append(f"--{key}={spec[key]}")
     argv += ["--wrap", "true"]
     try:
-        completed = subprocess.run(argv, capture_output=True, text=True, timeout=15,
-                                   check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        completed = _stall.run(argv, what="sbatch --test-only", attempts=1)
+    except OSError as exc:
         return {"provider": provider, "measured": False, "command": argv,
                 "why": str(exc)[:256]}
     text = (completed.stderr or "") + (completed.stdout or "")

@@ -45,6 +45,7 @@ from typing import IO, Any, Callable, Dict, List, Mapping, Optional, Sequence
 import yaml
 
 from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
+from jarvis_cd.util import stall as _stall
 
 
 ISSUE_SCHEMA = "jarvis.install-issue.v1"
@@ -1319,9 +1320,6 @@ def compiler_languages(paths: Mapping[str, Any]) -> List[str]:
     return [lang for lang, key in LANGUAGE_PATHS.items() if paths.get(key)]
 
 
-PROBE_TIMEOUT = 120
-
-
 def compiler_probe_enabled() -> bool:
     return os.environ.get("JARVIS_COMPILER_PROBE", "on").strip().lower() not in (
         "0", "off", "false", "no")
@@ -1353,9 +1351,12 @@ def probe_compiler(paths: Mapping[str, str], entry: Mapping[str, Any]) -> Dict[s
 
     Returns ``{lang: result}``; each result is ``{ok, step, command, cwd,
     exit_code, output, error}`` for the step that ran last (``exit_code``
-    None with ``error`` when it could not start, timed out, or the probe
-    could not set up its directory). The result is evidence only: it says
-    what ran and what it printed, not why.
+    None with ``error`` when it could not start, stalled, or the probe
+    could not set up its directory). No step has a time limit: one that
+    shows no output, CPU time or I/O for the stall window
+    (:mod:`jarvis_cd.util.stall`) is retried once, then reported with its
+    ``stall`` record. The result is evidence only: it says what ran and what
+    it printed, not why.
     """
     env = _compiler_environment(entry)
     results: Dict[str, Any] = {}
@@ -1398,22 +1399,16 @@ def probe_compiler(paths: Mapping[str, str], entry: Mapping[str, Any]) -> Dict[s
             for step, command in steps:
                 result.update(step=step, command=shlex.join(command))
                 try:
-                    done = subprocess.run(
-                        command, cwd=tmp, env=env, capture_output=True, text=True,
-                        timeout=PROBE_TIMEOUT,
-                    )
+                    done = _stall.run(command, cwd=tmp, env=env,
+                                      what=f"compiler probe ({lang} {step})")
                     result.update(exit_code=done.returncode,
                                   output=(done.stdout or "") + (done.stderr or ""))
                     if done.returncode != 0:
                         result["ok"] = False
-                except subprocess.TimeoutExpired as exc:
-                    out = exc.stdout or b""
-                    err = exc.stderr or b""
-                    result.update(
-                        ok=False, exit_code=None,
-                        output=(out.decode("utf-8", "replace") if isinstance(out, bytes) else out)
-                        + (err.decode("utf-8", "replace") if isinstance(err, bytes) else err),
-                        error=f"timed out after {PROBE_TIMEOUT}s")
+                    stalled = _stall.stall_error(done)
+                    if stalled is not None:
+                        result.update(exit_code=None, error=stalled,
+                                      stall=getattr(done, "stall"))
                 except OSError as exc:
                     result.update(ok=False, exit_code=None, error=f"could not start: {exc}")
                 if not result["ok"]:

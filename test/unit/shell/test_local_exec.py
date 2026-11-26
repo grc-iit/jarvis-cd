@@ -332,7 +332,7 @@ class TestLocalExec(unittest.TestCase):
         self.assertGreaterEqual(elapsed, 0.1)
 
     def test_timeout_terminates_shell_process_tree(self):
-        """A bounded command returns 124 without leaving its child running."""
+        """A stalled command returns 124 without leaving its child running."""
         command = subprocess.list2cmdline(
             [sys.executable, "-c", "import time; time.sleep(30)"]
         )
@@ -341,11 +341,36 @@ class TestLocalExec(unittest.TestCase):
         local_exec = LocalExec(command, LocalExecInfo(timeout=0.1))
 
         self.assertEqual(local_exec.exit_code["localhost"], 124)
-        self.assertIn(
-            "Command timed out after 0.1 seconds", local_exec.stderr["localhost"]
-        )
+        self.assertIn("Command stalled: no ", local_exec.stderr["localhost"])
+        self.assertIn("stall window timeout=0.1s", local_exec.stderr["localhost"])
         self.assertLess(time.monotonic() - start_time, 10)
         self.assertIsNotNone(local_exec.processes["localhost"].poll())
+
+    def test_timeout_is_a_stall_window_not_a_time_limit(self):
+        """A silent but busy command runs past ``timeout``; output counts too."""
+        busy = self.python_command(
+            "import time\n"
+            "end=time.monotonic()+2.5\n"
+            "while time.monotonic()<end: pass\n"
+            "print('busy done')"
+        )
+        talking = self.python_command(
+            "import sys,time\n"
+            "for _ in range(10):\n"
+            "    print('tick', flush=True); time.sleep(0.25)"
+        )
+
+        busy_exec = LocalExec(busy, LocalExecInfo(timeout=1, collect_output=True,
+                                                  hide_output=True))
+        talking_exec = LocalExec(talking, LocalExecInfo(timeout=1,
+                                                        collect_output=True,
+                                                        hide_output=True))
+
+        if os.path.isdir("/proc"):
+            self.assertEqual(busy_exec.exit_code["localhost"], 0)
+            self.assertIn("busy done", busy_exec.stdout["localhost"])
+        self.assertEqual(talking_exec.exit_code["localhost"], 0)
+        self.assertEqual(talking_exec.stdout["localhost"].count("tick"), 10)
 
     def test_timeout_kills_descendant_that_ignores_graceful_signal(self):
         """Timeout cleanup removes a descendant even when it ignores SIGTERM."""

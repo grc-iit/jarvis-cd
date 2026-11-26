@@ -22,15 +22,15 @@ every Spack command JARVIS runs. JARVIS never edits the person's
 from __future__ import annotations
 
 import os
-import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 
+from jarvis_cd.util import stall as _stall
+
 SCHEMA = "jarvis.spack-health.v1"
 #: builds the provider index of every configured repo, needs no package
 PROBE = ("providers", "mpi")
-_TIMEOUT = 300
 _CACHE_SECONDS = 600
 #: ``off`` skips the probe (the unit tests' default)
 SWITCH_ENV = "JARVIS_SPACK_HEALTH"
@@ -68,17 +68,23 @@ def _executable(root: str, executable: Optional[str]) -> str:
     return str(executable or Path(root) / "bin" / "spack")
 
 
-def _run(executable: str, args: Sequence[str], env: Mapping[str, str],
-         timeout: int = _TIMEOUT) -> Tuple[Optional[int], str, str]:
+def _run(executable: str, args: Sequence[str], env: Mapping[str, str]
+         ) -> Tuple[Optional[int], str, str]:
+    """``(exit, stdout, stderr)``; exit None when Spack could not start or stalled.
+
+    No time limit: a cold misc cache (a fresh Spack on NFS) can index for
+    minutes without printing, so the command is watched for a stall
+    (:mod:`jarvis_cd.util.stall`) and its output so far is kept.
+    """
     try:
-        completed = subprocess.run(
-            [executable, *args], capture_output=True, text=True, timeout=timeout,
-            stdin=subprocess.DEVNULL, env=dict(env), encoding="utf-8", errors="replace",
-        )
-    except subprocess.TimeoutExpired:
-        return None, "", f"timed out after {timeout} s"
+        completed = _stall.run([executable, *args], env=env,
+                               what="spack " + " ".join(args[:2]))
     except OSError as exc:
         return None, "", str(exc)
+    stalled = _stall.stall_error(completed)
+    if stalled is not None:
+        err = (completed.stderr or "").rstrip("\n")
+        return None, completed.stdout or "", (err + "\n" if err else "") + stalled
     return completed.returncode, completed.stdout or "", completed.stderr or ""
 
 
@@ -114,12 +120,12 @@ def probe(root: Any, executable: Optional[str] = None, *, fresh: bool = False
         "command": [exe, *PROBE],
         "config_env": {name: env[name] for name in _CONFIG_ENV if name in env},
         "exit": rc,
-        # a timeout or a Spack that cannot run is not this check's to judge
+        # a stall or a Spack that cannot run is not this check's to judge
         "ok": None if rc is None else rc == 0,
         "error": None if rc == 0 else (error_line(err or out) or f"exit {rc}"),
         "seconds": round(time.monotonic() - started, 3),
     }
-    if rc not in (0, None):
+    if rc != 0 and (out or err):
         result["output"] = out + err
     _PROBES[(key, mode)] = (time.monotonic(), result)
     return dict(result)

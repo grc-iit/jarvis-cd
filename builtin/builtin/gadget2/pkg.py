@@ -172,7 +172,6 @@ class Gadget2(Application):
             program or "Gadget2",
             environment=environment,
             accepted_return_codes=(0, 1),
-            timeout_seconds=5,
         )
         capabilities = (
             ("gadget2", "mpi_execution", "particle_simulation")

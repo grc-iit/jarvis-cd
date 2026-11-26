@@ -51,6 +51,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
+from jarvis_cd.util import stall as _stall
 from jarvis_cd.core.spack_install import (
     MPI_PROVIDERS,
     Decisions,
@@ -85,16 +86,27 @@ _TAIL = 4000
 
 
 def run_logged(argv: Sequence[Any], context, *, env: Optional[Mapping[str, str]] = None,
-               timeout: Optional[float] = None) -> subprocess.CompletedProcess:
-    """Run ``argv`` with stdout and stderr in the install log; return the result."""
+               watched: bool = False) -> subprocess.CompletedProcess:
+    """Run ``argv`` with stdout and stderr in the install log; return the result.
+
+    Nothing has a time limit. ``watched`` (the probes) stops a command that
+    stalls (:mod:`jarvis_cd.util.stall`), retries it once, and logs its
+    progress and the stall; the result then has returncode 124 and the
+    output so far.
+    """
     context.log(f"[{_utc_now()}] $ {shlex.join([str(item) for item in argv])}\n")
     try:
-        result = subprocess.run(
-            [str(item) for item in argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, env=dict(env) if env is not None else None, timeout=timeout,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        if watched:
+            def say(text: str, **_: Any) -> None:
+                context.log(f"[{_utc_now()}] {text}\n")
+
+            result = _stall.run(argv, env=env, merge_stderr=True, say=say, echo=False)
+        else:
+            result = subprocess.run(
+                [str(item) for item in argv], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, env=dict(env) if env is not None else None, check=False,
+            )
+    except OSError as exc:
         context.log(f"[{_utc_now()}] failed to run: {exc}\n")
         return subprocess.CompletedProcess(list(argv), 127, str(exc), None)
     if result.stdout:
@@ -391,12 +403,10 @@ def find_pythons() -> List[Dict[str, Any]]:
             continue
         seen.add(real)
         try:
-            result = subprocess.run(
+            result = _stall.run(
                 [path, "-c", "import sys, venv, ensurepip; "
-                 "print('%d.%d.%d' % sys.version_info[:3])"],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-                timeout=30, check=False)
-        except (OSError, subprocess.TimeoutExpired):
+                 "print('%d.%d.%d' % sys.version_info[:3])"], what=f"{path} version probe")
+        except OSError:
             continue
         if result.returncode != 0:
             continue
@@ -445,7 +455,7 @@ def _pip_probe(prefix: Path, requirements: Sequence[str], context) -> List[Dict[
         return [{"requirement": item, "status": "missing", "reason": "no venv yet"}
                 for item in requirements]
     result = run_logged([python, "-c", _PIP_PROBE, json.dumps(list(requirements))],
-                        context, timeout=120)
+                        context, watched=True)
     try:
         return list(json.loads((result.stdout or "").strip().splitlines()[-1]))
     except (ValueError, IndexError):
@@ -716,12 +726,12 @@ def _conda_probe(exe: Path, prefix: Path, specs: Sequence[str], context
     python = exe.parent / "python"
     if python.exists():
         result = run_logged([python, "-c", _CONDA_PROBE, prefix, json.dumps(list(specs))],
-                            context, timeout=120)
+                            context, watched=True)
         try:
             return list(json.loads((result.stdout or "").strip().splitlines()[-1]))
         except (ValueError, IndexError):
             pass
-    listed = run_logged([exe, "list", "-p", prefix, "--json"], context, timeout=120)
+    listed = run_logged([exe, "list", "-p", prefix, "--json"], context, watched=True)
     try:
         names = {str(item.get("name")) for item in json.loads(listed.stdout or "[]")}
     except ValueError:
@@ -1193,10 +1203,9 @@ def podman_node_script(directory: Path) -> Path:
 
 def _engine_field(executable: str, template: str) -> Optional[str]:
     try:
-        result = subprocess.run([executable, "info", "--format", template],
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                text=True, timeout=60, check=False)
-    except (OSError, subprocess.TimeoutExpired):
+        result = _stall.run([executable, "info", "--format", template],
+                            what=f"{executable} info")
+    except OSError:
         return None
     return result.stdout.strip() if result.returncode == 0 else None
 
@@ -1204,12 +1213,15 @@ def _engine_field(executable: str, template: str) -> Optional[str]:
 def engine_error(executable: str) -> Optional[str]:
     """None when ``<engine> info`` works here, else the engine's own error."""
     try:
-        result = subprocess.run([executable, "info"], stdout=subprocess.DEVNULL,
-                                stderr=subprocess.PIPE, text=True, timeout=120, check=False)
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        result = _stall.run([executable, "info"], what=f"{executable} info")
+    except OSError as exc:
         return f"`{executable} info` did not run: {exc}"
     if result.returncode == 0:
         return None
+    stalled = _stall.stall_error(result)
+    if stalled is not None:
+        return f"`{executable} info` {stalled}" + (
+            f"; it printed: {_tail(result.stderr)}" if (result.stderr or "").strip() else "")
     return _tail(result.stderr) or f"`{executable} info` exited {result.returncode}"
 
 
@@ -1541,9 +1553,8 @@ def engine_command(engine: str) -> str:
 
 def _podman_has_compose() -> bool:
     try:
-        result = subprocess.run(["podman", "compose", "--help"], stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL, timeout=60, check=False)
-    except (OSError, subprocess.TimeoutExpired):
+        result = _stall.run(["podman", "compose", "--help"], what="podman compose --help")
+    except OSError:
         return False
     return result.returncode == 0
 

@@ -29,6 +29,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Mapping, Optional
 
+from jarvis_cd.util import stall as _stall
+
 
 _DIRECTIVE_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 _HOST_SUFFIX = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
@@ -1522,22 +1524,23 @@ def control_scheduler_execution(
     *,
     cluster: Optional[str] = None,
 ) -> SchedulerControlResult:
-    """Run one bounded provider cancel or stop command without a shell."""
+    """Run one provider cancel or stop command without a shell.
+
+    No time limit; one that stalls (:mod:`jarvis_cd.util.stall`) is stopped
+    and reported, never retried.
+    """
     argv = scheduler_control_argv(provider, action, native_id, cluster=cluster)
     scheduler_type = _SCHEDULERS[provider.strip().lower()]
     try:
-        completed = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=30,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        completed = _stall.run(argv, what=argv[0], attempts=1)
+    except OSError as exc:
         return scheduler_type.interpret_control(
             action, argv, None, f"{argv[0]} failed: {str(exc)[:1024]}"
+        )
+    stalled = _stall.stall_error(completed)
+    if stalled is not None:
+        return scheduler_type.interpret_control(
+            action, argv, None, f"{argv[0]} {stalled}"
         )
     return scheduler_type.interpret_control(action, argv, completed, None)
 
@@ -1545,19 +1548,19 @@ def control_scheduler_execution(
 def _run_scheduler_query(
     argv: list[str],
 ) -> tuple[Optional[subprocess.CompletedProcess[str]], Optional[str]]:
-    """Run one bounded scheduler query without invoking a shell."""
+    """Run one scheduler query without invoking a shell.
+
+    No time limit (a busy controller can take a while to answer); a query
+    that stalls (:mod:`jarvis_cd.util.stall`) is stopped, not retried: the
+    caller's next poll is the retry.
+    """
     try:
-        completed = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=5,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        completed = _stall.run(argv, what=argv[0], attempts=1)
+    except OSError as exc:
         return None, f"{argv[0]} query failed: {str(exc)[:1024]}"
+    stalled = _stall.stall_error(completed)
+    if stalled is not None:
+        return None, f"{argv[0]} query {stalled}"
     if completed.returncode == 0:
         return completed, None
     diagnostic = (completed.stderr or completed.stdout or "").strip()
@@ -1851,7 +1854,11 @@ def move_scheduler_execution(
     *,
     cluster: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Run one bounded move of a pending job; returns the typed outcome."""
+    """Run one move of a pending job; returns the typed outcome.
+
+    No time limit; a move that stalls (:mod:`jarvis_cd.util.stall`) is
+    stopped and reported, never retried.
+    """
     scheduler_type = _SCHEDULERS.get(provider.strip().lower())
     if scheduler_type is None:
         raise SchedulerControlUnsupported(
@@ -1859,17 +1866,13 @@ def move_scheduler_execution(
         )
     argv = scheduler_type.move_argv(native_id, queue, cluster=cluster)
     try:
-        completed: Optional[subprocess.CompletedProcess[str]] = subprocess.run(
-            argv,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=30,
-            check=False,
-        )
+        completed: Optional[subprocess.CompletedProcess[str]] = _stall.run(
+            argv, what=argv[0], attempts=1)
         diagnostic = None
-    except (OSError, subprocess.TimeoutExpired) as exc:
+        stalled = _stall.stall_error(completed)
+        if stalled is not None:
+            completed, diagnostic = None, f"{argv[0]} {stalled}"
+    except OSError as exc:
         completed, diagnostic = None, f"{argv[0]} failed: {str(exc)[:1024]}"
     accepted, reason, detail = scheduler_type.interpret_move(completed, diagnostic)
     return {

@@ -10,6 +10,8 @@ import signal
 from abc import ABC, abstractmethod
 from typing import Callable, Dict, cast
 
+from jarvis_cd.util import stall as _stall
+
 from .exec_info import ExecInfo, ExecType
 from .windows_job import WindowsJob, spawn_windows_job_process
 
@@ -53,6 +55,7 @@ class CoreExec(ABC):
         self._output_callback_failure = threading.Event()
         self._output_callback_lock = threading.Lock()
         self._output_callback_finalized = False
+        self._last_output_at: Dict[str, float] = {}  # hostname -> monotonic
 
     @abstractmethod
     def run(self):
@@ -74,13 +77,16 @@ class CoreExec(ABC):
         if hostname in self.processes:
             process = self.processes[hostname]
             timeout = getattr(getattr(self, "exec_info", None), "timeout", None)
-            timed_out = False
-            try:
-                exit_code = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                self.kill(hostname)
-                exit_code = 124
+            stalled = None
+            if timeout is None:
+                exit_code = process.wait()
+            else:
+                stalled = self._wait_watched(hostname, process, float(timeout))
+                if stalled is not None:
+                    self.kill(hostname)
+                    exit_code = _stall.STALLED_EXIT_CODE
+                else:
+                    exit_code = process.returncode
             self.exit_code[hostname] = exit_code
 
             self._join_output_threads(hostname)
@@ -111,14 +117,37 @@ class CoreExec(ABC):
                     windows_job.close(process)
                     self.windows_jobs.pop(hostname, None)
 
-            if timed_out:
-                diagnostic = f"Command timed out after {timeout} seconds"
+            if stalled is not None:
+                diagnostic = stalled
                 existing = self.stderr.get(hostname, "")
                 separator = "" if not existing or existing.endswith("\n") else "\n"
                 self.stderr[hostname] = f"{existing}{separator}{diagnostic}\n"
 
             return exit_code
         return 0
+
+    def _wait_watched(self, hostname: str, process, window: float):
+        """Wait with ``timeout`` as a stall window, not a time limit.
+
+        The command runs as long as its local process tree shows output,
+        CPU time or I/O; it is stopped only after ``window`` seconds with none
+        of them (without ``/proc``, only output counts). Returns the stall
+        diagnostic, or None when the command exited by itself.
+        """
+        watch = _stall.ActivityWatch(process.pid)
+        poll = min(_stall.POLL_SECONDS, max(0.05, window / 4))
+        while True:
+            try:
+                process.wait(timeout=poll)
+                return None
+            except subprocess.TimeoutExpired:
+                pass
+            idle = watch.sample(self._last_output_at.get(hostname))
+            if idle >= window:
+                observed = "output, CPU time or I/O" if watch.watched else "output"
+                return (f"Command stalled: no {observed} for {idle:.1f}s "
+                        f"(stall window timeout={window:g}s); stopped "
+                        f"({watch.describe()}ran {time.monotonic() - watch.started:.1f}s)")
 
     def _join_output_threads(self, hostname: str) -> None:
         """Bound output-drain joins and terminate descendants retaining pipes."""
@@ -416,6 +445,7 @@ class LocalExec(CoreExec):
             for line in iter(pipe.readline, ""):
                 if not line:
                     break
+                self._last_output_at[self.hostname] = time.monotonic()
 
                 callback = self.exec_info.line_callback
                 if callback is not None and not self._output_callback_failure.is_set():

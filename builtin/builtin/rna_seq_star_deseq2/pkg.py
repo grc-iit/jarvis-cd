@@ -143,7 +143,6 @@ class RnaSeqStarDeseq2(Application):
             star,
             environment=environment,
             arguments=("--version",),
-            timeout_seconds=10,
         )
         deseq_probe = probe_program(
             rscript,
@@ -152,7 +151,6 @@ class RnaSeqStarDeseq2(Application):
                 "-e",
                 "suppressPackageStartupMessages(library(DESeq2));cat(as.character(packageVersion('DESeq2')))",
             ),
-            timeout_seconds=20,
         )
         return PackageDeploymentContract(
             package="builtin.rna_seq_star_deseq2",

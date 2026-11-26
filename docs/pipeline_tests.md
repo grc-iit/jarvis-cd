@@ -662,7 +662,7 @@ A record (`kind: failure`, `failure_schema: jarvis.failure.v1`,
 | `doing` | what JARVIS was doing, in words (`message` and `question` say it with the host, the command and where the output is) |
 | `host` | the node it ran on |
 | `command`, `cwd` | the command line and its working directory (`null` when nothing ran, e.g. a missing prefix) |
-| `exit_code`, `error` | the exit code; `null` with `error` when it could not start, timed out, or did not run |
+| `exit_code`, `error` | the exit code; `null` with `error` when it could not start, stalled (no output, CPU time or I/O for the stall window on each attempt; see [Long commands and stalls](spack.md#long-commands-and-stalls)), or did not run |
 | `packages` | the packages it concerned |
 | `output_path`, `output_bytes` | the full output, in `<install>/failures/<stage>-<host>-<id>.log`, with a header naming the command, host and exit code. When it could not be written (a full disk), `output_path` is `null`, `output_write_error` says why, and `output` holds up to 64 KiB of it |
 | `output_tail` | a preview: the last 40 lines (4 KiB at most). Nothing is lost; the file has it all |
@@ -798,8 +798,9 @@ its `kind`, `issue_id`, message and details, and adds
 `answerable: false`, `host` and `paths`. The install exits `5`, and its
 document carries `refused: true` and the original refusal as `refusal`. A
 typed refusal raised by any installer lands there the same way, with
-`stage: <method>_install`. The preparation's Spack commands have no time
-limit; they are watched for stalls instead (see
+`stage: <method>_install`. The preparation's Spack commands, the compiler
+probe and the health check have no time limit; they are watched for stalls
+instead (see
 [Long commands and stalls](spack.md#long-commands-and-stalls)).
 
 `JARVIS_SPACK_CONFIG=<dir>` (or `JARVIS_SPACK_ROOT`) turns on

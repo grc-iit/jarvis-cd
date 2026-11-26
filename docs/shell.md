@@ -673,11 +673,19 @@ Exec('which required_tool', LocalExecInfo()).run()
 Exec('mkdir -p /output/dir', LocalExecInfo()).run()
 ```
 
-### 7. Handle Timeouts
+### 7. Stall Windows (`timeout`)
+
+`timeout` is a stall window, not a time limit. The command runs as long as
+it needs while its local process tree shows output, CPU time or I/O
+(`/proc`; elsewhere only output counts). After `timeout` seconds with none
+of them it is stopped: exit code `124`, and stderr gets `Command stalled: no
+output, CPU time or I/O for <s>s (stall window timeout=<t>s); stopped (...)`.
+There is no retry. `timeout=None` (the default) does not watch the command.
+For `SshExec`, `timeout` also sets ssh's `ConnectTimeout`.
 
 ```python
-# Set reasonable timeouts for long-running commands
-exec_info = LocalExecInfo(timeout=300)  # 5 minutes
+# Stop a command that goes silent and idle for 5 minutes
+exec_info = LocalExecInfo(timeout=300)
 Exec('long_running_command', exec_info).run()
 ```
 

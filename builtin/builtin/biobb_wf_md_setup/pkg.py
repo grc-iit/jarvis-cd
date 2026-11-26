@@ -246,13 +246,11 @@ class BiobbWfMdSetup(Application):
             python_program,
             environment=environment,
             arguments=("-c", "import biobb_gromacs, biobb_model"),
-            timeout_seconds=10,
         )
         gromacs_probe = probe_program(
             gromacs_program,
             environment=environment,
             arguments=("--version",),
-            timeout_seconds=10,
         )
         requirements = (
             RuntimeRequirement(

@@ -210,7 +210,7 @@ class TestPip(_Case):
         with mock.patch.object(mi, 'jarvis_python', return_value='/site/uv/python3.12'), \
                 mock.patch.object(mi.shutil, 'which', side_effect=which), \
                 mock.patch.object(mi.os.path, 'realpath', side_effect=lambda p: p), \
-                mock.patch.object(mi.subprocess, 'run', return_value=done([], '3.12.7')):
+                mock.patch.object(mi._stall, 'run', return_value=done([], '3.12.7')):
             found = mi.find_pythons()
         self.assertEqual([(item['name'], item['constraint']) for item in found],
                          [('jarvis', '/site/uv/python3.12'), ('python3', '/usr/bin/python3')])

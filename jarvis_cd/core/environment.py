@@ -326,7 +326,7 @@ class EnvironmentManager:
         :return: Dictionary of captured environment variables
         """
         import shlex
-        import subprocess
+        from jarvis_cd.util import stall as _stall
         from jarvis_cd.core.spack_install import (
             spack_command,
             spack_subprocess_environment,
@@ -345,14 +345,15 @@ class EnvironmentManager:
         script = f'{load_cmds} && unset _jarvis_load && env'
 
         try:
-            result = subprocess.run(
-                ['bash', '-c', script],
-                capture_output=True, text=True, timeout=120,
-                env=spack_subprocess_environment()
-            )
+            # no time limit: a cold Spack cache can index for minutes in
+            # silence, so only a stall stops the load (jarvis_cd.util.stall)
+            result = _stall.run(['bash', '-c', script],
+                                env=spack_subprocess_environment(), what='spack load')
             if result.returncode != 0:
+                stalled = _stall.stall_error(result)
                 raise RuntimeError(
-                    f"spack load failed (exit code {result.returncode}).\n"
+                    f"spack load failed (exit code {result.returncode}"
+                    + (f"; {stalled}" if stalled else "") + ").\n"
                     f"stderr: {result.stderr}"
                 )
         except FileNotFoundError:
