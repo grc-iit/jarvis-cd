@@ -170,8 +170,8 @@ def sched_info(jarvis: Any, provider: Optional[str] = None, *, include_mpi: bool
 
         report = ResourceGraphManager().net_report()
         document["net"] = {key: report.get(key) for key in
-                           ("graph", "site_graph", "present", "effective", "override",
-                            "collected_at", "collected_in")}
+                           ("graph", "site_graph", "present", "form", "effective", "override",
+                            "collected_at", "collected_in", "legacy", "error")}
         issues.extend(report.get("issues") or [])
         # per-node topology a collector read on the nodes (partitions carry sinfo's)
         document["cpu"] = ResourceGraphManager().resource_graph.cpu

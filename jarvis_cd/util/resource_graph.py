@@ -61,6 +61,10 @@ class ResourceGraph:
         self.common_mounts: Dict[str, List[Dict[str, Any]]] = {}
         # ``net`` section (jarvis.resource-graph.net.v1), see util.network
         self.net: Optional[Dict[str, Any]] = None
+        # a ``net`` value that is not v1 (legacy list or unreadable), kept as
+        # read so a save never drops it; see util.network.classify_net_section
+        self.net_status: Dict[str, Any] = {"form": "absent", "legacy": None, "error": None}
+        self.net_unparsed: Any = None
         # person-confirmed install placement answers, see core.install_placement
         self.install_placement: Optional[Dict[str, Any]] = None
         # site software copies the person confirmed, see core.site_copies
@@ -216,6 +220,8 @@ class ResourceGraph:
         data: Dict[str, Any] = {'fs': fs_data}
         if self.net:
             data['net'] = self.net
+        elif self.net_unparsed is not None:
+            data['net'] = self.net_unparsed
         if self.install_placement:
             data['install_placement'] = self.install_placement
         if self.software:
@@ -264,8 +270,12 @@ class ResourceGraph:
         self.nodes = {}
         self.common_mounts = {}
         data = data or {}
-        net = data.get('net')
-        self.net = net if isinstance(net, dict) else None
+        from jarvis_cd.util.network import classify_net_section
+
+        net_status = classify_net_section(data.get('net'))
+        self.net = net_status["net"]
+        self.net_status = {key: net_status[key] for key in ("form", "legacy", "error")}
+        self.net_unparsed = data.get('net') if self.net is None else None
         placement = data.get('install_placement')
         self.install_placement = placement if isinstance(placement, dict) else None
         software = data.get('software')
@@ -275,7 +285,8 @@ class ResourceGraph:
         self.cpu = cpu if isinstance(cpu, dict) else None
 
         # Handle resource graph format with 'fs' section
-        if ('fs' in data or self.net is not None or self.install_placement is not None
+        if ('fs' in data or self.net is not None or self.net_unparsed is not None
+                or self.install_placement is not None
                 or self.software is not None or self.cpu is not None):
             # Determine hostname for resource graph files
             self.nodes[hostname] = []

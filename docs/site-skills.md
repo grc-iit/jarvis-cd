@@ -3,8 +3,8 @@
 A site skill is one Markdown document about a site: how its queues, MPI,
 network or filesystems behave, and what to do about it. JARVIS keeps the
 skills it is given in its site home, so every JARVIS root that shares the
-home shares its skills. With a site graph (`JARVIS_RESOURCE_GRAPH`) the home
-is `JARVIS_SITE_HOME`, else `~/.ppi-jarvis/site`; without one it is the
+home shares its skills. The home is `JARVIS_SITE_HOME`; else, with a site
+graph (`JARVIS_RESOURCE_GRAPH`), `~/.ppi-jarvis/site`; else the
 JARVIS root (see
 [resource_graph.md](resource_graph.md#site-level-graph-jarvis_resource_graph)).
 CLIO, or a person, reads them before planning work on the site.

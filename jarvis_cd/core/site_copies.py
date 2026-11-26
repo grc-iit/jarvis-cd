@@ -729,18 +729,36 @@ def spack_copies(name: str, searched: List[str],
 
 def graph_copies(name: str, searched: List[str], path: Optional[Path] = None
                  ) -> List[Dict[str, Any]]:
-    """The copies of ``name`` the resource graph's ``software`` section lists."""
-    import yaml
+    """The copies of ``name`` the resource graph's ``software`` section lists.
 
-    from jarvis_cd.core.install_placement import _graph_file
+    Without ``path`` this is the effective graph (JARVIS's own over the
+    site's, :func:`jarvis_cd.util.site_state.effective_graph_status`), so a
+    ``software`` section the site publishes is read.
+    """
+    from jarvis_cd.util.site_state import effective_graph_status, load_graph_file
 
-    try:
-        graph_path = _graph_file(path)
-        graph = yaml.safe_load(graph_path.read_text(encoding="utf-8")) or {}
-    except (OSError, ValueError, yaml.YAMLError):
-        searched.append("resource graph: none readable")
+    if path is not None:
+        loaded, error = load_graph_file(Path(path))
+        status = {"graph": loaded or {}, "files": [str(path)],
+                  "errors": [error] if error else [],
+                  "section_files": ({GRAPH_SECTION: str(path)}
+                                    if loaded and GRAPH_SECTION in loaded else {})}
+    else:
+        try:
+            status = effective_graph_status()
+        except ValueError as error:
+            searched.append(f"resource graph: none readable ({str(error)[:300]})")
+            return []
+    for error in status["errors"]:
+        searched.append(f"resource graph {error['path']}: unreadable ({error['error'][:300]})")
+    graph = status["graph"]
+    section = graph.get(GRAPH_SECTION)
+    graph_path = status["section_files"].get(GRAPH_SECTION)
+    if graph_path is None:
+        if not status["errors"]:
+            searched.append(f"resource graph {', '.join(status['files'])}: no "
+                            f"`{GRAPH_SECTION}` section")
         return []
-    section = graph.get(GRAPH_SECTION) if isinstance(graph, dict) else None
     entries = [item for item in section or [] if isinstance(item, Mapping)
                and _names_match(str(item.get("name") or ""), name)] \
         if isinstance(section, list) else []

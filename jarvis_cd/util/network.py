@@ -622,16 +622,23 @@ def net_collect_reasons(
     *,
     hosts: Optional[Iterable[str]] = None,
     launch_nodes: Optional[int] = None,
+    form: Optional[str] = None,
 ) -> List[str]:
     """Why a multi-node launch must collect its hosts' net facts first.
 
-    ``net_missing``: the graph has no ``net`` section. ``hosts_not_in_graph``:
+    ``net_missing``: the graph has no ``net`` section (``net_legacy_form``
+    when ``form`` says it is the legacy list, ``net_unreadable`` when it
+    can't be read: neither has per-node facts). ``hosts_not_in_graph``:
     some launch hosts (or, before the hosts are known, more nodes than the
     graph saw) have no facts. ``graph_predates_ucx_verification``: the data
     pick's RDMA device was never checked with UCX. A person's override of
     both roles needs no facts. Empty when the graph covers the launch.
     """
     if not net or not (net.get("collected_on") or net.get("override")):
+        if not net and form == NET_LEGACY_FORM:
+            return ["net_legacy_form"]
+        if not net and form == "unreadable":
+            return ["net_unreadable"]
         return ["net_missing"]
     override = net.get("override") or {}
     if "data" in override and "control" in override:
@@ -753,6 +760,7 @@ def persist_net_section(
                 graph = {}
             if not isinstance(graph, dict):
                 graph = {}
+            replaced_form = classify_net_section(graph.get("net"))["form"]
             previous = graph.get("net") if isinstance(graph.get("net"), dict) else None
             if previous is None:
                 published = (read_graph_file(site_graph_file()) or {}).get("net")
@@ -770,6 +778,9 @@ def persist_net_section(
                     section["override"] = previous.get("override")
                 result["merge"] = {"mode": "replaced",
                                    "replaced_collected_on": (previous or {}).get("collected_on")}
+            if replaced_form in (NET_LEGACY_FORM, "unreadable"):
+                # an older or unreadable value in JARVIS's own graph gives way
+                result["merge"]["replaced_form"] = replaced_form
             graph["net"] = section
             descriptor, temporary = tempfile.mkstemp(
                 dir=path.parent, prefix=".resource_graph.", suffix=".tmp", text=True
@@ -1048,19 +1059,81 @@ def active_graph_file() -> Path:
     return own_graph_file()
 
 
+NET_LEGACY_FORM = "legacy_list"
+
+
+def classify_net_section(value: Any) -> Dict[str, Any]:
+    """What a graph's ``net`` value is, without changing it.
+
+    ``form``: ``absent``; ``v1`` (a mapping, :data:`NET_SCHEMA`);
+    ``legacy_list`` (an older JARVIS's list of libfabric entries, each with
+    ``fabric``/``provider``/``domain``); or ``unreadable``. ``net`` is the v1
+    mapping or None. ``legacy`` reads a legacy list as it is: its entries and
+    the fabrics, domains and providers they name, with no per-node facts or
+    selection. ``error`` says why an unreadable value can't be read.
+    """
+    if value is None:
+        return {"form": "absent", "net": None, "legacy": None, "error": None}
+    if isinstance(value, dict):
+        return {"form": "v1", "net": value, "legacy": None, "error": None}
+    legacy_keys = ("fabric", "provider", "domain")
+    if isinstance(value, list):
+        bad = [index for index, item in enumerate(value)
+               if not isinstance(item, dict) or not any(key in item for key in legacy_keys)]
+        if value and not bad:
+            fabrics: Dict[str, Dict[str, Any]] = {}
+            for item in value:
+                key = str(item.get("fabric") or "")
+                entry = fabrics.setdefault(key, {"fabric": item.get("fabric"),
+                                                 "domains": [], "providers": [],
+                                                 "shared": []})
+                for field, plural in (("domain", "domains"), ("provider", "providers"),
+                                      ("shared", "shared")):
+                    if field in item and item[field] not in entry[plural]:
+                        entry[plural].append(item[field])
+            return {"form": NET_LEGACY_FORM, "net": None, "error": None,
+                    "legacy": {"form": NET_LEGACY_FORM, "entries": value,
+                               "fabrics": list(fabrics.values())}}
+        error = ("net is an empty list" if not value else
+                 f"net is a list, but entries {bad[:10]} are not mappings with "
+                 f"{'/'.join(legacy_keys)} (the legacy form)")
+    else:
+        error = f"net is a {type(value).__name__}"
+    return {"form": "unreadable", "net": None, "legacy": None,
+            "error": (f"{error}; expected a mapping ({NET_SCHEMA}) or the legacy "
+                      f"list form")}
+
+
+def net_section_status() -> Dict[str, Any]:
+    """The effective graph's ``net`` value, classified, with its file.
+
+    :func:`classify_net_section` plus ``graph`` (the file the section comes
+    from) and ``graph_errors`` (graph files that exist but can't be read; a
+    net in one of them is ``unreadable`` when no other file gives one).
+    """
+    from jarvis_cd.util.site_state import effective_graph_status
+
+    try:
+        status = effective_graph_status()
+    except ValueError as error:
+        return {"form": "unreadable", "net": None, "legacy": None, "error": str(error)[:1024],
+                "graph": None, "graph_errors": []}
+    result = classify_net_section(status["graph"].get("net"))
+    result["graph"] = status["section_files"].get("net")
+    result["graph_errors"] = status["errors"]
+    if result["form"] == "absent" and status["errors"]:
+        result.update(form="unreadable", error="; ".join(
+            f"{error['path']}: {error['error']}" for error in status["errors"])[:1024])
+    return result
+
+
 def load_net_section() -> Optional[Dict[str, Any]]:
     """Load the graph's ``net`` section without initializing JARVIS.
 
-    JARVIS's own section when it has one, else the site graph's.
+    JARVIS's own section when it has one, else the site graph's. Only the v1
+    form: a legacy list has no per-node facts, so a launch collects them.
     """
-    from jarvis_cd.util.site_state import effective_graph
-
-    try:
-        graph = effective_graph()
-    except (OSError, ValueError):
-        return None
-    net = graph.get("net")
-    return net if isinstance(net, dict) else None
+    return net_section_status()["net"]
 
 
 def classify_mpi_network_failure(

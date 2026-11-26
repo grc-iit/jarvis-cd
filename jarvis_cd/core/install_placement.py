@@ -821,11 +821,12 @@ def persist_graph_answer(phase: str, entry: Mapping[str, Any], *,
     Only standing constraints (``login_limited``, ``compute_job``) are site
     facts; ``ask_each_time`` is not written. An answer already in the graph
     (JARVIS's own or the site's) that is newer is kept. The site graph is
-    never written. Without a site graph the root's directory must exist (it
-    is never created here); the site home is created. Never raises: the
+    never written. Without a shared site home (a site graph or
+    ``JARVIS_SITE_HOME``) the root's directory must exist (it is never
+    created here); a shared site home is created. Never raises: the
     decision is recorded either way.
     """
-    from jarvis_cd.util.site_state import site_graph_file
+    from jarvis_cd.util.site_state import shared_site_home
 
     result: Dict[str, Any] = {"phase": phase, "persisted": False}
     try:
@@ -837,7 +838,7 @@ def persist_graph_answer(phase: str, entry: Mapping[str, Any], *,
     if phase not in PHASES or entry.get("constraint") not in STANDING:
         result["skipped"] = "not a standing constraint"
         return result
-    if path is None and site_graph_file() is not None:
+    if path is None and shared_site_home():
         try:
             graph_path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as error:

@@ -197,9 +197,12 @@ class Jarvis:
 
         self.site_graph_file: Optional[Path] = site_state.site_graph_file()
         self.resource_graph_is_site = self.site_graph_file is not None
+        # JARVIS_SITE_HOME (or a site graph) makes the site home one record
+        # shared by every root; without either each root is its own record.
+        self.site_home_shared = site_state.shared_site_home()
         self.resource_graph_file = (
             site_state.own_graph_file()
-            if self.resource_graph_is_site
+            if self.site_home_shared
             else self.jarvis_root / "resource_graph.yaml"
         )
 
@@ -316,6 +319,13 @@ class Jarvis:
                 f"Using the site resource graph {self.site_graph_file} "
                 f"({RESOURCE_GRAPH_ENVIRONMENT}, read-only); JARVIS records its "
                 f"own facts in {self.resource_graph_file}"
+            )
+        elif self.site_home_shared:
+            # A shared site home's graph belongs to every root: init never
+            # creates or resets it.
+            logger.info(
+                f"Using the site home's resource graph {self.resource_graph_file} "
+                f"(JARVIS_SITE_HOME)"
             )
         elif resource_graph_exists and not force:
             logger.warning(

@@ -82,12 +82,26 @@ def site(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 def test_site_home_and_own_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     root = tmp_path / "root"
     monkeypatch.setenv("JARVIS_ROOT", str(root))
-    monkeypatch.setenv("JARVIS_SITE_HOME", str(tmp_path / "ignored"))
+    monkeypatch.delenv("JARVIS_SITE_HOME", raising=False)
     monkeypatch.delenv("JARVIS_RESOURCE_GRAPH", raising=False)
     Jarvis._instance = None
-    # without a site graph, the root is the site record, as before
+    # with neither, the root is the site record, as before
     assert site_state.site_home() == root
     assert site_state.own_graph_file() == root / "resource_graph.yaml"
+    assert not site_state.shared_site_home()
+
+    # JARVIS_SITE_HOME applies without a site graph too
+    home = tmp_path / "home"
+    monkeypatch.setenv("JARVIS_SITE_HOME", str(home))
+    assert site_state.site_home() == home.resolve()
+    assert site_state.own_graph_file() == home.resolve() / "resource_graph.yaml"
+    assert site_state.shared_site_home()
+    jarvis = Jarvis.get_instance()
+    assert jarvis.resource_graph_file == home.resolve() / "resource_graph.yaml"
+    assert method_site_home() == home.resolve()
+    saved = persist_net_section({"selected": {"interface": "eth0"}})
+    assert Path(saved["path"]) == home.resolve() / "resource_graph.yaml", saved
+    Jarvis._instance = None
 
     graph = tmp_path / "published" / "resource_graph.yaml"
     monkeypatch.setenv("JARVIS_RESOURCE_GRAPH", str(graph))
@@ -182,3 +196,87 @@ def test_site_home_equal_to_the_graph_directory_is_refused(site, monkeypatch):
     result = placement.persist_graph_answer("check", _answer("compute_job", NEW))
     assert not result["persisted"] and "never" in result["error"]
     assert not persist_net_section({"selected": {}})["persisted"]
+
+LEGACY_NET = [
+    {"domain": "enp47s0np0", "fabric": "172.25.0.0/16", "provider": "tcp;ofi_rxm",
+     "shared": True, "speed": 42949672960},
+    {"domain": "eno1", "fabric": "172.20.0.0/16", "provider": "tcp;ofi_rxm",
+     "shared": True, "speed": 42949672960},
+    {"domain": "lo", "fabric": "127.0.0.0/8", "provider": "tcp;ofi_rxm",
+     "shared": False, "speed": 42949672960},
+]
+
+
+@pytest.fixture
+def named_graph(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A writable site-named graph; the test fills it."""
+    graph = tmp_path / "site" / "resource_graph.yaml"
+    graph.parent.mkdir()
+    monkeypatch.setenv("JARVIS_RESOURCE_GRAPH", str(graph))
+    monkeypatch.setenv("JARVIS_SITE_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("JARVIS_ROOT", str(tmp_path / "root"))
+    Jarvis._instance = None
+    yield graph
+    Jarvis._instance = None
+
+
+def test_graph_copies_read_the_site_graphs_software(named_graph: Path):
+    from jarvis_cd.core.site_copies import graph_copies
+
+    named_graph.write_text(yaml.safe_dump({"fs": [], "software": [
+        {"name": "ior", "version": "3.3.0", "modules": ["ior/3.3.0"]}]}))
+    searched: list = []
+    copies = graph_copies("ior", searched)
+    assert [copy["version"] for copy in copies] == ["3.3.0"]
+    assert copies[0]["graph"] == str(named_graph.resolve())
+    assert "none readable" not in " ".join(searched)
+
+    named_graph.write_text("software: [unclosed\n")
+    searched = []
+    assert graph_copies("ior", searched) == []
+    assert any("unreadable" in line and str(named_graph.resolve()) in line
+               for line in searched), searched
+
+
+def test_a_legacy_list_net_is_read_not_missing(named_graph: Path):
+    from jarvis_cd.core.resource_graph import ResourceGraphManager
+    from jarvis_cd.util.network import load_net_section, net_collect_reasons, net_section_status
+    from jarvis_cd.util.resource_graph import ResourceGraph
+
+    named_graph.write_text(yaml.safe_dump({"fs": [], "net": LEGACY_NET}))
+    report = ResourceGraphManager().net_report()
+    assert report["present"] is True and report["form"] == "legacy_list"
+    assert [issue["kind"] for issue in report["issues"]] == ["resource_graph_net_legacy"]
+    assert report["issues"][0]["blocking"] is False
+    fabrics = {entry["fabric"]: entry for entry in report["legacy"]["fabrics"]}
+    assert fabrics["172.25.0.0/16"]["domains"] == ["enp47s0np0"]
+    assert report["legacy"]["entries"] == LEGACY_NET
+
+    # the launch has no per-node facts from it, and says why it collects
+    assert load_net_section() is None
+    status = net_section_status()
+    assert status["form"] == "legacy_list"
+    assert net_collect_reasons(None, launch_nodes=2, form=status["form"]) == ["net_legacy_form"]
+
+    graph = ResourceGraph()
+    graph.load_from_dict({"net": LEGACY_NET}, hostname="g")
+    assert graph.to_dict()["net"] == LEGACY_NET  # a save keeps it as written
+
+
+def test_an_unreadable_net_is_reported_with_its_error(named_graph: Path):
+    from jarvis_cd.core.resource_graph import ResourceGraphManager
+
+    named_graph.write_text(yaml.safe_dump({"fs": [], "net": "eth0"}))
+    report = ResourceGraphManager().net_report()
+    assert report["form"] == "unreadable"
+    issue, = report["issues"]
+    assert issue["kind"] == "resource_graph_net_unreadable"
+    assert "net is a str" in issue["details"]["error"]
+
+    Jarvis._instance = None
+    named_graph.write_text("net: {selected: [\n")
+    report = ResourceGraphManager().net_report()
+    assert report["form"] == "unreadable"
+    issue, = report["issues"]
+    assert issue["kind"] == "resource_graph_net_unreadable"
+    assert issue["details"]["graph_errors"][0]["path"] == str(named_graph.resolve())

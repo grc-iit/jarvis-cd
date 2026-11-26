@@ -39,9 +39,9 @@ What JARVIS records goes to its own **site home** instead:
 
 | Setting | Site home |
 |---------|-----------|
-| `JARVIS_SITE_HOME=<dir>` (with a site graph) | `<dir>`. It must not be the site graph's directory; JARVIS refuses that. |
+| `JARVIS_SITE_HOME=<dir>` | `<dir>`, with or without a site graph. It must not be the site graph's directory; JARVIS refuses that. Without a site graph, `<dir>/resource_graph.yaml` is JARVIS's own graph, shared by every root that sets the same `<dir>`; `jarvis init` never creates or resets it. |
 | site graph named, `JARVIS_SITE_HOME` unset | `~/.ppi-jarvis/site`, shared by every JARVIS root of this person |
-| no site graph | the JARVIS root (`JARVIS_ROOT`, default `~/.ppi-jarvis`), as before. `JARVIS_SITE_HOME` is ignored. |
+| neither | the JARVIS root (`JARVIS_ROOT`, default `~/.ppi-jarvis`), as before. |
 
 The site home holds JARVIS's own graph (`<site home>/resource_graph.yaml`),
 its [skills](site-skills.md) (`skills/`), the confirmed
@@ -54,7 +54,10 @@ at a time. A section JARVIS wrote (`rg build`, `rg load`, `rg net set|clear`,
 a net collection) wins. Every other section comes from the site graph, so a
 later update the site publishes still applies. JARVIS saves only the
 sections that differ from the site's. `install_placement` answers merge per
-phase, the newer `answered_at` winning. `jarvis rg path` prints JARVIS's own
+phase, the newer `answered_at` winning. Every reader (placement answers,
+site copies from `software`, the net, `rg show`) reads this effective graph,
+never one file alone; a graph file that exists but can't be parsed is
+reported with its parse error. `jarvis rg path` prints JARVIS's own
 file, or the site file while JARVIS has none. `jarvis rg show` names both
 files and prints the effective graph.
 

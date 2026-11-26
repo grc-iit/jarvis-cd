@@ -193,9 +193,10 @@ class LocalMpiExec(LocalExec):
         collected = None
         record = None
         try:
-            net = net_util.load_net_section()
+            net_status = net_util.net_section_status()
+            net = net_status['net']
             if self.network_flavour != 'cray':
-                collected = self._collect_launch_net(net, hosts)
+                collected = self._collect_launch_net(net, hosts, form=net_status['form'])
                 if collected and collected.get('net'):
                     net = collected['net']
             choice = net_util.resolve_launch_network(net, hosts)
@@ -267,7 +268,7 @@ class LocalMpiExec(LocalExec):
             )
         return record
 
-    def _collect_launch_net(self, net, hosts):
+    def _collect_launch_net(self, net, hosts, form=None):
         """Collect the launch hosts' net facts when the graph lacks them.
 
         Returns None when the graph covers the launch, else
@@ -279,7 +280,7 @@ class LocalMpiExec(LocalExec):
 
         if not net_util.launch_crosses_network(hosts):
             return None
-        reasons = net_util.net_collect_reasons(net, hosts=hosts)
+        reasons = net_util.net_collect_reasons(net, hosts=hosts, form=form)
         if not reasons:
             return None
         from ..core.rg_collector import collect_failure_issue, collect_net_facts

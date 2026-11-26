@@ -525,6 +525,7 @@ class ResourceGraphManager:
         from jarvis_cd.util.network import NET_SCHEMA, resolve_launch_network
 
         net = self.resource_graph.net
+        net_status = getattr(self.resource_graph, "net_status", None) or {}
         document: Dict[str, Any] = {
             "schema_version": "jarvis.resource-graph.net-report.v1",
             "graph": str(self.jarvis.resource_graph_file),
@@ -532,9 +533,27 @@ class ResourceGraphManager:
             "site_graph_file": (str(self.jarvis.site_graph_file)
                                 if getattr(self.jarvis, "site_graph_file", None) else None),
             "present": bool(net),
+            "form": "v1" if net else net_status.get("form", "absent"),
         }
         if not net:
-            document["issues"] = [self._net_missing_issue()]
+            if document["form"] == "absent":
+                from jarvis_cd.util.network import net_section_status
+
+                # the graph files may exist but not parse: say so, not "missing"
+                status = net_section_status()
+                if status["form"] == "unreadable":
+                    net_status = {"form": "unreadable", "error": status["error"],
+                                  "graph_errors": status["graph_errors"]}
+                    document["form"] = "unreadable"
+            if document["form"] == "legacy_list":
+                document.update(present=True, legacy=net_status.get("legacy"),
+                                effective=None)
+                document["issues"] = [self._net_legacy_issue(net_status.get("legacy"))]
+            elif document["form"] == "unreadable":
+                document.update(present=True, readable=False, error=net_status.get("error"))
+                document["issues"] = [self._net_unreadable_issue(net_status)]
+            else:
+                document["issues"] = [self._net_missing_issue()]
             return document
         effective = resolve_launch_network(net, net.get("collected_on") or [])
         document.update(
@@ -577,6 +596,50 @@ class ResourceGraphManager:
             remedy="jarvis ppl submit of builtin.resource_graph (net_only=true)",
         )
 
+    @staticmethod
+    def _net_legacy_issue(legacy: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        from jarvis_cd.core.issues import make_jarvis_issue
+
+        fabrics = [entry.get("fabric") for entry in (legacy or {}).get("fabrics") or []]
+        issue = make_jarvis_issue(
+            kind="resource_graph_net_legacy",
+            subject="resource graph net",
+            message=(
+                "The resource graph's 'net' section is in the legacy list form "
+                f"(libfabric entries for fabrics {fabrics}), read as it is. It has "
+                "no per-node facts and no data/control selection, so before a "
+                "multi-node MPI launch JARVIS collects those facts on the launch "
+                "hosts, as it does with no net section. Nothing to answer now."
+            ),
+            field="resource_graph.net",
+            details={"form": "legacy_list", "fabrics": fabrics, "severity": "advisory",
+                     "blocking": False},
+            remedy=("none needed; to collect ahead of time, submit builtin.resource_graph "
+                    "with net_only=true over the compute nodes"),
+        )
+        issue["severity"] = "advisory"
+        issue["blocking"] = False
+        return issue
+
+    @staticmethod
+    def _net_unreadable_issue(status: Dict[str, Any]) -> Dict[str, Any]:
+        from jarvis_cd.core.issues import make_jarvis_issue
+
+        return make_jarvis_issue(
+            kind="resource_graph_net_unreadable",
+            subject="resource graph net",
+            message=(
+                "The resource graph's 'net' section can't be read: "
+                f"{status.get('error')}. Fix or remove it in the graph file, or "
+                "collect the net facts again (builtin.resource_graph net_only=true)."
+            ),
+            field="resource_graph.net",
+            details={"error": status.get("error"),
+                     "graph_errors": status.get("graph_errors") or []},
+            remedy="fix the graph file, or jarvis ppl submit of builtin.resource_graph "
+                   "(net_only=true)",
+        )
+
     def net_set(
         self,
         *,
@@ -593,7 +656,9 @@ class ResourceGraphManager:
             raise ValueError("rg net set needs --data and/or --control")
         net = self.resource_graph.net
         if not net:
-            raise JarvisIssueError([self._net_missing_issue()])
+            # an override needs the v1 facts: say why they are not there
+            raise JarvisIssueError(self.net_report().get("issues")
+                                   or [self._net_missing_issue()])
         previous = net.get("override") or {}
         override = make_override(
             net, data=data, control=control, reason=reason, set_by=set_by

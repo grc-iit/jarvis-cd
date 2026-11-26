@@ -3663,6 +3663,16 @@ class JarvisCLI(ArgParse):
         if not report.get("present"):
             print("no net section: " + report["issues"][0]["message"])
             return
+        if report.get("form") == "legacy_list":
+            print("net (legacy list form, no per-node facts or selection):")
+            for fabric in (report.get("legacy") or {}).get("fabrics") or []:
+                print(f"  {str(fabric.get('fabric')):<20} domains={fabric.get('domains')} "
+                      f"providers={fabric.get('providers')}")
+            print(report["issues"][0]["message"])
+            return
+        if report.get("form") == "unreadable":
+            print("net unreadable: " + report["issues"][0]["message"])
+            return
         print(f"collected: {report.get('collected_at')} on {report.get('collected_on')}")
         for role in ("data", "control"):
             choice = (report.get("effective") or {}).get(role) or {}
@@ -3706,7 +3716,7 @@ class JarvisCLI(ArgParse):
             from jarvis_cd.core.site_facts import show_site_facts
 
             report = self.rg_manager.net_report()
-            if report.get("present"):
+            if report.get("form") == "v1":
                 report["site_facts"] = show_site_facts(self.rg_manager)
             return report
 

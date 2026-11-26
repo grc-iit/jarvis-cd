@@ -210,7 +210,7 @@ All three print a `jarvis.resource-graph.net-report.v1` document. It has:
 
 - `graph`, the file JARVIS writes; `site_graph`, which is true under
   `JARVIS_RESOURCE_GRAPH`; and `site_graph_file`, the site's read-only graph;
-- `present`;
+- `present`, and `form`: `v1`, `legacy_list`, `unreadable` or `absent`;
 - `collected_at`, `collected_on` and `collected_in`;
 - `selected` and `override`;
 - `effective`, holding `data`, `control`, and `sources` (`graph` or
@@ -219,9 +219,23 @@ All three print a `jarvis.resource-graph.net-report.v1` document. It has:
 
 If the net was collected outside an allocation, the report carries
 `warnings`. Without a net section, the report has `present: false` and a
-`resource_graph_net_missing` issue (`field: resource_graph.net`). `set` on a
-graph without a net section refuses with that issue and exit 5. With `+json`,
-stdout carries only the document.
+`resource_graph_net_missing` issue (`field: resource_graph.net`).
+
+An older JARVIS wrote `net` as a list of libfabric entries (`domain`,
+`fabric`, `provider`, `shared`, `speed`). That **legacy list** is read as it
+is: `present: true`, `form: legacy_list`, `legacy.entries` (the list as
+written) and `legacy.fabrics` (each fabric with its `domains`, `providers`
+and `shared`), and an advisory `resource_graph_net_legacy` issue (`blocking:
+false`). It has no per-node facts and no selection, so a multi-node launch
+collects them first, with reason `net_legacy_form`; saving the graph keeps
+the list until a collection replaces it. A `net` that is neither form, or a
+graph file that doesn't parse, is `present: true`, `form: unreadable`, with
+the `resource_graph_net_unreadable` issue whose `details` carry the `error`
+and `graph_errors` (`path`, `error`); its launch reason is
+`net_unreadable`.
+
+`set` on a graph without v1 net facts refuses with that issue and exit 5.
+With `+json`, stdout carries only the document.
 
 `rg net set` records a person's override under `net.override`:
 `source: person`, `set_at`, `set_by` (default `$USER`), `reason`, and the

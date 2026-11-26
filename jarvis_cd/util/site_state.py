@@ -6,7 +6,7 @@ admin location the person can't or shouldn't write to.
 
 JARVIS keeps its own state in its site home:
 
-* ``JARVIS_SITE_HOME`` when set (with a site graph);
+* ``JARVIS_SITE_HOME`` when set, with or without a site graph;
 * else, when a site graph is named, ``~/.ppi-jarvis/site``: one home shared
   by every JARVIS root of this person (a relay's per-job roots included);
 * else the JARVIS root (``JARVIS_ROOT``, else ``~/.ppi-jarvis``), as before.
@@ -14,8 +14,11 @@ JARVIS keeps its own state in its site home:
 The site home holds JARVIS's own graph (``resource_graph.yaml``: the net
 facts it collected, the person's placement answers, a ``rg build``), the
 ``site-facts/`` answers, ``skills/``, ``miniforge3/`` and the chained
-``spacks/``. Without a site graph, JARVIS's own graph stays the root's
-``resource_graph.yaml``.
+``spacks/``. With neither a site graph nor ``JARVIS_SITE_HOME``, JARVIS's
+own graph stays the root's ``resource_graph.yaml``.
+
+Every reader of the graph reads the effective graph (:func:`effective_graph`),
+never one file alone.
 
 Reading overlays JARVIS's own graph on the site graph, one top-level section
 at a time: a section JARVIS wrote wins, every other section comes from the
@@ -27,7 +30,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 RESOURCE_GRAPH_ENVIRONMENT = "JARVIS_RESOURCE_GRAPH"
 SITE_HOME_ENVIRONMENT = "JARVIS_SITE_HOME"
@@ -55,17 +58,31 @@ def _jarvis_root() -> Path:
     return Path(root).expanduser() if root else Path.home() / ".ppi-jarvis"
 
 
+def configured_site_home() -> Optional[Path]:
+    """``JARVIS_SITE_HOME``, or None when it is not set."""
+    value = os.environ.get(SITE_HOME_ENVIRONMENT, "").strip()
+    return Path(value).expanduser().resolve() if value else None
+
+
+def shared_site_home() -> bool:
+    """Whether the site home is shared by roots (a site graph or JARVIS_SITE_HOME).
+
+    False only when every root is its own site record.
+    """
+    return site_graph_file() is not None or configured_site_home() is not None
+
+
 def site_home() -> Path:
     """The directory where JARVIS keeps its own per-site state (writable).
 
-    ``JARVIS_SITE_HOME`` applies with a site graph only: without one, every
-    root is its own site record, as before.
+    ``JARVIS_SITE_HOME`` when set; else ``~/.ppi-jarvis/site`` with a site
+    graph; else the JARVIS root, so every root is its own site record.
     """
+    configured = configured_site_home()
+    if configured is not None:
+        return configured
     if site_graph_file() is None:
         return _jarvis_root()
-    configured = os.environ.get(SITE_HOME_ENVIRONMENT, "").strip()
-    if configured:
-        return Path(configured).expanduser().resolve()
     return (Path.home() / ".ppi-jarvis" / "site").resolve()
 
 
@@ -77,7 +94,7 @@ def own_graph_file() -> Path:
     """
     site = site_graph_file()
     if site is None:
-        return _jarvis_root() / GRAPH_NAME
+        return site_home() / GRAPH_NAME
     own = site_home() / GRAPH_NAME
     if own.resolve() == site:
         raise ValueError(
@@ -102,23 +119,41 @@ def published_dir(name: str) -> Optional[Path]:
     return directory
 
 
-def read_graph_file(path: Optional[Path]) -> Optional[Dict[str, Any]]:
-    """One graph file as a mapping; None when absent or unreadable."""
+def load_graph_file(path: Optional[Path]
+                    ) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """One graph file as ``(mapping, error)``.
+
+    An absent file is ``(None, None)``. A file that exists but can't be read
+    or parsed, or is not a mapping, is ``(None, {"path", "error"})`` with the
+    reader's own error text.
+    """
     if path is None:
-        return None
+        return None, None
     import json
 
     import yaml
 
     try:
         text = Path(path).read_text(encoding="utf-8")
-    except OSError:
-        return None
+    except FileNotFoundError:
+        return None, None
+    except OSError as error:
+        return None, {"path": str(path), "error": str(error)[:1024]}
     try:
         data = json.loads(text) if Path(path).suffix.lower() == ".json" else yaml.safe_load(text)
-    except (ValueError, yaml.YAMLError):
-        return None
-    return data if isinstance(data, dict) else None
+    except (ValueError, yaml.YAMLError) as error:
+        return None, {"path": str(path), "error": str(error)[:1024]}
+    if data is None:
+        return None, None
+    if not isinstance(data, dict):
+        return None, {"path": str(path),
+                      "error": f"the graph is a {type(data).__name__}, not a mapping"}
+    return data, None
+
+
+def read_graph_file(path: Optional[Path]) -> Optional[Dict[str, Any]]:
+    """One graph file as a mapping; None when absent, empty or unreadable."""
+    return load_graph_file(path)[0]
 
 
 def merge_graphs(site: Optional[Mapping[str, Any]],
@@ -166,11 +201,29 @@ def own_sections(site: Optional[Mapping[str, Any]],
 
 def effective_graph() -> Dict[str, Any]:
     """The graph JARVIS acts on: its own graph overlaid on the site's."""
-    own = read_graph_file(own_graph_file())
+    return effective_graph_status()["graph"]
+
+
+def effective_graph_status() -> Dict[str, Any]:
+    """The effective graph with where each section came from and read errors.
+
+    ``graph``: the merged mapping. ``section_files``: per top-level section,
+    the file it comes from. ``files``: the files read (own first).
+    ``errors``: ``{"path", "error"}`` for each file that exists but could not
+    be read. Raises ValueError as :func:`own_graph_file` does.
+    """
+    own_file = own_graph_file()
     site_file = site_graph_file()
-    if site_file is None:
-        return dict(own or {})
-    return merge_graphs(read_graph_file(site_file), own)
+    own, own_error = load_graph_file(own_file)
+    site, site_error = load_graph_file(site_file) if site_file is not None else (None, None)
+    section_files: Dict[str, str] = {key: str(site_file) for key in (site or {})}
+    section_files.update({key: str(own_file) for key in (own or {})})
+    return {
+        "graph": merge_graphs(site, own) if site_file is not None else dict(own or {}),
+        "section_files": section_files,
+        "files": [str(own_file)] + ([str(site_file)] if site_file is not None else []),
+        "errors": [error for error in (own_error, site_error) if error],
+    }
 
 
 def graph_sources() -> Dict[str, Any]:

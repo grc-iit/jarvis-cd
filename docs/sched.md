@@ -44,7 +44,7 @@ becomes an entry in `issues`, never a failure, and the command exits `0`.
 | `account` | the submit defaults set in the environment: `SBATCH_ACCOUNT`, `SLURM_ACCOUNT`, `SBATCH_QOS`, `SBATCH_PARTITION`, `PBS_ACCOUNT`, `LSB_DEFAULTPROJECT` |
 | `partitions[]` | see below |
 | `mpi` | see below (absent with `+no_mpi`) |
-| `net` | the resource graph's network: `graph`, `site_graph`, `present`, `effective` (`data` and `control`), `override`, `collected_at`, `collected_in` (see [resource-graph-network.md](resource-graph-network.md)) |
+| `net` | the resource graph's network: `graph`, `site_graph`, `present`, `form` (`v1`, `legacy_list`, `unreadable`, `absent`), `effective` (`data` and `control`), `override`, `collected_at`, `collected_in`, `legacy` (a legacy list as read) and `error` (why it is unreadable) (see [resource-graph-network.md](resource-graph-network.md)) |
 | `cpu` | the resource graph's `cpu` section (`jarvis.resource-graph.cpu.v1`): the topology the collector read on each node it ran on, or `null` before a collection (see [Whole cores per rank](scheduler.md#whole-cores-per-rank)) |
 | `site_skills[]` | the site's skills: `name`, `description`, `path`, `sha256`, `source` (`site` when the site publishes it beside its graph, `jarvis` for JARVIS's own; see [site-skills.md](site-skills.md)) |
 | `issues[]` | what is missing, see below |
@@ -136,7 +136,7 @@ The `mpi` block:
 | `scheduler_missing` | `jarvis.issue.v1` | no scheduler client on `PATH` and no `--provider` |
 | `scheduler_unsupported` | `jarvis.issue.v1` | JARVIS cannot submit to this provider (`details.supported` lists the ones it can). For PBS, LSF and Flux the queues are still read, and `details.queues_read` is `true` |
 | `scheduler_query_failed` | `jarvis.issue.v1` | the provider reported no partitions, or a queue or limits read failed (`details` holds the raw `command`, `exit_code` and `output`) |
-| `resource_graph_net_missing` (and the other network issues) | `jarvis.issue.v1` | the resource graph has no usable `net` section, as `jarvis rg net +json` reports it |
+| `resource_graph_net_missing` (and the other network issues) | `jarvis.issue.v1` | the resource graph has no usable `net` section, as `jarvis rg net +json` reports it. A legacy list-form `net` is read and gives the advisory `resource_graph_net_legacy` instead; a `net` or graph file that can't be read gives `resource_graph_net_unreadable` with the error (see [Resource graph network](resource-graph-network.md)). `net.form` says which |
 | `spack_missing` | `jarvis.install-issue.v1` | JARVIS has no Spack. It is the same issue, with the same `issue_id` and `site_spacks[]`, that `ppl install +check` raises (see [Missing Spack](pipeline_tests.md#missing-spack-spack_missing)) |
 | `jarvis_not_initialized` | `jarvis.issue.v1` | `JARVIS_ROOT` has no `jarvis_config.yaml`. The rest of the document is still filled in, and the command still exits 0; `field` is `JARVIS_ROOT` and `remedy` says to run `jarvis init` once on that root. Pipeline commands refuse until then |
 
