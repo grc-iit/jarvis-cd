@@ -1072,8 +1072,23 @@ option for every package:
 Ready means the package's `ready()` returns true. By default that's when its
 service runtime (`JARVIS_SERVICE_RUNTIME_PATH`) reports `ready` or `degraded`.
 A `start()` that returns also counts as ready. A `failed` or `stopped` report
-before ready, a `start()` that raises, or `start_timeout` seconds (default
-600, `0` for no limit) without readiness fails the pipeline start.
+before ready, or a `start()` that raises (the service process exited), fails
+the pipeline start at once.
+
+There is no time limit on becoming ready. JARVIS waits while the start shows
+activity, and logs `still waiting for ready` every 60 s with what it saw.
+Activity is any of:
+
+- output from the commands `start()` runs;
+- CPU time or I/O of the `start()` thread, or of any process started since
+  it began (so `ssh`/`mpiexec` relaying a remote service's output counts);
+- a change to the service runtime or endpoint file.
+
+Only a stall fails the start: no activity for `start_timeout` seconds. Unset
+(the default), the window is `JARVIS_STALL_SECONDS` (600 s, see
+[spack.md](spack.md#long-commands-and-stalls)). `0` turns the stall check off.
+The error names the window, how long it waited, and quotes the start's last
+output. Without `/proc` (macOS) nothing counts as a stall.
 
 ### Services once the last step returns (`after_steps`)
 

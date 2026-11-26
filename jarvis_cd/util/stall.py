@@ -20,7 +20,9 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from collections import deque
+from contextlib import contextmanager
+from typing import Any, Callable, Deque, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence
 
 STALL_SECONDS_ENV = "JARVIS_STALL_SECONDS"
 #: the 1.9.19 name, still read when :data:`STALL_SECONDS_ENV` is unset
@@ -74,6 +76,27 @@ def process_tree(root_pid: int) -> List[int]:
     return tree
 
 
+def _proc_activity(base: str, children: bool = True) -> tuple:
+    """CPU ticks and I/O bytes of one ``/proc`` entry (a process or a task)."""
+    cpu = io_bytes = 0
+    try:
+        with open(f"{base}/stat", "rb") as stream:
+            fields = stream.read().rsplit(b")", 1)[1].split()
+        cpu += int(fields[11]) + int(fields[12])
+        if children:
+            cpu += int(fields[13]) + int(fields[14])
+    except (OSError, IndexError, ValueError):
+        pass
+    try:
+        with open(f"{base}/io", "rb") as stream:
+            for line in stream:
+                if line.startswith((b"rchar:", b"wchar:")):
+                    io_bytes += int(line.split()[1])
+    except (OSError, IndexError, ValueError):
+        pass
+    return cpu, io_bytes
+
+
 def tree_activity(root_pid: int) -> Optional[Dict[str, int]]:
     """CPU ticks and I/O bytes of the process tree, or None without ``/proc``."""
     if not os.path.isdir("/proc/self"):
@@ -81,19 +104,9 @@ def tree_activity(root_pid: int) -> Optional[Dict[str, int]]:
     cpu = io_bytes = 0
     pids = process_tree(root_pid)
     for pid in pids:
-        try:
-            with open(f"/proc/{pid}/stat", "rb") as stream:
-                fields = stream.read().rsplit(b")", 1)[1].split()
-            cpu += int(fields[11]) + int(fields[12]) + int(fields[13]) + int(fields[14])
-        except (OSError, IndexError, ValueError):
-            pass
-        try:
-            with open(f"/proc/{pid}/io", "rb") as stream:
-                for line in stream:
-                    if line.startswith((b"rchar:", b"wchar:")):
-                        io_bytes += int(line.split()[1])
-        except (OSError, IndexError, ValueError):
-            pass
+        pid_cpu, pid_io = _proc_activity(f"/proc/{pid}")
+        cpu += pid_cpu
+        io_bytes += pid_io
     return {"cpu_ticks": cpu, "io_bytes": io_bytes, "processes": len(pids)}
 
 
@@ -153,6 +166,126 @@ class ActivityWatch:
                 f"{self.activity['cpu_ticks']} ticks, io {self.activity['io_bytes']} bytes; ")
 
 
+class OutputSink:
+    """Output lines that commands print for a watcher that doesn't own them.
+
+    A thread sets one with :func:`collecting`; the commands it starts
+    (:class:`jarvis_cd.shell.core_exec.CoreExec`, :func:`run_watched`) note
+    each line they read into it, from their own reader threads.
+    """
+
+    def __init__(self, tail_lines: int = 40):
+        self._lock = threading.Lock()
+        self.last_at: Optional[float] = None
+        self.lines = 0
+        self._tail: Deque[str] = deque(maxlen=tail_lines)
+
+    def note(self, line: str) -> None:
+        with self._lock:
+            self.last_at = time.monotonic()
+            self.lines += 1
+            self._tail.append(line if line.endswith("\n") else line + "\n")
+
+    def tail(self) -> str:
+        with self._lock:
+            return "".join(self._tail)[-OUTPUT_TAIL_CHARS:]
+
+
+_sink_local = threading.local()
+
+
+def current_sink() -> Optional[OutputSink]:
+    """The :class:`OutputSink` the calling thread collects into, if any."""
+    return getattr(_sink_local, "sink", None)
+
+
+@contextmanager
+def collecting(sink: OutputSink) -> Iterator[OutputSink]:
+    """Note the output of commands this thread starts into ``sink``."""
+    previous = current_sink()
+    _sink_local.sink = sink
+    try:
+        yield sink
+    finally:
+        _sink_local.sink = previous
+
+
+class StartWatch:
+    """When work a thread of this process does last showed activity.
+
+    For a caller that waits on a thread rather than a command (a background
+    service's ``start()``). Activity is any of: the thread's own CPU time or
+    I/O, a process this process started since the watch began (appearing,
+    exiting, or using CPU time or I/O, so ``ssh``/``mpiexec`` reading a
+    remote command's output counts), an output line in ``sink``, or a change
+    to one of ``paths`` (size or mtime). Processes that existed when the
+    watch began, and this process's other threads, don't count.
+    ``watched`` is False without ``/proc``: then only output and ``paths``
+    count, and a caller should not call anything a stall.
+    """
+
+    def __init__(self, sink: Optional[OutputSink] = None, paths: Iterable[str] = ()):
+        self.sink = sink
+        self.paths = [str(path) for path in paths if path]
+        self.thread_id: Optional[int] = None
+        self.watched = os.path.isdir("/proc/self")
+        self._baseline = set(process_tree(os.getpid())) if self.watched else set()
+        self.started = self.last_active = time.monotonic()
+        self.activity = self._read()
+
+    def _files(self) -> tuple:
+        state = []
+        for path in self.paths:
+            try:
+                info = os.stat(path)
+                state.append((info.st_mtime_ns, info.st_size))
+            except OSError:
+                state.append(None)
+        return tuple(state)
+
+    def _read(self) -> Dict[str, Any]:
+        reading: Dict[str, Any] = {"files": self._files()}
+        if not self.watched:
+            return reading
+        cpu = io_bytes = 0
+        if self.thread_id is not None:
+            cpu, io_bytes = _proc_activity(f"/proc/self/task/{self.thread_id}",
+                                           children=False)
+        new = sorted(pid for pid in process_tree(os.getpid()) if pid not in self._baseline)
+        for pid in new:
+            pid_cpu, pid_io = _proc_activity(f"/proc/{pid}")
+            cpu += pid_cpu
+            io_bytes += pid_io
+        reading.update(cpu_ticks=cpu, io_bytes=io_bytes, processes=len(new),
+                       pids=tuple(new))
+        return reading
+
+    def sample(self) -> float:
+        """Seconds since the last activity."""
+        now = time.monotonic()
+        output_at = self.sink.last_at if self.sink is not None else None
+        if output_at is not None and output_at > self.last_active:
+            self.last_active = output_at
+        current = self._read()
+        if current != self.activity:
+            self.last_active = now
+        self.activity = current
+        return now - self.last_active
+
+    def describe(self) -> str:
+        lines = self.sink.lines if self.sink is not None else 0
+        text = f"{lines} output line(s)"
+        if self.watched:
+            text += (f", {self.activity['processes']} process(es), cpu "
+                     f"{self.activity['cpu_ticks']} ticks, io {self.activity['io_bytes']} bytes")
+        return text + "; "
+
+    def record(self) -> Dict[str, Any]:
+        """The current activity, for a stall report."""
+        return {key: value for key, value in self.activity.items()
+                if key in ("cpu_ticks", "io_bytes", "processes")}
+
+
 def _stderr_say(text: str, *, record: bool = True) -> None:
     try:
         sys.stderr.write(f"JARVIS: {text}\n")
@@ -207,11 +340,14 @@ def run_watched(command: Sequence[str], environment: Optional[Mapping[str, str]]
         if not merge_stderr:
             streams["stderr"] = []
         last_output = [time.monotonic()]
+        sink = current_sink()
 
         def pump(name: str, stream: Any) -> None:
             for line in stream:
                 streams[name].append(line)
                 last_output[0] = time.monotonic()
+                if sink is not None:
+                    sink.note(line)
 
         readers = [threading.Thread(target=pump, args=(name, getattr(process, name)),
                                     daemon=True) for name in streams]

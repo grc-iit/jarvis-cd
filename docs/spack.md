@@ -112,7 +112,10 @@ command prepare runs (and its `git clone`), the build-host compiler probe
 (compile and run a hello world with each compiler), the Spack health check,
 `spack load` of a site copy, the login-shell module reads, the pip/conda/
 container probes, `ldd`, `ucx_info`, `ip addr`, `probe_program` and the
-scheduler's queries, cancels, stops, moves and `sbatch --test-only`.
+scheduler's queries, cancels, stops, moves and `sbatch --test-only`. A
+background service waiting to become ready is watched the same way (its
+`start_timeout` is the stall window; see
+[scheduler.md](scheduler.md)).
 
 The first `compiler find` in a new root can take minutes with no output:
 Spack builds its package indexes into `misc_cache` first, reading every

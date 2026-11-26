@@ -1059,9 +1059,13 @@ class Pkg:
             },
             {
                 "name": "start_timeout",
-                "msg": "Seconds a background start may take to become ready (0: no limit)",
+                "msg": (
+                    "Stall window of a background start: seconds without output, "
+                    "CPU time or I/O before it counts as stalled (unset: "
+                    "JARVIS_STALL_SECONDS; 0: never). Not a time limit"
+                ),
                 "type": int,
-                "default": 600,
+                "default": None,
             },
             {
                 "name": "after_steps",

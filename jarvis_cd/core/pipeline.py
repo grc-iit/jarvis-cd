@@ -3991,19 +3991,26 @@ class Pipeline:
         """Run ``pkg_instance.start()`` in a thread and wait until it is ready.
 
         Ready means ``pkg_instance.ready()`` is true (by default: its service
-        runtime reports ``ready``) or start() already returned. Raises if
-        start() fails, the service reports failure, or ``start_timeout``
-        seconds pass first.
+        runtime reports ``ready``) or start() already returned. There is no
+        time limit: the wait goes on while the start shows activity
+        (:class:`jarvis_cd.util.stall.StartWatch`), with a progress line every
+        :data:`~jarvis_cd.util.stall.PROGRESS_SECONDS`. Raises at once if
+        start() raises or the service reports failure, and on a stall: no
+        activity for ``start_timeout`` seconds (unset: ``JARVIS_STALL_SECONDS``;
+        ``0``: never a stall).
         """
         import threading
+        from jarvis_cd.util import stall as _stall
         from jarvis_cd.util.logger import logger
 
         pkg_id = pkg_def["pkg_id"]
         handle: Dict[str, Any] = {"pkg_id": pkg_id, "error": None}
+        sink = _stall.OutputSink()
 
         def _run() -> None:
             try:
-                pkg_instance.start()
+                with _stall.collecting(sink):
+                    pkg_instance.start()
             except BaseException as error:  # reported by the waiter
                 handle["error"] = error
             finally:
@@ -4015,11 +4022,17 @@ class Pipeline:
         )
         handle["thread"] = thread
         config = getattr(pkg_instance, "config", {}) or {}
-        raw_timeout = config.get("start_timeout")
-        timeout = float(600 if raw_timeout is None else raw_timeout)
-        logger.info(f"[{pkg_def['pkg_type']}] [START] background, waiting for ready")
+        window = self._start_stall_window(config.get("start_timeout"))
+        watch = _stall.StartWatch(sink, self._service_runtime_files(pkg_instance))
+        logger.info(
+            f"[{pkg_def['pkg_type']}] [START] background, waiting for ready ("
+            + (f"stall window {window:g}s" if window is not None else "no stall check")
+            + ")")
         thread.start()
-        deadline = time.monotonic() + timeout if timeout > 0 else None
+        watch.thread_id = thread.native_id
+        handle["start_watch"] = {"window_s": window, "watched": watch.watched}
+        sampled = last_report = watch.started
+        idle = 0.0
         while True:
             if not thread.is_alive():
                 if handle["error"] is not None:
@@ -4037,11 +4050,52 @@ class Pipeline:
                 return handle
             if state is False:
                 raise RuntimeError("service reported failed/stopped before ready")
-            if deadline is not None and time.monotonic() >= deadline:
-                raise RuntimeError(
-                    f"not ready after start_timeout={timeout:g}s"
-                )
+            now = time.monotonic()
+            if now - sampled >= min(_stall.POLL_SECONDS, window or _stall.POLL_SECONDS):
+                sampled = now
+                idle = watch.sample()
+                if now - last_report >= _stall.PROGRESS_SECONDS:
+                    last_report = now
+                    logger.info(
+                        f"[{pkg_def['pkg_type']}] [START] still waiting for ready "
+                        f"({int(now - watch.started)}s; {watch.describe()}"
+                        f"last activity {int(idle)}s ago)")
+                if window is not None and watch.watched and idle >= window:
+                    handle["start_watch"].update(
+                        stalled=True, waited_s=int(now - watch.started),
+                        idle_s=int(idle), activity=watch.record())
+                    tail = sink.tail()
+                    raise RuntimeError(
+                        f"not ready: start() stalled, no output, CPU time or I/O for "
+                        f"{int(idle)}s (stall window {window:g}s) after "
+                        f"{int(now - watch.started)}s; "
+                        + (f"its last output:\n{tail}" if tail else "it printed nothing"))
             thread.join(0.5)
+
+    @staticmethod
+    def _start_stall_window(raw: Any) -> Optional[float]:
+        """Stall window of a background start: ``start_timeout`` (0: none)."""
+        from jarvis_cd.util import stall as _stall
+
+        if raw is None or (isinstance(raw, str) and not raw.strip()):
+            return float(_stall.stall_seconds())
+        value = float(raw)
+        return value if value > 0 else None
+
+    @staticmethod
+    def _service_runtime_files(pkg_instance: Any) -> List[str]:
+        """The service runtime and endpoint files a start may write to."""
+        environments = [getattr(pkg_instance, "mod_env", None), getattr(pkg_instance, "env", None)]
+        path = next((str(env.get("JARVIS_SERVICE_RUNTIME_PATH")) for env in environments
+                     if isinstance(env, dict) and env.get("JARVIS_SERVICE_RUNTIME_PATH")), "")
+        if not path:
+            return []
+        try:
+            from jarvis_cd.service_runtime.endpoints import endpoint_path_for
+
+            return [path, str(endpoint_path_for(path))]
+        except Exception:
+            return [path]
 
     def _wait_background_packages(self, background: List[Dict[str, Any]]) -> None:
         """Block until every background start() returns; re-raise the first error."""

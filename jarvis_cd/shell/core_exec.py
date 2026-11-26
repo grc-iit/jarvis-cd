@@ -56,6 +56,8 @@ class CoreExec(ABC):
         self._output_callback_lock = threading.Lock()
         self._output_callback_finalized = False
         self._last_output_at: Dict[str, float] = {}  # hostname -> monotonic
+        # a background service start() watching the commands it runs
+        self._activity_sink = _stall.current_sink()
 
     @abstractmethod
     def run(self):
@@ -446,6 +448,8 @@ class LocalExec(CoreExec):
                 if not line:
                     break
                 self._last_output_at[self.hostname] = time.monotonic()
+                if self._activity_sink is not None:
+                    self._activity_sink.note(line)
 
                 callback = self.exec_info.line_callback
                 if callback is not None and not self._output_callback_failure.is_set():
