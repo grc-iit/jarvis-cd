@@ -27,7 +27,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Mapping, Optional
 
 
 _DIRECTIVE_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
@@ -759,6 +759,38 @@ class SlurmScheduler(Scheduler):
         r"^(?P<job_id>[0-9]+)(?:;(?P<cluster>[A-Za-z0-9_.-]+))?$"
     )
 
+    #: keys (and sbatch flags) that already say how tasks map to cores or
+    #: hardware threads; any of them leaves the per-core request to the person
+    _CORE_KEYS = ("ntasks_per_core", "threads_per_core", "cores_per_socket",
+                  "sockets_per_node", "hint", "extra_node_info")
+    _CORE_FLAGS = ("--ntasks-per-core", "--threads-per-core", "--cores-per-socket",
+                   "--sockets-per-node", "--hint", "--extra-node-info", "-B")
+
+    @classmethod
+    def core_request(cls, spec: Mapping[str, Any]) -> Dict[str, Any]:
+        """How ranks claim cores: ``--ntasks-per-core=1`` unless the person said.
+
+        With ``CR_CORE`` on nodes with several hardware threads per core, a
+        task otherwise counts one hardware thread, so two ranks share a core
+        (and a node fits twice the ranks it has cores). One task per core
+        makes each rank claim a whole core; nodes without SMT are unchanged.
+        A rank request is ``ntasks`` or ``ntasks_per_node``.
+        """
+        for key in cls._CORE_KEYS:
+            if key in spec:
+                return {"ntasks_per_core": spec.get(key) if key == "ntasks_per_core" else None,
+                        "source": "pipeline.scheduler", "key": key}
+        for raw in spec.get("sbatch_args") or []:
+            flag = str(raw).split("=", 1)[0]
+            if flag in cls._CORE_FLAGS:
+                return {"ntasks_per_core": None, "source": "pipeline.scheduler.sbatch_args",
+                        "key": flag}
+        ranks = any(spec.get(key) not in (None, False, 0)
+                    for key in ("ntasks", "ntasks_per_node"))
+        if not ranks:
+            return {"ntasks_per_core": None, "source": "unset", "key": None}
+        return {"ntasks_per_core": 1, "source": "jarvis", "key": "ntasks_per_core"}
+
     def __init__(self, *args: Any, **kwargs: Any):
         super().__init__(*args, **kwargs)
         self._validate_spec()
@@ -820,6 +852,9 @@ class SlurmScheduler(Scheduler):
                 lines.append(f"#SBATCH {flag}")
             else:
                 lines.append(f"#SBATCH {flag}={value}")
+        cores = self.core_request(self.spec)
+        if cores["source"] == "jarvis":
+            lines.append(f"#SBATCH --ntasks-per-core={cores['ntasks_per_core']}")
         for raw in self.spec.get("sbatch_args", []) or []:
             lines.append(f"#SBATCH {raw}")
         return lines

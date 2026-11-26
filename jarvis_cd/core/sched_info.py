@@ -207,6 +207,8 @@ def sched_info(jarvis: Any, provider: Optional[str] = None, *, include_mpi: bool
                            ("graph", "site_graph", "present", "effective", "override",
                             "collected_at", "collected_in")}
         issues.extend(report.get("issues") or [])
+        # per-node topology a collector read on the nodes (partitions carry sinfo's)
+        document["cpu"] = ResourceGraphManager().resource_graph.cpu
     except Exception as error:
         document["net"] = {"error": str(error)[:1024]}
     try:

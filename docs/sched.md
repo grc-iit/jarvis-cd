@@ -42,6 +42,7 @@ becomes an entry in `issues`, never a failure, and the command exits `0`.
 | `partitions[]` | see below |
 | `mpi` | see below (absent with `+no_mpi`) |
 | `net` | the resource graph's network: `graph`, `site_graph`, `present`, `effective` (`data` and `control`), `override`, `collected_at`, `collected_in` (see [resource-graph-network.md](resource-graph-network.md)) |
+| `cpu` | the resource graph's `cpu` section (`jarvis.resource-graph.cpu.v1`): the topology the collector read on each node it ran on, or `null` before a collection (see [Whole cores per rank](scheduler.md#whole-cores-per-rank)) |
 | `site_skills[]` | the skills stored next to the graph: `name`, `description`, `path`, `sha256` (see [site-skills.md](site-skills.md)) |
 | `issues[]` | what is missing, see below |
 

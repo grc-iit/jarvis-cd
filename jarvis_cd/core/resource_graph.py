@@ -161,6 +161,7 @@ class ResourceGraphManager:
             self.resource_graph.nodes = previous.nodes
             self.resource_graph.common_mounts = previous.common_mounts
         self._net_facts: Dict[str, Dict[str, Any]] = {}
+        self._cpu_facts: Dict[str, Dict[str, Any]] = {}
 
         # Collect resources from all nodes in parallel
         self._collected_hosts: List[str] = []
@@ -190,6 +191,10 @@ class ResourceGraphManager:
                 )
         else:
             self.resource_graph.net = previous.net
+        from jarvis_cd.util.resource_graph import merge_cpu_facts
+
+        # Per host, like a net-only merge: hosts not reached keep their facts.
+        self.resource_graph.cpu = merge_cpu_facts(previous.cpu, self._cpu_facts)
         # confirmed placement answers are the person's, not collected facts
         self.resource_graph.install_placement = self._stored_install_placement(previous)
 
@@ -351,6 +356,9 @@ class ResourceGraphManager:
                         net_facts = resource_data.pop("net", None)
                         if isinstance(net_facts, dict):
                             self._net_facts[hostname] = net_facts
+                        cpu_facts = resource_data.pop("cpu", None)
+                        if isinstance(cpu_facts, dict):
+                            self._cpu_facts[hostname] = cpu_facts
                         # Add to resource graph
                         if not net_only:
                             self.resource_graph.add_node_data(hostname, resource_data)

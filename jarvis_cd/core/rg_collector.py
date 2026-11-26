@@ -358,6 +358,9 @@ class ResourceGraphCLI(ArgParse):
             else:
                 resources = collect_storage_resources(benchmark=benchmark)
             resources['net'] = collect_local_interfaces()
+            from jarvis_cd.util.placement import cpu_topology
+
+            resources['cpu'] = cpu_topology()
             
             # Output results
             output_data = json.dumps(resources, indent=2)

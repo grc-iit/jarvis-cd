@@ -23,6 +23,7 @@ scheduler:
   job_name: dumbwarp_metagem_4n_full
   nodes: 4
   ntasks_per_node: 24
+  ntasks_per_core: false  # 24 slots count hardware threads (20-core nodes)
   mem: 20G
   partition: compute
   time: "00:25:00"

@@ -2,8 +2,11 @@
 import os
 from unittest.mock import patch
 
+import pytest
+
 from jarvis_cd.shell.exec_info import MpiExecInfo
 from jarvis_cd.shell.mpi_exec import OpenMpiExec
+from jarvis_cd.util import placement
 from jarvis_cd.util.hostfile import Hostfile
 from jarvis_cd.util.placement import THREAD_VARIABLES, rank_threads
 
@@ -12,6 +15,29 @@ SLURM = {
     "SLURM_JOB_NODELIST": "ares-comp-[21-22]",
     "SLURM_JOB_CPUS_PER_NODE": "40(x2)",
 }
+
+
+@pytest.fixture(autouse=True)
+def _no_smt(monkeypatch):
+    """One hardware thread per core unless a test says otherwise."""
+    monkeypatch.setattr(placement, "node_threads_per_core",
+                        lambda: {"value": 1, "source": "test"})
+
+
+def test_threads_count_whole_cores_on_smt_nodes(monkeypatch):
+    monkeypatch.setattr(placement, "node_threads_per_core",
+                        lambda: {"value": 2, "source": "sysfs"})
+    env = {}
+    # --ntasks-per-core=1: 16 ranks per node own 16 cores = 32 CPUs
+    record = rank_threads(32, 16, ["ares-comp-21", "ares-comp-22"], env,
+                          {**SLURM, "SLURM_JOB_CPUS_PER_NODE": "32(x2)"})
+    assert record["cpus_per_rank"] == 2
+    assert record["threads_per_core"] == {"value": 2, "source": "sysfs"}
+    assert record["threads_per_rank"] == 1
+    assert env["OMP_NUM_THREADS"] == "1"
+    env = {}
+    record = rank_threads(4, 4, ["ares-comp-21"], env, {**SLURM, "SLURM_CPUS_PER_TASK": "8"})
+    assert record["threads_per_rank"] == 4
 
 
 def test_cpus_per_node_divided_by_ranks_per_node():

@@ -10,6 +10,44 @@ from typing import Dict, List, Any, Optional, Set
 from collections import defaultdict
 from .logger import logger
 
+CPU_SCHEMA = "jarvis.resource-graph.cpu.v1"
+_CPU_FIELDS = ("cpus", "sockets", "cores_per_socket", "physical_cores", "threads_per_core")
+
+
+def merge_cpu_facts(
+    previous: Optional[Dict[str, Any]], collected: Dict[str, Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    """The ``cpu`` section: per-host topology plus the smallest node.
+
+    ``collected`` (host -> ``placement.cpu_topology()``) replaces those
+    hosts; other hosts keep what ``previous`` recorded. ``smallest`` holds
+    each field's minimum over hosts, and ``heterogeneous`` says whether
+    the hosts differ, so sizing from it fits every recorded node.
+    """
+    from datetime import datetime, timezone
+
+    hosts: Dict[str, Dict[str, Any]] = {}
+    if isinstance(previous, dict) and isinstance(previous.get("hosts"), dict):
+        hosts.update({str(h): dict(v) for h, v in previous["hosts"].items()
+                      if isinstance(v, dict)})
+    if not collected:
+        return previous if hosts else None
+    stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    for host, facts in collected.items():
+        hosts[str(host)] = {**{key: facts.get(key) for key in _CPU_FIELDS},
+                            "collected_at": stamp}
+    smallest: Dict[str, Any] = {}
+    shapes = set()
+    for facts in hosts.values():
+        shapes.add(tuple(facts.get(key) for key in _CPU_FIELDS))
+        for key in _CPU_FIELDS:
+            value = facts.get(key)
+            if isinstance(value, int):
+                smallest[key] = min(smallest.get(key, value), value)
+    return {"schema_version": CPU_SCHEMA, "hosts": dict(sorted(hosts.items())),
+            "smallest": smallest, "heterogeneous": len(shapes) > 1,
+            "source": "collector (/sys/devices/system/cpu topology on each node)"}
+
 
 class ResourceGraph:
     """
@@ -27,7 +65,9 @@ class ResourceGraph:
         self.install_placement: Optional[Dict[str, Any]] = None
         # site software copies the person confirmed, see core.site_copies
         self.software: Optional[List[Dict[str, Any]]] = None
-        
+        # per-node CPU topology the collector read (jarvis.resource-graph.cpu.v1)
+        self.cpu: Optional[Dict[str, Any]] = None
+
     def add_node_data(self, hostname: str, resource_data: Dict[str, Any]):
         """
         Add resource data for a node.
@@ -180,6 +220,8 @@ class ResourceGraph:
             data['install_placement'] = self.install_placement
         if self.software:
             data['software'] = self.software
+        if self.cpu:
+            data['cpu'] = self.cpu
         return data
 
     def save_to_file(self, output_path: Path, format: str = 'yaml'):
@@ -223,10 +265,12 @@ class ResourceGraph:
         software = data.get('software')
         self.software = ([dict(item) for item in software if isinstance(item, dict)]
                          if isinstance(software, list) else None)
+        cpu = data.get('cpu')
+        self.cpu = cpu if isinstance(cpu, dict) else None
 
         # Handle resource graph format with 'fs' section
         if ('fs' in data or self.net is not None or self.install_placement is not None
-                or self.software is not None):
+                or self.software is not None or self.cpu is not None):
             # Determine hostname for resource graph files
             hostname = input_path.stem  # Use filename as hostname
             self.nodes[hostname] = []

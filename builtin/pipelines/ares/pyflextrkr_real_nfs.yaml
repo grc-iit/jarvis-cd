@@ -23,6 +23,7 @@ scheduler:
   job_name: pyflextrkr_real_nfs
   nodes: 4
   ntasks_per_node: 24
+  ntasks_per_core: false  # 24 slots count hardware threads (20-core nodes)
   partition: compute
   time: "00:06:00"
   output: slurm-%j.out

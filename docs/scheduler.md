@@ -265,7 +265,8 @@ submitting. A resource-graph collection job is a pipeline with
 | `install` | `policy`, `runs_in`, `status`, the recorded `check` (when one matched), `placement`, and `at_submit`/`at_submit_limits` for a consented login check |
 | `install_job` | for an install job, the 1-node shape (`nodes`, `ntasks`, `exclusive`, `partition`, `account`, `time`, `overrides`) and `time_estimate`, how the wall time was chosen (see [Install job wall time](#install-job-wall-time)) |
 | `execution_root`, `hostfile`, `component_states` | where the record, the hostfile and [`components.jsonl`](executions.md#component-states-componentsjsonl) will be |
-| `warnings` | the `ppl check` warnings |
+| `warnings` | the `ppl check` warnings, plus the `cores.meaning` sentence when the ranks claim more cores per node than the partition has |
+| `cores` | for a Slurm run, what the request claims per node in physical cores (`jarvis.submit-cores.v1`, see [Whole cores per rank](#whole-cores-per-rank)) |
 | `submit_with`, `binding` | the bound submit command line, and how the binding works |
 
 The command exits with `exit_code`, so a caller handles a plan's exit 3 the
@@ -1115,6 +1116,59 @@ and its whole process tree. That stops both the paraview supervisor (which
 finalizes its service runtime as `stopped`) and the solver's `mpirun`, before
 the record is finalized.
 
+## Whole cores per rank
+
+On nodes with several hardware threads per core, Slurm counts each hardware
+thread as a CPU. Under `CR_CORE`, a task that asks for one CPU gets one
+hardware thread, so two ranks share a core and a node fits twice as many
+ranks as it has cores. Another job can also take the other half of those
+cores. On Ares (2 × 10 cores, 2 threads per core), two 16-rank jobs once
+shared a node: 32 ranks ran on 20 cores.
+
+So a Slurm job that requests ranks (`ntasks_per_node` or `ntasks`) also
+gets `#SBATCH --ntasks-per-core=1`. Each rank claims a whole core: 16 ranks
+per node claim 16 cores (32 CPUs), and 24 ranks on a 20-core node are
+refused at submit (`Requested node configuration is not available`) instead
+of sharing cores. `cpus_per_task` keeps Slurm's meaning (hardware threads),
+rounded up to whole cores: `cpus_per_task: 3` gives each rank 2 cores. A
+node without SMT is unchanged.
+
+The person keeps the choice. Any of `ntasks_per_core`, `threads_per_core`,
+`cores_per_socket`, `sockets_per_node`, `hint` or `extra_node_info` in
+`scheduler:`, or the matching flag in `sbatch_args`, leaves the mapping to
+them. `ntasks_per_core: false` restores Slurm's default of one task per
+hardware thread. The Ares builtin pipelines that use 24 slots on 20-core
+nodes for replicate loops set it. The other schedulers are unchanged.
+
+The request does not set `--exclusive`. Cores the job leaves free can go to
+other jobs; set `exclusive: true` to keep the nodes to this job. Slurm
+binds nothing when the site's `TaskPlugin` is `task/none` (Ares), so ranks
+may float over the node's CPUs. JARVIS's launchers add no binding, since
+binding to cores 0..N would collide with another job's ranks on a shared
+node.
+
+**The facts behind it.** `sched info` gives each partition's
+`sockets_per_node`, `cores_per_socket`, `threads_per_core` and
+`physical_cores_per_node` from `sinfo`. The resource graph's `cpu` section
+(`jarvis.resource-graph.cpu.v1`) holds what the collector read from
+`/sys/devices/system/cpu` on each node it ran on: `hosts.<host>` with
+`cpus`, `sockets`, `cores_per_socket`, `physical_cores`, `threads_per_core`
+and `collected_at`, plus `smallest` (each field's minimum) and
+`heterogeneous`. A collection replaces the hosts it reached and keeps the
+others.
+
+A Slurm run's plan (`ppl submit +plan`) carries `cores`
+(`jarvis.submit-cores.v1`):
+
+| Field | Meaning |
+|-------|---------|
+| `partition`, `source` | the submit partition (else the default), and where its topology came from: `sinfo`, `resource_graph.cpu`, or `null` when unknown |
+| `sockets_per_node`, `cores_per_socket`, `threads_per_core`, `physical_cores_per_node`, `cpus_per_node`, `heterogeneous` | that topology |
+| `ranks_per_node`, `cpus_per_task` | the request |
+| `ntasks_per_core`, `ntasks_per_core_source` | `1` from `jarvis`, the person's value from `pipeline.scheduler` (or `.sbatch_args`), or `unset` when no ranks are requested |
+| `cores_per_rank`, `cores_claimed_per_node`, `fits` | whole cores per rank, per node, and whether they fit the partition's cores (`null` when unknown or the person chose the mapping) |
+| `exclusive`, `meaning`, `override` | whether the nodes are the job's alone, one sentence saying what the request claims, and how to change it |
+
 ## Ranks per node inside an allocation
 
 Rank placement is the launcher's job, so packages pass their `nprocs` and
@@ -1165,13 +1219,19 @@ A rank that links a threaded library (OpenMP, OpenBLAS with pthreads, MKL)
 starts one thread per CPU it sees unless told otherwise, so 16 ranks on a
 40-CPU node can run 600+ threads. Inside an allocation, every MPI exec sets
 `OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS` and `MKL_NUM_THREADS` in each
-rank's env to the CPUs the allocation gives one rank:
+rank's env to the physical cores the allocation gives one rank, one thread
+per core. That is the CPUs per rank divided by the node's hardware threads
+per core, read from `/sys/devices/system/cpu` on the launch node (1 when
+unreadable), at least 1. The CPUs per rank are:
 
 - Slurm `SLURM_CPUS_PER_TASK` when the job asked for it (`cpus_per_task`);
 - else the CPUs per node (`SLURM_JOB_CPUS_PER_NODE` with
   `SLURM_JOB_NODELIST`, the smallest among the launch's hosts; under other
   schedulers the launcher's CPU affinity) divided by the ranks per node
-  (the launch's `ppn`, else `ceil(nprocs / hosts)`), at least 1.
+  (the launch's `ppn`, else `ceil(nprocs / hosts)`).
+
+With [one rank per core](#whole-cores-per-rank), 16 ranks per node on a
+2-thread-per-core node get 32 CPUs, so 2 CPUs and 1 thread per rank.
 
 A variable already in the rank env (the package's or pipeline's env) is
 kept, and one set in the launcher's environment is kept and forwarded to
@@ -1185,9 +1245,10 @@ in `provenance/launch-NNN/launch.json` (and inside `placement`):
 
 ```json
 {"schema_version": "jarvis.launch-threads.v1", "ranks_per_node": 16,
- "cpus": {"per_node": 40, "source": "SLURM_JOB_CPUS_PER_NODE", "value": "40(x2)"},
- "threads_per_rank": 2,
- "set": {"OMP_NUM_THREADS": "2", "OPENBLAS_NUM_THREADS": "2", "MKL_NUM_THREADS": "2"},
+ "cpus": {"per_node": 32, "source": "SLURM_JOB_CPUS_PER_NODE", "value": "32(x2)"},
+ "cpus_per_rank": 2, "threads_per_core": {"value": 2, "source": "sysfs"},
+ "threads_per_rank": 1,
+ "set": {"OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"},
  "kept": {}, "override": "..."}
 ```
 

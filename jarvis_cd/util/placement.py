@@ -201,6 +201,61 @@ def physical_cores(root: str = "/sys/devices/system/cpu") -> Optional[int]:
     return len(cores) or None
 
 
+def _online_cpus(root: str) -> List[int]:
+    """The CPU ids in ``<root>/online`` (e.g. ``0-39``), empty when unreadable."""
+    try:
+        with open(os.path.join(root, "online"), encoding="utf-8") as stream:
+            text = stream.read().strip()
+    except OSError:
+        return []
+    cpus: List[int] = []
+    for part in text.split(","):
+        start, _, end = part.partition("-")
+        if start.isdigit() and (not end or end.isdigit()):
+            cpus.extend(range(int(start), int(end or start) + 1))
+    return cpus
+
+
+def cpu_topology(root: str = "/sys/devices/system/cpu") -> Optional[Dict[str, Any]]:
+    """This node's CPU topology as the kernel reports it (``/sys`` topology).
+
+    ``cpus`` are hardware threads; ``physical_cores`` counts each core once
+    (distinct ``(physical_package_id, core_id)``). None when unreadable.
+    """
+    cores: Dict[tuple, int] = {}
+    sockets = set()
+    cpus = _online_cpus(root)
+    for cpu in cpus:
+        base = os.path.join(root, f"cpu{cpu}", "topology")
+        try:
+            with open(os.path.join(base, "core_id"), encoding="utf-8") as stream:
+                core = stream.read().strip()
+            with open(os.path.join(base, "physical_package_id"), encoding="utf-8") as stream:
+                package = stream.read().strip()
+        except OSError:
+            return None
+        sockets.add(package)
+        cores[(package, core)] = cores.get((package, core), 0) + 1
+    if not cores:
+        return None
+    return {
+        "cpus": len(cpus),
+        "sockets": len(sockets),
+        "physical_cores": len(cores),
+        "cores_per_socket": len(cores) // max(1, len(sockets)),
+        "threads_per_core": max(cores.values()),
+        "source": "sysfs",
+    }
+
+
+def node_threads_per_core(root: str = "/sys/devices/system/cpu") -> Dict[str, Any]:
+    """Hardware threads per physical core on this node (1 when unknown)."""
+    topology = cpu_topology(root)
+    if topology is None:
+        return {"value": 1, "source": "unknown"}
+    return {"value": int(topology["threads_per_core"]), "source": "sysfs"}
+
+
 def resolve_ppn(
     nprocs: Optional[int],
     ppn: Optional[int],
@@ -324,12 +379,13 @@ def rank_threads(
     rank_env: Dict[str, Any],
     environ: Mapping[str, str],
 ) -> Optional[Dict[str, Any]]:
-    """Set each rank's thread counts to the CPUs the allocation gives it.
+    """Set each rank's thread counts to the physical cores the allocation gives it.
 
     Inside an allocation, ``OMP_NUM_THREADS``, ``OPENBLAS_NUM_THREADS`` and
     ``MKL_NUM_THREADS`` go into ``rank_env`` as the allocation's CPUs per
-    rank: ``SLURM_CPUS_PER_TASK``, else CPUs per node divided by the ranks
-    per node (``ppn``, else ``ceil(nprocs / hosts)``), at least 1. A value
+    rank (``SLURM_CPUS_PER_TASK``, else CPUs per node divided by the ranks
+    per node: ``ppn``, else ``ceil(nprocs / hosts)``) divided by the node's
+    hardware threads per core, at least 1: one thread per whole core. A value
     already in the rank env (the package's or pipeline's env) is kept; one
     set in the launcher's environment is kept and forwarded to every rank.
     ``JARVIS_MPI_THREADS=off`` (rank env or environment) sets nothing.
@@ -352,14 +408,17 @@ def rank_threads(
     else:
         ranks_per_node = 1
     cpus = allocation_cpus(environ, hosts)
+    per_core = node_threads_per_core()
     threads: Optional[int] = None
+    cpus_per_rank: Optional[int] = None
     if cpus is not None:
         if "per_rank" in cpus:
-            threads = int(cpus["per_rank"])
+            cpus_per_rank = int(cpus["per_rank"])
         else:
-            threads = max(1, int(cpus["per_node"]) // max(1, ranks_per_node))
-    record.update(ranks_per_node=ranks_per_node, cpus=cpus, threads_per_rank=threads,
-                  set={}, kept={})
+            cpus_per_rank = int(cpus["per_node"]) // max(1, ranks_per_node)
+        threads = max(1, cpus_per_rank // max(1, int(per_core["value"])))
+    record.update(ranks_per_node=ranks_per_node, cpus=cpus, cpus_per_rank=cpus_per_rank,
+                  threads_per_core=per_core, threads_per_rank=threads, set={}, kept={})
     for name in THREAD_VARIABLES:
         if rank_env.get(name) not in (None, ""):
             record["kept"][name] = {"value": str(rank_env[name]), "from": "rank_env"}

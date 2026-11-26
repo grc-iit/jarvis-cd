@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from typing import Any, Dict, List, Mapping, Optional
 
 from jarvis_cd.core.pipeline_check import package_name
@@ -127,6 +128,103 @@ def _install_summary(ppl: Any, outcome: Optional[Mapping[str, Any]]) -> Dict[str
         if outcome.get("refused"):
             summary["refused"] = outcome["refused"]
     return summary
+
+
+def _partition_topology(spec: Mapping[str, Any]) -> Dict[str, Any]:
+    """The submit partition's node topology: sinfo, else the resource graph."""
+    from jarvis_cd.core.scheduler import SlurmScheduler
+
+    fields = ("sockets_per_node", "cores_per_socket", "threads_per_core",
+              "physical_cores_per_node", "cpus_per_node", "heterogeneous")
+    wanted = spec.get("partition")
+    try:
+        facts = SlurmScheduler.partition_facts()
+    except Exception:
+        facts = []
+    for entry in facts:
+        if (entry.get("partition") == wanted if wanted else entry.get("default")):
+            if entry.get("physical_cores_per_node"):
+                return {"partition": entry.get("partition"), "source": "sinfo",
+                        **{key: entry.get(key) for key in fields}}
+    try:
+        from jarvis_cd.core.resource_graph import ResourceGraphManager
+
+        cpu = ResourceGraphManager().resource_graph.cpu or {}
+    except Exception:
+        cpu = {}
+    smallest = cpu.get("smallest") or {}
+    if smallest.get("physical_cores"):
+        return {"partition": wanted, "source": "resource_graph.cpu",
+                "sockets_per_node": smallest.get("sockets"),
+                "cores_per_socket": smallest.get("cores_per_socket"),
+                "threads_per_core": smallest.get("threads_per_core"),
+                "physical_cores_per_node": smallest.get("physical_cores"),
+                "cpus_per_node": smallest.get("cpus"),
+                "heterogeneous": cpu.get("heterogeneous")}
+    return {"partition": wanted, "source": None, **dict.fromkeys(fields)}
+
+
+def _int(value: Any) -> Optional[int]:
+    if isinstance(value, bool):
+        return None
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def cores_plan(sched: Any, spec: Mapping[str, Any], nodes: Optional[int]) -> Dict[str, Any]:
+    """What a run's request claims per node, in physical cores.
+
+    The partition's topology is discovered (sinfo, else the collector's
+    graph); the request is the rendered spec plus JARVIS's per-core default
+    (``SlurmScheduler.core_request``).
+    """
+    request = sched.core_request(spec)
+    topology = _partition_topology(spec)
+    ranks_per_node = _int(spec.get("ntasks_per_node"))
+    total = _int(spec.get("ntasks"))
+    if ranks_per_node is None and total and nodes:
+        ranks_per_node = math.ceil(total / max(1, nodes))
+    cpus_per_task = _int(spec.get("cpus_per_task")) or 1
+    per_core = _int(topology.get("threads_per_core"))
+    cores = _int(topology.get("physical_cores_per_node"))
+    cores_per_rank = None
+    if request.get("ntasks_per_core") == 1 and per_core:
+        cores_per_rank = math.ceil(cpus_per_task / per_core)
+    claimed = (ranks_per_node * cores_per_rank
+               if ranks_per_node and cores_per_rank else None)
+    fits = claimed <= cores if claimed is not None and cores else None
+    if claimed is not None and cores:
+        meaning = (f"each rank claims {cores_per_rank} whole core(s): {ranks_per_node} "
+                   f"ranks per node claim {claimed} of the {cores} physical cores "
+                   f"({per_core} hardware thread(s) per core) on {topology['partition']}")
+        if fits is False:
+            meaning += "; Slurm refuses the submit (too few cores per node)"
+        elif not spec.get("exclusive") and claimed < cores:
+            meaning += "; other jobs may use the remaining cores (exclusive is not set)"
+    elif request["source"] == "jarvis":
+        meaning = "each rank claims a whole core (--ntasks-per-core=1); topology unknown"
+    elif request["source"] == "unset":
+        meaning = "no rank request; Slurm's default task per node"
+    else:
+        meaning = (f"per-core mapping set by the person ({request['key']}); JARVIS adds "
+                   "no --ntasks-per-core")
+    return {
+        "schema_version": "jarvis.submit-cores.v1",
+        **topology,
+        "ranks_per_node": ranks_per_node,
+        "cpus_per_task": cpus_per_task,
+        "ntasks_per_core": request.get("ntasks_per_core"),
+        "ntasks_per_core_source": request["source"],
+        "cores_per_rank": cores_per_rank,
+        "cores_claimed_per_node": claimed,
+        "fits": fits,
+        "exclusive": bool(spec.get("exclusive")),
+        "meaning": meaning,
+        "override": ("set scheduler.ntasks_per_core (false for Slurm's default of one "
+                     "task per hardware thread), or cpus_per_task for more cores per rank"),
+    }
 
 
 def build_submit_plan(
@@ -241,6 +339,10 @@ def build_submit_plan(
     }
     if rendered.get("install_job_shape"):
         document["install_job"] = rendered["install_job_shape"]
+    if action == "run" and sched.NAME == "slurm":
+        document["cores"] = cores_plan(sched, spec, nodes)
+        if document["cores"].get("fits") is False:
+            document["warnings"].append(document["cores"]["meaning"])
     if walltime and walltime.get("source") == "jarvis_estimate":
         document["sources"]["time"] = "jarvis_estimate"
     return document
