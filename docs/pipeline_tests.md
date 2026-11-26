@@ -779,9 +779,10 @@ the site home is `JARVIS_SITE_HOME`, else `~/.ppi-jarvis/site` when
 `JARVIS_RESOURCE_GRAPH` names a site graph (never that graph's directory),
 else `JARVIS_ROOT`, else `~/.ppi-jarvis`. It prepares that root once, as
 `jarvis spack prepare --site_spack <answer>` would, with the answer as its
-upstream, so find-first reuses what the site built. When `<root>/opt/spack`
-would make Spack's sbang line too long, its install tree is
-`~/.jarvis-spack/<digest>` (see [The install tree](spack.md#the-install-tree)).
+upstream, so find-first reuses what the site built. When the root's own
+install tree or bootstrap store would make Spack's sbang line too long, both
+live under `~/.jarvis-spack/<digest>` (see
+[The install tree](spack.md#the-install-tree)).
 Concurrent installs wait
 on one lock, and later ones find `site-prep.json` and skip the work. An
 `ambiguous_compiler` question from that preparation is raised like any other

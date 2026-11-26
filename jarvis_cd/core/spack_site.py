@@ -83,8 +83,8 @@ _RELEASE = re.compile(r"^\d+\.\d+(?:\.\d+)?$")
 #: Linux's shebang line limit, the one Spack's sbang hook enforces
 #: (``spack.hooks.sbang.system_shebang_limit``).
 SHEBANG_LIMIT = 127
-#: A directory for jarvis Spack install trees, one ``<digest>`` per root,
-#: used when ``<root>/opt/spack`` is too long for sbang.
+#: A directory for jarvis Spack install and bootstrap trees, one
+#: ``<digest>`` per root, used when the root's own are too long for sbang.
 INSTALL_BASE_ENV = "JARVIS_SPACK_INSTALL_BASE"
 DEFAULT_INSTALL_BASE = Path("~") / ".jarvis-spack"
 
@@ -94,44 +94,61 @@ def sbang_shebang(tree: Path) -> str:
     return f"#!/bin/sh {tree / 'bin' / 'sbang'}"
 
 
+def _sbang_lines(install_tree: Path, bootstrap_root: Path) -> Dict[str, int]:
+    # Spack's bootstrap store (clingo, gnupg) is <bootstrap root>/store, and
+    # gets its own sbang.
+    return {"install_tree": len(sbang_shebang(install_tree)),
+            "bootstrap_store": len(sbang_shebang(bootstrap_root / "store"))}
+
+
 def jarvis_install_tree(spack_root: Path) -> Dict[str, Any]:
-    """The install tree a jarvis Spack uses, and why.
+    """The install tree and bootstrap root a jarvis Spack uses, and why.
 
     Spack rewrites an installed script's over-long shebang to run through
-    ``<install_tree>/bin/sbang``, and refuses to install when that line
-    itself is over the limit. So the tree is Spack's default
-    ``<root>/opt/spack`` while its sbang line fits, else
-    ``<JARVIS_SPACK_INSTALL_BASE or ~/.jarvis-spack>/<digest of root>``.
+    ``<tree>/bin/sbang``, for its install tree and for its bootstrap store,
+    and refuses to install when that line itself is over the limit. So both
+    are the root's own (``<root>/opt/spack``, ``<root>/var/jarvis/bootstrap``)
+    while their sbang lines fit, else both move to
+    ``<JARVIS_SPACK_INSTALL_BASE or ~/.jarvis-spack>/<digest of root>/``.
     A base given in the environment is always used.
     """
     root = Path(spack_root).expanduser().resolve()
-    default = root / "opt" / "spack"
+    default_tree, default_bootstrap = root / "opt" / "spack", root / "var" / "jarvis" / "bootstrap"
+    default_lines = _sbang_lines(default_tree, default_bootstrap)
     base_text = os.environ.get(INSTALL_BASE_ENV, "").strip()
     digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
     if base_text:
-        tree = Path(os.path.abspath(os.path.expanduser(os.path.expandvars(base_text)))) / digest
+        base = Path(os.path.abspath(os.path.expanduser(os.path.expandvars(base_text))))
         source = INSTALL_BASE_ENV
-    elif len(sbang_shebang(default)) <= SHEBANG_LIMIT:
-        tree, source = default, "default"
+    elif max(default_lines.values()) <= SHEBANG_LIMIT:
+        base, source = None, "default"
     else:
-        tree = Path(os.path.abspath(os.path.expanduser(str(DEFAULT_INSTALL_BASE)))) / digest
+        base = Path(os.path.abspath(os.path.expanduser(str(DEFAULT_INSTALL_BASE))))
         source = "short_base"
-    line = sbang_shebang(tree)
-    if len(line) > SHEBANG_LIMIT:
+    if base is None:
+        tree, bootstrap = default_tree, default_bootstrap
+    else:
+        tree, bootstrap = base / digest / "opt", base / digest / "bootstrap"
+    lines = _sbang_lines(tree, bootstrap)
+    if max(lines.values()) > SHEBANG_LIMIT:
+        longest = (tree if lines["install_tree"] >= lines["bootstrap_store"]
+                   else bootstrap / "store")
+        line = sbang_shebang(longest)
         raise _refuse(
             "spack_install_tree_too_long",
-            f"Spack's sbang line for the install tree {tree} is {len(line)} characters, "
-            f"over Linux's {SHEBANG_LIMIT}: Spack cannot install scripts there. Set "
+            f"Spack's sbang line for {longest} is {len(line)} characters, over "
+            f"Linux's {SHEBANG_LIMIT}: Spack cannot install scripts there. Set "
             f"{INSTALL_BASE_ENV} to a shorter directory on a file system the build "
             "nodes share",
-            field=INSTALL_BASE_ENV, tree=str(tree), sbang_line=line,
+            field=INSTALL_BASE_ENV, tree=str(longest), sbang_line=line,
             length=len(line), limit=SHEBANG_LIMIT,
         )
     return {
         "root": str(tree),
+        "bootstrap_root": str(bootstrap),
         "source": source,
-        "sbang_line_length": len(line),
-        "default_sbang_line_length": len(sbang_shebang(default)),
+        "sbang_line_lengths": lines,
+        "default_sbang_line_lengths": default_lines,
         "limit": SHEBANG_LIMIT,
     }
 
@@ -607,9 +624,10 @@ def prepare_site(
                       field="--build_jobs", build_jobs=jobs)
     own_tree = jarvis_install_tree(spack_root)
     if own_tree["source"] == "short_base":
-        note = (f"install tree {own_tree['root']}: {spack_root / 'opt' / 'spack'} would "
-                f"give a {own_tree['default_sbang_line_length']}-character sbang line, "
-                f"over Linux's {SHEBANG_LIMIT}")
+        note = (f"install tree {own_tree['root']}, bootstrap root "
+                f"{own_tree['bootstrap_root']}: the root's own would give sbang lines of "
+                f"{own_tree['default_sbang_line_lengths']} characters, over Linux's "
+                f"{SHEBANG_LIMIT}")
         log.append(note)
         if progress is not None:
             progress(note + "\n")
@@ -659,7 +677,9 @@ def prepare_site(
     }}, changes)
     _put(etc, "concretizer.yaml", {"concretizer": {"reuse": True}}, changes)
     _put(etc, "bootstrap.yaml", {"bootstrap": {
-        "root": "$spack/var/jarvis/bootstrap", "trusted": {"spack-install": False},
+        "root": ("$spack/var/jarvis/bootstrap" if own_tree["source"] == "default"
+                 else own_tree["bootstrap_root"]),
+        "trusted": {"spack-install": False},
     }}, changes)
 
     spack = _Spack(spack_root, log, progress)

@@ -724,16 +724,19 @@ def prepare_chained_spack(
         except (OSError, ValueError):
             previous = None
         try:
-            tree = jarvis_install_tree(root)["root"]
+            wanted = jarvis_install_tree(root)
+            trees = (wanted["root"], wanted["bootstrap_root"])
         except JarvisIssueError:
-            tree = None  # prepare_site refuses it below
+            trees = None  # prepare_site refuses it below
+        # a record from before 1.9.22 used the root's own trees
+        had = (previous or {}).get("install_tree") if isinstance(previous, Mapping) else None
+        had = had or {"root": str(root.resolve() / "opt" / "spack"),
+                      "bootstrap_root": str(root.resolve() / "var" / "jarvis" / "bootstrap")}
         if (
             isinstance(previous, Mapping)
             and previous.get("status") == "prepared"
             and previous.get("site_spack") == str(site_root)
-            # a record from before 1.9.22 used Spack's default tree
-            and ((previous.get("install_tree") or {}).get("root")
-                 or str(root.resolve() / "opt" / "spack")) == tree
+            and (had.get("root"), had.get("bootstrap_root")) == trees
         ):
             return None
         answers = {

@@ -34,18 +34,29 @@ class TestJarvisInstallTree(unittest.TestCase):
         self.assertGreater(len(spack_site.sbang_shebang(root / "opt" / "spack")), SHEBANG_LIMIT)
         return root
 
-    def test_short_root_keeps_spack_default(self):
+    def test_bootstrap_store_alone_too_long_moves_both(self):
+        # <root>/opt/spack fits, <root>/var/jarvis/bootstrap/store does not
+        root = self.temp / ("r" * (SHEBANG_LIMIT - len(str(self.temp)) - 34))
+        self.assertLessEqual(len(spack_site.sbang_shebang(root / "opt" / "spack")), SHEBANG_LIMIT)
+        tree = jarvis_install_tree(root)
+        self.assertEqual(tree["source"], "short_base")
+        self.assertGreater(tree["default_sbang_line_lengths"]["bootstrap_store"], SHEBANG_LIMIT)
+
+    def test_short_root_keeps_its_own_trees(self):
         tree = jarvis_install_tree(self.temp / "s")
         self.assertEqual(tree["source"], "default")
         self.assertEqual(tree["root"], str(self.temp / "s" / "opt" / "spack"))
+        self.assertEqual(tree["bootstrap_root"], str(self.temp / "s" / "var" / "jarvis" / "bootstrap"))
 
-    def test_long_root_moves_to_short_base_per_root(self):
+    def test_long_root_moves_both_trees_to_short_base_per_root(self):
         root = self._long_root()
         tree = jarvis_install_tree(root)
         self.assertEqual(tree["source"], "short_base")
-        self.assertEqual(Path(tree["root"]).parent, self.temp / "h" / ".jarvis-spack")
-        self.assertLessEqual(tree["sbang_line_length"], SHEBANG_LIMIT)
-        self.assertGreater(tree["default_sbang_line_length"], SHEBANG_LIMIT)
+        home = Path(tree["root"]).parent
+        self.assertEqual(home.parent, self.temp / "h" / ".jarvis-spack")
+        self.assertEqual(Path(tree["bootstrap_root"]).parent, home)
+        self.assertLessEqual(max(tree["sbang_line_lengths"].values()), SHEBANG_LIMIT)
+        self.assertGreater(tree["default_sbang_line_lengths"]["install_tree"], SHEBANG_LIMIT)
         self.assertEqual(jarvis_install_tree(root)["root"], tree["root"])
         self.assertNotEqual(jarvis_install_tree(root.parent / "other")["root"], tree["root"])
 
@@ -53,7 +64,7 @@ class TestJarvisInstallTree(unittest.TestCase):
         os.environ[INSTALL_BASE_ENV] = str(self.temp / "b")
         tree = jarvis_install_tree(self.temp / "s")
         self.assertEqual(tree["source"], INSTALL_BASE_ENV)
-        self.assertEqual(Path(tree["root"]).parent, self.temp / "b")
+        self.assertEqual(Path(tree["root"]).parent.parent, self.temp / "b")
 
     def test_too_long_base_is_refused_with_the_line(self):
         os.environ[INSTALL_BASE_ENV] = str(self.temp / ("b" * 130))
