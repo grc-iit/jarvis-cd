@@ -214,6 +214,8 @@ class InstallFailed(JarvisIssueError):
         super().__init__(issues, exit_code=INSTALL_FAILED_EXIT_CODE)
         self.issues_path = Path(issues_path)
         self.report = dict(report) if report is not None else None
+        #: the refusal document when this wraps a typed refusal (refusal_failure)
+        self.refusal: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         document: Dict[str, Any] = dict(self.report or {})
@@ -228,6 +230,8 @@ class InstallFailed(JarvisIssueError):
             open_issues=[issue.get("issue_id") for issue in issues],
             issues_path=str(self.issues_path),
         )
+        if self.refusal is not None:
+            document.update(refused=True, refusal=self.refusal)
         return document
 
 
@@ -728,7 +732,14 @@ def prepare_chained_spack(
             str(issue_id): dict(entry) if isinstance(entry, Mapping) else {"constraint": entry}
             for issue_id, entry in (context.answers or {}).items()
         }
-        record = prepare_site(root=str(root), site_spack=str(site_root), answers=answers)
+        try:
+            record = prepare_site(root=str(root), site_spack=str(site_root), answers=answers,
+                                  progress=context.log)
+        except InstallFailed:
+            raise
+        except JarvisIssueError as refused:
+            context.log(f"[{_utc_now()}] REFUSED: preparing jarvis Spack {root}: {refused}\n")
+            raise refusal_failure(context, refused, stage="spack_site_prep") from refused
     context.log(
         f"[{_utc_now()}] jarvis Spack {root} prepared ({record.get('checkout')}), "
         f"upstream {record.get('upstream_install_tree')}\n"
@@ -1038,6 +1049,45 @@ def failure_record(
         if value is not None:
             issue[key] = value
     return issue
+
+
+def refusal_failure(
+    context: "InstallContext", error: JarvisIssueError, *, stage: str,
+    packages: Sequence[str] = (),
+) -> InstallFailed:
+    """An install's :class:`InstallFailed` for a typed refusal raised under it.
+
+    Each ``jarvis.issue.v1`` refusal (``spack_compiler_find_failed`` from
+    site preparation, say) is written to ``issues.jsonl`` as it is: its
+    kind, issue id, message and details, with the install's host, stage and
+    paths added, never answerable. The failure keeps the refusal's exit
+    code and its document (``refusal``).
+    """
+    raised: List[Dict[str, Any]] = []
+    for item in error.issues:
+        issue = dict(item)
+        message = str(issue.get("message") or error)
+        issue.setdefault("refusal_schema", issue.get("schema"))
+        issue.update(
+            schema=ISSUE_SCHEMA,
+            package=str(packages[0]) if len(packages) == 1 else "*",
+            scope="run",
+            question=message,
+            message=message,
+            candidates=[],
+            answerable=False,
+            stage=stage,
+            packages=[str(name) for name in packages],
+            host=socket.gethostname(),
+            paths={"install_log": str(context.log_path),
+                   "issues": str(context.issues_path)},
+        )
+        context.raise_issue(issue)
+        raised.append(issue)
+    failed = InstallFailed(raised, context.issues_path)
+    failed.exit_code = error.exit_code
+    failed.refusal = error.to_dict()
+    return failed
 
 
 def spack_failure(

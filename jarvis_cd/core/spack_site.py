@@ -15,10 +15,12 @@ reuse what the site already has:
   it is an ``ambiguous_compiler`` question (exit 3) instead of a guess.
 
 Everything goes to the root's site scope ``<root>/etc/spack`` (the scope that
-survives ``SPACK_DISABLE_LOCAL_CONFIG``). It is light, short work, safe on a
-login node: a shallow clone when the root is absent, config writes,
-``compiler find``, ``external find`` and a ``module load`` probe in a
-throwaway login shell. It never installs or builds. The result is
+survives ``SPACK_DISABLE_LOCAL_CONFIG``). It never installs or builds: a
+shallow clone when the root is absent, config writes, ``compiler find``,
+``external find`` and a ``module load`` probe in a throwaway login shell.
+A first ``compiler find`` against a large upstream on NFS can take minutes,
+so no Spack command has a time limit; each is watched for a stall instead
+(see :class:`_Spack`, ``JARVIS_SPACK_STALL_SECONDS``). The result is
 ``<root>/var/jarvis/site-prep.json`` (``jarvis.spack-site-prep.v1``), which
 install records and provenance reference.
 """
@@ -32,7 +34,7 @@ import re
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, Iterator, List, Mapping, Optional, Sequence
 
 import yaml
 
@@ -81,11 +83,12 @@ _MODULE_VERSION = re.compile(r"^[0-9][A-Za-z0-9._-]*$")
 
 
 def _refuse(kind: str, message: str, *, field: Optional[str] = None,
-            **details: Any) -> JarvisIssueError:
+            evidence: Optional[Mapping[str, Any]] = None, **details: Any) -> JarvisIssueError:
+    """A site-prep refusal; ``evidence`` (output, exit code) is kept out of its id."""
     issue = make_jarvis_issue(
         kind=kind, subject="spack_site_prep", message=message,
         identity={key: str(value) for key, value in details.items()},
-        field=field, details=details,
+        field=field, details={**details, **dict(evidence or {})},
     )
     return JarvisIssueError([issue], document={"schema_version": SITE_PREP_SCHEMA})
 
@@ -97,29 +100,244 @@ def _version_key(version: str) -> tuple:
     )
 
 
-class _Spack:
-    """Runs one Spack by path, isolated like every jarvis Spack call."""
+#: seconds a jarvis Spack command may go without output, CPU time or I/O in its
+#: process tree before it counts as stalled (``JARVIS_SPACK_STALL_SECONDS``).
+#: Not a time limit: a command that keeps working runs as long as it needs.
+STALL_SECONDS_ENV = "JARVIS_SPACK_STALL_SECONDS"
+DEFAULT_STALL_SECONDS = 600
+#: how often a running command reports that it is still working
+PROGRESS_SECONDS = 60
+#: attempts of a command that stalls before site preparation refuses
+STALL_ATTEMPTS = 2
+_POLL_SECONDS = 5.0
+_OUTPUT_TAIL_CHARS = 4096
 
-    def __init__(self, root: Path, log: List[str]):
+
+def stall_seconds() -> int:
+    raw = os.environ.get(STALL_SECONDS_ENV, "").strip()
+    try:
+        value = int(raw) if raw else DEFAULT_STALL_SECONDS
+    except ValueError:
+        value = DEFAULT_STALL_SECONDS
+    return max(value, 30)
+
+
+def _process_tree(root_pid: int) -> List[int]:
+    """``root_pid`` and its live descendants (from ``/proc``)."""
+    children: Dict[int, List[int]] = {}
+    try:
+        entries = os.listdir("/proc")
+    except OSError:
+        return [root_pid]
+    for entry in entries:
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat", "rb") as stream:
+                fields = stream.read().rsplit(b")", 1)[1].split()
+        except (OSError, IndexError):
+            continue
+        children.setdefault(int(fields[1]), []).append(int(entry))
+    tree, pending = [], [root_pid]
+    while pending:
+        pid = pending.pop()
+        tree.append(pid)
+        pending.extend(children.get(pid, ()))
+    return tree
+
+
+def _tree_activity(root_pid: int) -> Optional[Dict[str, int]]:
+    """CPU ticks and I/O bytes of the process tree, or None without ``/proc``."""
+    if not os.path.isdir("/proc/self"):
+        return None
+    cpu = io_bytes = 0
+    pids = _process_tree(root_pid)
+    for pid in pids:
+        try:
+            with open(f"/proc/{pid}/stat", "rb") as stream:
+                fields = stream.read().rsplit(b")", 1)[1].split()
+            cpu += int(fields[11]) + int(fields[12]) + int(fields[13]) + int(fields[14])
+        except (OSError, IndexError, ValueError):
+            pass
+        try:
+            with open(f"/proc/{pid}/io", "rb") as stream:
+                for line in stream:
+                    if line.startswith((b"rchar:", b"wchar:")):
+                        io_bytes += int(line.split()[1])
+        except (OSError, IndexError, ValueError):
+            pass
+    return {"cpu_ticks": cpu, "io_bytes": io_bytes, "processes": len(pids)}
+
+
+def _stop_group(process: subprocess.Popen) -> None:
+    import signal
+
+    killpg = getattr(os, "killpg", None)
+    for sig, grace in ((signal.SIGTERM, 10), (getattr(signal, "SIGKILL", signal.SIGTERM), 10)):
+        try:
+            if killpg is None:
+                raise OSError("no process groups")
+            killpg(process.pid, sig)
+        except OSError:
+            try:
+                process.kill()
+            except OSError:
+                pass
+        try:
+            process.wait(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+class _Spack:
+    """Runs one Spack by path, isolated like every jarvis Spack call.
+
+    No time limit: a command runs while it shows progress (output, or CPU
+    time or I/O anywhere in its process tree). Every
+    :data:`PROGRESS_SECONDS` it reports that it is still working; one that
+    shows none for :func:`stall_seconds` is stopped and retried, visibly,
+    up to :data:`STALL_ATTEMPTS` times. The result of a command that
+    stalled every time has ``returncode`` 124, Spack's own output so far,
+    and a ``stall`` record.
+    """
+
+    def __init__(self, root: Path, log: List[str],
+                 progress: Optional[Callable[[str], Any]] = None):
         self.executable = str(root / "bin" / "spack")
         self.root = root
         self.log = log
+        self.progress = progress
 
-    def run(self, arguments: Sequence[str], timeout: int = 300) -> subprocess.CompletedProcess:
+    def _say(self, text: str, *, record: bool = True) -> None:
+        if record:
+            self.log.append(text)
+        if self.progress is not None:
+            try:
+                self.progress(f"[{_utc_now()}] {text}\n")
+            except Exception:
+                pass
+
+    def run(self, arguments: Sequence[str]) -> subprocess.CompletedProcess:
         with _jarvis_root(self.root):
             environment = spack_subprocess_environment()
-        command = [self.executable, *arguments]
-        self.log.append("$ " + shlex.join(command))
+        return run_watched([self.executable, *arguments], environment, self._say,
+                           what="spack " + " ".join(arguments[:2]))
+
+
+def run_watched(command: Sequence[str], environment: Optional[Mapping[str, str]],
+                say: Callable[..., None], *, what: str) -> subprocess.CompletedProcess:
+    """Run ``command`` with stall detection and visible retries (see :class:`_Spack`)."""
+    import threading
+    import time
+
+    window = stall_seconds()
+    say("$ " + shlex.join(command))
+    stalls: List[Dict[str, Any]] = []
+    for attempt in range(1, STALL_ATTEMPTS + 1):
         try:
-            completed = subprocess.run(
-                command, capture_output=True, text=True, encoding="utf-8",
-                errors="replace", env=environment, timeout=timeout, check=False,
+            process = subprocess.Popen(
+                list(command), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
+                env=dict(environment) if environment is not None else None,
+                start_new_session=True,
             )
-        except subprocess.TimeoutExpired:
-            self.log.append(f"timed out after {timeout}s")
-            return subprocess.CompletedProcess(command, 124, "", "timeout")
-        self.log.append(f"exit {completed.returncode}")
+        except OSError as error:
+            say(f"could not start: {error}")
+            return subprocess.CompletedProcess(list(command), 127, "", str(error))
+        streams: Dict[str, List[str]] = {"stdout": [], "stderr": []}
+        last_output = [time.monotonic()]
+
+        def pump(name: str, stream: Any) -> None:
+            for line in stream:
+                streams[name].append(line)
+                last_output[0] = time.monotonic()
+
+        readers = [threading.Thread(target=pump, args=(name, getattr(process, name)),
+                                    daemon=True) for name in streams]
+        for reader in readers:
+            reader.start()
+        started = last_active = time.monotonic()
+        last_report = started
+        previous = _tree_activity(process.pid)
+        watched = previous is not None
+        stalled: Optional[Dict[str, Any]] = None
+        while True:
+            try:
+                process.wait(timeout=_POLL_SECONDS)
+                break
+            except subprocess.TimeoutExpired:
+                pass
+            now = time.monotonic()
+            sample = _tree_activity(process.pid)
+            if last_output[0] > last_active:
+                last_active = last_output[0]
+            if sample is not None and previous is not None and (
+                    sample["cpu_ticks"] != previous["cpu_ticks"]
+                    or sample["io_bytes"] != previous["io_bytes"]):
+                last_active = now
+            if sample is not None:
+                previous = sample
+            if now - last_report >= PROGRESS_SECONDS:
+                last_report = now
+                lines = sum(len(item) for item in streams.values())
+                say(f"{what} still running ({int(now - started)}s, attempt {attempt}; "
+                    f"{lines} output line(s), "
+                    + (f"{previous['processes']} process(es), cpu "
+                       f"{previous['cpu_ticks']} ticks, io {previous['io_bytes']} bytes; "
+                       if previous is not None else "")
+                    + f"last progress {int(now - last_active)}s ago)", record=False)
+            if watched and now - last_active >= window:
+                stalled = {"attempt": attempt, "after_s": int(now - started),
+                           "idle_s": int(now - last_active), "activity": previous}
+                _stop_group(process)
+                break
+        for reader in readers:
+            reader.join(timeout=10)
+        stdout, stderr = "".join(streams["stdout"]), "".join(streams["stderr"])
+        if stalled is None:
+            say(f"exit {process.returncode}")
+            completed = subprocess.CompletedProcess(list(command), process.returncode,
+                                                    stdout, stderr)
+            if stalls:
+                completed.stall = {"stalls": stalls, "recovered": True}  # type: ignore[attr-defined]
+            return completed
+        stalled["output_tail"] = (stderr + stdout)[-_OUTPUT_TAIL_CHARS:]
+        stalls.append(stalled)
+        if attempt < STALL_ATTEMPTS:
+            say(f"{what} stalled: no output, CPU time or I/O for {stalled['idle_s']}s "
+                f"(window {window}s); stopped and retrying "
+                f"(attempt {attempt + 1}/{STALL_ATTEMPTS})")
+            continue
+        say(f"{what} stalled: no output, CPU time or I/O for {stalled['idle_s']}s "
+            f"(window {window}s) on all {STALL_ATTEMPTS} attempts")
+        completed = subprocess.CompletedProcess(list(command), 124, stdout, stderr)
+        completed.stall = {"stalls": stalls, "recovered": False,  # type: ignore[attr-defined]
+                           "window_s": window, "attempts": STALL_ATTEMPTS}
         return completed
+    raise AssertionError("unreachable")
+
+
+def _failed_detail(completed: subprocess.CompletedProcess) -> Dict[str, Any]:
+    """What a refusal carries about a failed or stalled Spack command."""
+    output = (completed.stderr or "") + (completed.stdout or "")
+    detail: Dict[str, Any] = {"exit_code": completed.returncode,
+                              "output": output[-_OUTPUT_TAIL_CHARS:]}
+    stall = getattr(completed, "stall", None)
+    if stall is not None:
+        detail["stall"] = stall
+    return detail
+
+
+def _failed_message(what: str, completed: subprocess.CompletedProcess) -> str:
+    output = ((completed.stderr or "") + (completed.stdout or "")).strip()
+    stall = getattr(completed, "stall", None)
+    if stall is not None and not stall.get("recovered"):
+        head = (f"{what} stalled: no output, CPU time or I/O for "
+                f"{stall['window_s']}s on each of {stall['attempts']} attempts")
+        return head + ("; Spack's output so far: " + output[-512:] if output
+                       else "; Spack printed nothing")
+    return f"{what} failed: " + output[-512:]
 
 
 @contextlib.contextmanager
@@ -158,10 +376,11 @@ def _load_yaml(path: Path) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def site_install_tree(site: Path, log: List[str]) -> Path:
+def site_install_tree(site: Path, log: List[str],
+                      progress: Optional[Callable[[str], Any]] = None) -> Path:
     """The site Spack's install tree (``spack.store.STORE.root``)."""
-    completed = _Spack(site, log).run(
-        ["python", "-c", "import spack.store; print(spack.store.STORE.root)"], timeout=60
+    completed = _Spack(site, log, progress).run(
+        ["python", "-c", "import spack.store; print(spack.store.STORE.root)"]
     )
     lines = [line.strip() for line in (completed.stdout or "").splitlines() if line.strip()]
     if completed.returncode == 0 and lines and lines[-1].startswith("/"):
@@ -249,7 +468,7 @@ def module_mpis(module_paths: Sequence[str], skip: Sequence[Path],
 def toolchains(spack: _Spack, packages: Mapping[str, Any]) -> List[Dict[str, Any]]:
     """Compilers Spack knows: ``compilers:`` (0.x) or compiler externals (1.x)."""
     result: List[Dict[str, Any]] = []
-    completed = spack.run(["config", "get", "compilers"], timeout=60)
+    completed = spack.run(["config", "get", "compilers"])
     loaded = yaml.safe_load(completed.stdout or "") if completed.returncode == 0 else None
     entries = (loaded or {}).get("compilers") if isinstance(loaded, Mapping) else None
     for entry in entries or []:
@@ -285,7 +504,6 @@ def installed_mpis(spack: _Spack) -> List[Dict[str, Any]]:
     mpis: List[Dict[str, Any]] = []
     completed = spack.run(
         ["find", "--format", "{name}@{version} {hash:7} {compiler} {prefix}"],
-        timeout=60,
     )
     if completed.returncode != 0:
         return mpis
@@ -414,22 +632,18 @@ def ambiguous_compiler_issue(candidates: Sequence[str], chains: Sequence[Mapping
 # ---------------------------------------------------------------------------
 
 
-def _clone(root: Path, version: str, log: List[str]) -> None:
+def _clone(root: Path, version: str, log: List[str],
+           progress: Optional[Callable[[str], Any]] = None) -> None:
     if not root.parent.is_dir():
         root.parent.mkdir(parents=True, exist_ok=True)
     command = ["git", "-c", "advice.detachedHead=false", "clone", "--quiet", "--depth", "1",
                "--branch", f"v{version}", "https://github.com/spack/spack.git", str(root)]
-    log.append("$ " + shlex.join(command))
-    try:
-        completed = subprocess.run(command, capture_output=True, text=True, timeout=600)
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise _refuse("spack_clone_failed", f"git clone of Spack v{version} into {root} "
-                      f"failed: {error}", root=str(root), version=version)
-    log.append(f"exit {completed.returncode}")
+    completed = run_watched(command, None, _Spack(root, log, progress)._say,
+                            what=f"git clone of Spack v{version}")
     if completed.returncode != 0:
-        raise _refuse("spack_clone_failed", f"git clone of Spack v{version} into {root} "
-                      f"failed: {completed.stderr.strip()[-512:]}", root=str(root),
-                      version=version)
+        raise _refuse("spack_clone_failed", _failed_message(
+            f"git clone of Spack v{version} into {root}", completed), root=str(root),
+            version=version, evidence=_failed_detail(completed))
 
 
 def _git_commit(root: Path) -> Optional[str]:
@@ -453,6 +667,7 @@ def prepare_site(
     build_jobs: Optional[int] = None,
     clone: bool = True,
     answers: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    progress: Optional[Callable[[str], Any]] = None,
 ) -> Dict[str, Any]:
     """Prepare ``root`` (default ``JARVIS_SPACK_ROOT``); see the module doc.
 
@@ -460,6 +675,8 @@ def prepare_site(
     ``<root>/var/jarvis/site-prep.json``). ``record["exit_code"]`` is 3 when
     an ``ambiguous_compiler`` question is open. Refusals raise
     :class:`JarvisIssueError` (exit 5) and change nothing that was valid.
+    ``progress`` receives each command, its "still running" reports and any
+    stall retry as they happen (see :class:`_Spack`).
     """
     log: List[str] = []
     root_text = (root or os.environ.get("JARVIS_SPACK_ROOT", "")).strip()
@@ -480,7 +697,7 @@ def prepare_site(
                           "itself", field="--site_spack", site_spack=str(site))
         site_version = spack_checkout_version(site)
         tree = (Path(install_tree).expanduser() if install_tree
-                else site_install_tree(site, log))
+                else site_install_tree(site, log, progress))
         if not (tree / ".spack-db" / "index.json").is_file():
             raise _refuse("site_install_tree_invalid", f"site install tree {tree} has no "
                           ".spack-db/index.json", field="--install_tree", tree=str(tree))
@@ -523,7 +740,7 @@ def prepare_site(
         raise _refuse("spack_root_missing", f"{spack_root} has no Spack and --no_clone was "
                       "given", field="JARVIS_SPACK_ROOT", root=str(spack_root))
     else:
-        _clone(spack_root, version, log)
+        _clone(spack_root, version, log, progress)
         checkout = "cloned"
     commit = _git_commit(spack_root)
     pin = SPACK_RELEASE_PINS.get(version)
@@ -554,18 +771,18 @@ def prepare_site(
         "root": "$spack/var/jarvis/bootstrap", "trusted": {"spack-install": False},
     }}, changes)
 
-    spack = _Spack(spack_root, log)
+    spack = _Spack(spack_root, log, progress)
     found = spack.run(["compiler", "find", "--scope", "site"])
     if found.returncode != 0:
-        raise _refuse("spack_compiler_find_failed", "spack compiler find failed: "
-                      + (found.stderr or found.stdout or "").strip()[-512:],
-                      root=str(spack_root))
+        raise _refuse("spack_compiler_find_failed",
+                      _failed_message("spack compiler find", found),
+                      root=str(spack_root), evidence=_failed_detail(found))
     if tools:
         externals = spack.run(["external", "find", "--not-buildable", "--scope", "site", *tools])
         if externals.returncode != 0:
-            raise _refuse("spack_external_find_failed", "spack external find failed: "
-                          + (externals.stderr or externals.stdout or "").strip()[-512:],
-                          root=str(spack_root))
+            raise _refuse("spack_external_find_failed",
+                          _failed_message("spack external find", externals),
+                          root=str(spack_root), evidence=_failed_detail(externals))
 
     warnings: List[str] = []
     paths = list(module_paths) if module_paths else login_module_path().split(":")

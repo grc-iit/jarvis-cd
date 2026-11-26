@@ -121,11 +121,13 @@ class Installer(ABC):
         turns "no matching record" into a deferral to the allocation instead
         of an ``install_unchecked`` issue.
         """
+        from jarvis_cd.core.issues import JarvisIssueError
         from jarvis_cd.core.spack_install import (
             FAILURE_KIND,
             REPORT_SCHEMA,
             InstallDecisionNeeded,
             InstallFailed,
+            refusal_failure,
         )
 
         if mode not in ("install", "check"):
@@ -230,6 +232,19 @@ class Installer(ABC):
                     report["installers"][method] = {
                         "status": "failed",
                         "issues": [issue["issue_id"] for issue in failed.issues],
+                    }
+                    break
+                except JarvisIssueError as refused:
+                    if context is None:
+                        raise
+                    # a typed refusal under an install lands in issues.jsonl too
+                    failure = refusal_failure(
+                        context, refused, stage=f"{method}_install",
+                        packages=[str(d.get("pkg_id") or d.get("pkg_name") or "pkg")
+                                  for d in pkg_list])
+                    report["installers"][method] = {
+                        "status": "refused",
+                        "issues": [issue["issue_id"] for issue in failure.issues],
                     }
                     break
                 report["installers"][method] = result or {"status": "done"}

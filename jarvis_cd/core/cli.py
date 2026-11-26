@@ -3960,6 +3960,7 @@ class JarvisCLI(ArgParse):
                 build_jobs=self.kwargs.get("build_jobs"),
                 clone=not self.kwargs.get("no_clone"),
                 answers=load_answers(Path(answers)) if answers else None,
+                progress=sys.stderr.write,
             ),
             text,
             ensure=lambda: self._ensure_site_context(needs_graph=False),
