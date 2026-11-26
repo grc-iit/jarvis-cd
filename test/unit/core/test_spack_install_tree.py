@@ -66,7 +66,7 @@ class TestJarvisInstallTree(unittest.TestCase):
 
     def test_root_prepared_with_the_old_tree_is_prepared_again(self):
         root = self._long_root()
-        root.mkdir(parents=True)
+        (root / SITE_PREP_RECORD).parent.mkdir(parents=True)
         site = Path("/site/spack")
         (root / SITE_PREP_RECORD).write_text(json.dumps(
             {"status": "prepared", "site_spack": str(site)}), encoding="utf-8")
