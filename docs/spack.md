@@ -101,9 +101,37 @@ login node's. A compiler can still be missing where builds run (for example
 the build host; see [Compilers on the build host](#compilers-on-the-build-host).
 
 It never installs or builds. Its Spack calls are configuration writes plus
-`compiler find`, `external find`, `config get` and `find`, each with a
-timeout. If a site allows nothing but `spack find` and `spack spec` on its
-login nodes, run it inside a JARVIS-submitted job.
+`compiler find`, `external find`, `config get` and `find`. If a site allows
+nothing but `spack find` and `spack spec` on its login nodes, run it inside
+a JARVIS-submitted job.
+
+### Long commands and stalls
+
+No Spack command that prepare runs (nor its `git clone`) has a time limit.
+The first `compiler find` in a new root can take minutes with no output:
+Spack builds its package indexes into `misc_cache` first, reading every
+`package.py`. On Ares, against an NFS upstream on a compute node, that took
+about 4 minutes, and 20 s once the cache was warm. Instead of a limit, each
+command is watched:
+
+- Activity is any output, or a change in the CPU time or I/O bytes
+  (`/proc/<pid>/stat` and `/proc/<pid>/io`) of any process in its tree.
+- Every 60 s a running command reports `<command> still running (<s>s,
+  attempt N; <lines> output line(s), <n> process(es), cpu <ticks> ticks,
+  io <bytes> bytes; last progress <s>s ago)`. These lines go to stderr for
+  `jarvis spack prepare` and to `install.log` during an install.
+- A command with no activity for `JARVIS_SPACK_STALL_SECONDS` (default
+  600, at least 30) is stalled. Its process group is stopped, and it is
+  retried once, with a line saying so.
+- If it stalls on both attempts, prepare refuses with the command's own
+  refusal kind (`spack_compiler_find_failed`, say). The message names the
+  stall and quotes Spack's output so far. The issue's `details` carry
+  `exit_code` (124), `output` (its last 4 KiB) and `stall`:
+  `{stalls: [{attempt, after_s, idle_s, activity, output_tail}],
+  recovered: false, window_s, attempts}`.
+
+Where there is no `/proc` (macOS), output is still reported but nothing is
+ever counted as stalled.
 
 ### The record
 
@@ -152,7 +180,7 @@ and changes nothing that was valid:
 | `compiler_invalid`, `compiler_not_found` | `--compiler` is malformed, or matches no compiler (or more than one) |
 | `build_jobs_invalid` | `--build_jobs` outside 1..1024 |
 | `answer_invalid` | an answer is not one of the candidates |
-| `spack_compiler_find_failed`, `spack_external_find_failed` | Spack itself failed |
+| `spack_compiler_find_failed`, `spack_external_find_failed` | Spack itself failed, or stalled on every attempt; `details` carry its `exit_code`, `output` and any `stall` |
 
 ### Compilers on the build host
 

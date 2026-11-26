@@ -791,6 +791,17 @@ Spack runs the entry's `prepare` command inside a job and answers with the
 prepared root. [`jarvis sched info +json`](sched.md) reports the same issue
 without a pipeline.
 
+A refusal from that preparation (`spack_compiler_find_failed`, say; see
+[spack.md](spack.md#refusals)) is written to `issues.jsonl` too. It keeps
+its `kind`, `issue_id`, message and details, and adds
+`refusal_schema: jarvis.issue.v1`, `stage: spack_site_prep`,
+`answerable: false`, `host` and `paths`. The install exits `5`, and its
+document carries `refused: true` and the original refusal as `refusal`. A
+typed refusal raised by any installer lands there the same way, with
+`stage: <method>_install`. The preparation's Spack commands have no time
+limit; they are watched for stalls instead (see
+[Long commands and stalls](spack.md#long-commands-and-stalls)).
+
 `JARVIS_SPACK_CONFIG=<dir>` (or `JARVIS_SPACK_ROOT`) turns on
 `SPACK_DISABLE_LOCAL_CONFIG=1`, so Spack reads no user or system
 configuration. Put site configuration in `<root>/etc/spack` (see above).
