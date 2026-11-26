@@ -48,7 +48,8 @@ the Spack root, so a relay can run it before `jarvis init`.
    Each file is rewritten only when its content changes:
    - `upstreams.yaml`: the site Spack's install tree, plus its `lmod` and
      `tcl` module trees when they exist;
-   - `config.yaml`: `misc_cache`, `test_stage` and the bootstrap root under
+   - `config.yaml`: the install tree (see [The install tree](#the-install-tree)),
+     `misc_cache`, `test_stage` and the bootstrap root under
      `<root>/var/jarvis`, `build_stage` under `$tempdir/$user` (the site's
      recorded `install_tmpdir`, when the person chose one, overrides it in
      the pipeline's environment; see
@@ -104,6 +105,24 @@ It never installs or builds. Its Spack calls are configuration writes plus
 `compiler find`, `external find`, `config get` and `find`. If a site allows
 nothing but `spack find` and `spack spec` on its login nodes, run it inside
 a JARVIS-submitted job.
+
+### The install tree
+
+Spack rewrites an installed script whose shebang is over Linux's
+127-character limit to start `#!/bin/sh <install tree>/bin/sbang`, and
+refuses the install ("Install tree root is too long") when that line is
+itself over the limit. The JARVIS Spack's install tree is therefore Spack's
+default `<root>/opt/spack` while its sbang line fits. A root deep in a site
+home (`~/.clio-relay/adapter/<id>/jarvis-cd/site/spacks/<release>-<digest>`,
+say) puts the tree in `~/.jarvis-spack/<digest of root>` instead, following
+Spack's own advice that the tree be the shortest shared path.
+`JARVIS_SPACK_INSTALL_BASE` names another base, always used when set; it
+must be on a file system the build nodes share. A tree whose sbang line is
+still too long is refused (`spack_install_tree_too_long`) before anything is
+written. The choice is written as `config:install_tree:root` in the site
+scope and recorded as `install_tree`. A root prepared before 1.9.22, whose
+tree no longer matches, is prepared again; packages are then rebuilt into
+the new tree, or reused from the upstream.
 
 ### Long commands and stalls
 
@@ -161,6 +180,7 @@ The result is written to `<root>/var/jarvis/site-prep.json`
 | `root`, `version`, `commit`, `pinned`, `checkout` | the JARVIS Spack, its release and commit, the expected pin, and `present` or `cloned` |
 | `config_scope` | `<root>/etc/spack` |
 | `site_spack`, `site_version`, `upstream_install_tree` | the chained site Spack |
+| `install_tree` | `root`, `source` (`default`, `short_base` or `JARVIS_SPACK_INSTALL_BASE`), `sbang_line_length`, `default_sbang_line_length` and `limit` |
 | `build_jobs`, `build_tools` | as configured |
 | `changes[]` | each file written or unchanged, and each policy change |
 | `module_mpis[]` | `{name, version, module, prefix, modulepath}` found |
@@ -196,6 +216,7 @@ and changes nothing that was valid:
 | `build_tool_invalid` | a build tool is not a package name, or is an MPI |
 | `compiler_invalid`, `compiler_not_found` | `--compiler` is malformed, or matches no compiler (or more than one) |
 | `build_jobs_invalid` | `--build_jobs` outside 1..1024 |
+| `spack_install_tree_too_long` | the install tree's sbang line is over 127 characters; `details` carry the `tree`, `sbang_line` and `length` |
 | `answer_invalid` | an answer is not one of the candidates |
 | `spack_compiler_find_failed`, `spack_external_find_failed` | Spack itself failed, or stalled on every attempt; `details` carry its `exit_code`, `output` and any `stall` |
 

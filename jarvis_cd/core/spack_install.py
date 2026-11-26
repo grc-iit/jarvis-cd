@@ -715,7 +715,7 @@ def prepare_chained_spack(
     concurrent installs wait on one lock. Returns the open
     ``ambiguous_compiler`` issue, or None when the root is ready.
     """
-    from jarvis_cd.core.spack_site import SITE_PREP_RECORD, prepare_site
+    from jarvis_cd.core.spack_site import SITE_PREP_RECORD, jarvis_install_tree, prepare_site
 
     root.parent.mkdir(parents=True, exist_ok=True)
     with _file_lock(root.parent / f".{root.name}.lock", exclusive=True):
@@ -723,10 +723,17 @@ def prepare_chained_spack(
             previous = json.loads((root / SITE_PREP_RECORD).read_text(encoding="utf-8"))
         except (OSError, ValueError):
             previous = None
+        try:
+            tree = jarvis_install_tree(root)["root"]
+        except JarvisIssueError:
+            tree = None  # prepare_site refuses it below
         if (
             isinstance(previous, Mapping)
             and previous.get("status") == "prepared"
             and previous.get("site_spack") == str(site_root)
+            # a record from before 1.9.22 used Spack's default tree
+            and ((previous.get("install_tree") or {}).get("root")
+                 or str(root.resolve() / "opt" / "spack")) == tree
         ):
             return None
         answers = {
@@ -743,7 +750,8 @@ def prepare_chained_spack(
             raise refusal_failure(context, refused, stage="spack_site_prep") from refused
     context.log(
         f"[{_utc_now()}] jarvis Spack {root} prepared ({record.get('checkout')}), "
-        f"upstream {record.get('upstream_install_tree')}\n"
+        f"upstream {record.get('upstream_install_tree')}, install tree "
+        f"{(record.get('install_tree') or {}).get('root')}\n"
     )
     for issue in record.get("issues") or []:
         context.raise_issue(issue)

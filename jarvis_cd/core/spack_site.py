@@ -28,6 +28,7 @@ install records and provenance reference.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
 import re
@@ -78,6 +79,63 @@ _COMPILER_FAMILIES = ("gcc", "clang", "llvm", "oneapi", "intel-oneapi-compilers"
                       "xl", "nag", "fj", "aocc")
 _PACKAGE_NAME = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,99}$")
 _RELEASE = re.compile(r"^\d+\.\d+(?:\.\d+)?$")
+
+#: Linux's shebang line limit, the one Spack's sbang hook enforces
+#: (``spack.hooks.sbang.system_shebang_limit``).
+SHEBANG_LIMIT = 127
+#: A directory for jarvis Spack install trees, one ``<digest>`` per root,
+#: used when ``<root>/opt/spack`` is too long for sbang.
+INSTALL_BASE_ENV = "JARVIS_SPACK_INSTALL_BASE"
+DEFAULT_INSTALL_BASE = Path("~") / ".jarvis-spack"
+
+
+def sbang_shebang(tree: Path) -> str:
+    """The line Spack prepends to an installed script whose shebang is too long."""
+    return f"#!/bin/sh {tree / 'bin' / 'sbang'}"
+
+
+def jarvis_install_tree(spack_root: Path) -> Dict[str, Any]:
+    """The install tree a jarvis Spack uses, and why.
+
+    Spack rewrites an installed script's over-long shebang to run through
+    ``<install_tree>/bin/sbang``, and refuses to install when that line
+    itself is over the limit. So the tree is Spack's default
+    ``<root>/opt/spack`` while its sbang line fits, else
+    ``<JARVIS_SPACK_INSTALL_BASE or ~/.jarvis-spack>/<digest of root>``.
+    A base given in the environment is always used.
+    """
+    root = Path(spack_root).expanduser().resolve()
+    default = root / "opt" / "spack"
+    base_text = os.environ.get(INSTALL_BASE_ENV, "").strip()
+    digest = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:12]
+    if base_text:
+        tree = Path(os.path.abspath(os.path.expanduser(os.path.expandvars(base_text)))) / digest
+        source = INSTALL_BASE_ENV
+    elif len(sbang_shebang(default)) <= SHEBANG_LIMIT:
+        tree, source = default, "default"
+    else:
+        tree = Path(os.path.abspath(os.path.expanduser(str(DEFAULT_INSTALL_BASE)))) / digest
+        source = "short_base"
+    line = sbang_shebang(tree)
+    if len(line) > SHEBANG_LIMIT:
+        raise _refuse(
+            "spack_install_tree_too_long",
+            f"Spack's sbang line for the install tree {tree} is {len(line)} characters, "
+            f"over Linux's {SHEBANG_LIMIT}: Spack cannot install scripts there. Set "
+            f"{INSTALL_BASE_ENV} to a shorter directory on a file system the build "
+            "nodes share",
+            field=INSTALL_BASE_ENV, tree=str(tree), sbang_line=line,
+            length=len(line), limit=SHEBANG_LIMIT,
+        )
+    return {
+        "root": str(tree),
+        "source": source,
+        "sbang_line_length": len(line),
+        "default_sbang_line_length": len(sbang_shebang(default)),
+        "limit": SHEBANG_LIMIT,
+    }
+
+
 _COMPILER = re.compile(r"^(?:auto|[a-z][a-z0-9_-]{0,49}(?:@=?[0-9][A-Za-z0-9._:-]{0,49})?)$")
 _MODULE_VERSION = re.compile(r"^[0-9][A-Za-z0-9._-]*$")
 
@@ -547,6 +605,14 @@ def prepare_site(
     if not 1 <= jobs <= ALL_CPUS_BUILD_JOBS:
         raise _refuse("build_jobs_invalid", f"build_jobs must be 1..{ALL_CPUS_BUILD_JOBS}",
                       field="--build_jobs", build_jobs=jobs)
+    own_tree = jarvis_install_tree(spack_root)
+    if own_tree["source"] == "short_base":
+        note = (f"install tree {own_tree['root']}: {spack_root / 'opt' / 'spack'} would "
+                f"give a {own_tree['default_sbang_line_length']}-character sbang line, "
+                f"over Linux's {SHEBANG_LIMIT}")
+        log.append(note)
+        if progress is not None:
+            progress(note + "\n")
 
     if (spack_root / "bin" / "spack").is_file():
         have = spack_checkout_version(spack_root)
@@ -584,6 +650,8 @@ def prepare_site(
             upstream["modules"] = modules
         _put(etc, "upstreams.yaml", {"upstreams": {"site": upstream}}, changes)
     _put(etc, "config.yaml", {"config": {
+        "install_tree": {"root": ("$spack/opt/spack" if own_tree["source"] == "default"
+                                  else own_tree["root"])},
         "misc_cache": "$spack/var/jarvis/misc-cache",
         "test_stage": "$spack/var/jarvis/test-stage",
         "build_stage": ["$tempdir/$user/jarvis-spack-stage"],
@@ -713,6 +781,7 @@ def prepare_site(
         "site_spack": str(site) if site else None,
         "site_version": site_version,
         "upstream_install_tree": str(tree) if tree else None,
+        "install_tree": own_tree,
         "build_jobs": jobs,
         "build_tools": tools,
         "changes": changes + policy_changes,
@@ -750,6 +819,7 @@ def site_prep_record(root: Optional[str]) -> Optional[Dict[str, Any]]:
         "commit": record.get("commit"),
         "site_spack": record.get("site_spack"),
         "upstream_install_tree": record.get("upstream_install_tree"),
+        "install_tree": (record.get("install_tree") or {}).get("root"),
         "compiler": (record.get("compiler") or {}).get("chosen"),
         "compiler_source": (record.get("compiler") or {}).get("source"),
         "compiler_binding": (record.get("compiler") or {}).get("binding_require"),
