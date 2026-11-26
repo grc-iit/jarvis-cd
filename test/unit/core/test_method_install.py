@@ -114,7 +114,7 @@ class FakePip:
         self.calls = []
         self.fail_install = fail_install
 
-    def __call__(self, argv, context, env=None, timeout=None):
+    def __call__(self, argv, context, env=None, watched=False):
         argv = [str(item) for item in argv]
         self.calls.append(argv)
         if argv[1:3] == ['-m', 'venv']:
@@ -297,7 +297,7 @@ class FakeConda:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, argv, context, env=None, timeout=None):
+    def __call__(self, argv, context, env=None, watched=False):
         argv = [str(item) for item in argv]
         self.calls.append(argv)
         if argv[1] in ('create', 'install'):
@@ -319,7 +319,7 @@ class TestConda(_Case):
                 for spec in specs]
 
     def run_conda(self, ppl, mode, condas, context=None):
-        def record(argv, context, env=None, timeout=None):
+        def record(argv, context, env=None, watched=False):
             result = self.fake(argv, context)
             self.installed.update(token for token in argv[5:] if not token.startswith('-'))
             return result
@@ -402,7 +402,7 @@ class TestContainer(_Case):
         def built():
             return any(call[1] == 'commit' for call in calls) and build_rc == 0
 
-        def run(argv, context, env=None, timeout=None):
+        def run(argv, context, env=None, watched=False):
             argv = [str(item) for item in argv]
             calls.append(argv)
             if argv[1] == 'save':
