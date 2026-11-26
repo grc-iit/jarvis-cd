@@ -1066,6 +1066,7 @@ class Pkg:
                 ),
                 "type": int,
                 "default": None,
+                "required": False,
             },
             {
                 "name": "after_steps",
