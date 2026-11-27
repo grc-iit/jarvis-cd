@@ -1997,7 +1997,10 @@ def apply_build_compilers(
 
 #: ``spack python`` script: the language virtuals (``depends_on("c")``,
 #: ``"cxx"``, ``"fortran"``) each node to build declares, with ``when``
-#: conditions evaluated against the node's concretized spec text
+#: conditions evaluated against the node's concretized spec text. Spack
+#: 0.22/0.23 routes those ``depends_on`` calls to the package's
+#: ``languages`` (``{when: {"c", ...}}``), not its ``dependencies``; Spack
+#: 1.0 keeps them as dependencies. Both are read.
 LANGUAGE_SCRIPT = r'''
 import json, sys
 LANGS = ("c", "cxx", "fortran")
@@ -2018,6 +2021,12 @@ def matches(spec, when):
         return bool(test(when))
     except Exception:
         return True
+
+def lang_name(lang):
+    try:
+        return spack.spec.Spec(str(lang)).name
+    except Exception:
+        return str(lang).strip()
 
 out = {}
 for node in nodes:
@@ -2044,6 +2053,14 @@ for node in nodes:
                 for name in second:
                     if name in LANGS and matches(spec, first):
                         found.add(name)
+        # Spack 0.22/0.23: {when: {"c", "fortran", ...}}
+        for when, langs in (getattr(cls, "languages", None) or {}).items():
+            if not matches(spec, when):
+                continue
+            for lang in langs:
+                name = lang_name(lang)
+                if name in LANGS:
+                    found.add(name)
     except Exception:
         out[key] = None
         continue
@@ -2109,16 +2126,19 @@ def no_language_compiler_issue(
     else:
         problem = (f"no single compiler on {host} has all of {', '.join(needed)} "
                    "(a build uses one compiler)")
+    checked = "; ".join(
+        f"{item['spec']} has {','.join(sorted(_languages_of(item))) or 'none'}"
+        for item in usable) or "no usable compiler"
     issue = make_issue(
         kind="compiler_unavailable",
         package="*",
         subject="compiler",
         scope="site",
         question=(f"{problem[:1].upper()}{problem[1:]}, which "
-                  f"{', '.join(users[:8]) or 'the build'} need(s). How should this "
-                  "build get a compiler for it?"),
+                  f"{', '.join(users[:8]) or 'the build'} need(s) (checked: "
+                  f"{checked}). How should this build get a compiler for it?"),
         candidates=[],
-        detail=f"languages {','.join(needed)} on {host}: {problem}",
+        detail=f"languages {','.join(needed)} on {host}: {problem}; checked: {checked}",
         evidence=[f"spack python (language virtuals); {origin}"],
         answerable=False,
         hint=("register a compiler with those languages on the build nodes "

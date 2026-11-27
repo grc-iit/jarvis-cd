@@ -283,8 +283,11 @@ builds, before any `spack install`:
    language the build needs. After the first plan, the install asks Spack
    which language virtuals (`depends_on("c")`, `"cxx"`, `"fortran"`) each
    node to build declares. It runs one `spack python` script
-   (`<install>/spack-languages.py`), which evaluates each dependency's
-   `when` against the node's concretized spec. The build needs the union:
+   (`<install>/spack-languages.py`), which evaluates each declaration's
+   `when` against the node's concretized spec. Spack 0.22 and 0.23 keep
+   these declarations in the package's `languages`, not its
+   `dependencies`; Spack 1.0 keeps them as dependencies. The script reads
+   both. The build needs the union:
    for example xcompact3d needs Fortran, and ParaView needs C++. A usable
    compiler without one of those languages is left out of this build's
    `compilers:` with the reason `no <lang> compiler on <host>`. Specs
