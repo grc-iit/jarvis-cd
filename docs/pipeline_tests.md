@@ -817,11 +817,25 @@ Before JARVIS plans a Spack build of a package, it looks for copies the site
 already has of the package itself (the root name of `install_query`, any
 version):
 
-- **Modules.** In a login shell (where `module` is defined): `module -t
-  avail <name>`, and with Lmod also `module -t spider <name>` (which finds
-  modules behind a hierarchy, such as an MPI). `module spider <module>` gives
-  the modules to load first, and `module show` gives the module file, what it
-  loads and its install prefix.
+- **Modules.** In a login shell (where `module` is defined), JARVIS reads
+  the module system's own record of every module: with Lmod, `$LMOD_DIR/spider
+  -o jsonSoftwarePage $MODULEPATH`; with Environment Modules (4.5 and later),
+  `module avail --json`. Each record gives the module's package name, its
+  version, its full name, its module file and the modules to load first
+  (Lmod's `parent`, Modules' `via`). A module is a copy of `<name>` only when
+  the package name it records is `<name>`: on a site whose MODULEPATH holds
+  both a Spack Lmod root and a hierarchy directory inside it,
+  `openmpi/5.0.5-cphqvsy/gcc/11.4.0/adios2/2.10.2-sf7srjv` is recorded as
+  package `…/adios2` and is not an openmpi copy. A module file reached by
+  several names is one copy (the shortest name, with what it needs loaded
+  first). `module show` gives what the module loads and its install prefix.
+  Each copy's `identity` says where its name and version came from
+  (`module_system_record`, with the command, package and version). Only
+  when there is no record (an older or Tcl-only module system, or a record
+  that does not parse) are `module -t avail <name>`, Lmod's `module -t
+  spider <name>` and `module spider <module>` used and the package and
+  version parsed from the module name; those copies say
+  `parsed_from_module_path`, and the search says why.
 - **Site Spacks.** Every site Spack JARVIS finds (those under the site home
   and the JARVIS root are JARVIS's own and are skipped): `spack find --json
   <name>` and `spack find -d --format '{hash} {name} {version} {prefix}'`.

@@ -3,11 +3,14 @@
 Before a Spack package is planned, JARVIS looks for the copies the site
 already has:
 
-* module trees: ``module -t avail <name>`` (Lmod and Tcl modules), plus
-  ``module -t spider <name>`` and ``module spider <module>`` with Lmod, which
-  also finds modules behind a hierarchy (e.g. under an MPI) and the modules
-  that must be loaded first; ``module show`` gives the copy's prefix and what
-  it loads (which MPI it uses);
+* module trees: the module system's own record of every module (Lmod's
+  ``spider -o jsonSoftwarePage``, Environment Modules' ``module avail
+  --json``) gives each module's package name, version, file and the modules
+  that must be loaded first; a module is ``<name>``'s only when the package
+  name it records is. Without a record, ``module -t avail <name>`` (and with
+  Lmod ``module -t spider <name>`` and ``module spider <module>``) are parsed
+  from the module names, and each copy's ``identity`` says so; ``module
+  show`` gives the copy's prefix and what it loads (which MPI it uses);
 * the site's Spacks (:func:`~jarvis_cd.core.spack_install.discover_site_spacks`,
   not the Spacks JARVIS owns): ``spack find --json <name>``, any version;
 * the resource graph's ``software`` section: copies the person confirmed for
@@ -276,7 +279,14 @@ name="$1"
 if ! type module >/dev/null 2>&1; then printf '\n@@NOMODULE\n'; exit 0; fi
 printf '\n@@LMOD=%s\n' "${LMOD_CMD-}"
 printf '@@MODULEPATH=%s\n' "${MODULEPATH-}"
-printf '@@AVAIL\n'
+if [ -n "${LMOD_CMD-}" ] && [ -x "${LMOD_DIR-}/spider" ]; then
+  printf '\n@@RECORD=lmod\n'
+  "$LMOD_DIR/spider" -o jsonSoftwarePage "${MODULEPATH-}" 2>/dev/null
+elif [ -z "${LMOD_CMD-}" ] && [ -n "${MODULES_CMD-}" ]; then
+  printf '\n@@RECORD=modules\n'
+  module avail --json 2>&1
+fi
+printf '\n@@AVAIL\n'
 module -t avail "$name" 2>&1
 if [ -n "${LMOD_CMD-}" ]; then
   printf '\n@@SPIDER\n'
@@ -284,6 +294,12 @@ if [ -n "${LMOD_CMD-}" ]; then
 fi
 printf '\n@@END\n'
 '''
+
+# what each module system calls its own record of every module
+_RECORD_COMMANDS = {
+    "lmod": "$LMOD_DIR/spider -o jsonSoftwarePage $MODULEPATH",
+    "modules": "module avail --json",
+}
 
 _MODULE_SPIDER_SCRIPT = r'''
 for m in "$@"; do
@@ -381,6 +397,152 @@ def module_entry(module: str, name: str) -> Optional[Dict[str, Any]]:
         "version_text": version_text,
         "spack_hash7": spack_hash,
     }
+
+
+def _json_in(lines: Sequence[str]) -> Any:
+    """The JSON document in a section's lines (anything around it ignored), or None."""
+    text = "\n".join(lines)
+    starts = [i for i in (text.find("["), text.find("{")) if i >= 0]
+    if not starts:
+        return None
+    try:
+        return json.JSONDecoder().raw_decode(text[min(starts):])[0]
+    except ValueError:
+        return None
+
+
+def parse_lmod_spider_json(data: Any) -> Optional[List[Dict[str, Any]]]:
+    """Lmod's ``spider -o jsonSoftwarePage``: one record per module version.
+
+    Each is Lmod's own ``package`` (its short name), ``versionName``, the
+    ``full`` module name, the module file (``path``) and the modules that
+    must be loaded first (``parent``: any one of the lists). None when the
+    document is not that shape.
+    """
+    if not isinstance(data, list):
+        return None
+    records: List[Dict[str, Any]] = []
+    for package in data:
+        if not isinstance(package, Mapping) or not isinstance(package.get("versions"), list):
+            return None
+        for version in package["versions"]:
+            if not isinstance(version, Mapping) or not version.get("full"):
+                continue
+            parents = [[str(m) for m in option] if isinstance(option, list) else
+                       str(option).split() for option in version.get("parent") or []]
+            records.append({
+                "package": str(package.get("package") or ""),
+                "version": version.get("versionName"),
+                "full": str(version["full"]),
+                "path": version.get("path"),
+                "parents": [option for option in parents if option],
+                "family": version.get("family"),
+            })
+    return records
+
+
+def parse_modules_avail_json(data: Any) -> Optional[List[Dict[str, Any]]]:
+    """Environment Modules' ``module avail --json``: one record per modulefile.
+
+    The document is keyed by modulepath (or, with ``-o`` lacking
+    ``modulepath``, directly by module name); each module's ``name`` is
+    relative to its modulepath, its last element is the version (Modules'
+    own naming), ``pathname`` is the file and ``via`` the module that enabled
+    its modulepath. None when the document is not that shape.
+    """
+    if not isinstance(data, Mapping):
+        return None
+    groups = ([data] if all(isinstance(v, Mapping) and "name" in v for v in data.values())
+              else list(data.values()))
+    records: List[Dict[str, Any]] = []
+    for group in groups:
+        if not isinstance(group, Mapping):
+            return None
+        for item in group.values():
+            if not isinstance(item, Mapping) or item.get("type") not in (
+                    "modulefile", "virtual"):
+                continue
+            full = str(item.get("name") or "").strip("/")
+            if "/" not in full:
+                continue
+            via = item.get("via") or []
+            vias = [via] if isinstance(via, str) else [str(v) for v in via]
+            package, _, version = full.rpartition("/")
+            records.append({
+                "package": package,
+                "version": version,
+                "full": full,
+                "path": item.get("pathname"),
+                "parents": [[v] for v in vias if v],
+                "family": None,
+            })
+    return records
+
+
+def _package_name(package: str) -> str:
+    parts = [part for part in package.split("/") if part]
+    return parts[-1] if parts else ""
+
+
+def record_entries(records: Sequence[Mapping[str, Any]], name: str, source: str,
+                   ) -> List[Dict[str, Any]]:
+    """The module system's records that are ``name``'s, one per module file.
+
+    A record is ``name``'s when the package name the module system gives it
+    ends in ``name``: ``openmpi/5.0.5-cphqvsy/gcc/11.4.0/adios2`` is adios2,
+    not openmpi. The same file reached by several names (a MODULEPATH entry
+    inside another, or a hierarchy) is one copy: the record with the shortest
+    package name is kept, and the longest one gives the hierarchy it sits in.
+    """
+    groups: Dict[str, List[Mapping[str, Any]]] = {}
+    for record in records:
+        if _names_match(_package_name(record["package"]), name):
+            groups.setdefault(str(record.get("path") or record["full"]), []).append(record)
+    entries: List[Dict[str, Any]] = []
+    for path, group in groups.items():
+        chosen = min(group, key=lambda r: (r["package"].count("/"), len(r["full"]),
+                                           r["full"]))
+        deepest = max(group, key=lambda r: r["package"].count("/"))
+        full = chosen["full"]
+        rest = full[len(chosen["package"]):].strip("/") if full.startswith(
+            chosen["package"]) else full.rpartition("/")[2]
+        rest_parts = [part for part in rest.split("/") if part]
+        version_text = rest_parts[-1] if rest_parts else None
+        parsed, spack_hash = module_version(version_text) if version_text else (None, None)
+        recorded_version = chosen.get("version")
+        if source == "lmod" and recorded_version and "/" in str(recorded_version):
+            recorded_version = str(recorded_version).rpartition("/")[2]
+        prereqs = (min(chosen["parents"], key=lambda o: (len(o), sum(m.count("/") for m in o)))
+                   if chosen["parents"] else [])
+        module_dir = None
+        stem = re.sub(r"\.lua$", "", path) if chosen.get("path") else ""
+        if stem.endswith("/" + full):
+            module_dir = stem[: -len(full) - 1]
+        entries.append({
+            "module": full,
+            "short": full,
+            "hierarchy": [p for p in deepest["package"].split("/") if p][:-1],
+            "flavor": rest_parts[:-1],
+            "version": (module_version(str(recorded_version))[0] if recorded_version
+                        else parsed),
+            "version_text": version_text,
+            "spack_hash7": spack_hash,
+            "origin": "record",
+            "prereqs": prereqs,
+            "module_file": chosen.get("path"),
+            "module_dir": module_dir,
+            "identity": {
+                "source": "module_system_record",
+                "record": _RECORD_COMMANDS[source],
+                "package": chosen["package"],
+                "version": chosen.get("version"),
+                "full": full,
+                **({"family": chosen["family"]} if chosen.get("family") else {}),
+                **({"also_named": sorted(r["full"] for r in group if r is not chosen)}
+                   if len(group) > 1 else {}),
+            },
+        })
+    return entries
 
 
 def parse_spider_prereqs(lines: Sequence[str]) -> Optional[List[str]]:
@@ -484,27 +646,53 @@ def module_copies(name: str, searched: List[str]) -> List[Dict[str, Any]]:
         return []
     lmod = next((key[5:] for key in sections if key.startswith("LMOD=")), "")
     module_path = next((key[11:] for key in sections if key.startswith("MODULEPATH=")), "")
-    avail = _module_names(sections.get("AVAIL", []))
-    spider = _module_names(sections.get("SPIDER", [])) if lmod else []
-    searched.append(
-        f"modules ({'Lmod' if lmod else 'environment modules'}): `module -t avail {name}`"
-        + (f", `module -t spider {name}`" if lmod else "")
-        + f" on MODULEPATH {module_path or '(empty)'}")
-    entries: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
-    for module, origin in [*((m, "spider") for m in spider), *((m, "avail") for m in avail)]:
-        entry = module_entry(module, name)
-        if entry is None or entry["version_text"] is None:
-            continue
-        key = (entry["version_text"].lower(), tuple(entry["flavor"]))
-        current = entries.get(key)
-        entry["origin"] = origin
-        if current is None or (current["origin"] != "spider" and (
-                origin == "spider" or len(module) < len(current["module"]))):
-            entries[key] = entry
-    chosen = list(entries.values())[:_MAX_MODULES]
+    system = "Lmod" if lmod else "environment modules"
+    record_source = next((key[7:] for key in sections if key.startswith("RECORD=")), "")
+    records = None
+    if record_source in _RECORD_COMMANDS:
+        parse = (parse_lmod_spider_json if record_source == "lmod"
+                 else parse_modules_avail_json)
+        records = parse(_json_in(sections[f"RECORD={record_source}"]))
+    chosen: List[Dict[str, Any]]
+    if records is not None:
+        searched.append(
+            f"modules ({system}): its own record of every module, "
+            f"`{_RECORD_COMMANDS[record_source]}` ({len(records)} module(s)), on MODULEPATH "
+            f"{module_path or '(empty)'}; a module is {name}'s when the package name it "
+            f"records is {name}")
+        chosen = record_entries(records, name, record_source)[:_MAX_MODULES]
+    else:
+        avail = _module_names(sections.get("AVAIL", []))
+        spider = _module_names(sections.get("SPIDER", [])) if lmod else []
+        why = (f"`{_RECORD_COMMANDS[record_source]}` gave no record it could read"
+               if record_source else f"no module-system record ({system})")
+        searched.append(
+            f"modules ({system}): `module -t avail {name}`"
+            + (f", `module -t spider {name}`" if lmod else "")
+            + f" on MODULEPATH {module_path or '(empty)'}; {why}, so each module's "
+            "package and version are parsed from its name")
+        entries: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
+        for module, origin in [*((m, "spider") for m in spider),
+                               *((m, "avail") for m in avail)]:
+            entry = module_entry(module, name)
+            if entry is None or entry["version_text"] is None:
+                continue
+            key = (entry["version_text"].lower(), tuple(entry["flavor"]))
+            current = entries.get(key)
+            entry["origin"] = origin
+            entry["identity"] = {
+                "source": "parsed_from_module_path",
+                "note": f"no module-system record ({why}): package and version "
+                        "parsed from the module name",
+            }
+            if current is None or (current["origin"] != "spider" and (
+                    origin == "spider" or len(module) < len(current["module"]))):
+                entries[key] = entry
+        chosen = list(entries.values())[:_MAX_MODULES]
     if not chosen:
         return []
-    prereqs: Dict[str, List[str]] = {}
+    prereqs: Dict[str, List[str]] = {
+        entry["module"]: entry["prereqs"] for entry in chosen if entry.get("prereqs")}
     spidered = [entry["module"] for entry in chosen if entry["origin"] == "spider"]
     if lmod and spidered:
         _, output = _login(_MODULE_SPIDER_SCRIPT, spidered)
@@ -530,8 +718,8 @@ def module_copies(name: str, searched: List[str]) -> List[Dict[str, Any]]:
             mpi = _mpi_of_module(item) if item else None
             if mpi:
                 break
-        module_dir = None
-        if show.get("file") and entry["short"] in show["file"]:
+        module_dir = entry.get("module_dir")
+        if module_dir is None and show.get("file") and entry["short"] in show["file"]:
             module_dir = show["file"][: show["file"].rfind(entry["short"])].rstrip("/")
         prefix = show.get("prefix")
         prefix_hash = _PREFIX_HASH.search(prefix or "")
@@ -544,10 +732,12 @@ def module_copies(name: str, searched: List[str]) -> List[Dict[str, Any]]:
             # where the module file is; the login MODULEPATH (and the modules
             # loaded first) reach it, so it is not `module use`d at run
             "module_dir": module_dir,
-            "module_file": show.get("file"),
+            "module_file": show.get("file") or entry.get("module_file"),
             "prefix": prefix,
             "spack_hash": prefix_hash.group("hash") if prefix_hash else None,
             "flavor": "/".join(entry["flavor"]) or None,
+            # where the package name and version came from
+            "identity": entry["identity"],
             "implies": {
                 "mpi": mpi,
                 "loads": [item for item in show["loads"] if item not in before],
@@ -971,7 +1161,7 @@ def candidates_for(copies: Sequence[Mapping[str, Any]], needs: Needs,
             "does": _does(copy),
         }
         for key in ("modulepath", "module_dir", "spack_root", "spack_hash", "spack", "graph",
-                    "basis", "compiler", "flavor", "module_file"):
+                    "basis", "compiler", "flavor", "module_file", "identity"):
             if copy.get(key) is not None:
                 candidate[key] = copy[key]
         candidates.append(candidate)

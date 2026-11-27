@@ -61,10 +61,13 @@ prepend_path("CMAKE_PREFIX_PATH","{IOR_PREFIX}/.")
 
 
 def fake_login(avail=AVAIL, spider=SPIDER_TERSE, detail=SPIDER_DETAIL, show=SHOW,
-               lmod='/usr/share/lmod/lmod/libexec/lmod'):
+               lmod='/usr/share/lmod/lmod/libexec/lmod', record=None):
     def login(script, args, timeout=None):
         if script is sc._MODULE_LIST_SCRIPT:
-            text = f"\n@@LMOD={lmod}\n@@MODULEPATH={LMOD_TREE}/Core\n@@AVAIL\n{avail}"
+            text = f"\n@@LMOD={lmod}\n@@MODULEPATH={LMOD_TREE}/Core\n"
+            if record is not None:
+                text += f"@@RECORD={record[0]}\n{json.dumps(record[1])}\n"
+            text += f"@@AVAIL\n{avail}"
             if lmod:
                 text += f"\n@@SPIDER\n{spider}"
             return 0, text + "\n@@END\n"
@@ -249,6 +252,104 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual((copies[0]['source'], copies[0]['label']),
                          ('resource_graph', 'IOR (site build)'))
         self.assertEqual(copies[0]['discovered'], ['module'])
+
+
+ARES_LMOD = '/mnt/repo/software/spack/spack/share/spack/lmod/linux-ubuntu22.04-x86_64'
+
+
+def lmod_version(package, full, version, path, parent=None, family=None):
+    entry = {'full': full, 'versionName': version, 'path': f'{ARES_LMOD}/{path}',
+             'markedDefault': False}
+    if parent:
+        entry['parent'] = parent
+    if family:
+        entry['family'] = family
+    return {'package': package, 'defaultVersionName': version, 'versions': [entry]}
+
+
+# Captured on Ares (Lmod 8.7.25) from `$LMOD_DIR/spider -o jsonSoftwarePage
+# $MODULEPATH`, trimmed to these modules and to the fields JARVIS reads. Its
+# MODULEPATH holds the Spack Lmod root and, inside it, gcc/11.4.0 and
+# openmpi/5.0.5-cphqvsy/gcc/11.4.0, so a module file is reached by several names.
+ARES_SPIDER = [
+    lmod_version('openmpi', 'openmpi/5.0.5-cphqvsy', '5.0.5',
+                 'gcc/11.4.0/openmpi/5.0.5-cphqvsy.lua', family='mpi'),
+    lmod_version('gcc/11.4.0/openmpi', 'gcc/11.4.0/openmpi/5.0.5-cphqvsy', '5.0.5',
+                 'gcc/11.4.0/openmpi/5.0.5-cphqvsy.lua', family='mpi'),
+    lmod_version('openmpi', 'openmpi/5.0.5-x2kvx5l', '5.0.5',
+                 'gcc/11.4.0/openmpi/5.0.5-x2kvx5l.lua', family='mpi'),
+    lmod_version('openmpi/5.0.5-cphqvsy/gcc/11.4.0/adios2',
+                 'openmpi/5.0.5-cphqvsy/gcc/11.4.0/adios2/2.10.2-sf7srjv', '2.10.2',
+                 'openmpi/5.0.5-cphqvsy/gcc/11.4.0/adios2/2.10.2-sf7srjv.lua'),
+    lmod_version('adios2', 'adios2/2.10.2-sf7srjv', '2.10.2',
+                 'openmpi/5.0.5-cphqvsy/gcc/11.4.0/adios2/2.10.2-sf7srjv.lua',
+                 parent=[['openmpi/5.0.5-cphqvsy'], ['gcc/11.4.0/openmpi/5.0.5-cphqvsy']]),
+    lmod_version('openmpi/5.0.5-cphqvsy/gcc/11.4.0/wrf',
+                 'openmpi/5.0.5-cphqvsy/gcc/11.4.0/wrf/4.6.1-ulfhjc3', '4.6.1',
+                 'openmpi/5.0.5-cphqvsy/gcc/11.4.0/wrf/4.6.1-ulfhjc3.lua'),
+]
+
+# Reconstructed in the `module avail --json` shape the Environment Modules
+# docs show (MIGRATING.rst, 4.5 and 5.x): keyed by modulepath, with the
+# hierarchy directory also on MODULEPATH.
+MODULES_AVAIL = {
+    '/sw/modulefiles': {
+        'openmpi/5.0.5': {'name': 'openmpi/5.0.5', 'type': 'modulefile', 'symbols': [],
+                          'tags': [], 'pathname': '/sw/modulefiles/openmpi/5.0.5',
+                          'via': []},
+        'openmpi/5.0.5/adios2/2.10.2': {
+            'name': 'openmpi/5.0.5/adios2/2.10.2', 'type': 'modulefile', 'symbols': [],
+            'tags': [], 'pathname': '/sw/modulefiles/openmpi/5.0.5/adios2/2.10.2', 'via': []},
+        'openmpi/5.0.5/adios2': {'name': 'openmpi/5.0.5/adios2', 'type': 'directory'},
+    },
+    '/sw/modulefiles/openmpi/5.0.5': {
+        'adios2/2.10.2': {'name': 'adios2/2.10.2', 'type': 'modulefile', 'symbols': [],
+                          'tags': [], 'pathname': '/sw/modulefiles/openmpi/5.0.5/adios2/2.10.2',
+                          'via': 'openmpi/5.0.5'},
+    },
+}
+
+
+class TestModuleSystemRecords(unittest.TestCase):
+    def module_copies(self, name, record, lmod='/usr/share/lmod/lmod/libexec/lmod'):
+        searched = []
+        login = fake_login(avail='', spider='', lmod=lmod, record=record)
+        with mock.patch.object(sc, '_login', side_effect=login):
+            return sc.module_copies(name, searched), searched
+
+    def test_lmod_hierarchy_modules_are_not_copies_of_their_mpi(self):
+        copies, searched = self.module_copies('openmpi', ('lmod', ARES_SPIDER))
+        self.assertEqual([c['module'] for c in copies],
+                         ['openmpi/5.0.5-cphqvsy', 'openmpi/5.0.5-x2kvx5l'])
+        self.assertEqual({c['version'] for c in copies}, {'5.0.5'})
+        identity = copies[0]['identity']
+        self.assertEqual(identity['source'], 'module_system_record')
+        self.assertEqual(identity['also_named'], ['gcc/11.4.0/openmpi/5.0.5-cphqvsy'])
+        self.assertEqual(copies[0]['module_dir'], f'{ARES_LMOD}/gcc/11.4.0')
+        self.assertIn('spider -o jsonSoftwarePage', searched[0])
+
+    def test_lmod_record_gives_the_package_and_what_loads_first(self):
+        copies, _ = self.module_copies('adios2', ('lmod', ARES_SPIDER))
+        self.assertEqual(len(copies), 1, copies)
+        copy = copies[0]
+        self.assertEqual(copy['modules'], ['openmpi/5.0.5-cphqvsy', 'adios2/2.10.2-sf7srjv'])
+        self.assertEqual(copy['version'], '2.10.2')
+        self.assertEqual(copy['implies']['mpi']['hash'], 'cphqvsy')
+
+    def test_environment_modules_record(self):
+        copies, searched = self.module_copies('openmpi', ('modules', MODULES_AVAIL), lmod='')
+        self.assertEqual([c['module'] for c in copies], ['openmpi/5.0.5'])
+        copies, _ = self.module_copies('adios2', ('modules', MODULES_AVAIL), lmod='')
+        self.assertEqual(copies[0]['modules'], ['openmpi/5.0.5', 'adios2/2.10.2'])
+        self.assertIn('module avail --json', searched[0])
+
+    def test_path_parsing_only_without_a_record_and_marked(self):
+        copies, searched = self.module_copies('openmpi', ('lmod', 'not a record'))
+        self.assertEqual(copies, [])
+        self.assertIn('gave no record it could read', searched[0])
+        with mock.patch.object(sc, '_login', side_effect=fake_login()):
+            fallback = sc.module_copies('ior', [])
+        self.assertEqual(fallback[0]['identity']['source'], 'parsed_from_module_path')
 
 
 class TestRecommendation(unittest.TestCase):
