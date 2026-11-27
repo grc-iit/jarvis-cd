@@ -989,6 +989,12 @@ def _configure_menu(self):
     return base_menu + package_menu
 ```
 
+**Overriding a common parameter**: a package may declare a common parameter
+(`start_timeout`, `sleep`, `timeout`, ...) in its own menu to give it a
+different type, default or help. The package's entry replaces the common one,
+so its default is the one used. A saved `null` for a parameter the package
+declares with a real default reads as that default.
+
 ### Lifecycle Methods
 
 #### `_configure(self, **kwargs)`

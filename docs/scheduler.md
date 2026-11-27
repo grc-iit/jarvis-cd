@@ -1086,7 +1086,8 @@ Activity is any of:
 
 Only a stall fails the start: no activity for `start_timeout` seconds. Unset
 (the default), the window is `JARVIS_STALL_SECONDS` (600 s, see
-[spack.md](spack.md#long-commands-and-stalls)). `0` turns the stall check off.
+[spack.md](spack.md#long-commands-and-stalls)). A package that declares its
+own `start_timeout` default uses that instead. `0` turns the stall check off.
 The error names the window, how long it waited, and quotes the start's last
 output. Without `/proc` (macOS) nothing counts as a stall.
 

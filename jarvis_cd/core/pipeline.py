@@ -6033,6 +6033,8 @@ class Pipeline:
         base_config.setdefault("do_dbg", False)
         base_config.setdefault("dbg_port", 50000)
         pkg_instance.config = base_config
+        if base_config and hasattr(pkg_instance, "_fill_null_defaults"):
+            pkg_instance._fill_null_defaults()
 
         # Set up environment variables - mod_env is exact replica of env plus LD_PRELOAD
         if pipeline_env is None:

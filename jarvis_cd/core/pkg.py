@@ -1087,6 +1087,14 @@ class Pkg:
             },
         ]
 
+        # A package that declares a common parameter itself owns it: its type,
+        # default and help win. Keeping both entries let the common default
+        # overwrite the package's (defaults are applied in menu order).
+        declared = {
+            item.get("name") for item in package_menu if isinstance(item, dict)
+        }
+        common_menu = [item for item in common_menu if item["name"] not in declared]
+
         # These controls remain part of the CLI and persisted package config,
         # but generic agents should reason from the package-owned deployment
         # contract instead of choosing installers, paths, or debug machinery.
@@ -1348,6 +1356,28 @@ class Pkg:
                 and default_value is not None
             ):
                 self.config[param_name] = default_value
+
+    def _fill_null_defaults(self):
+        """Read a null value as unset: the package's declared default, if any.
+
+        Pipelines saved while a common default was null (``start_timeout`` in
+        1.9.21 and 1.9.22) carry ``null`` for parameters the package declares
+        with a real default.
+        """
+        try:
+            menu = self.configure_menu() or []
+        except Exception:
+            return
+        for item in menu:
+            name = item.get("name") if isinstance(item, dict) else None
+            default_value = item.get("default") if name else None
+            if (
+                name
+                and default_value is not None
+                and name in self.config
+                and self.config[name] is None
+            ):
+                self.config[name] = default_value
 
     def update_config(self, new_config: Dict[str, Any], rebuild: bool = True):
         """

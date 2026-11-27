@@ -890,6 +890,42 @@ class TestPkgConfigurationMethods(unittest.TestCase):
         self.assertIn("do_dbg", param_names)
         self.assertIn("timeout", param_names)
 
+    def test_package_declared_common_param_wins(self):
+        """A package's own start_timeout default is the parsed default"""
+
+        class TestPkg(Pkg):
+            def _configure_menu(self):
+                return [{"name": "start_timeout", "type": int, "default": 120}]
+
+        pkg = TestPkg(pipeline=self.mock_pipeline)
+        pkg.pkg_id = "test_pkg"
+        names = [item["name"] for item in pkg.configure_menu()]
+        self.assertEqual(names.count("start_timeout"), 1)
+
+        argparse = pkg.get_argparse()
+        argparse.parse(["configure"])
+        self.assertEqual(argparse.kwargs["start_timeout"], 120)
+
+    def test_fill_null_defaults(self):
+        """A saved null reads as the package's declared default"""
+
+        class TestPkg(Pkg):
+            def _configure_menu(self):
+                return [{"name": "start_timeout", "type": int, "default": 120}]
+
+        pkg = TestPkg(pipeline=self.mock_pipeline)
+        pkg.config = {"start_timeout": None, "walltime": None, "timeout": 5}
+        pkg._fill_null_defaults()
+
+        self.assertEqual(pkg.config["start_timeout"], 120)
+        self.assertIsNone(pkg.config["walltime"])
+        self.assertEqual(pkg.config["timeout"], 5)
+
+        plain = Pkg(pipeline=self.mock_pipeline)
+        plain.config = {"start_timeout": None}
+        plain._fill_null_defaults()
+        self.assertIsNone(plain.config["start_timeout"])
+
     def test_get_argparse(self):
         """Test get_argparse() returns PkgArgParse instance"""
         pkg = Pkg(pipeline=self.mock_pipeline)
