@@ -541,7 +541,7 @@ jobs:
                   --jq '[.object.sha, .object.type] | @tsv'
               )
             done
-            test "$type" = "commit"
+            test "$type" = "commit" || return 1
             printf '%s\n' "$sha"
           }
           test "$(resolve_remote_tag)" = "$GITHUB_SHA"
@@ -577,8 +577,11 @@ jobs:
           release_pages_json="$release_tmp/release-pages.json"
           release_body="JARVIS-CD $TAG_NAME immutable release."
 
+          # Callers test this in `if`, where errexit is off: a failed lookup
+          # must return its own status, not jq's verdict on an empty file.
           fetch_published_release() {
-            gh api "repos/$REPOSITORY/releases/tags/$TAG_NAME" >"$release_json"
+            gh api "repos/$REPOSITORY/releases/tags/$TAG_NAME" \
+              >"$release_json" || return
             jq -e \
               --arg tag "$TAG_NAME" \
               --arg body "$release_body" '

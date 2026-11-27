@@ -384,6 +384,7 @@ def test_release_resume_is_exact_byte_and_fail_closed() -> None:
     assert "gh api --paginate --slurp" in WORKFLOW
     assert "python ci/release_draft.py" in WORKFLOW
     assert "find_existing_release || lookup_status=$?" in WORKFLOW
+    assert '>"$release_json" || return' in WORKFLOW
     assert 'if [ "$lookup_status" -eq 3 ]' in WORKFLOW
     assert "if ! gh api --paginate --slurp" in WORKFLOW
     assert "find_draft_release" in WORKFLOW
