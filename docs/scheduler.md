@@ -1295,11 +1295,11 @@ A Slurm run's plan (`ppl submit +plan`) carries `cores`
 
 ## Ranks per node inside an allocation
 
-Rank placement is the launcher's job, so packages pass their `nprocs` and
-`ppn` and need not read the scheduler. Inside an allocation (`SLURM_JOB_ID`,
-`PBS_JOBID`, `LSB_JOBID` or `FLUX_JOB_ID` set), every MPI exec (Open MPI
-`-npernode`, MPICH/Intel `-ppn`, Cray `--ppn`) bounds ranks per node by the
-scheduler's task geometry:
+Packages pass their `nprocs` and `ppn`, and JARVIS never changes them.
+Inside an allocation (`SLURM_JOB_ID`, `PBS_JOBID`, `LSB_JOBID` or
+`FLUX_JOB_ID` set), every MPI exec (Open MPI `-npernode`, MPICH/Intel
+`-ppn`, Cray `--ppn`) checks ranks per node against the scheduler's task
+geometry:
 
 | Scheduler | Tasks per node |
 |-----------|----------------|
@@ -1307,35 +1307,31 @@ scheduler's task geometry:
 | PBS | lines per host in `PBS_NODEFILE`, else `PBS_NUM_PPN` |
 | LSF | `LSB_MCPU_HOSTS` |
 
-When the job asked for no task geometry (Flux, or Slurm with only `nodes`),
-the bound is the physical cores the launcher may run on: its CPU affinity,
-with the hardware threads of one core counted once. With a `host_slice`, the
-bound is the smallest count among the slice's hosts.
+With a `host_slice`, the bound is the smallest count among the slice's
+hosts. When the job asked for no task geometry (Flux, or Slurm with only
+`nodes`), there is no bound to check.
 
-The package's `ppn` is kept when it fits the bound and places every rank
-(`ppn × hosts ≥ nprocs`), so a step can under-fill its nodes on purpose.
-Otherwise the bound wins. A package default can't halve a grant: 8 ranks in
-a 1-node, 8-task job no longer launch as `-npernode 4` (`ppr:4:node`, which
-Open MPI refuses). It can't exceed the grant either. When `nprocs` needs
-more per node than granted, `ppn = ceil(nprocs / hosts)` and the placement
-carries a `warning`. Outside an allocation the package's `ppn` is used
-unchanged, as is it when `JARVIS_MPI_PLACEMENT=off` is set in the
-environment or the package's env.
+A launch runs only when the package's `ppn` places every rank on its hosts
+(`ppn × hosts ≥ nprocs`) and stays within the grant, so a step can
+under-fill its nodes on purpose. With no `ppn`, ranks spread evenly,
+`ceil(nprocs / hosts)` per node, which must fit the grant too. Anything
+else is refused with a `launch_does_not_fit` issue that gives `nprocs`,
+`ppn`, the hosts and the granted count; the layout is never changed to
+fit. The pipeline job is sized so each package's slice holds
+`ceil(nprocs / ppn)` nodes (see "Node count of the job"), so a refusal
+means a fixed `host_slice` or `scheduler.nodes` is too small. Outside an
+allocation the package's `ppn` goes to the launcher unchanged.
 
-An adjusted value prints `jarvis: ppn A -> B (reason)` on stderr. Each
-launch records its decision as `placement` (`jarvis.launch-placement.v1`)
-in `provenance/launch-NNN/launch.json` and `provenance.json`:
+Each launch records its placement (`jarvis.launch-placement.v1`) in
+`provenance/launch-NNN/launch.json` and `provenance.json`:
 
 ```json
-{"scheduler": "slurm", "job_id": "27999", "nprocs": 8, "hosts": 1,
- "ppn_requested": 4, "ppn": 8, "adjusted": true,
- "source": "scheduler_geometry", "bound": 8,
- "geometry": {"variable": "SLURM_NTASKS_PER_NODE", "value": "8", ...},
- "reason": "package ppn 4 on 1 host(s) cannot place 8 ranks; 8 per node granted"}
+{"scheduler": "slurm", "job_id": "29308", "nprocs": 8, "hosts": 2,
+ "ppn_requested": 4, "ppn": 4, "granted": null, "geometry": null,
+ "source": "package"}
 ```
 
-`source` is `scheduler_geometry`, `physical_cores` (with `physical_cores`),
-or `package` when neither is known.
+`source` is `package`, or `even_spread` when the package set no `ppn`.
 
 ## Threads per rank
 

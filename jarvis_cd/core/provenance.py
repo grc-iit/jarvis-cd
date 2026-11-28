@@ -482,8 +482,8 @@ def write_provenance(
             for launch in launches
             if isinstance(launch.get("network"), dict)
         ],
-        # Ranks per node each launch used and why (task geometry, physical
-        # cores, or the package's ppn); see jarvis_cd.util.placement.
+        # Ranks per node each launch used, checked against the grant; see
+        # jarvis_cd.util.placement.
         "mpi_placement": [
             {"launch": launch["id"], **launch["placement"]}
             for launch in launches

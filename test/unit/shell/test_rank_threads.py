@@ -112,3 +112,17 @@ def test_launch_passes_threads_to_ranks_and_records_them():
     assert launch.placement["threads"] is launch.threads
     assert launch.launch_record()["threads"]["threads_per_rank"] == 10
     assert "OMP_NUM_THREADS" not in package_env
+
+
+def test_a_ppn_that_does_not_fit_is_refused_not_changed():
+    from jarvis_cd.core.issues import JarvisIssueError
+    from jarvis_cd.util.placement import resolve_ppn
+
+    hosts = ["ares-comp-21"]
+    with pytest.raises(JarvisIssueError, match="8 ranks at ppn 4 on 1 host"):
+        resolve_ppn(8, 4, hosts, SLURM)
+    with pytest.raises(JarvisIssueError, match="exceed the 4 tasks per node"):
+        resolve_ppn(8, 8, hosts, {**SLURM, "SLURM_NTASKS_PER_NODE": "4"})
+    ppn, record = resolve_ppn(8, 4, ["ares-comp-21", "ares-comp-22"], SLURM)
+    assert ppn == 4 and record["source"] == "package"
+    assert resolve_ppn(8, None, ["ares-comp-21", "ares-comp-22"], SLURM)[0] == 4

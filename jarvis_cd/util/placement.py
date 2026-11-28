@@ -1,8 +1,7 @@
 """Ranks per node for an MPI launch inside a scheduler allocation.
 
-Rank placement is the launcher's job, not a package's. Inside an
-allocation the scheduler's task geometry bounds how many ranks each node
-may run:
+Inside an allocation the scheduler's task geometry says how many ranks each
+node may run:
 
 * Slurm: ``SLURM_NTASKS_PER_NODE``, else ``SLURM_TASKS_PER_NODE`` paired
   with ``SLURM_JOB_NODELIST`` (only when the job asked for tasks, i.e.
@@ -10,15 +9,10 @@ may run:
 * PBS: one ``PBS_NODEFILE`` line per MPI slot (else ``PBS_NUM_PPN``);
 * LSF: ``LSB_MCPU_HOSTS`` (``host slots host slots ...``).
 
-When the job asked for no task geometry, the physical cores this process
-may run on (its CPU affinity, hardware threads of one core counted once)
-are the default bound. Outside an allocation nothing changes.
-
-The package's ``ppn`` is kept when it fits the bound and places every rank
-(``ppn * hosts >= nprocs``), so a step can still under-fill nodes on
-purpose. Otherwise the bound wins: a package default can neither halve a
-grant (8 ranks on one 8-task node launched as ``ppr:4:node``) nor exceed
-it. ``JARVIS_MPI_PLACEMENT=off`` keeps the package's value unchanged.
+A package's ``ppn`` is never changed: a launch whose ``ppn`` cannot place
+its ranks on its hosts, or exceeds the tasks per node granted, is refused
+with the numbers (:func:`resolve_ppn`). Outside an allocation nothing is
+checked.
 """
 
 from __future__ import annotations
@@ -180,27 +174,6 @@ def _geometry_bound(geometry: Mapping[str, Any], hosts: List[str]) -> int:
     return int(geometry.get("min") or 1)
 
 
-def physical_cores(root: str = "/sys/devices/system/cpu") -> Optional[int]:
-    """Physical cores this process may run on (hardware threads counted once)."""
-    try:
-        cpus = sorted(os.sched_getaffinity(0))
-    except (AttributeError, OSError):
-        count = os.cpu_count()
-        return count or None
-    cores = set()
-    for cpu in cpus:
-        base = os.path.join(root, f"cpu{cpu}", "topology")
-        try:
-            with open(os.path.join(base, "core_id"), encoding="utf-8") as stream:
-                core = stream.read().strip()
-            with open(os.path.join(base, "physical_package_id"), encoding="utf-8") as stream:
-                package = stream.read().strip()
-        except OSError:
-            return len(cpus) or None
-        cores.add((package, core))
-    return len(cores) or None
-
-
 def _online_cpus(root: str) -> List[int]:
     """The CPU ids in ``<root>/online`` (e.g. ``0-39``), empty when unreadable."""
     try:
@@ -262,68 +235,52 @@ def resolve_ppn(
     hosts: List[str],
     environ: Mapping[str, str],
 ) -> tuple[Optional[int], Optional[Dict[str, Any]]]:
-    """Return ``(ppn, placement record)`` for one launch.
+    """Return ``(ppn, placement record)`` for one launch, or refuse one that does not fit.
 
-    The record is None outside an allocation or when placement is off; the
-    package's ``ppn`` is then used unchanged.
+    A package's ``ppn`` is never changed. Inside an allocation it must place
+    every rank on the launch hosts (``ppn * hosts >= nprocs``) and stay within
+    the tasks per node the scheduler granted; with no ``ppn`` the ranks are
+    spread evenly, ``ceil(nprocs / hosts)``, which must fit the grant too. A
+    launch that does not fit raises :class:`JarvisIssueError`
+    (``launch_does_not_fit``) with the numbers. The record is None outside an
+    allocation, where the package's ``ppn`` goes to the launcher as it is.
     """
-    if str(environ.get("JARVIS_MPI_PLACEMENT", "")).lower() in {"off", "0", "false", "package"}:
-        return ppn, None
     job = allocation(environ)
     if job is None:
         return ppn, None
     n_hosts = max(1, len(hosts))
+    total = int(nprocs) if isinstance(nprocs, int) and nprocs > 0 else None
     geometry = task_geometry(environ)
-    record: Dict[str, Any] = {
+    bound = _geometry_bound(geometry, hosts) if geometry is not None else None
+    resolved = ppn if ppn is not None else (math.ceil(total / n_hosts) if total else None)
+    problem = None
+    if ppn is not None and total and ppn * n_hosts < total:
+        problem = (f"{total} ranks at ppn {ppn} on {n_hosts} host(s) place only "
+                   f"{ppn * n_hosts}")
+    elif bound is not None and resolved is not None and resolved > bound:
+        problem = (f"{total} ranks on {n_hosts} host(s) at {resolved} per node exceed the "
+                   f"{bound} tasks per node the allocation granted")
+    if problem:
+        from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
+
+        raise JarvisIssueError([make_jarvis_issue(
+            kind="launch_does_not_fit", subject=f"{job['scheduler']} job {job['job_id']}",
+            message=problem, field="ppn",
+            details={"nprocs": total, "ppn": ppn, "hosts": list(hosts), "granted": bound},
+            remedy="give the package hosts for nprocs / ppn (host_slice or scheduler.nodes), "
+                   "or change nprocs or ppn")])
+    return resolved, {
         "schema_version": PLACEMENT_SCHEMA,
         "scheduler": job["scheduler"],
         "job_id": job["job_id"],
         "nprocs": nprocs,
         "hosts": n_hosts,
         "ppn_requested": ppn,
+        "ppn": resolved,
+        "granted": bound,
         "geometry": geometry,
+        "source": "package" if ppn is not None else "even_spread",
     }
-    if geometry is not None:
-        bound = _geometry_bound(geometry, hosts)
-        record["source"] = "scheduler_geometry"
-    else:
-        bound = physical_cores()
-        record["source"] = "physical_cores"
-        record["physical_cores"] = bound
-        if not bound:
-            record["source"] = "package"
-            record["ppn"] = ppn
-            record["adjusted"] = False
-            record["reason"] = "no task geometry and no core count; package ppn kept"
-            return ppn, record
-    record["bound"] = bound
-    label = ("granted" if record["source"] == "scheduler_geometry"
-             else "physical cores available")
-    total = int(nprocs) if isinstance(nprocs, int) and nprocs > 0 else None
-    needed = math.ceil(total / n_hosts) if total else None
-    over_grant = needed is not None and needed > bound
-    if ppn is not None and ppn <= bound and (needed is None or ppn >= needed):
-        resolved = ppn
-        reason = f"package ppn {ppn} fits the {bound} per node {label} and places all ranks"
-    elif over_grant:
-        resolved = needed
-        reason = (f"{total} ranks on {n_hosts} host(s) need {needed} per node, "
-                  f"more than the {bound} {label}")
-    else:
-        resolved = bound
-        if ppn is None:
-            reason = f"no package ppn; {bound} per node {label}"
-        elif ppn > bound:
-            reason = f"package ppn {ppn} exceeds the {bound} per node {label}"
-        else:
-            reason = (f"package ppn {ppn} on {n_hosts} host(s) cannot place "
-                      f"{total} ranks; {bound} per node {label}")
-    record["ppn"] = resolved
-    record["adjusted"] = resolved != ppn
-    record["reason"] = reason
-    if over_grant:
-        record["warning"] = "oversubscribed: nprocs exceeds the tasks the allocation granted"
-    return resolved, record
 
 
 #: the thread-count variables a launch sets per rank (OpenMP, OpenBLAS, MKL)

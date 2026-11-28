@@ -159,26 +159,17 @@ class LocalMpiExec(LocalExec):
         return record
 
     def _resolve_placement(self):
-        """Bound ranks per node by the allocation's task geometry.
+        """Check ranks per node against the allocation; see ``jarvis_cd.util.placement``.
 
-        Inside an allocation the scheduler's tasks per node (else the
-        physical cores) win over a package ``ppn`` that would not fit or
-        would not place every rank; see ``jarvis_cd.util.placement``.
+        A package ``ppn`` that cannot place every rank or exceeds the tasks
+        per node granted is refused, never changed.
         """
         import os
-        import sys
         from ..util.placement import resolve_ppn
 
-        environ = dict(os.environ)
-        if (self.mpi_env or {}).get('JARVIS_MPI_PLACEMENT'):
-            environ['JARVIS_MPI_PLACEMENT'] = self.mpi_env['JARVIS_MPI_PLACEMENT']
-        ppn, record = resolve_ppn(
-            self.nprocs, self.ppn, list(self.hostfile.hosts), environ
+        self.ppn, record = resolve_ppn(
+            self.nprocs, self.ppn, list(self.hostfile.hosts), os.environ
         )
-        if record and record.get('adjusted'):
-            print(f"jarvis: ppn {self.ppn} -> {ppn} ({record['reason']})",
-                  file=sys.stderr)
-        self.ppn = ppn
         return record
 
     def _apply_launch_network(self, launcher_env: Dict[str, Any]):
