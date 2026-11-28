@@ -66,6 +66,14 @@ def test_slice_that_selects_no_node_is_reported():
     assert problems and problems[0]["pkg_id"] == "bad"
 
 
+def test_ranks_at_their_ppn_size_the_allocation():
+    assert node_shape([_package("wx", nprocs=8, ppn=4)], None)[:2] == (2, 4)
+    shaped = node_shape([_package("a", nprocs=4, ppn=2), _package("b", host_slice="-3:", nprocs=3, ppn=1)], None)
+    assert shaped == (3, 2, [])
+    nodes, _per_node, problems = node_shape([_package("narrow", host_slice="0:1", nprocs=8, ppn=4)], None)
+    assert nodes == 1 and problems[0]["pkg_id"] == "narrow"
+
+
 def test_allocation_hosts_dedupes_in_allocation_order(tmp_path):
     nodefile = tmp_path / "nodes"
     nodefile.write_text("n3\nn3\nn1\nn1\nn2\n", encoding="utf-8")

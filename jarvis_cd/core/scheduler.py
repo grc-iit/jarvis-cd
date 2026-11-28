@@ -770,10 +770,11 @@ def node_shape(
     """``(nodes, tasks per node, problems)`` one allocation needs for these packages.
 
     ``nodes`` is the largest of the declared node count, the smallest node
-    count that makes every ``host_slice`` select at least one node, and 1.
-    Tasks per node is the largest per-node demand of a package: its
-    ``ppn``, else its ranks spread over its slice. ``problems`` lists each
-    slice that is still invalid for ``nodes`` (a negative start, say).
+    count at which every package's ``host_slice`` (none means every node)
+    selects the nodes its ranks need at its ``ppn`` (``ceil(nprocs / ppn)``,
+    else one), and 1. Tasks per node is the largest per-node demand of a
+    package: its ``ppn``, else its ranks spread over its slice. ``problems``
+    lists each slice that is still invalid or too narrow for ``nodes``.
     Packages with their own ``hostfile`` are skipped.
     """
     from jarvis_cd.core.pipeline_check import _ranks, _slice_range
@@ -789,25 +790,43 @@ def node_shape(
             continue
         text = str(config.get("host_slice") or "").strip()
         slices.append((str(package.get("pkg_id")), text, config))
-    nodes = max(declared, 1)
-    for _pkg_id, text, _config in slices:
+
+    def span_of(text: str, size: int) -> Tuple[Optional[int], Optional[str]]:
         if not text:
-            continue
-        for size in range(1, 4097):
-            if _slice_range(text, size)[1] is None:
-                nodes = max(nodes, size)
+            return size, None
+        selected, problem = _slice_range(text, size)
+        if problem or selected is None:
+            return None, problem
+        return selected[1] - selected[0], None
+
+    def nodes_needed(config: Dict[str, Any]) -> int:
+        ppn = str(config.get("ppn") or "").strip()
+        ranks = _ranks(config)
+        if ranks and ppn.isdigit() and int(ppn) > 0:
+            return -(-ranks // int(ppn))
+        return 1
+
+    # a larger allocation only widens or keeps each slice, so the first fit is the least
+    nodes = max(declared, 1)
+    for _pkg_id, text, config in slices:
+        need = nodes_needed(config)
+        for size in range(nodes, 4097):
+            span, _problem = span_of(text, size)
+            if span is not None and span >= need:
+                nodes = size
                 break
     problems: List[Dict[str, Any]] = []
     per_node: Optional[int] = None
     for pkg_id, text, config in slices:
-        span = nodes
-        if text:
-            selected, problem = _slice_range(text, nodes)
-            if problem or selected is None:
-                problems.append({"pkg_id": pkg_id, "host_slice": text,
-                                 "nodes": nodes, "problem": problem})
-                continue
-            span = selected[1] - selected[0]
+        span, problem = span_of(text, nodes)
+        need = nodes_needed(config)
+        if span is not None and span < need:
+            problem = (f"{_ranks(config)} ranks at ppn {config.get('ppn')} need {need} "
+                       f"nodes, and host_slice {text!r} selects {span}")
+        if problem or span is None:
+            problems.append({"pkg_id": pkg_id, "host_slice": text,
+                             "nodes": nodes, "problem": problem})
+            continue
         ppn = str(config.get("ppn") or "").strip()
         demand = int(ppn) if ppn.isdigit() and int(ppn) > 0 else None
         ranks = _ranks(config)

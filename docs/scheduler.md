@@ -156,11 +156,15 @@ The one job requests the node set the whole pipeline graph needs:
 
 - `nodes` is the largest of `scheduler.nodes`, 1, and, for each package that
   has no `hostfile` of its own, the smallest node count at which its
-  `host_slice` selects at least one node (a slice `"12:16"` needs 16 nodes, a
-  negative slice such as `"-4:"` needs 4);
+  `host_slice` (none means every node) selects the nodes its ranks need at
+  its `ppn`: `ceil(nprocs / ppn)` when both are set, else one. A slice
+  `"12:16"` needs 16 nodes, a negative slice such as `"-4:"` needs 4, and
+  `nprocs: 8, ppn: 4` with no slice needs 2;
 - every package's slice is then checked against that count; a slice that
-  still selects no node, or reaches past it, is refused before submitting
-  with issue kind `host_slice_outside_allocation` (`field: host_slice`);
+  still selects no node, reaches past it, or is narrower than its ranks at
+  its `ppn` need (`nprocs: 8, ppn: 4, host_slice: "0:1"`) is refused before
+  submitting with issue kind `host_slice_outside_allocation`
+  (`field: host_slice`);
 - when neither `ntasks` nor `ntasks_per_node` is declared, `ntasks_per_node`
   is the largest per-node demand of a package: its `ppn`, else its ranks
   (`nprocs`) divided by its slice width, rounded up (only when above 1).

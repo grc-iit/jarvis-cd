@@ -1332,9 +1332,10 @@ class Pipeline:
         """Size the one batch job for every package's ``host_slice``.
 
         The job asks for the largest of ``scheduler.nodes`` and the node count
-        each slice needs, and, with no task shape declared, for the largest
-        per-node task demand of a package. A slice that still selects no node
-        of that allocation is refused before anything is submitted.
+        each package's slice needs to hold its ranks at its ``ppn``, and, with
+        no task shape declared, for the largest per-node task demand of a
+        package. A slice that is invalid or too narrow for that allocation is
+        refused before anything is submitted.
         """
         from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
         from jarvis_cd.core.scheduler import node_shape
