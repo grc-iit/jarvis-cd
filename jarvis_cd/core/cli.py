@@ -1075,7 +1075,18 @@ class JarvisCLI(ArgParse):
         self.add_cmd(
             "repo list", msg="List all registered repositories", aliases=["repo ls"]
         )
-        self.add_args([])
+        self.add_args(
+            [
+                {
+                    "name": "json",
+                    "msg": "Print the jarvis.repos.v1 document: repositories, "
+                    "their packages, menus and contracts",
+                    "type": bool,
+                    "default": False,
+                    "prefix": "+",
+                }
+            ]
+        )
 
         self.add_cmd("repo create", msg="Create a new package in repository")
         self.add_args(
@@ -3339,6 +3350,13 @@ class JarvisCLI(ArgParse):
 
     def repo_list(self):
         """List repositories"""
+        if self.kwargs.get("json"):
+            self._json_call(
+                lambda: self.repo_manager.describe_repositories(),
+                lambda _document: None,
+                ensure=self._ensure_config_loaded,
+            )
+            return
         self._ensure_config_loaded()
         self.repo_manager.list_repositories()
 

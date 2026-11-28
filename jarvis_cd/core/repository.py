@@ -1,4 +1,6 @@
-﻿import keyword
+﻿import ast
+import json
+import keyword
 import os
 import re
 import shutil
@@ -6,7 +8,10 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
+
+import yaml
+
 from jarvis_cd.core.config import BUILTIN_REPOSITORY_NAME, Jarvis
 
 _URL_SCHEME = re.compile(r"^(https?|ssh|git|file|git\+ssh)://", re.IGNORECASE)
@@ -113,6 +118,76 @@ def _remove_tree(path: Path) -> None:
         shutil.rmtree(path, onexc=_retry_writable)
     else:
         shutil.rmtree(path, onerror=_retry_writable)
+
+
+REPOS_SCHEMA = "jarvis.repos.v1"
+
+
+def static_menu(source: str) -> Optional[List[Dict[str, Any]]]:
+    """The literal list a ``pkg.py``'s ``_configure_menu`` returns, read without importing it.
+
+    ``type`` is its name (``int``, ``str``). An entry value built by a call is
+    left out; a menu that is not one literal list is ``None``. Listing a
+    repository so never runs its code.
+    """
+    try:
+        tree = ast.parse(source.lstrip("\ufeff"))
+    except SyntaxError:
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef) or node.name != "_configure_menu":
+            continue
+        returns = [item for item in ast.walk(node) if isinstance(item, ast.Return)]
+        if len(returns) != 1 or not isinstance(returns[0].value, ast.List):
+            return None
+        entries: List[Dict[str, Any]] = []
+        for element in returns[0].value.elts:
+            if not isinstance(element, ast.Dict):
+                return None
+            entry: Dict[str, Any] = {}
+            for key_node, value_node in zip(element.keys, element.values):
+                if key_node is None:
+                    return None
+                try:
+                    key = ast.literal_eval(key_node)
+                    entry[str(key)] = (
+                        getattr(value_node, "id", None)
+                        if key == "type"
+                        else ast.literal_eval(value_node)
+                    )
+                except (ValueError, TypeError, SyntaxError):
+                    continue
+            if isinstance(entry.get("name"), str):
+                entries.append(entry)
+        return entries
+    return None
+
+
+def _git_source(repo_path: str) -> Optional[Dict[str, str]]:
+    if not (Path(repo_path) / ".git").exists():
+        return None
+    try:
+        commit = _git(["-C", repo_path, "rev-parse", "HEAD"])
+    except RuntimeError:
+        return None
+    try:
+        url = _git(["-C", repo_path, "remote", "get-url", "origin"])
+    except RuntimeError:
+        url = ""
+    return {"commit": commit, "url": url}
+
+
+def _contract(package_dir: Path) -> Dict[str, Any]:
+    path = package_dir / "contract.yaml"
+    if not path.is_file():
+        return {"contract": None}
+    try:
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
+        return {"contract": None, "contract_error": str(exc).splitlines()[0]}
+    if not isinstance(loaded, dict):
+        return {"contract": None, "contract_error": "contract.yaml is not a mapping"}
+    return {"contract": json.loads(json.dumps(loaded, default=str))}
 
 
 class RepositoryManager:
@@ -412,6 +487,50 @@ class RepositoryManager:
         elif builtin_path_str not in repos:
             builtin_exists = "âœ“" if builtin_path.exists() else "âœ—"
             print(f"  Built-in: builtin ({builtin_path}) {builtin_exists}")
+
+    def describe_repositories(self) -> Dict[str, Any]:
+        """The ``jarvis.repos.v1`` document ``jarvis repo list +json`` prints.
+
+        Every registered repository with its path, git source and packages (a
+        ``<repo>/<repo>/<package>/pkg.py``), each with its menu as
+        :func:`static_menu` reads it and its ``contract.yaml``, if any, as data.
+        No package is imported.
+        """
+        repos = []
+        for repo_path in self.jarvis_config.repos["repos"]:
+            path = Path(repo_path)
+            name = path.name
+            packages = []
+            inner = path / name
+            if inner.is_dir():
+                for pkg_py in sorted(inner.glob("*/pkg.py")):
+                    try:
+                        menu = static_menu(pkg_py.read_text(encoding="utf-8"))
+                    except (OSError, UnicodeDecodeError):
+                        menu = None
+                    packages.append(
+                        {
+                            "name": pkg_py.parent.name,
+                            "dir": str(pkg_py.parent),
+                            "menu": menu,
+                            **_contract(pkg_py.parent),
+                        }
+                    )
+            repos.append(
+                {
+                    "name": name,
+                    "path": str(path),
+                    "exists": path.is_dir(),
+                    "git": _git_source(str(path)) if path.is_dir() else None,
+                    "packages": packages,
+                }
+            )
+        builtin = self.jarvis_config.get_builtin_repo_path()
+        return {
+            "schema_version": REPOS_SCHEMA,
+            "builtin": str(builtin) if builtin is not None else None,
+            "repos": repos,
+        }
         
     def create_package(self, package_name: str, package_type: str):
         """

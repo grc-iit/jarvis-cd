@@ -197,3 +197,53 @@ def test_cli_init_records_no_builtin(
     assert reloaded.config[NO_BUILTIN_CONFIG_KEY] is True
     assert reloaded.repos == {"repos": []}
     assert reloaded.get_builtin_repo_path() is None
+
+
+def test_repo_list_json_reads_menus_and_contracts_without_importing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import json
+
+    monkeypatch.setenv("JARVIS_ROOT", str(tmp_path / ".ppi-jarvis"))
+    jarvis = _initialize(tmp_path, no_builtin=True)
+    package = tmp_path / "demo" / "demo" / "hello"
+    package.mkdir(parents=True)
+    (package / "pkg.py").write_text(
+        "\ufeffraise SystemExit('imported')\n"
+        "class Hello:\n"
+        "    def _configure_menu(self):\n"
+        "        return [{'name': 'out', 'msg': 'where', 'type': str, 'default': 'o',\n"
+        "                 'bind': make()}]\n",
+        encoding="utf-8",
+    )
+    (package / "contract.yaml").write_text("version: 0.3.0\n", encoding="utf-8")
+    broken = tmp_path / "demo" / "demo" / "broken"
+    broken.mkdir()
+    (broken / "pkg.py").write_text("x = 1\n", encoding="utf-8")
+    (broken / "contract.yaml").write_text("- a list\n", encoding="utf-8")
+    RepositoryManager(jarvis).add_repository(str(tmp_path / "demo"))
+
+    cli = JarvisCLI()
+    cli.define_options()
+    cli.parse(["repo", "list", "+json"])
+    document = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+
+    assert document["schema_version"] == "jarvis.repos.v1"
+    assert document["builtin"] is None
+    [repo] = document["repos"]
+    assert (repo["name"], repo["exists"], repo["git"]) == ("demo", True, None)
+    assert repo["packages"] == [
+        {
+            "name": "broken",
+            "dir": str(broken),
+            "menu": None,
+            "contract": None,
+            "contract_error": "contract.yaml is not a mapping",
+        },
+        {
+            "name": "hello",
+            "dir": str(package),
+            "menu": [{"name": "out", "msg": "where", "type": "str", "default": "o"}],
+            "contract": {"version": "0.3.0"},
+        },
+    ]
