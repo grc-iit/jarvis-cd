@@ -160,6 +160,7 @@ class Installer(ABC):
         if method_choices:
             report["method_choices"] = method_choices
         activation: Optional[Dict[str, Any]] = None
+        captured_keys: set = set()
         # Both load policies (install and check) apply a fresh capture: it was
         # written by an install that ended satisfied, so it is what a check
         # would confirm, without minutes of spack spec/find/load.
@@ -168,6 +169,7 @@ class Installer(ABC):
             activation = captured["activation"]
             if captured["result"] is not None:
                 report["installers"]["spack"] = captured["result"]
+                captured_keys = {site_copies.pkg_key(d) for d in grouped["spack"]}
                 grouped = {m: pkgs for m, pkgs in grouped.items() if m != "spack"}
         site_summary: Optional[Dict[str, Any]] = None
         needs_site_search = any(site_copies.needs_search(ppl, pkg_def)
@@ -199,10 +201,12 @@ class Installer(ABC):
                 site_summary["verified"] = verified["packages"]
             if needs_site_search or verified["packages"]:
                 report["site_copies"] = site_summary
+            # the re-read sees methods site resolution changed; the capture
+            # already answered its packages
             grouped = Installer.get_installers(ppl)
             for method in ("spack", "site"):
                 kept = [pkg_def for pkg_def in grouped.get(method) or []
-                        if site_copies.pkg_key(pkg_def) not in held]
+                        if site_copies.pkg_key(pkg_def) not in held | captured_keys]
                 grouped.pop(method, None)
                 if kept:
                     grouped[method] = kept
