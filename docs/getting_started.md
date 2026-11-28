@@ -42,14 +42,15 @@ jarvis repo add https://github.com/iowarp/clio-jarvis
   `clio_jarvis`, which must be the package directory inside it). It checks out
   `--ref` (a branch, tag or commit; default: the remote's default branch),
   checks the `<name>/<name>/<pkg>/pkg.py` layout, and registers the clone.
-  The URL and ref are recorded under `sources:` in `<JARVIS_ROOT>/repos.yaml`.
+  The URL and ref are read back from the clone itself; a tag or commit leaves
+  it detached, which pins it.
 
 Later, refresh the clone or move it to another ref (`clio-jarvis` is
 accepted too):
 
 ```bash
-jarvis repo update clio_jarvis              # fetch, then the recorded ref
-jarvis repo update clio_jarvis --ref v1.2   # move to (and record) a new ref
+jarvis repo update clio_jarvis              # fetch; a branch moves to origin, a pin stays
+jarvis repo update clio_jarvis --ref v1.2   # move to another branch, tag or commit
 ```
 
 See [Repository commands](package_dev_guide.md#adding-repositories) for the

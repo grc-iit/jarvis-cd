@@ -14,7 +14,7 @@ Every scheduler takes the same path:
 ``slurm``, ``pbs``, ``lsf``, ``flux``, ``cobalt`` or ``local`` (no
 scheduler: PSI/J's local executor runs the same spec on this host).
 Scheduler-specific queries (partitions, pending-job facts) and the job move
-live in :mod:`jarvis_cd.site.queues`.
+live in :mod:`jarvis_cd.core.queues`.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from jarvis_cd.site import queues
+from jarvis_cd.core import queues
 
 
 _DIRECTIVE_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
@@ -79,8 +79,6 @@ class SchedulerExecutionStatus:
     #: what produced the state: ``exit_code_file``, ``queue``,
     #: ``psij_exit_code_file`` or ``absent``
     basis: Optional[str] = None
-    #: kept for the observation document; JARVIS never reads accounting
-    accounting: Optional[str] = None
 
     def __post_init__(self) -> None:
         """Reject internally inconsistent provider observations."""
@@ -114,8 +112,7 @@ class SchedulerControlResult:
 
     ``accepted`` means the provider took the request. ``job_ended`` means the
     provider no longer has the job (it finished or was already removed), which
-    makes the request a no-op rather than an error. ``job_pending`` is kept
-    in the document and is always false: a stop is a file the job polls.
+    makes the request a no-op rather than an error.
     """
 
     action: SchedulerControlAction
@@ -124,7 +121,6 @@ class SchedulerControlResult:
     diagnostic: Optional[str]
     accepted: bool
     job_ended: bool = False
-    job_pending: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize the bounded result for execution record metadata."""
@@ -135,7 +131,6 @@ class SchedulerControlResult:
             "diagnostic": self.diagnostic,
             "accepted": self.accepted,
             "job_ended": self.job_ended,
-            "job_pending": self.job_pending,
         }
 
 
@@ -1027,27 +1022,6 @@ def query_scheduler_execution(
             "unknown", diagnostic=f"PSI/J {name} status failed: "
             f"{str(exc)[:1024] or type(exc).__name__}")
     return _from_psij_state(status.state.name, status.message, psij_code)
-
-
-def query_scheduler_queue(provider: str, native_id: str) -> Optional[Dict[str, Any]]:
-    """Queue facts (``jarvis.scheduler.queue.v1``) for one pending job."""
-    return queues.queue_facts(provider.strip().lower(), native_id)
-
-
-def scheduler_partition_facts(provider: str) -> List[Dict[str, Any]]:
-    """Partitions with node counts and limits for one provider."""
-    return queues.partition_facts(provider.strip().lower())
-
-
-def move_scheduler_execution(
-    provider: str,
-    native_id: str,
-    queue: str,
-    *,
-    cluster: Optional[str] = None,
-) -> Dict[str, Any]:
-    """Move one pending job to another queue (:func:`jarvis_cd.site.queues.move_job`)."""
-    return queues.move_job(provider.strip().lower(), native_id, queue, cluster=cluster)
 
 
 def scheduler_control_argv(

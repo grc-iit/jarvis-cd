@@ -14,8 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
-from jarvis_cd.core import queue_limits
-from jarvis_cd.core.queue_limits import LIMIT_KEYS
+from jarvis_cd.core import queues as queue_limits
+from jarvis_cd.core.queues import LIMIT_KEYS
 
 # --------------------------------------------------------------------- Slurm
 
@@ -62,7 +62,7 @@ def test_slurm_captured_lines_fill_every_key_and_mark_the_absent_ones():
 def test_slurm_failed_scontrol_marks_every_limit_unknown_with_the_raw_error():
     entries: List[Dict[str, Any]] = [{"partition": "gpu"}]
     failed = SimpleNamespace(returncode=1, stdout="", stderr="slurm_load_partitions: Unable to contact slurm controller")
-    with patch("jarvis_cd.site.queues.run_query",
+    with patch("jarvis_cd.core.queues.run_query",
                return_value=(failed, "scontrol query exited 1: slurm_load_partitions: Unable to contact slurm controller")):
         error = queue_limits.attach_slurm_limits(entries)
     assert error is not None and error["exit_code"] == 1
@@ -421,7 +421,7 @@ def test_flux_reader_falls_back_to_the_default_table():
         return (SimpleNamespace(returncode=1, stdout="", stderr="flux-queue: unknown format"),
                 "flux query exited 1: flux-queue: unknown format")
 
-    with patch("jarvis_cd.site.queues.run_query", side_effect=query):
+    with patch("jarvis_cd.core.queues.run_query", side_effect=query):
         entries, error = queue_limits.flux_partitions()
     assert error is None and len(calls) == 3
     assert entries[1]["limits_source"]["fields"]["max_nodes"] == "limits.range.effective.nnodes"
@@ -445,7 +445,7 @@ def _sched_info(provider, outputs):
         return SimpleNamespace(returncode=0, stdout=result, stderr=""), None
 
     jarvis = SimpleNamespace(resource_graph_file=None, resource_graph_is_site=False)
-    with patch("jarvis_cd.site.queues.run_query", side_effect=query):
+    with patch("jarvis_cd.core.queues.run_query", side_effect=query):
         return sched_info(jarvis, provider, include_mpi=False)
 
 

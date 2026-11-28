@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from jarvis_cd.core.scheduler import Scheduler
 from jarvis_cd.core.submit_plan import cores_plan
-from jarvis_cd.site.queues import core_request
+from jarvis_cd.core.queues import core_request
 from jarvis_cd.util.placement import cpu_topology, node_threads_per_core
 from jarvis_cd.util.resource_graph import ResourceGraph, merge_cpu_facts
 
@@ -44,7 +44,7 @@ def test_person_mapping_wins(tmp_path):
 
 
 def _plan(spec, nodes=2, facts=(ARES_COMPUTE,)):
-    with patch("jarvis_cd.site.queues.partition_facts", return_value=list(facts)):
+    with patch("jarvis_cd.core.queues.partition_facts", return_value=list(facts)):
         return cores_plan("slurm", spec, nodes)
 
 

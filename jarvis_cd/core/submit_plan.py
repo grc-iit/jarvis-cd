@@ -42,7 +42,7 @@ def _time_limit_seconds(value: Any) -> Optional[int]:
         return None
     if isinstance(value, int):
         return value * 60  # Slurm: a bare number is minutes
-    from jarvis_cd.site.queues import parse_slurm_duration
+    from jarvis_cd.core.queues import parse_slurm_duration
 
     return parse_slurm_duration(str(value))
 
@@ -132,7 +132,7 @@ def _install_summary(ppl: Any, outcome: Optional[Mapping[str, Any]]) -> Dict[str
 
 def _partition_topology(spec: Mapping[str, Any]) -> Dict[str, Any]:
     """The submit partition's node topology: sinfo, else the resource graph."""
-    from jarvis_cd.site.queues import partition_facts
+    from jarvis_cd.core.queues import partition_facts
 
     fields = ("sockets_per_node", "cores_per_socket", "threads_per_core",
               "physical_cores_per_node", "cpus_per_node", "heterogeneous")
@@ -178,9 +178,9 @@ def cores_plan(provider: str, spec: Mapping[str, Any], nodes: Optional[int]) -> 
 
     The partition's topology is discovered (sinfo, else the collector's
     graph); the request is the rendered spec plus JARVIS's per-core default
-    (:func:`jarvis_cd.site.queues.core_request`).
+    (:func:`jarvis_cd.core.queues.core_request`).
     """
-    from jarvis_cd.site.queues import core_request
+    from jarvis_cd.core.queues import core_request
 
     request = core_request(provider, spec)
     topology = _partition_topology(spec)

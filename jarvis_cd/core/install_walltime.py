@@ -102,8 +102,8 @@ def _human(seconds: Optional[float]) -> str:
 
 def slurm_partitions() -> Optional[List[Dict[str, Any]]]:
     """Every partition's MaxTime, DefaultTime, state and default flag."""
-    from jarvis_cd.site.queues import parse_slurm_duration as _parse_slurm_duration
-    from jarvis_cd.site.queues import run_query
+    from jarvis_cd.core.queues import parse_slurm_duration as _parse_slurm_duration
+    from jarvis_cd.core.queues import run_query
 
     completed, _diagnostic = run_query(["scontrol", "show", "partition", "-o"])
     if completed is None or completed.returncode != 0:

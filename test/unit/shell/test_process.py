@@ -28,11 +28,11 @@ class TestKill(unittest.TestCase):
     """Tests for Kill class"""
 
     def test_kill_uses_exact_basename_match(self):
-        """Kill should pkill -9 -x against the executable name."""
+        """Kill sends TERM, then KILL, with pkill -x against the executable name."""
         kill = Kill("nonexistent_test_process_xyz")
         cmd = kill.cmd
-        self.assertIn("pkill", cmd)
-        self.assertIn("-9", cmd)
+        self.assertIn("pkill -TERM", cmd)
+        self.assertIn("pkill -KILL", cmd)
         self.assertIn("-x", cmd)
         self.assertNotIn("-f", cmd)
         self.assertIn("nonexistent_test_process_xyz", cmd)

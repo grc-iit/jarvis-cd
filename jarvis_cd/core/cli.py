@@ -579,7 +579,7 @@ class JarvisCLI(ArgParse):
         self.add_cmd(
             "execution move",
             msg="Move a pending scheduler execution to another queue "
-            "(Slurm partition only, via jarvis_cd.site.queues)",
+            "(Slurm partition only, via jarvis_cd.core.queues)",
         )
         self.add_args(
             [
@@ -1034,7 +1034,7 @@ class JarvisCLI(ArgParse):
 
         self.add_cmd(
             "repo update",
-            msg="Fetch a git-cloned repository and check out its recorded (or a new) ref",
+            msg="Fetch a git-cloned repository: a branch moves to origin, a pinned clone stays",
         )
         self.add_args(
             [
@@ -1047,7 +1047,7 @@ class JarvisCLI(ArgParse):
                 },
                 {
                     "name": "ref",
-                    "msg": "Branch, tag or commit to move to (recorded for later updates)",
+                    "msg": "Branch, tag or commit to move to (a tag or commit pins the clone)",
                     "type": str,
                     "default": None,
                 },

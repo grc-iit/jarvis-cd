@@ -2091,10 +2091,8 @@ class Pipeline:
         ):
             return record
 
-        from jarvis_cd.core.scheduler import (
-            query_scheduler_execution,
-            query_scheduler_queue,
-        )
+        from jarvis_cd.core.queues import queue_facts as query_scheduler_queue
+        from jarvis_cd.core.scheduler import query_scheduler_execution
 
         observation = query_scheduler_execution(
             record.scheduler_provider,
@@ -2110,13 +2108,10 @@ class Pipeline:
             age_seconds = (datetime.now(timezone.utc) - created).total_seconds()
             if age_seconds < _SCHEDULER_MISSING_GRACE_SECONDS:
                 return record
-            state, return_code, error, basis = self._reconcile_vanished_job(
-                store, record, observation
-            )
+            state, return_code, error, basis = self._reconcile_vanished_job(store, record)
             terminal = True
             reconciliation = {
                 "basis": basis,
-                "accounting": observation.accounting,
                 "record_state_before": record.state,
             }
         else:
@@ -2141,7 +2136,6 @@ class Pipeline:
             "provider_state": observation.provider_state,
             "diagnostic": observation.diagnostic,
             "basis": observation.basis,
-            "accounting": observation.accounting,
         }
         if reconciliation is not None:
             observation_document["reconciliation"] = reconciliation
@@ -2181,7 +2175,7 @@ class Pipeline:
             raise
 
     def _reconcile_vanished_job(
-        self, store, record: ExecutionRecord, observation
+        self, store, record: ExecutionRecord
     ) -> tuple[str, int, str, str]:
         """Terminal (state, rc, error, basis) for a job the scheduler forgot.
 
@@ -2197,11 +2191,6 @@ class Pipeline:
         """
         provider = record.scheduler_provider
         native_id = record.scheduler_native_id
-        unaccounted = (
-            "; scheduler accounting is unavailable"
-            if observation.accounting == "unavailable"
-            else ""
-        )
         for key in ("cancel_request", "stop_request"):
             request = record.metadata.get(key)
             if isinstance(request, dict) and request.get("status") != "failed":
@@ -2209,7 +2198,7 @@ class Pipeline:
                     "canceled",
                     143,
                     f"scheduler {provider} job {native_id} ended after jarvis "
-                    f"execution {key.split('_')[0]}{unaccounted}",
+                    f"execution {key.split('_')[0]}",
                     key,
                 )
         execution_root = store.executions_dir / record.execution_id
@@ -2223,14 +2212,14 @@ class Pipeline:
                 "canceled",
                 143,
                 f"scheduler {provider} job {native_id} left the queue before it "
-                f"started (removed outside JARVIS){unaccounted}",
+                f"started (removed outside JARVIS)",
                 "vanished_pending",
             )
         return (
             "failed",
             1,
             f"scheduler {provider} no longer reports job {native_id}, and its "
-            f"JARVIS runtime never finalized the record (lost){unaccounted}",
+            f"JARVIS runtime never finalized the record (lost)",
             "vanished_running",
         )
 
@@ -2244,10 +2233,8 @@ class Pipeline:
         ``move_request`` metadata either way.
         """
         from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
-        from jarvis_cd.core.scheduler import (
-            SchedulerControlUnsupported,
-            move_scheduler_execution,
-        )
+        from jarvis_cd.core.queues import move_job
+        from jarvis_cd.core.scheduler import SchedulerControlUnsupported
 
         store = self._execution_store()
         record = self.get_execution(execution_id)
@@ -2292,8 +2279,8 @@ class Pipeline:
             "to_queue": queue,
         }
         try:
-            result = move_scheduler_execution(
-                provider, native_id, queue, cluster=control_cluster
+            result = move_job(
+                provider.strip().lower(), native_id, queue, cluster=control_cluster
             )
         except SchedulerControlUnsupported as exc:
             request["status"] = "unsupported"
@@ -3967,7 +3954,7 @@ class Pipeline:
     def _record_scheduler_job(self, store: Any, execution_id: str) -> None:
         """Record the allocation's real start once (``metadata.scheduler_job``)."""
         try:
-            from jarvis_cd.site.queues import scheduler_job_start
+            from jarvis_cd.core.queues import scheduler_job_start
 
             current = store.get(execution_id).metadata.get("scheduler_job")
             job = scheduler_job_start()

@@ -11,7 +11,7 @@ from jarvis_cd.core import install_placement as placement
 from jarvis_cd.core import install_walltime as walltime
 from jarvis_cd.core.issues import JarvisIssueError
 
-from test.unit.core.test_scheduler_submission import _real_pipeline
+from jarvis_cd.core.pipeline import Pipeline
 
 PARAVIEW = {"pkg_id": "pv", "pkg_type": "builtin.paraview",
             "config": {"install_method": "spack", "install": "paraview@5.13.1"}}
@@ -343,6 +343,37 @@ def test_non_slurm_has_no_cap():
 
 
 # --- the submission path -----------------------------------------------------
+
+
+def _real_pipeline(tmp_path: Path) -> Pipeline:
+    """A real Pipeline whose config/shared/private roots are test-local."""
+    repository_root = Path(__file__).parents[3]
+    jarvis = SimpleNamespace(
+        hostfile=None,
+        get_pipeline_dir=lambda name: tmp_path / "config" / "pipelines" / name,
+        get_pipeline_shared_dir=lambda name: tmp_path / "shared" / name,
+        get_pipeline_private_dir=lambda name: tmp_path / "private" / name,
+        get_builtin_repo_path=lambda: repository_root / "builtin",
+        set_current_pipeline=lambda _name: None,
+        jarvis_root=tmp_path / "jarvis-root",
+    )
+    with patch("jarvis_cd.core.pipeline.Jarvis.get_instance", return_value=jarvis):
+        pipeline = Pipeline()
+    pipeline.create("example")
+    pipeline.scheduler = {"name": "slurm", "nodes": 1}
+    pipeline.packages = [
+        {
+            "pkg_type": "builtin.echo",
+            "pkg_id": "echo",
+            "pkg_name": "echo",
+            "global_id": "example.echo",
+            "config": {},
+        }
+    ]
+    pipeline.env = {"PATH": "/spack/a/bin", "SPACK_ROOT": "/opt/spack"}
+    pipeline.last_loaded_file = "/operator/source.yaml"
+    pipeline.save()
+    return pipeline
 
 
 def test_install_job_gets_the_estimate_and_explicit_time_wins(tmp_path, monkeypatch):

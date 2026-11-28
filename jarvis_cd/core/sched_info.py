@@ -10,7 +10,7 @@ so it is safe on a login node:
   nodes, QoS, allowed accounts). Slurm reads ``sinfo`` and ``scontrol show
   partition -o``; PBS ``qstat -Qf``/``-Bf``, LSF ``bqueues -l``/``bparams``
   and Flux ``flux queue list`` give their queues the same ``limits`` keys
-  (see :mod:`jarvis_cd.core.queue_limits`);
+  (see :mod:`jarvis_cd.core.queues`);
 * ``account``: what jarvis would submit with (``SBATCH_ACCOUNT``...);
 * ``mpi``: the Spack MPI candidates the installer would offer, the MPI
   launchers jarvis supports, and ``mpiexec`` on PATH;
@@ -44,11 +44,10 @@ def detect_provider() -> Optional[str]:
 
 def partitions(provider: str) -> Tuple[List[Dict[str, Any]], Optional[Dict[str, Any]]]:
     """Partitions (queues) with their limits, and the raw error of a failed read."""
-    from jarvis_cd.core.queue_limits import QUEUE_READERS, attach_slurm_limits
-    from jarvis_cd.core.scheduler import scheduler_partition_facts
+    from jarvis_cd.core.queues import QUEUE_READERS, attach_slurm_limits, partition_facts
 
     if provider == "slurm":
-        facts = scheduler_partition_facts(provider)
+        facts = partition_facts(provider)
         if not facts:
             return [], None
         return facts, attach_slurm_limits(facts)
@@ -113,7 +112,7 @@ def mpi_facts(issues: List[Dict[str, Any]]) -> Dict[str, Any]:
 def sched_info(jarvis: Any, provider: Optional[str] = None, *, include_mpi: bool = True,
                extra_issues: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     from jarvis_cd.core.issues import make_jarvis_issue
-    from jarvis_cd.core.queue_limits import QUEUE_READERS
+    from jarvis_cd.core.queues import QUEUE_READERS
     from jarvis_cd.core.scheduler import SUPPORTED_SCHEDULERS as _SCHEDULERS
 
     issues: List[Dict[str, Any]] = list(extra_issues or [])

@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from jarvis_cd.core.scheduler import EXIT_CODE_NAME, STOP_REQUEST_NAME, _write_atomic
-from jarvis_cd.site.queues import allocation_identity
+from jarvis_cd.core.queues import allocation_identity
 
 
 def allocation_hosts(nodefile: Optional[str], suffix: str = "") -> List[str]:

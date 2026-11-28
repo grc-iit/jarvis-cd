@@ -12,7 +12,7 @@ pipeline packages (mpi | ssh | pssh launches)  ->  one PSI/J JobSpec  ->  JobExe
 ```
 
 JARVIS writes no `sbatch` script of its own. The only Slurm-specific code
-left is `jarvis_cd/site/queues.py`: read-only queue and partition queries
+left is `jarvis_cd/core/queues.py`: read-only queue and partition queries
 (`sinfo`, `squeue`, `scontrol show`) and `jarvis execution move`.
 
 When `scheduler:` is set, `jarvis ppl submit` creates a unique execution
@@ -375,7 +375,7 @@ without accounting):
 
 A terminal state is committed into the same durable execution record, with
 `metadata.scheduler_observation` (`jarvis.scheduler.observation.v1`:
-`state`, `provider_state`, `basis`, `accounting`, `diagnostic`, and
+`state`, `provider_state`, `basis`, `diagnostic`, and
 `reconciliation` when JARVIS had to infer the outcome). Generic query errors
 never terminalize the execution.
 
@@ -390,7 +390,7 @@ After the startup grace period, JARVIS commits one of these outcomes:
 |-----------|-----------------|------------------------|
 | a `cancel_request` or `stop_request` was recorded | `canceled` (rc 143) | `cancel_request` / `stop_request` |
 | the record never left `submitted` and the job wrote no output | `canceled` (rc 143): removed while pending, for example by an external `scancel` | `vanished_pending` |
-| the runtime started but never finalized | `failed` (rc 1): "never finalized the record (lost); scheduler accounting is unavailable" | `vanished_running` |
+| the runtime started but never finalized | `failed` (rc 1): "never finalized the record (lost)" | `vanished_running` |
 
 Within the grace period the record stays `submitted`.
 
@@ -417,7 +417,7 @@ jarvis execution move <execution-id> --queue <partition> [--pipeline-id P] +json
 ```
 
 This runs `scontrol update JobId=<job> Partition=<partition>` from
-`jarvis_cd/site/queues.py` (Slurm only; PSI/J has no move verb) and prints
+`jarvis_cd/core/queues.py` (Slurm only; PSI/J has no move verb) and prints
 the record.
 `metadata.move_request` (`jarvis.execution.control.v1`, `action: move`)
 records `from_queue`, `to_queue`, the exact `command`, `status` and the
@@ -550,14 +550,14 @@ Slurm, PBS, LSF and Flux queues and per-job limits, read-only; see
 | `submit.slurm` batch script, `sbatch --parsable` | `psij-job.json`, `executor.submit(job)`; artifact format `psij-jobspec-json`, `script_sha256` hashes the JSON |
 | `scontrol show hostnames $SLURM_JOB_NODELIST` | `PSIJ_NODEFILE`, deduplicated in order |
 | batch-shell `TERM` trap | `jarvis_cd.submit.entry` `SIGTERM` handler, with `trap ':' TERM` in PSI/J's batch shell and launcher shell so they wait for it |
-| `stop`: `scancel --signal=TERM --batch`, pending falls back to cancel | `stop`: the `stop-request` file; `job_pending` is always `false` |
+| `stop`: `scancel --signal=TERM --batch`, pending falls back to cancel | `stop`: the `stop-request` file |
 | `cancel`: `scancel [--clusters=C]` | `cancel`: `executor.cancel(job)` (`scancel -Q`) |
 | status: `squeue`, `scontrol show job`, `sacct` | status: `exit_code` file, then PSI/J's status command; no `sacct` |
 | `sbatch --wait` | `job.wait()`; a nonzero return is `workload_failed` (no `accepted_with_error`) |
 | `%j` in `output`/`error` | refused; PSI/J writes the exact paths |
 | arrays, `--clusters`, hetjobs, valueless flags | refused |
 | `pre_cmds` before the hostfile, `post_cmds` after the pipeline, in the job log | PSI/J `pre_launch` before the entry, `post_launch` after finalizing; logs `pre-launch.log`, `post-launch.log` |
-| partition facts, queue facts, `move` in the scheduler class | `jarvis_cd/site/queues.py` |
+| partition facts, queue facts, `move` in the scheduler class | `jarvis_cd/core/queues.py` |
 
 ## Install jobs
 

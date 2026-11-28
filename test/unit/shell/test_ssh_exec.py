@@ -128,7 +128,7 @@ class TestSshExec(unittest.TestCase):
         ssh_exec = SshExec("pwd", exec_info)
 
         cmd = ssh_exec.get_cmd()
-        self.assertIn("cd /tmp/test", cmd)
+        self.assertIn("cd -- /tmp/test", cmd)
 
     def test_ssh_with_sudo(self):
         """Test SSH command with sudo"""
@@ -221,7 +221,7 @@ class TestSshExec(unittest.TestCase):
         self.assertIn("testuser@testhost", cmd)
         self.assertIn("-p 2222", cmd)
         self.assertIn("-i /path/to/key", cmd)
-        self.assertIn("cd /tmp", cmd)
+        self.assertIn("cd -- /tmp", cmd)
         self.assertIn("VAR1", cmd)
         self.assertIn("VAR2", cmd)
         self.assertIn("sudo -E", cmd)
@@ -350,7 +350,7 @@ class TestPsshExec(unittest.TestCase):
         owner = object()
         process = object()
 
-        def make_exec(_cmd, _info, hostname):
+        def make_exec(_cmd, _info, hostname, **_kwargs):
             return MagicMock(
                 processes={hostname: process},
                 process_groups={hostname: 42},

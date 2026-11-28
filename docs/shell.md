@@ -125,7 +125,8 @@ Execute a command on one host. How it gets there depends on where JARVIS runs:
   `srun --jobid=$SLURM_JOB_ID --overlap -w <node> -N1 -n1 --input=none`. The
   command stays in the job (its cgroup and accounting), uses the CPUs the job
   requested on that node, and ends when the job is cancelled. This needs no
-  ssh keys or host keys between nodes. Stopping it sends every process in the
+  ssh keys or host keys between nodes, and needs Slurm 20.11 or later
+  (`--overlap`). Stopping it sends every process in the
   step SIGTERM (`scancel --signal=TERM <job>.<step>`), waits the grace
   period, then ends the step.
 - **Anywhere else** (a dev host, a plain ssh cluster, cloud VMs, a host

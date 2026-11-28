@@ -4,7 +4,8 @@ SSH execution classes for Jarvis shell execution.
 A command for another host reaches it in one of two ways:
 
 - Inside a Slurm allocation, on a node of that allocation, it runs as a job
-  step: ``srun --jobid --overlap -w <node> -N1 -n1``. It stays in the job's
+  step: ``srun --jobid --overlap -w <node> -N1 -n1`` (Slurm 20.11 or later).
+  It stays in the job's
   cgroup, is accounted to the job, and ends when the job is cancelled.
 - Anywhere else (a dev host, a plain ssh cluster, cloud VMs, or a host outside
   the allocation) it runs over ssh with a stdin lifeline: the remote side
@@ -51,7 +52,6 @@ LIFELINE = (
 
 _allocation_lock = threading.Lock()
 _allocation_cache: Dict[tuple, Dict[str, str]] = {}
-_overlap_cache: Dict[str, bool] = {}
 _step_counter = itertools.count()
 
 
@@ -112,20 +112,6 @@ def _current_user() -> Optional[str]:
         return getpass.getuser()
     except Exception:
         return None
-
-
-def _srun_has_overlap() -> bool:
-    with _allocation_lock:
-        if "srun" not in _overlap_cache:
-            try:
-                text = subprocess.run(
-                    ["srun", "--help"], capture_output=True, text=True,
-                    timeout=30, stdin=subprocess.DEVNULL,
-                ).stdout
-            except (OSError, subprocess.SubprocessError):
-                text = ""
-            _overlap_cache["srun"] = "--overlap" in text
-        return _overlap_cache["srun"]
 
 
 def remote_command(cmd: str, exec_info, marker: str = "") -> str:
@@ -205,9 +191,8 @@ class SshExec(LocalExec):
         """``srun`` step on the target node of the current allocation."""
         self.job_id = os.environ["SLURM_JOB_ID"]
         self.step_name = f"jarvis-{os.getpid()}-{next(_step_counter)}"
-        parts = ["srun", f"--jobid={self.job_id}", f"--job-name={self.step_name}"]
-        if _srun_has_overlap():
-            parts.append("--overlap")
+        parts = ["srun", f"--jobid={self.job_id}", f"--job-name={self.step_name}",
+                 "--overlap"]
         # No -c: the step uses the CPUs the job requested on that node, and
         # binding a one-task step would pin everything it starts.
         parts.extend(["-w", str(self.step_node), "-N1", "-n1", "--export=ALL",

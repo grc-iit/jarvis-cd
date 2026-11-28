@@ -1,13 +1,12 @@
-import keyword
+﻿import keyword
 import os
 import re
 import shutil
 import stat
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, List, Optional
 from jarvis_cd.core.config import BUILTIN_REPOSITORY_NAME, Jarvis
 
 _URL_SCHEME = re.compile(r"^(https?|ssh|git|file|git\+ssh)://", re.IGNORECASE)
@@ -116,10 +115,6 @@ def _remove_tree(path: Path) -> None:
         shutil.rmtree(path, onerror=_retry_writable)
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
 class RepositoryManager:
     """
     Manages Jarvis repositories - adding, removing, listing, and creating packages.
@@ -174,13 +169,13 @@ class RepositoryManager:
                 f"Missing directory: {expected_subdir}\n\n"
                 f"To fix this, ensure your repository follows the required structure:\n"
                 f"  {repo_name}/\n"
-                f"  ├── {repo_name}/           # Required subdirectory with same name\n"
-                f"  │   ├── package1/\n"
-                f"  │   │   └── pkg.py\n"
-                f"  │   └── package2/\n"
-                f"  │       └── pkg.py\n"
-                f"  └── pipelines/          # Optional pipeline index\n"
-                f"      └── example.yaml"
+                f"  â”œâ”€â”€ {repo_name}/           # Required subdirectory with same name\n"
+                f"  â”‚   â”œâ”€â”€ package1/\n"
+                f"  â”‚   â”‚   â””â”€â”€ pkg.py\n"
+                f"  â”‚   â””â”€â”€ package2/\n"
+                f"  â”‚       â””â”€â”€ pkg.py\n"
+                f"  â””â”€â”€ pipelines/          # Optional pipeline index\n"
+                f"      â””â”€â”€ example.yaml"
             )
 
         if not expected_subdir.is_dir():
@@ -246,21 +241,19 @@ class RepositoryManager:
                 f"Repository '{name}' was not added (see above); removed the clone "
                 f"{clone_dir}. Use +force to replace the existing repository"
             )
-        self.jarvis_config.set_repo_source(
-            str(clone_dir), {"url": url, "ref": ref, "cloned_at": _now()}
-        )
         print(f"Checked out {ref or 'HEAD'} at {commit}")
 
     def update_repository(self, repo_name: str, ref: Optional[str] = None):
         """
         Refresh a repository added from a git URL.
 
-        Fetches ``origin`` (with tags), then checks out the recorded ref, or
-        ``ref`` which is recorded from then on. A branch is reset to
-        ``origin/<branch>``; a tag or commit is checked out detached.
+        Fetches ``origin`` (with tags). A clone on a branch is reset to
+        ``origin/<branch>``; a detached clone (a tag or commit) is pinned and
+        stays where it is. ``ref`` moves the clone: a branch is checked out
+        tracking ``origin/<branch>``, a tag or commit detached.
 
         :param repo_name: Name of the repository (not full path)
-        :param ref: Branch, tag or commit to move to instead of the recorded one
+        :param ref: Branch, tag or commit to move to
         """
         if ref is not None:
             _validate_ref(ref)
@@ -273,31 +266,27 @@ class RepositoryManager:
         ]
         if not matches:
             raise ValueError(f"No repository named '{repo_name}' is registered")
-        sourced = [
-            (repo_path, source)
-            for repo_path in matches
-            if (source := self.jarvis_config.get_repo_source(repo_path)) is not None
-        ]
-        if not sourced:
+        clones = [path for path in matches if self.jarvis_config.is_owned_git_clone(path)]
+        if not clones:
             raise ValueError(
                 f"Repository '{repo_name}' ({', '.join(matches)}) was not added from a "
                 f"git URL; only repositories added with 'jarvis repo add <git url>' "
                 f"can be updated"
             )
-        for repo_path, source in sourced:
-            self._update_git_clone(repo_path, source, ref)
+        for repo_path in clones:
+            self._update_git_clone(repo_path, ref)
 
-    def _update_git_clone(self, repo_path: str, source: Dict[str, Any], ref: Optional[str]):
+    def _update_git_clone(self, repo_path: str, ref: Optional[str]):
         clone = str(repo_path)
-        target = ref or source.get("ref")
-        print(f"Fetching {source.get('url')} into {clone}")
+        url = _git(["-C", clone, "remote", "get-url", "origin"])
+        print(f"Fetching {url} into {clone}")
         _git(["-C", clone, "fetch", "--tags", "origin"], capture=False)
-        if not target:
-            head = _git(["-C", clone, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
-            target = head.split("/", 1)[1] if head.startswith("origin/") else head
-
         previous_commit = _git(["-C", clone, "rev-parse", "HEAD"])
         previous_branch = _git(["-C", clone, "rev-parse", "--abbrev-ref", "HEAD"])
+        target = ref or (previous_branch if previous_branch != "HEAD" else None)
+        if target is None:
+            print(f"{Path(clone).name} is pinned at {previous_commit}; pass --ref to move it")
+            return
         try:
             if _git_ok(["-C", clone, "show-ref", "--verify", "--quiet",
                         f"refs/remotes/origin/{target}"]):
@@ -314,9 +303,6 @@ class RepositoryManager:
             raise
 
         commit = _git(["-C", clone, "rev-parse", "HEAD"])
-        self.jarvis_config.set_repo_source(
-            clone, {**source, "ref": target, "updated_at": _now()}
-        )
         print(f"Updated {Path(clone).name} ({clone}) to {target} at {commit}")
         
     def remove_repository(self, repo_path: str):
@@ -362,10 +348,9 @@ class RepositoryManager:
             )
 
         for repo_path in matching:
-            source = self.jarvis_config.pop_repo_source(repo_path)
-            if source is not None and self.jarvis_config.is_owned_git_clone(repo_path):
+            if self.jarvis_config.is_owned_git_clone(repo_path):
                 _remove_tree(Path(repo_path))
-                print(f"Deleted clone of {source.get('url')}: {repo_path}")
+                print(f"Deleted clone: {repo_path}")
         
         # Clean up any other non-existent repositories while we're at it
         self.jarvis_config.cleanup_nonexistent_repos()
@@ -383,14 +368,6 @@ class RepositoryManager:
             f"Builtin package repository left out of this root "
             f"(no_builtin: true in {self.jarvis_config.config_file})"
         )
-        if self.jarvis_config.builtin_environment_override is False:
-            print(
-                "Note: JARVIS_NO_BUILTIN is set to a false value, which keeps "
-                "builtin in for processes that set it"
-            )
-        distribution = self.jarvis_config._distribution_builtin_repository()
-        if distribution is not None:
-            print(f"To bring it back: jarvis repo add {distribution}")
         return len(removed)
         
     def list_repositories(self):
@@ -411,30 +388,29 @@ class RepositoryManager:
             repo_count = 0
             for repo_path in repos:
                 repo_name = Path(repo_path).name
-                exists = "✓" if Path(repo_path).exists() else "✗"
+                exists = "âœ“" if Path(repo_path).exists() else "âœ—"
                 
                 # Check if this is the builtin repository
                 if repo_path == builtin_path_str:
                     print(f"  {repo_count+1}. {repo_name} ({repo_path}) {exists} [builtin]")
                 else:
                     print(f"  {repo_count+1}. {repo_name} ({repo_path}) {exists}")
-                source = self.jarvis_config.get_repo_source(repo_path)
-                if source is not None:
+                if self.jarvis_config.is_owned_git_clone(repo_path):
                     try:
+                        url = _git(["-C", repo_path, "remote", "get-url", "origin"])
+                        branch = _git(["-C", repo_path, "rev-parse", "--abbrev-ref", "HEAD"])
                         commit = _git(["-C", repo_path, "rev-parse", "--short", "HEAD"])
                     except RuntimeError:
-                        commit = "unknown"
-                    print(
-                        f"     git: {source.get('url')} ref: {source.get('ref') or 'HEAD'} "
-                        f"commit: {commit}"
-                    )
+                        url, branch, commit = "unknown", "unknown", "unknown"
+                    ref = "pinned" if branch == "HEAD" else branch
+                    print(f"     git: {url} ref: {ref} commit: {commit}")
                 repo_count += 1
                 
         # Only show separate builtin entry if it's not in the registered repos
         if builtin_path is None:
             print("  Built-in: builtin left out (JARVIS_NO_BUILTIN / no_builtin)")
         elif builtin_path_str not in repos:
-            builtin_exists = "✓" if builtin_path.exists() else "✗"
+            builtin_exists = "âœ“" if builtin_path.exists() else "âœ—"
             print(f"  Built-in: builtin ({builtin_path}) {builtin_exists}")
         
     def create_package(self, package_name: str, package_type: str):
