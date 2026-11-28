@@ -237,7 +237,7 @@ Submit with `jarvis ppl submit path/to/test.yaml`.
 **Mode B — per-iteration template (`scheduler.*` vars present):**
 the top-level scheduler becomes a set of *defaults* that every
 iteration's scheduler inherits, and each iteration is submitted as its
-own job via `sbatch --wait` (so the test runner blocks on each job
+own job and waited on through PSI/J (so the test runner blocks on each job
 before moving on). See [Scheduler Variables](#scheduler-variables).
 
 In Mode B, `jarvis ppl submit` is rejected; use `jarvis ppl run` so
@@ -1099,7 +1099,7 @@ jarvis ppl install --forget mpi +json           # forget a recorded answer, then
 
 With `+json`, stdout carries exactly one JSON document: the install report,
 or with `+submit` the `jarvis.execution.handle.v1` handle. Submit progress
-lines (script path, hostfile, the `sbatch` command) go to stderr.
+lines (job description path, hostfile, the submit command) go to stderr.
 
 `--forget <selector>` removes recorded answers from `decisions.yaml` and
 prints a `jarvis.install-forget.v1` document with `decisions_path`,
@@ -1317,7 +1317,7 @@ order:
 3. The `scheduler.*` values from this combination's `vars:`.
 
 When the merged block exists, the iteration is submitted as its own
-job via `sbatch --wait`; the test runner blocks on each job before
+job and waited on through PSI/J; the test runner blocks on each job before
 collecting stats and moving on.
 
 #### Example: Scaling Sweep
@@ -1328,8 +1328,8 @@ scheduler:
   partition: compute
   time: "00:30:00"
   ntasks_per_node: 16
-  output: ${HOME}/logs/scaling.%j.out
-  error:  ${HOME}/logs/scaling.%j.err
+  # stdout/stderr default to each iteration's execution directory;
+  # PSI/J writes exact paths, so %j patterns are refused
 
 config:
   name: ior_scaling
@@ -1602,7 +1602,7 @@ class Ycsb(Application):
 
 ## Scheduling
 
-Pipeline tests integrate with the batch scheduler (SLURM today) in two
+Pipeline tests integrate with the batch scheduler (any PSI/J executor) in two
 mutually exclusive modes, selected automatically by whether `vars:`
 contains any `scheduler.*` entries. Both are introduced under
 [scheduler (optional)](#scheduler-optional) above; this section
@@ -1611,17 +1611,17 @@ summarizes them and points at the full reference.
 ### Mode A — one job wraps the whole test
 
 No `scheduler.*` vars. A top-level `scheduler:` block wraps **every**
-combination and repeat in a single allocation. The generated job
-script builds a hostfile from the allocation, then runs
+combination and repeat in a single allocation. The PSI/J job's
+entry builds a hostfile from the allocation, then runs
 `jarvis ppl run yaml <test>` once so all iterations reuse the same
 nodes sequentially.
 
 ```bash
-jarvis ppl submit path/to/test.yaml          # writes + sbatch
-jarvis ppl submit path/to/test.yaml +no_submit   # script only
+jarvis ppl submit path/to/test.yaml          # writes + submits through PSI/J
+jarvis ppl submit path/to/test.yaml +no_submit   # job description only
 ```
 
-The script is written to `<test_shared_dir>/submit.slurm`.
+The job description is written to `<test_shared_dir>/psij-job.json`.
 
 ### Mode B — one job per iteration
 
@@ -1633,7 +1633,7 @@ merged in order:
 top-level scheduler  ⊕  config.scheduler (if any)  ⊕  scheduler.* vars
 ```
 
-Each iteration is submitted on its own via `sbatch --wait`, so the
+Each iteration is submitted on its own and waited on through PSI/J, so the
 test runner **blocks** on each job (capturing its runtime/stats)
 before moving to the next. Run these with `jarvis ppl run yaml
 <test>`; `jarvis ppl submit` is rejected in this mode because wrapping
@@ -1741,8 +1741,8 @@ How the pieces interact:
   `spack install ior` and loads its environment. The install is
   idempotent, so the second experiment reuses the first's build.
 - **SLURM** → because the `scheduler:` block is **nested inside
-  `config:`**, every iteration is submitted as its own job with
-  `sbatch --wait`; the runner blocks on each job, records its
+  `config:`**, every iteration is submitted as its own job and
+  waited on through PSI/J; the runner blocks on each job, records its
   runtime/stats, then continues. (A nested `config.scheduler` is the
   per-iteration form — see [Scheduling](#scheduling). A suite does not
   wrap all experiments in one allocation; scheduling is expressed

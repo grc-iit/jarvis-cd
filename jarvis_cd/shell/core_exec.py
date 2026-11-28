@@ -357,8 +357,10 @@ class LocalExec(CoreExec):
         else:
             env = os.environ
 
-        # Prepare stdin
-        stdin_pipe = subprocess.PIPE if self.exec_info.stdin else None
+        # Prepare stdin. A held pipe is never written: closing it (or this
+        # process dying) is the remote end's signal to stop (ssh lifeline).
+        hold_stdin = getattr(self, "_hold_stdin", False) and os.name != "nt"
+        stdin_pipe = subprocess.PIPE if self.exec_info.stdin or hold_stdin else None
 
         # Start process
         try:
@@ -501,6 +503,12 @@ class LocalExec(CoreExec):
     def wait(self, hostname: str = "localhost") -> int:
         """Wait for completion and handle sleep"""
         exit_code = super().wait(hostname)
+        process = self.processes.get(hostname)
+        if getattr(self, "_hold_stdin", False) and process is not None and process.stdin:
+            try:
+                process.stdin.close()
+            except (OSError, ValueError):
+                pass
 
         # Sleep if specified
         if self.exec_info.sleep_ms > 0:

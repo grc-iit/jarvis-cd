@@ -24,6 +24,7 @@ dependencies = [
   "pyyaml",
   "pandas",
   "podman-compose",
+  "psij-python==0.9.11",
   "pywin32>=311 ; sys_platform == 'win32'",
 ]
 

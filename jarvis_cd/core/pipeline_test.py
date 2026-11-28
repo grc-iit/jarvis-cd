@@ -517,9 +517,8 @@ class PipelineTest:
         """Generate a job script that runs the whole test inside one batch
         allocation.
 
-        The script:
-          1. Builds the hostfile from the allocation
-             (``scontrol show hostnames $SLURM_JOB_NODELIST``)
+        The job description:
+          1. Builds the hostfile from the allocation (``PSIJ_NODEFILE``)
           2. Runs ``jarvis ppl run yaml <test_file>`` so each iteration
              reuses the same allocation.
 
@@ -527,9 +526,9 @@ class PipelineTest:
         by placing the scheduler block inside ``config:`` instead — that
         is handled by ``Pipeline.submit()``.
 
-        :param submit: when True, exec ``sbatch`` after writing the
-            script; when False, only write it and return the path.
-        :return: Path to the generated job script.
+        :param submit: when True, submit through PSI/J after writing the
+            description; when False, only write it and return the path.
+        :return: Path to the generated PSI/J job description.
         """
         if not self.scheduler:
             raise ValueError(
@@ -570,18 +569,19 @@ class PipelineTest:
                                pipeline_yaml=self.source_path,
                                pipeline_name=self.name)
         script_path = sched.write_script()
-        logger.pipeline(f"Wrote scheduler script: {script_path}")
+        logger.pipeline(f"Wrote PSI/J job description: {script_path}")
         logger.pipeline(f"Hostfile (built at job start): {sched.hostfile}")
 
         if submit:
-            from jarvis_cd.shell import Exec, LocalExecInfo
-            cmd = ' '.join(sched.submit_command())
-            logger.pipeline(f"Submitting: {cmd}")
-            result = Exec(cmd, LocalExecInfo()).run()
-            exit_code = result.exit_code.get('localhost', 1)
-            if exit_code != 0:
+            from jarvis_cd.core.scheduler import SchedulerSubmitRefused
+            try:
+                submission = sched.submit()
+            except SchedulerSubmitRefused as exc:
                 raise RuntimeError(
-                    f"Scheduler submission failed (exit {exit_code}): {cmd}")
+                    f"{sched.NAME} refused the submission: {exc}") from exc
+            logger.pipeline(
+                f"Submitted {sched.NAME} job {submission.native_id}: "
+                f"{' '.join(submission.command)}")
         return script_path
 
     def _run_plots(self, pipeline=None):
@@ -673,7 +673,7 @@ class PipelineTest:
             # If this iteration has a scheduler block (either from a
             # nested config.scheduler or from a top-level scheduler
             # template + scheduler.X vars), submit it as its own job and
-            # block until it finishes via ``sbatch --wait``. Otherwise
+            # block until it finishes (PSI/J ``job.wait()``). Otherwise
             # run the pipeline in-process.
             if pipeline.scheduler:
                 logger.pipeline(

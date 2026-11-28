@@ -76,9 +76,9 @@ def _state(enabled: Optional[bool], started: Optional[bool]) -> Optional[str]:
 
 def _query(argv: List[str]) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
     """stdout of one bounded query, or the raw error (command, exit code, output)."""
-    from jarvis_cd.core.scheduler import _run_scheduler_query
+    from jarvis_cd.site.queues import run_query
 
-    completed, diagnostic = _run_scheduler_query(argv)
+    completed, diagnostic = run_query(argv)
     if completed is not None and completed.returncode == 0:
         return completed.stdout, None
     return None, {"command": " ".join(argv),
@@ -137,7 +137,7 @@ def _slurm_value(text: str) -> Any:
 
 def parse_slurm_partitions(text: str) -> Dict[str, Known]:
     """Known limits per partition from ``scontrol show partition -o``."""
-    from jarvis_cd.core.scheduler import _parse_slurm_duration
+    from jarvis_cd.site.queues import parse_slurm_duration as _parse_slurm_duration
 
     result: Dict[str, Known] = {}
     for line in text.splitlines():

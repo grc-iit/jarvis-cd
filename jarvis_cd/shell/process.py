@@ -3,9 +3,10 @@ Process utility classes for Jarvis shell execution.
 """
 
 import os
+import shlex
 import subprocess
 import sys
-from typing import Union, List
+from typing import Optional, Union, List
 from .exec_factory import Exec
 from .exec_info import ExecInfo, ExecType, LocalExecInfo
 
@@ -25,23 +26,36 @@ def _python_command(source: str, *args: str) -> str:
 
 class Kill(Exec):
     """
-    Kill all processes whose process name exactly matches an executable.
+    Stop the current user's processes whose name exactly matches an executable.
     """
 
-    def __init__(self, executable: str, exec_info: ExecInfo = None):
+    def __init__(self, executable: str, exec_info: ExecInfo = None,
+                 grace: Optional[int] = None):
         """
-        Kill all processes whose process name (comm) exactly equals
-        ``executable``. Uses ``pkill -9 -x <executable>``, which matches
-        the basename only — pass the executable name, not a command line
-        or regex.
+        Stop every process of the current user whose process name (comm)
+        exactly equals ``executable``: SIGTERM, then up to ``grace`` seconds
+        (default ``JARVIS_KILL_GRACE``, 10) for them to exit, then SIGKILL.
+        ``pkill -x`` matches the basename only, so pass the executable name,
+        not a command line or regex. Other users' processes are never touched.
+        With an SSH/PSSH ``exec_info`` it runs on each host.
 
         :param executable: Executable name to kill (e.g. ``redis-server``)
         :param exec_info: Info needed to execute the command
+        :param grace: Seconds between SIGTERM and SIGKILL
         """
         if exec_info is None:
             exec_info = LocalExecInfo()
+        if grace is None:
+            from .ssh_exec import kill_grace
+            grace = kill_grace()
 
-        kill_cmd = f"pkill -9 -x '{executable}'"
+        name = shlex.quote(executable)
+        kill_cmd = (
+            f'u="$(id -u)"; pkill -TERM -u "$u" -x {name}; i=0; '
+            f'while [ "$i" -lt {int(grace)} ] && pgrep -u "$u" -x {name} >/dev/null; '
+            f'do sleep 1; i=$((i + 1)); done; '
+            f'pkill -KILL -u "$u" -x {name}; exit 0'
+        )
         super().__init__(kill_cmd, exec_info)
 
 

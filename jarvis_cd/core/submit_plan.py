@@ -3,10 +3,10 @@
 A plan resolves everything a real ``+submit`` would, without submitting and
 without Spack: the scheduler and its directives, the total nodes, each
 component's nodes and ranks, the couplings between components, the exact
-batch script, and the issues that would refuse the submit (exit 3 or 5).
+PSI/J job description, and the issues that would refuse the submit (exit 3 or 5).
 
 The plan binds to the later submission by ``plan_sha256``, a digest of the
-script bytes and the sealed snapshot input. ``jarvis ppl submit ...
+job description bytes and the sealed snapshot input. ``jarvis ppl submit ...
 --execution-id ID --plan_sha256 SHA`` renders again and refuses with a
 ``submission_plan_changed`` issue (exit 5) before recording or submitting
 anything when they differ.
@@ -42,9 +42,9 @@ def _time_limit_seconds(value: Any) -> Optional[int]:
         return None
     if isinstance(value, int):
         return value * 60  # Slurm: a bare number is minutes
-    from jarvis_cd.core.scheduler import _parse_slurm_duration
+    from jarvis_cd.site.queues import parse_slurm_duration
 
-    return _parse_slurm_duration(str(value))
+    return parse_slurm_duration(str(value))
 
 
 def _source(key: str, spec: Mapping[str, Any], declared: Mapping[str, Any],
@@ -132,13 +132,13 @@ def _install_summary(ppl: Any, outcome: Optional[Mapping[str, Any]]) -> Dict[str
 
 def _partition_topology(spec: Mapping[str, Any]) -> Dict[str, Any]:
     """The submit partition's node topology: sinfo, else the resource graph."""
-    from jarvis_cd.core.scheduler import SlurmScheduler
+    from jarvis_cd.site.queues import partition_facts
 
     fields = ("sockets_per_node", "cores_per_socket", "threads_per_core",
               "physical_cores_per_node", "cpus_per_node", "heterogeneous")
     wanted = spec.get("partition")
     try:
-        facts = SlurmScheduler.partition_facts()
+        facts = partition_facts("slurm")
     except Exception:
         facts = []
     for entry in facts:
@@ -173,14 +173,16 @@ def _int(value: Any) -> Optional[int]:
         return None
 
 
-def cores_plan(sched: Any, spec: Mapping[str, Any], nodes: Optional[int]) -> Dict[str, Any]:
+def cores_plan(provider: str, spec: Mapping[str, Any], nodes: Optional[int]) -> Dict[str, Any]:
     """What a run's request claims per node, in physical cores.
 
     The partition's topology is discovered (sinfo, else the collector's
     graph); the request is the rendered spec plus JARVIS's per-core default
-    (``SlurmScheduler.core_request``).
+    (:func:`jarvis_cd.site.queues.core_request`).
     """
-    request = sched.core_request(spec)
+    from jarvis_cd.site.queues import core_request
+
+    request = core_request(provider, spec)
     topology = _partition_topology(spec)
     ranks_per_node = _int(spec.get("ntasks_per_node"))
     total = _int(spec.get("ntasks"))
@@ -340,7 +342,7 @@ def build_submit_plan(
     if rendered.get("install_job_shape"):
         document["install_job"] = rendered["install_job_shape"]
     if action == "run" and sched.NAME == "slurm":
-        document["cores"] = cores_plan(sched, spec, nodes)
+        document["cores"] = cores_plan(sched.NAME, spec, nodes)
         if document["cores"].get("fits") is False:
             document["warnings"].append(document["cores"]["meaning"])
     if walltime and walltime.get("source") == "jarvis_estimate":

@@ -114,7 +114,7 @@ def sched_info(jarvis: Any, provider: Optional[str] = None, *, include_mpi: bool
                extra_issues: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     from jarvis_cd.core.issues import make_jarvis_issue
     from jarvis_cd.core.queue_limits import QUEUE_READERS
-    from jarvis_cd.core.scheduler import _SCHEDULERS
+    from jarvis_cd.core.scheduler import SUPPORTED_SCHEDULERS as _SCHEDULERS
 
     issues: List[Dict[str, Any]] = list(extra_issues or [])
     chosen = (provider or "").strip().lower() or detect_provider()

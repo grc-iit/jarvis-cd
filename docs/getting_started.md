@@ -18,6 +18,43 @@ jarvis init ~/.jarvis/config ~/.jarvis/private ~/.jarvis/shared
 
 On a personal machine all three directories can be the same. On a cluster, `shared` should be on a shared filesystem visible to all nodes.
 
+### Site setup with uv and a git package repository
+
+A site that runs JARVIS with its own package repository (for example
+`clio_jarvis`) instead of the builtin one needs three steps. jarvis-cd is not
+published on PyPI (the PyPI package named `jarvis` is unrelated), so install
+it from git as a uv tool:
+
+```bash
+uv tool install git+https://github.com/grc-iit/jarvis-cd@relay_ready
+jarvis repo rm builtin
+jarvis repo add https://github.com/iowarp/clio-jarvis
+```
+
+- `uv tool install` puts the `jarvis` command on `PATH` (in uv's tool bin
+  directory; run `uv tool update-shell` once if it is not on `PATH`).
+- `jarvis repo rm builtin` records `no_builtin: true` in
+  `<JARVIS_ROOT>/jarvis_config.yaml` (initializing the root with the
+  `jarvis init` default directories if it was not initialized yet).
+- `jarvis repo add <git url>` clones the repository into
+  `<JARVIS_ROOT>/repos/<name>`, where `<name>` is the URL basename without
+  `.git` with `-` and `.` replaced by `_` (`clio-jarvis` becomes
+  `clio_jarvis`, which must be the package directory inside it). It checks out
+  `--ref` (a branch, tag or commit; default: the remote's default branch),
+  checks the `<name>/<name>/<pkg>/pkg.py` layout, and registers the clone.
+  The URL and ref are recorded under `sources:` in `<JARVIS_ROOT>/repos.yaml`.
+
+Later, refresh the clone or move it to another ref (`clio-jarvis` is
+accepted too):
+
+```bash
+jarvis repo update clio_jarvis              # fetch, then the recorded ref
+jarvis repo update clio_jarvis --ref v1.2   # move to (and record) a new ref
+```
+
+See [Repository commands](package_dev_guide.md#adding-repositories) for the
+full command list.
+
 ### Leaving the builtin package repository out
 
 By default JARVIS includes the `builtin` package repository it ships with.
@@ -26,6 +63,8 @@ relay that brings its own repositories) can leave builtin out completely:
 
 ```bash
 jarvis init ~/.jarvis/config ~/.jarvis/private ~/.jarvis/shared +no_builtin
+# or, on a root that is already set up:
+jarvis repo rm builtin
 # or, for every root a process touches:
 export JARVIS_NO_BUILTIN=1
 ```
@@ -33,14 +72,16 @@ export JARVIS_NO_BUILTIN=1
 | Switch | Where | Effect |
 |---|---|---|
 | `JARVIS_NO_BUILTIN=1` (`true`/`yes`/`on`; `0`/`false`/`no`/`off` forces builtin back on) | environment | Wins over the config key for this process. |
-| `no_builtin: true` | `<JARVIS_ROOT>/jarvis_config.yaml` | Recorded by `jarvis init +no_builtin`, or by `jarvis init` while `JARVIS_NO_BUILTIN` is truthy. A later `jarvis init` keeps the root's setting unless `+no_builtin`/`-no_builtin` is given. |
+| `no_builtin: true` | `<JARVIS_ROOT>/jarvis_config.yaml` | Recorded by `jarvis init +no_builtin`, by `jarvis repo rm builtin`, or by `jarvis init` while `JARVIS_NO_BUILTIN` is truthy. A later `jarvis init` keeps the root's setting unless `+no_builtin`/`-no_builtin` is given. `jarvis repo add <path to a builtin repository>` clears it. |
 
 With builtin left out:
 
 - `jarvis init` registers no repositories, and strips `builtin` entries from
   an existing `repos.yaml` it preserves.
 - The repository list (`jarvis repo list`, package search and resolution)
-  ignores every repository named `builtin`, and `jarvis repo add` refuses one.
+  ignores every repository named `builtin`. `jarvis repo add` of a
+  repository named `builtin` brings builtin back (it clears `no_builtin`),
+  except while `JARVIS_NO_BUILTIN` is truthy, where it is refused.
 - No builtin copy is located: not the distribution's `builtin`, the legacy
   `<JARVIS_ROOT>/builtin`, nor a `builtin` package in site-packages.
   `builtin.<pkg>` package types fail with an error naming the switch.

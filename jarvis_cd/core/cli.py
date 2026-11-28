@@ -304,7 +304,7 @@ class JarvisCLI(ArgParse):
                 },
                 {
                     "name": "no_submit",
-                    "msg": "Only write the job script, do not run sbatch",
+                    "msg": "Only write the PSI/J job description, do not submit",
                     "type": bool,
                     "default": False,
                     "prefix": "+",
@@ -504,7 +504,7 @@ class JarvisCLI(ArgParse):
 
         self.add_cmd(
             "execution cancel",
-            msg="Cancel a scheduler execution (scancel) and record it canceled",
+            msg="Cancel a scheduler execution (PSI/J cancel) and record it canceled",
         )
         self.add_args(
             [
@@ -534,8 +534,8 @@ class JarvisCLI(ArgParse):
 
         self.add_cmd(
             "execution stop",
-            msg="Gracefully stop a scheduler execution: TERM the batch shell, "
-            "which runs ppl stop and finalizes the record",
+            msg="Gracefully stop a scheduler execution: write its stop request; "
+            "the job entry runs ppl stop and finalizes the record",
         )
         self.add_args(
             [
@@ -578,7 +578,8 @@ class JarvisCLI(ArgParse):
 
         self.add_cmd(
             "execution move",
-            msg="Move a pending scheduler execution to another queue (partition)",
+            msg="Move a pending scheduler execution to another queue "
+            "(Slurm partition only, via jarvis_cd.site.queues)",
         )
         self.add_args(
             [
@@ -1000,22 +1001,55 @@ class JarvisCLI(ArgParse):
         # Repository commands
         self.add_menu("repo", msg="Repository management commands")
 
-        self.add_cmd("repo add", msg="Add a repository to Jarvis")
+        self.add_cmd("repo add", msg="Add a repository (directory or git URL) to Jarvis")
         self.add_args(
             [
                 {
                     "name": "repo_path",
-                    "msg": "Path to repository directory",
+                    "msg": (
+                        "Path to repository directory, or a git URL (https://, "
+                        "ssh://, file://, git@host:org/repo.git) to clone into "
+                        "<JARVIS_ROOT>/repos/<name> (URL basename, '-' and '.' "
+                        "as '_')"
+                    ),
                     "type": str,
                     "required": True,
                     "pos": True,
                 },
                 {
                     "name": "force",
-                    "msg": "Force overwrite if repository already exists",
+                    "msg": "Force overwrite if repository already exists (re-clone a git URL)",
                     "type": bool,
                     "default": False,
                     "aliases": ["f"],
+                },
+                {
+                    "name": "ref",
+                    "msg": "Branch, tag or commit to check out (git URL only)",
+                    "type": str,
+                    "default": None,
+                },
+            ]
+        )
+
+        self.add_cmd(
+            "repo update",
+            msg="Fetch a git-cloned repository and check out its recorded (or a new) ref",
+        )
+        self.add_args(
+            [
+                {
+                    "name": "repo_name",
+                    "msg": "Name of a repository added from a git URL",
+                    "type": str,
+                    "required": True,
+                    "pos": True,
+                },
+                {
+                    "name": "ref",
+                    "msg": "Branch, tag or commit to move to (recorded for later updates)",
+                    "type": str,
+                    "default": None,
                 },
             ]
         )
@@ -1027,7 +1061,10 @@ class JarvisCLI(ArgParse):
             [
                 {
                     "name": "repo_name",
-                    "msg": "Name of repository to remove (not full path)",
+                    "msg": (
+                        "Name of repository to remove (not full path); 'builtin' "
+                        "also leaves the builtin repository out of this root"
+                    ),
                     "type": str,
                     "required": True,
                     "pos": True,
@@ -3283,7 +3320,16 @@ class JarvisCLI(ArgParse):
         self._ensure_config_loaded()
         repo_path = self.kwargs["repo_path"]
         force = self.kwargs.get("force", False)
-        self.repo_manager.add_repository(repo_path, force=force)
+        ref = self.kwargs.get("ref")
+        self.repo_manager.add_repository(repo_path, force=force, ref=ref)
+
+    def repo_update(self):
+        """Update a repository cloned from a git URL"""
+        self._ensure_config_loaded()
+        assert self.repo_manager is not None
+        self.repo_manager.update_repository(
+            self.kwargs["repo_name"], ref=self.kwargs.get("ref")
+        )
 
     def repo_remove(self):
         """Remove repository by name"""

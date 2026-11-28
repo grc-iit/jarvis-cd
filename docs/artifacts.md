@@ -33,8 +33,8 @@ completion. Already `available` output is not promoted to `finalized` merely
 because the process exited.
 
 A `scripted` scheduler record created with `submit=False` is the deliberate
-exception to terminal sealing: JARVIS supports activating that exact script
-later, so its manifest remains appendable until the activated workload reaches
+exception to terminal sealing: JARVIS supports activating that exact job
+description later, so its manifest remains appendable until the activated workload reaches
 a real completed, failed, or canceled state.
 
 Locations are transport-neutral references:

@@ -289,10 +289,10 @@ Packages without an `install` key (or with an empty string) are skipped during s
 
 ### Scheduler Configuration
 
-Pipelines can be submitted to a batch resource manager (SLURM today) by
-adding a top-level `scheduler:` key. The job script that
-`jarvis ppl submit` writes builds a hostfile from the allocation and
-then runs the pipeline. See [scheduler.md](scheduler.md) for the full
+Pipelines can be submitted to a batch resource manager (Slurm, PBS, LSF,
+Flux or Cobalt through PSI/J, or `local` for none) by adding a top-level
+`scheduler:` key. The PSI/J job that `jarvis ppl submit` submits builds a
+hostfile from the allocation and then runs the pipeline. See [scheduler.md](scheduler.md) for the full
 key reference.
 
 ```yaml
@@ -310,7 +310,7 @@ scheduler:
 
 When `scheduler:` is set, `self.hostfile` is automatically bound to
 `scheduler.hostfile` so every package in the pipeline reads from the
-file the job script populates inside the allocation.
+file the job populates inside the allocation.
 
 ### Container Configuration
 
@@ -887,9 +887,9 @@ jarvis ppl clean
 #### Submit Pipeline to a Batch Scheduler
 
 When the pipeline YAML carries a `scheduler:` block (see
-[scheduler.md](scheduler.md)), `jarvis ppl submit` writes a job script
-into the pipeline's shared directory and (by default) submits it via
-the scheduler's command — `sbatch` for SLURM.
+[scheduler.md](scheduler.md)), `jarvis ppl submit` writes a PSI/J job
+description into the execution directory and (by default) submits it
+through PSI/J's executor for that scheduler.
 
 ```bash
 # Submit the current pipeline
@@ -898,7 +898,7 @@ jarvis ppl submit
 # Submit a specific YAML (pipeline or pipeline test)
 jarvis ppl submit path/to/pipeline.yaml
 
-# Only write the script, do not submit
+# Only write the job description, do not submit
 jarvis ppl submit +no_submit
 
 # Show what would be submitted (no submit, no Spack), then submit exactly that
@@ -917,7 +917,7 @@ jarvis ppl check yaml coupled.yaml +json # a YAML, as jarvis.pipeline-check.v1
 
 `ppl check` validates a pipeline without starting anything or running an
 install. `ppl submit` and `ppl run` run the same check first and refuse
-before any `sbatch` call or package start. A check with errors exits **5**.
+before any submit or package start. A check with errors exits **5**.
 With `+json`, it prints one `jarvis.pipeline-check.v1` document on stdout
 (logs go to stderr), and a refused submit prints a `jarvis.refusal.v1`
 document whose `issues` are the same errors.

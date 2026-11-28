@@ -1,43 +1,50 @@
 """
-Job scheduler integration for Jarvis-CD.
+Batch submission for Jarvis-CD through PSI/J.
 
-Provides a base ``Scheduler`` class plus concrete backends (SLURM, PBS, ...)
-that turn a pipeline's ``scheduler:`` YAML block into a submittable job
-script. The generated script is responsible for:
+A pipeline's ``scheduler:`` block becomes one PSI/J ``JobSpec``: the
+resources the whole pipeline needs, the scheduler attributes, and one
+program, ``python -m jarvis_cd.submit.entry``, that runs as a single
+process on the first allocated node (PSI/J launcher ``single``). The entry
+writes the JARVIS hostfile from the allocation, runs the pipeline's
+execution snapshot, handles ``jarvis execution stop`` and scheduler TERM,
+and finalizes the execution record.
 
-  1. Constructing a hostfile from the scheduler's allocation
-     (e.g. ``$SLURM_JOB_NODELIST``) and writing it to the execution-scoped
-     location the pipeline expects.
-  2. Running the pipeline's isolated execution snapshot once the hostfile is
-     in place.
-
-The hostfile path is exported back onto the pipeline so every package
-that resolves ``self.hostfile`` sees the same file the job script will
-populate.
+Every scheduler takes the same path:
+``JobExecutor.get_instance(name, config=...)`` with ``name`` one of
+``slurm``, ``pbs``, ``lsf``, ``flux``, ``cobalt`` or ``local`` (no
+scheduler: PSI/J's local executor runs the same spec on this host).
+Scheduler-specific queries (partitions, pending-job facts) and the job move
+live in :mod:`jarvis_cd.site.queues`.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
-import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Mapping, Optional
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
-from jarvis_cd.util import stall as _stall
+from jarvis_cd.site import queues
 
 
 _DIRECTIVE_KEY = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,63}$")
 _HOST_SUFFIX = re.compile(r"^[A-Za-z0-9_.:-]{1,64}$")
-_SLURM_NATIVE_ID = re.compile(r"^[0-9]{1,64}$")
-_UNRESOLVED_SLURM_ARTIFACT_PATH = (
-    "JARVIS could not prove one concrete path for this SLURM filename pattern"
-)
+_MEMORY = re.compile(r"^([0-9]+)([KMGT]?)B?$", re.IGNORECASE)
+
+#: JARVIS scheduler names; each is also the PSI/J executor name
+SUPPORTED_SCHEDULERS = ("slurm", "pbs", "lsf", "flux", "cobalt", "local")
+_SCHEDULER_ALIASES = {"none": "local"}
+
+JOBSPEC_SCHEMA = "jarvis.submit.jobspec.v1"
+STOP_REQUEST_NAME = "stop-request"
+EXIT_CODE_NAME = "exit_code"
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,9 +76,10 @@ class SchedulerExecutionStatus:
     return_code: Optional[int]
     provider_state: Optional[str]
     diagnostic: Optional[str] = None
-    #: which query produced the state: ``queue``, ``accounting`` or ``absent``
+    #: what produced the state: ``exit_code_file``, ``queue``,
+    #: ``psij_exit_code_file`` or ``absent``
     basis: Optional[str] = None
-    #: ``available``, ``unavailable`` (no slurmdbd and similar) or ``None``
+    #: kept for the observation document; JARVIS never reads accounting
     accounting: Optional[str] = None
 
     def __post_init__(self) -> None:
@@ -96,14 +104,18 @@ class SchedulerControlUnsupported(ValueError):
     """The scheduler provider has no JARVIS cancel or stop command."""
 
 
+class SchedulerSubmitRefused(RuntimeError):
+    """The scheduler (through PSI/J) refused the submission."""
+
+
 @dataclass(frozen=True, slots=True)
 class SchedulerControlResult:
-    """The outcome of one provider control command (cancel or stop).
+    """The outcome of one provider control request (cancel or stop).
 
     ``accepted`` means the provider took the request. ``job_ended`` means the
     provider no longer has the job (it finished or was already removed), which
-    makes the request a no-op rather than an error. ``job_pending`` means a
-    signal could not reach a job that has not started yet.
+    makes the request a no-op rather than an error. ``job_pending`` is kept
+    in the document and is always false: a stop is a file the job polls.
     """
 
     action: SchedulerControlAction
@@ -149,8 +161,9 @@ def resolve_scheduler_name(spec: Optional[Dict[str, Any]]) -> str:
 
     ``name: auto`` (or ``detect``), or no ``name`` at all, picks the
     scheduler whose client is on ``PATH`` (``sbatch``, ``qsub``, ``bsub``,
-    ``flux``), so a caller can write one block for every site. Raises
-    :class:`JarvisIssueError` (``scheduler_missing`` or
+    ``flux``), so a caller can write one block for every site. ``local``
+    (alias ``none``) runs the job on this host through PSI/J's local
+    executor. Raises :class:`JarvisIssueError` (``scheduler_missing`` or
     ``scheduler_unsupported``, exit 5).
     """
     from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
@@ -180,20 +193,22 @@ def resolve_scheduler_name(spec: Optional[Dict[str, Any]]) -> str:
                             "clients": [client for client, _provider in _CLIENTS],
                         },
                         remedy="submit from a host with the site's scheduler client, or "
-                        "name the scheduler in scheduler.name",
+                        "name the scheduler in scheduler.name (local runs on this host)",
                     )
                 ]
             )
-    if name not in _SCHEDULERS:
+    name = _SCHEDULER_ALIASES.get(name, name)
+    if name not in SUPPORTED_SCHEDULERS:
         raise JarvisIssueError(
             [
                 make_jarvis_issue(
                     kind="scheduler_unsupported",
                     subject="scheduler",
-                    message=f"JARVIS has no {name} scheduler provider yet",
+                    message=f"JARVIS has no {name} scheduler provider",
                     identity={"provider": name},
                     field="scheduler.name",
-                    details={"requested": requested, "supported": sorted(_SCHEDULERS)},
+                    details={"requested": requested,
+                             "supported": sorted(SUPPORTED_SCHEDULERS)},
                     remedy="use a supported scheduler",
                 )
             ]
@@ -211,18 +226,20 @@ def make_scheduler(
     pipeline_action: str = "run",
     pipeline_action_args: Optional[List[str]] = None,
     install_on_load: Optional[str] = None,
+    local_hosts: Optional[List[str]] = None,
 ) -> "Scheduler":
-    """Factory: build a Scheduler from a parsed YAML dict.
+    """Factory: build the PSI/J submission for a parsed ``scheduler:`` block.
 
     :param spec: ``scheduler:`` block from the pipeline YAML
-    :param pipeline_shared_dir: pipeline-level shared directory
-        (used to default the hostfile path and to drop the job script)
+    :param pipeline_shared_dir: execution directory: the job's working
+        directory, the default hostfile and log location, and the home of
+        the job description and PSI/J's own files
     :param pipeline_yaml: path to the pipeline YAML the job should run
         (None when invoked from a pre-loaded current pipeline)
     :param pipeline_name: pipeline name (used for ``jarvis ppl run`` when
         no YAML path is supplied)
     :param pipeline_snapshot_dir: immutable execution-scoped pipeline input
-        directory. When provided, the scheduler runs that snapshot rather than
+        directory. When provided, the job runs that snapshot rather than
         reloading mutable named-pipeline state.
     :param jarvis_root: configuration root whose repository selection must be
         retained by a scheduled snapshot.
@@ -232,12 +249,13 @@ def make_scheduler(
     :param install_on_load: ``JARVIS_INSTALL_ON_LOAD`` sealed into the run
         command, so the job's load applies the submitter's policy even when
         the scheduler does not export the environment.
+    :param local_hosts: for ``local`` only, the hosts the job runs on (the
+        JARVIS hostfile at submit); a scheduler's allocation sets them otherwise.
     """
     name = resolve_scheduler_name(spec)
-    cls = _SCHEDULERS[name]
     if str((spec or {}).get("name") or "").strip().lower() != name:
         spec = {**spec, "name": name}
-    return cls(
+    return Scheduler(
         spec,
         pipeline_shared_dir,
         pipeline_yaml=pipeline_yaml,
@@ -247,18 +265,147 @@ def make_scheduler(
         pipeline_action=pipeline_action,
         pipeline_action_args=pipeline_action_args,
         install_on_load=install_on_load,
+        local_hosts=local_hosts,
     )
 
 
-class Scheduler:
-    """Base class for batch-scheduler integrations."""
+#: keys JARVIS consumes itself; they never become scheduler attributes
+_STRUCTURAL_KEYS = {
+    "name", "hostfile", "suffix", "sbatch_args", "pre_cmds", "post_cmds",
+    "stop_timeout", "stop_grace", "output", "error",
+}
+#: scheduler key -> ResourceSpecV1 field (positive integers)
+_RESOURCE_KEYS = {
+    "nodes": "node_count",
+    "ntasks": "process_count",
+    "ntasks_per_node": "processes_per_node",
+    "cpus_per_task": "cpu_cores_per_process",
+    "gpus_per_task": "gpu_cores_per_process",
+}
+#: scheduler key -> JobAttributes field
+_ATTRIBUTE_KEYS = {
+    "partition": "queue_name",
+    "account": "account",
+    "reservation": "reservation_id",
+}
+_REFUSED_KEYS = {
+    "array": "job arrays are not supported; submit one execution per element",
+    "clusters": "multi-cluster submission is not supported; submit from the "
+                "cluster's own login node",
+    "cluster": "multi-cluster submission is not supported; submit from the "
+               "cluster's own login node",
+    "hetjob": "heterogeneous jobs are not supported; one execution requests "
+              "one homogeneous node set",
+    "packjob": "heterogeneous jobs are not supported; one execution requests "
+               "one homogeneous node set",
+}
+_REFUSED_FLAGS = {"array": "array", "clusters": "clusters", "hetjob": "hetjob",
+                  "packjob": "packjob", "output": None, "error": None}
+_UNLIMITED = {"UNLIMITED", "INFINITE"}
 
-    #: scheduler name as it appears in YAML (``slurm``, ``pbs``, ...)
+
+def _positive_int(value: Any, *, field: str) -> Optional[int]:
+    if isinstance(value, bool):
+        raise ValueError(f"scheduler.{field} must be a whole number")
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value.strip())
+    if not isinstance(value, int):
+        raise ValueError(f"scheduler.{field} must be a whole number")
+    return value or None
+
+
+def _memory_bytes(value: Any) -> int:
+    match = _MEMORY.fullmatch(str(value).strip())
+    if match is None:
+        raise ValueError("scheduler.mem must be a size such as 4000 (MB), 4000M or 64G")
+    unit = (match.group(2) or "M").upper()
+    return int(match.group(1)) * 1024 ** (1 + "KMGT".index(unit))
+
+
+def _duration_seconds(value: Any) -> Optional[int]:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value * 60
+    text = str(value).strip()
+    if text.upper() in _UNLIMITED:
+        return None
+    seconds = queues.parse_slurm_duration(text)
+    if seconds is None:
+        raise ValueError(
+            "scheduler.time must be minutes or [days-]hours:minutes:seconds")
+    return seconds
+
+
+def _check_resource_shape(resources: Dict[str, Any]) -> None:
+    """PSI/J's constraint: ``process_count = node_count * processes_per_node``."""
+    nodes = resources["node_count"]
+    tasks = resources["process_count"]
+    per_node = resources["processes_per_node"]
+    if nodes and tasks and per_node and tasks != nodes * per_node:
+        raise ValueError(
+            f"scheduler.ntasks ({tasks}) must equal nodes ({nodes}) x "
+            f"ntasks_per_node ({per_node})")
+    if tasks and per_node and not nodes and tasks % per_node:
+        raise ValueError("scheduler.ntasks must be a multiple of ntasks_per_node")
+    if tasks and nodes and not per_node and tasks % nodes:
+        raise ValueError(
+            "scheduler.ntasks must be a multiple of nodes (PSI/J places the same "
+            "number of tasks on every node)")
+
+
+def _computed_nodes(resources: Dict[str, Any]) -> int:
+    if resources["node_count"]:
+        return int(resources["node_count"])
+    if resources["process_count"] and resources["processes_per_node"]:
+        return int(resources["process_count"]) // int(resources["processes_per_node"])
+    return 1
+
+
+def _write_atomic(path: Path, text: str, mode: int = 0o600) -> Path:
+    """Durably replace ``path`` with ``text``."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", text=True)
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        temporary_path.chmod(mode)
+        os.replace(temporary_path, path)
+        if os.name != "nt":
+            directory = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+    return path
+
+
+@dataclass(frozen=True)
+class SchedulerSubmission:
+    """One job PSI/J accepted."""
+
+    job: Any
+    executor: Any
+    native_id: str
+    command: List[str]
+
+
+class Scheduler:
+    """One pipeline submission: a ``scheduler:`` block mapped onto PSI/J."""
+
+    #: the JARVIS scheduler name, also the PSI/J executor name
     NAME: str = ""
 
-    #: filename of the generated submission script inside the pipeline
-    #: shared directory
-    SCRIPT_NAME: str = "submit.sh"
+    #: the job description JARVIS writes (and binds ``+plan`` to)
+    SCRIPT_NAME: str = "psij-job.json"
+    PRE_LAUNCH_NAME = "pre-launch.sh"
+    POST_LAUNCH_NAME = "post-launch.sh"
+    LOCAL_NODEFILE_NAME = "local-nodefile.txt"
+    LAUNCHER = "single"
 
     def __init__(
         self,
@@ -271,8 +418,21 @@ class Scheduler:
         pipeline_action: str = "run",
         pipeline_action_args: Optional[List[str]] = None,
         install_on_load: Optional[str] = None,
+        local_hosts: Optional[List[str]] = None,
     ):
         self.spec = dict(spec or {})
+        name = str(self.spec.get("name") or "").strip().lower()
+        self.NAME = _SCHEDULER_ALIASES.get(name, name)
+        if self.NAME not in SUPPORTED_SCHEDULERS:
+            raise ValueError(f"unknown scheduler {name!r}")
+        # With no scheduler there is no allocation to read, so the job runs
+        # on the hosts sealed here (ssh reaches all but the first).
+        self.local_hosts: Optional[List[str]] = None
+        if self.NAME == "local" and local_hosts:
+            self.local_hosts = [
+                _validated_single_line(host, field="hostfile", limit=255)
+                for host in local_hosts
+            ]
         if install_on_load is not None and install_on_load not in (
             "install",
             "check",
@@ -321,484 +481,11 @@ class Scheduler:
         )
         self.hostfile = os.path.expandvars(validated_hostfile)
         _validated_single_line(self.hostfile, field="hostfile")
-
-    @property
-    def script_path(self) -> Path:
-        return self.shared_dir / self.SCRIPT_NAME
-
-    def render(self) -> str:
-        """Render the submission script as a string."""
-        raise NotImplementedError
-
-    def write_script(self) -> Path:
-        """Durably write the execution-scoped submission script."""
-        self.shared_dir.mkdir(parents=True, exist_ok=True)
-        path = self.script_path
-        descriptor, temporary_name = tempfile.mkstemp(
-            dir=self.shared_dir,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            text=True,
-        )
-        temporary_path = Path(temporary_name)
-        descriptor_owned = True
-        try:
-            try:
-                stream = os.fdopen(
-                    descriptor,
-                    "w",
-                    encoding="utf-8",
-                    newline="\n",
-                )
-            except BaseException:
-                os.close(descriptor)
-                descriptor_owned = False
-                raise
-            descriptor_owned = False
-            with stream:
-                stream.write(self.render())
-                stream.flush()
-                os.fsync(stream.fileno())
-            temporary_path.chmod(0o700)
-            os.replace(temporary_path, path)
-            if os.name != "nt":
-                directory = os.open(
-                    self.shared_dir,
-                    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
-                )
-                try:
-                    os.fsync(directory)
-                finally:
-                    os.close(directory)
-        finally:
-            if descriptor_owned:
-                os.close(descriptor)
-            temporary_path.unlink(missing_ok=True)
-        return path
-
-    def submit_command(self, wait: bool = False) -> List[str]:
-        """Argv used to submit the rendered script.
-
-        :param wait: when True, ask the scheduler to block until the job
-            finishes (e.g. ``sbatch --wait``). Backends that have no
-            equivalent ignore the flag.
-        """
-        raise NotImplementedError
-
-    def parse_submission_output(self, stdout: str) -> Dict[str, Any]:
-        """Parse provider-owned submission output into stable metadata.
-
-        Scheduler implementations must reject output that cannot be tied to a
-        submission made by their own command.  Callers must never infer job
-        identities from arbitrary application stdout.
-        """
-        raise NotImplementedError
-
-    @classmethod
-    def query_execution(cls, native_id: str) -> SchedulerExecutionStatus:
-        """Query one provider-native execution identity."""
-        del native_id
-        return SchedulerExecutionStatus(
-            state="unknown",
-            terminal=False,
-            return_code=None,
-            provider_state=None,
-            diagnostic=f"JARVIS cannot query scheduler provider {cls.NAME!r}",
-        )
-
-    @classmethod
-    def query_queue(cls, native_id: str) -> Optional[Dict[str, Any]]:
-        """Queue facts for a pending job; ``None`` when the provider has none."""
-        del native_id
-        return None
-
-    @classmethod
-    def partition_facts(cls) -> List[Dict[str, Any]]:
-        """Partitions (queues) with node counts and limits, when known."""
-        return []
-
-    @classmethod
-    def move_argv(
-        cls, native_id: str, queue: str, *, cluster: Optional[str] = None
-    ) -> List[str]:
-        """Argv that moves a pending job to another queue."""
-        del native_id, queue, cluster
-        raise SchedulerControlUnsupported(
-            f"JARVIS has no move command for scheduler provider {cls.NAME!r}"
-        )
-
-    @classmethod
-    def interpret_move(
-        cls,
-        completed: Optional[subprocess.CompletedProcess[str]],
-        diagnostic: Optional[str],
-    ) -> tuple[bool, Optional[str], Optional[str]]:
-        """(accepted, refusal reason, diagnostic) for one move command."""
-        if completed is None:
-            return False, "scheduler_unavailable", diagnostic
-        if completed.returncode == 0:
-            return True, None, None
-        return False, "scheduler_rejected", (completed.stderr or "")[:2048]
-
-    @classmethod
-    def control_argv(
-        cls,
-        action: SchedulerControlAction,
-        native_id: str,
-        *,
-        cluster: Optional[str] = None,
-    ) -> List[str]:
-        """Argv that cancels the job or delivers TERM to its batch shell."""
-        del native_id, cluster
-        raise SchedulerControlUnsupported(
-            f"JARVIS has no {action} command for scheduler provider {cls.NAME!r}"
-        )
-
-    @classmethod
-    def interpret_control(
-        cls,
-        action: SchedulerControlAction,
-        argv: List[str],
-        completed: Optional[subprocess.CompletedProcess[str]],
-        diagnostic: Optional[str],
-    ) -> SchedulerControlResult:
-        """Map a provider control command's exit into a typed result."""
-        return SchedulerControlResult(
-            action=action,
-            argv=tuple(argv),
-            return_code=None if completed is None else completed.returncode,
-            diagnostic=diagnostic,
-            accepted=completed is not None and completed.returncode == 0,
-        )
-
-    @property
-    def array_requested(self) -> bool:
-        """Return whether this submission can create an array of jobs."""
-        return False
-
-    @classmethod
-    def resolve_artifact_path(
-        cls,
-        path_pattern: str,
-        *,
-        native_id: str,
-        array_requested: bool = False,
-    ) -> SchedulerArtifactPathResolution:
-        """Resolve one provider filename pattern from trusted submission identity."""
-        del native_id, array_requested
-        return SchedulerArtifactPathResolution(
-            path=_validated_single_line(path_pattern, field="artifact_path")
-        )
-
-    def _snapshot_environment(self) -> str:
-        """``env`` prefix that pins a jarvis CLI call to the execution snapshot."""
-        assert self.pipeline_snapshot_dir is not None
-        environment = [
-            "env",
-            "JARVIS_PIPELINE_SNAPSHOT_DIR="
-            + shlex.quote(str(self.pipeline_snapshot_dir)),
-        ]
-        if self.jarvis_root is not None:
-            environment.append("JARVIS_ROOT=" + shlex.quote(str(self.jarvis_root)))
-        if self.install_on_load is not None and self.pipeline_action == "run":
-            environment.append("JARVIS_INSTALL_ON_LOAD=" + self.install_on_load)
-        return " ".join(environment)
-
-    def _pipeline_invocation(self) -> str:
-        """Shell snippet that runs the pipeline once the hostfile is in
-        place. Always points jarvis at the persisted YAML when one was
-        supplied, falling back to ``jarvis ppl run`` against the
-        currently-loaded pipeline otherwise.
-        """
-        jarvis_cli = f"{shlex.quote(sys.executable)} -m jarvis_cd.core.cli"
-        if self.pipeline_snapshot_dir is not None:
-            snapshot_yaml = self.pipeline_snapshot_dir / "pipeline.yaml"
-            arguments = "".join(
-                f" {shlex.quote(argument)}" for argument in self.pipeline_action_args
-            )
-            return (
-                self._snapshot_environment()
-                + f" {jarvis_cli} ppl {self.pipeline_action} yaml "
-                + f"{shlex.quote(str(snapshot_yaml))}{arguments}"
-            )
-        if self.pipeline_yaml:
-            return f"{jarvis_cli} ppl run yaml {shlex.quote(self.pipeline_yaml)}"
-        if self.pipeline_name:
-            return (
-                f"{jarvis_cli} cd {shlex.quote(self.pipeline_name)} && "
-                f"{jarvis_cli} ppl run"
-            )
-        return f"{jarvis_cli} ppl run"
-
-    def _pipeline_stop_invocation(self) -> Optional[str]:
-        """Shell snippet that runs ``jarvis ppl stop`` for the same pipeline.
-
-        Install jobs have no package services to stop, so they return None and
-        the TERM handler only signals the running child.
-        """
-        if self.pipeline_action != "run":
-            return None
-        jarvis_cli = f"{shlex.quote(sys.executable)} -m jarvis_cd.core.cli"
-        if self.pipeline_snapshot_dir is not None:
-            snapshot_yaml = self.pipeline_snapshot_dir / "pipeline.yaml"
-            return (
-                self._snapshot_environment()
-                + f" {jarvis_cli} ppl stop yaml {shlex.quote(str(snapshot_yaml))}"
-            )
-        if self.pipeline_yaml:
-            return f"{jarvis_cli} ppl stop yaml {shlex.quote(self.pipeline_yaml)}"
-        if self.pipeline_name:
-            return (
-                f"{jarvis_cli} cd {shlex.quote(self.pipeline_name)} && "
-                f"{jarvis_cli} ppl stop"
-            )
-        return f"{jarvis_cli} ppl stop"
-
-    def _termination_helper(self, arguments: str) -> str:
-        """One best-effort call that records TERM handling in the record."""
-        if self.pipeline_snapshot_dir is None:
-            return ":"
-        execution_root = self.pipeline_snapshot_dir.parent
-        return (
-            f"{shlex.quote(sys.executable)} -m jarvis_cd.core.execution termination "
-            f"--execution-root {shlex.quote(str(execution_root))} "
-            f"--execution-id {shlex.quote(execution_root.name)} {arguments}"
-        )
-
-    def _termination_block(self) -> str:
-        """Render the TERM trap that stops the pipeline before the job exits.
-
-        The pipeline runs as a background child that the batch shell waits on,
-        so a TERM delivered to the batch shell (``scancel --signal=TERM
-        --batch``) interrupts ``wait`` and runs this handler at once. The
-        handler records the signal, runs ``jarvis ppl stop``, signals the
-        child's whole process tree, waits for it, and exits. The EXIT trap then
-        finalizes the service runtimes and the execution record.
-        """
-        stop_invocation = self._pipeline_stop_invocation()
-        if stop_invocation is None:
-            stop_block = '        echo "JARVIS: no ppl stop for this job action"\n'
-        else:
-            stop_block = (
-                '        echo "JARVIS: ppl stop BEGIN"\n'
-                "        jarvis_stop_rc=0\n"
-                "        jarvis_stop_timeout=()\n"
-                "        if command -v timeout >/dev/null 2>&1; then\n"
-                "            jarvis_stop_timeout=(timeout --kill-after=5 "
-                f"{self.stop_timeout})\n"
-                "        fi\n"
-                '        ${jarvis_stop_timeout[@]+"${jarvis_stop_timeout[@]}"} '
-                f"{stop_invocation} || jarvis_stop_rc=$?\n"
-                '        echo "JARVIS: ppl stop END rc=$jarvis_stop_rc"\n'
-            )
-        received = self._termination_helper("--phase received --signal TERM")
-        stopped = self._termination_helper(
-            '--phase stopped ${jarvis_stop_rc:+--stop-return-code "$jarvis_stop_rc"} '
-            '--child-reaped "$jarvis_child_reaped"'
-        )
-        return (
-            "jarvis_child_pid=\n"
-            "jarvis_descendants() {\n"
-            "    local jarvis_parent=$1 jarvis_pid\n"
-            '    for jarvis_pid in $(pgrep -P "$jarvis_parent" 2>/dev/null || true); do\n'
-            '        jarvis_descendants "$jarvis_pid"\n'
-            '        echo "$jarvis_pid"\n'
-            "    done\n"
-            "}\n"
-            "jarvis_signal_child_tree() {\n"
-            "    local jarvis_signal=$1 jarvis_pid\n"
-            '    [ -n "${jarvis_child_pid:-}" ] || return 0\n'
-            '    for jarvis_pid in $(jarvis_descendants "$jarvis_child_pid") '
-            '"$jarvis_child_pid"; do\n'
-            '        kill -s "$jarvis_signal" "$jarvis_pid" 2>/dev/null || true\n'
-            "    done\n"
-            "}\n"
-            "jarvis_on_term() {\n"
-            "    trap '' TERM INT\n"
-            "    jarvis_stop_rc=\n"
-            "    jarvis_child_reaped=false\n"
-            '    echo "JARVIS: TERM received by the batch shell"\n'
-            f"    jarvis_term_reason=$({received} || echo scheduler)\n"
-            '    echo "JARVIS: termination reason=$jarvis_term_reason"\n'
-            '    if [ -n "${jarvis_child_pid:-}" ]; then\n'
-            '        if [ "$jarvis_term_reason" = stop_request ]; then\n'
-            f"{stop_block}"
-            "        fi\n"
-            "        jarvis_signal_child_tree TERM\n"
-            f"        jarvis_stop_deadline=$((SECONDS + {self.stop_grace}))\n"
-            '        while kill -0 "$jarvis_child_pid" 2>/dev/null '
-            '&& [ "$SECONDS" -lt "$jarvis_stop_deadline" ]; do\n'
-            "            sleep 1\n"
-            "        done\n"
-            '        if kill -0 "$jarvis_child_pid" 2>/dev/null; then\n'
-            '            echo "JARVIS: pipeline child ignored TERM; sending KILL"\n'
-            "            jarvis_signal_child_tree KILL\n"
-            "        fi\n"
-            '        wait "$jarvis_child_pid" 2>/dev/null || true\n'
-            "        jarvis_child_reaped=true\n"
-            '        echo "JARVIS: pipeline child reaped"\n'
-            "    fi\n"
-            f"    {stopped} >/dev/null || true\n"
-            '    if [ "$jarvis_term_reason" = stop_request ]; then\n'
-            '        if [ "${jarvis_stop_rc:-0}" -eq 0 ]; then\n'
-            "            exit 0\n"
-            "        fi\n"
-            "        exit 1\n"
-            "    fi\n"
-            "    exit 143\n"
-            "}\n"
-            "trap jarvis_on_term TERM\n"
-        )
-
-    def _pipeline_launch_block(self) -> str:
-        """Run the pipeline as a waited child so TERM reaches the batch shell.
-
-        A foreground child would defer the shell's TERM trap until the child
-        exited, and a SLURM ``--batch`` signal never reaches the child itself.
-        """
-        return (
-            f"{self._pipeline_invocation()} &\n"
-            "jarvis_child_pid=$!\n"
-            "jarvis_child_rc=0\n"
-            'wait "$jarvis_child_pid" || jarvis_child_rc=$?\n'
-            "jarvis_child_pid=\n"
-            'if [ "$jarvis_child_rc" -ne 0 ]; then\n'
-            '    exit "$jarvis_child_rc"\n'
-            "fi\n"
-        )
-
-    def _execution_lifecycle_block(self) -> str:
-        """Render an EXIT trap that durably finalizes scheduler script state."""
-        finalizer = ""
-        if self.pipeline_snapshot_dir is not None:
-            execution_root = self.pipeline_snapshot_dir.parent
-            execution_id = execution_root.name
-            python_executable = shlex.quote(sys.executable)
-            finalizer = (
-                '    echo "JARVIS: finalizing execution record (exit $jarvis_exit_code)"\n'
-                f"    if ! {python_executable} -m jarvis_cd.core.execution finalize "
-                f"--execution-root {shlex.quote(str(execution_root))} "
-                f"--execution-id {shlex.quote(execution_id)} "
-                '--return-code "$jarvis_exit_code"; then\n'
-                '        echo "Could not persist JARVIS execution state" >&2\n'
-                '        if [ "$jarvis_exit_code" -eq 0 ]; then\n'
-                "            jarvis_exit_code=1\n"
-                "        fi\n"
-                "    fi\n"
-            )
-        return (
-            "jarvis_hostfile_tmp=\n"
-            "jarvis_finalize_execution() {\n"
-            "    jarvis_exit_code=$?\n"
-            "    trap - EXIT\n"
-            '    if [ -n "${jarvis_hostfile_tmp:-}" ]; then\n'
-            '        if ! rm -f -- "$jarvis_hostfile_tmp"; then\n'
-            '            echo "Could not remove temporary JARVIS hostfile" >&2\n'
-            '            if [ "$jarvis_exit_code" -eq 0 ]; then\n'
-            "                jarvis_exit_code=1\n"
-            "            fi\n"
-            "        fi\n"
-            "    fi\n"
-            f"{finalizer}"
-            '    exit "$jarvis_exit_code"\n'
-            "}\n"
-            "trap jarvis_finalize_execution EXIT\n"
-        )
-
-    def _execution_activation_block(self) -> str:
-        """Render provider-specific runtime identity activation when available."""
-        return ""
-
-
-class SlurmScheduler(Scheduler):
-    """SLURM (sbatch) backend."""
-
-    NAME = "slurm"
-    SCRIPT_NAME = "submit.slurm"
-
-    #: keys in the scheduler block we consume directly; everything else is
-    #: treated as a long-form ``--<key>=<value>`` sbatch directive so users
-    #: can pass arbitrary SBATCH flags from YAML without us hard-coding
-    #: every one.
-    _STRUCTURAL_KEYS = {
-        "name",
-        "hostfile",
-        "suffix",
-        "sbatch_args",
-        "pre_cmds",
-        "post_cmds",
-        "stop_timeout",
-        "stop_grace",
-    }
-
-    #: explicit short-key -> SBATCH long-flag map. Anything not in here
-    #: that isn't structural is passed as ``--<key>=<value>`` with
-    #: underscores rewritten to dashes.
-    _EXPLICIT_DIRECTIVES = {
-        "job_name": "--job-name",
-        "nodes": "--nodes",
-        "ntasks": "--ntasks",
-        "ntasks_per_node": "--ntasks-per-node",
-        "cpus_per_task": "--cpus-per-task",
-        "mem": "--mem",
-        "time": "--time",
-        "partition": "--partition",
-        "account": "--account",
-        "qos": "--qos",
-        "output": "--output",
-        "error": "--error",
-        "gres": "--gres",
-        "gpus": "--gpus",
-        "gpus_per_node": "--gpus-per-node",
-        "constraint": "--constraint",
-        "reservation": "--reservation",
-        "exclusive": "--exclusive",
-        "mail_user": "--mail-user",
-        "mail_type": "--mail-type",
-    }
-
-    _PARSABLE_SUBMISSION = re.compile(
-        r"^(?P<job_id>[0-9]+)(?:;(?P<cluster>[A-Za-z0-9_.-]+))?$"
-    )
-
-    #: keys (and sbatch flags) that already say how tasks map to cores or
-    #: hardware threads; any of them leaves the per-core request to the person
-    _CORE_KEYS = ("ntasks_per_core", "threads_per_core", "cores_per_socket",
-                  "sockets_per_node", "hint", "extra_node_info")
-    _CORE_FLAGS = ("--ntasks-per-core", "--threads-per-core", "--cores-per-socket",
-                   "--sockets-per-node", "--hint", "--extra-node-info", "-B")
-
-    @classmethod
-    def core_request(cls, spec: Mapping[str, Any]) -> Dict[str, Any]:
-        """How ranks claim cores: ``--ntasks-per-core=1`` unless the person said.
-
-        With ``CR_CORE`` on nodes with several hardware threads per core, a
-        task otherwise counts one hardware thread, so two ranks share a core
-        (and a node fits twice the ranks it has cores). One task per core
-        makes each rank claim a whole core; nodes without SMT are unchanged.
-        A rank request is ``ntasks`` or ``ntasks_per_node``.
-        """
-        for key in cls._CORE_KEYS:
-            if key in spec:
-                return {"ntasks_per_core": spec.get(key) if key == "ntasks_per_core" else None,
-                        "source": "pipeline.scheduler", "key": key}
-        for raw in spec.get("sbatch_args") or []:
-            flag = str(raw).split("=", 1)[0]
-            if flag in cls._CORE_FLAGS:
-                return {"ntasks_per_core": None, "source": "pipeline.scheduler.sbatch_args",
-                        "key": flag}
-        ranks = any(spec.get(key) not in (None, False, 0)
-                    for key in ("ntasks", "ntasks_per_node"))
-        if not ranks:
-            return {"ntasks_per_core": None, "source": "unset", "key": None}
-        return {"ntasks_per_core": 1, "source": "jarvis", "key": "ntasks_per_core"}
-
-    def __init__(self, *args: Any, **kwargs: Any):
-        super().__init__(*args, **kwargs)
         self._validate_spec()
+        self._mapping = self._map_spec()
 
     def _validate_spec(self) -> None:
-        """Reject directive and hook text that can alter script structure."""
+        """Reject values that are not one bounded token, and unsupported shapes."""
         if len(self.spec) > 128:
             raise ValueError("scheduler contains too many fields")
         for key, value in self.spec.items():
@@ -817,13 +504,6 @@ class SlurmScheduler(Scheduler):
                         raise ValueError(
                             "scheduler.sbatch_args entries must be single --flag tokens"
                         )
-                    if key == "sbatch_args" and rendered.split("=", 1)[0] in {
-                        "--error",
-                        "--output",
-                    }:
-                        raise ValueError(
-                            "scheduler.sbatch_args cannot override output or error"
-                        )
                 continue
             if value is None or isinstance(value, bool):
                 continue
@@ -838,1013 +518,525 @@ class SlurmScheduler(Scheduler):
                 raise ValueError(
                     f"scheduler.{key} must be one printable directive token"
                 )
+            if key in {"output", "error"} and "%" in rendered:
+                raise ValueError(
+                    f"scheduler.{key} cannot hold %-patterns: PSI/J writes the "
+                    "job's output to this exact path"
+                )
         suffix = self.spec.get("suffix")
         if suffix is not None and _HOST_SUFFIX.fullmatch(str(suffix)) is None:
             raise ValueError("scheduler.suffix is not a valid hostname suffix")
 
-    def _directives(self) -> List[str]:
-        lines: List[str] = []
+    def _map_spec(self) -> Dict[str, Any]:
+        """The PSI/J job this block asks for, as plain data."""
+        resources: Dict[str, Any] = {field: None for field in _RESOURCE_KEYS.values()}
+        resources["exclusive_node_use"] = False
+        resources["memory"] = None
+        attributes: Dict[str, Any] = {field: None for field in _ATTRIBUTE_KEYS.values()}
+        attributes["duration_seconds"] = None
+        custom: Dict[str, str] = {}
+        job_name: Optional[str] = None
         for key, value in self.spec.items():
-            if key in self._STRUCTURAL_KEYS:
+            if key in _STRUCTURAL_KEYS or value is None or value is False:
                 continue
-            if value is None or value is False:
-                continue
-            flag = self._EXPLICIT_DIRECTIVES.get(key, f"--{key.replace('_', '-')}")
-            if value is True:
-                lines.append(f"#SBATCH {flag}")
+            if key in _REFUSED_KEYS:
+                raise ValueError(f"scheduler.{key}: {_REFUSED_KEYS[key]}")
+            if key in _RESOURCE_KEYS:
+                resources[_RESOURCE_KEYS[key]] = _positive_int(value, field=key)
+            elif key == "exclusive" and value is True:
+                resources["exclusive_node_use"] = True
+            elif key == "mem" and str(value).strip() not in {"0", "0M", "0G"}:
+                resources["memory"] = _memory_bytes(value)
+            elif key == "time":
+                attributes["duration_seconds"] = _duration_seconds(value)
+            elif key in _ATTRIBUTE_KEYS:
+                attributes[_ATTRIBUTE_KEYS[key]] = str(value)
+            elif key == "job_name":
+                job_name = str(value)
+            elif value is True:
+                raise ValueError(
+                    f"scheduler.{key}: true cannot be passed to the scheduler "
+                    "(PSI/J renders every extra as --key=value); give it a value")
             else:
-                lines.append(f"#SBATCH {flag}={value}")
-        cores = self.core_request(self.spec)
+                custom[f"{self.NAME}.{key.replace('_', '-')}"] = str(value)
+        for raw in self.spec.get("sbatch_args") or []:
+            flag, separator, value = str(raw)[2:].partition("=")
+            if flag in _REFUSED_FLAGS:
+                reason = _REFUSED_FLAGS[flag]
+                raise ValueError(
+                    f"scheduler.sbatch_args --{flag}: "
+                    + (_REFUSED_KEYS[reason] if reason else
+                       "set scheduler.output or scheduler.error instead"))
+            if not separator or not value:
+                raise ValueError(
+                    f"scheduler.sbatch_args {raw}: give the flag a value (--flag=value)")
+            custom[f"slurm.{flag}"] = value
+        cores = queues.core_request(self.NAME, self.spec)
         if cores["source"] == "jarvis":
-            lines.append(f"#SBATCH --ntasks-per-core={cores['ntasks_per_core']}")
-        for raw in self.spec.get("sbatch_args", []) or []:
-            lines.append(f"#SBATCH {raw}")
-        return lines
-
-    def render(self) -> str:
-        directives = "\n".join(self._directives())
-        pre = "\n".join(self.spec.get("pre_cmds", []) or [])
-        post = "\n".join(self.spec.get("post_cmds", []) or [])
-        hostfile = shlex.quote(self.hostfile)
-        python_executable = shlex.quote(sys.executable)
-        invocation = self._pipeline_launch_block()
-        lifecycle = self._execution_lifecycle_block()
-        termination = self._termination_block()
-        activation = self._execution_activation_block()
-
-        # Build hostfile from the allocation. scontrol expands the
-        # compact nodelist into one host per line; that's exactly what
-        # jarvis.util.hostfile.Hostfile consumes. When `suffix:` is set,
-        # append it to each hostname — used to redirect traffic onto a
-        # secondary NIC (e.g. `ares-comp-1` -> `ares-comp-1-40g` for the
-        # 40GbE interface).
-        suffix = self.spec.get("suffix")
-        if suffix:
-            hostnames_cmd = (
-                f'scontrol show hostnames "$SLURM_JOB_NODELIST" '
-                f"| awk -v s={shlex.quote(str(suffix))} '{{print $0 s}}'"
-            )
-        else:
-            hostnames_cmd = 'scontrol show hostnames "$SLURM_JOB_NODELIST"'
-        hostfile_block = (
-            f"jarvis_hostfile={hostfile}\n"
-            'jarvis_hostfile_dir=$(dirname -- "$jarvis_hostfile")\n'
-            "jarvis_hostfile_name=${jarvis_hostfile##*/}\n"
-            'mkdir -p -- "$jarvis_hostfile_dir"\n'
-            "jarvis_hostfile_tmp=$(mktemp -- "
-            '"$jarvis_hostfile_dir/.${jarvis_hostfile_name}.jarvis.$$.XXXXXX")\n'
-            f'if ! {{ {hostnames_cmd}; }} > "$jarvis_hostfile_tmp"; then\n'
-            '    echo "Could not expand the SLURM allocation hostfile" >&2\n'
-            "    exit 1\n"
-            "fi\n"
-            'if [ ! -s "$jarvis_hostfile_tmp" ]; then\n'
-            '    echo "SLURM allocation produced an empty hostfile" >&2\n'
-            "    exit 1\n"
-            "fi\n"
-            f'{python_executable} - "$jarvis_hostfile_tmp" '
-            "\"$jarvis_hostfile\" <<'PY'\n"
-            "import errno\n"
-            "import os\n"
-            "import sys\n"
-            "\n"
-            "temporary_path, final_path = sys.argv[1:]\n"
-            "with open(temporary_path, 'rb') as stream:\n"
-            "    os.fsync(stream.fileno())\n"
-            "os.replace(temporary_path, final_path)\n"
-            "directory_path = os.path.dirname(final_path) or '.'\n"
-            "unsupported = {errno.EBADF, errno.EINVAL}\n"
-            "for name in ('ENOTSUP', 'EOPNOTSUPP'):\n"
-            "    value = getattr(errno, name, None)\n"
-            "    if value is not None:\n"
-            "        unsupported.add(value)\n"
-            "try:\n"
-            "    directory = os.open(\n"
-            "        directory_path,\n"
-            "        os.O_RDONLY | getattr(os, 'O_DIRECTORY', 0),\n"
-            "    )\n"
-            "except OSError as error:\n"
-            "    if error.errno not in unsupported:\n"
-            "        raise\n"
-            "else:\n"
-            "    try:\n"
-            "        os.fsync(directory)\n"
-            "    except OSError as error:\n"
-            "        if error.errno not in unsupported:\n"
-            "            raise\n"
-            "    finally:\n"
-            "        os.close(directory)\n"
-            "PY\n"
-            "jarvis_hostfile_tmp=\n"
-            'echo "Wrote hostfile: $jarvis_hostfile"\n'
-            'cat -- "$jarvis_hostfile"\n'
-        )
-
-        script = (
-            "#!/bin/bash\n"
-            f"{directives}\n"
-            "\n"
-            "set -euo pipefail\n"
-            "\n"
-            f"{lifecycle}"
-            f"{termination}"
-            f"{activation}"
-            "\n"
-            "# --- Pre-run hooks ---\n"
-            f"{pre}\n"
-            "\n"
-            "# --- Build hostfile from SLURM allocation ---\n"
-            f"{hostfile_block}"
-            "\n"
-            "# --- Run the Jarvis pipeline as a waited child (TERM-safe) ---\n"
-            f"{invocation}"
-            "\n"
-            "# --- Post-run hooks ---\n"
-            f"{post}\n"
-        )
-        return script
-
-    def _execution_activation_block(self) -> str:
-        """Bind the allocation's trusted SLURM identity before user hooks."""
-        if self.pipeline_snapshot_dir is None:
-            return ""
-        execution_root = self.pipeline_snapshot_dir.parent
-        execution_id = execution_root.name
-        python_executable = shlex.quote(sys.executable)
-        return (
-            "jarvis_scheduler_cluster_args=()\n"
-            'if [ -n "${SLURM_CLUSTER_NAME:-}" ]; then\n'
-            '    jarvis_scheduler_cluster_args=(--cluster "$SLURM_CLUSTER_NAME")\n'
-            "fi\n"
-            f"{python_executable} -m jarvis_cd.core.execution activate "
-            f"--execution-root {shlex.quote(str(execution_root))} "
-            f"--execution-id {shlex.quote(execution_id)} "
-            f"--provider {shlex.quote(self.NAME)} "
-            '--native-id "$SLURM_JOB_ID" "${jarvis_scheduler_cluster_args[@]}"\n'
-        )
-
-    def submit_command(self, wait: bool = False) -> List[str]:
-        # ``--parsable`` is the provider boundary: stdout is a stable
-        # ``job_id[;cluster]`` record rather than human-oriented text.
-        # Command-line output/error options override both inherited SBATCH_*
-        # variables and script directives. Removing SBATCH_ARRAY_INX prevents
-        # an ambient shell variable from silently turning a scalar submission
-        # into an array whose log paths require task identity.
-        cmd = ["env", "-u", "SBATCH_ARRAY_INX", "sbatch", "--parsable"]
-        if wait:
-            cmd.append("--wait")
-        for key in ("output", "error"):
-            value = self.spec.get(key)
-            if value is not None:
-                cmd.append(f"--{key}={value}")
-        cmd.append(str(self.script_path))
-        return cmd
-
-    def parse_submission_output(self, stdout: str) -> Dict[str, Any]:
-        """Parse the exact record produced by ``sbatch --parsable``."""
-        value = stdout.strip()
-        match = self._PARSABLE_SUBMISSION.fullmatch(value)
-        if match is None:
+            custom.setdefault(
+                f"{self.NAME}.ntasks-per-core", str(cores["ntasks_per_core"]))
+        _check_resource_shape(resources)
+        stdout = str(self.spec.get("output") or self.shared_dir / "stdout.log")
+        stderr = str(self.spec.get("error") or self.shared_dir / "stderr.log")
+        if any(character.isspace() for character in stdout + stderr):
             raise ValueError(
-                "SLURM submission did not return a valid "
-                "`sbatch --parsable` job identity"
-            )
+                "the job's log paths cannot contain whitespace (PSI/J's launcher "
+                "does not quote them); set scheduler.output and scheduler.error")
         return {
-            "provider": self.NAME,
-            "scheduler_job_id": match.group("job_id"),
-            "scheduler_cluster": match.group("cluster"),
-            "identity_source": "scheduler_submit_api",
+            "name": job_name or self.pipeline_name,
+            "resources": resources,
+            "attributes": attributes,
+            "custom_attributes": dict(sorted(custom.items())),
+            "stdout_path": stdout,
+            "stderr_path": stderr,
+            "node_count": _computed_nodes(resources),
         }
 
-    @classmethod
-    def query_execution(cls, native_id: str) -> SchedulerExecutionStatus:
-        """Query live and accounting SLURM state for one exact scalar job."""
-        if _SLURM_NATIVE_ID.fullmatch(native_id) is None:
-            raise ValueError("SLURM execution query requires a numeric job ID")
+    @property
+    def script_path(self) -> Path:
+        return self.shared_dir / self.SCRIPT_NAME
 
-        # --states=all keeps ended jobs visible for MinJobAge, so a cancel or
-        # an exit is seen even on sites without accounting (no slurmdbd).
-        queue, queue_diagnostic = _run_scheduler_query(
-            [
-                "squeue",
-                "--noheader",
-                "--states=all",
-                "--jobs",
-                native_id,
-                "--format=%i|%T",
-            ]
-        )
-        queue_reports_absent = False
-        if queue is not None and queue.returncode == 0:
-            queue_record = _matching_slurm_status_line(queue.stdout, native_id, 2)
-            if queue_record is not None:
-                observed = _slurm_execution_status(
-                    queue_record[1],
-                    return_code=None,
-                )
-                return_code = None
-                if observed.terminal:
-                    return_code = _slurm_control_exit_code(native_id)
-                    observed = _slurm_execution_status(
-                        queue_record[1], return_code=return_code
-                    )
-                return SchedulerExecutionStatus(
-                    state=observed.state,
-                    terminal=observed.terminal,
-                    return_code=observed.return_code,
-                    provider_state=observed.provider_state,
-                    diagnostic=observed.diagnostic,
-                    basis="queue",
-                )
-            queue_reports_absent = True
-
-        accounting, accounting_diagnostic = _run_scheduler_query(
-            [
-                "sacct",
-                "--noheader",
-                "--parsable2",
-                "--allocations",
-                "--jobs",
-                native_id,
-                "--format=JobIDRaw,State,ExitCode",
-            ]
-        )
-        if accounting is not None and accounting.returncode == 0:
-            accounting_record = _matching_slurm_status_line(
-                accounting.stdout,
-                native_id,
-                3,
-            )
-            if accounting_record is None:
-                return SchedulerExecutionStatus(
-                    state="missing",
-                    terminal=False,
-                    return_code=None,
-                    provider_state=None,
-                    diagnostic="SLURM accounting has no record for the accepted job",
-                    basis="accounting",
-                    accounting="available",
-                )
-            observed = _slurm_execution_status(
-                accounting_record[1],
-                return_code=_parse_slurm_exit_code(accounting_record[2]),
-            )
-            return SchedulerExecutionStatus(
-                state=observed.state,
-                terminal=observed.terminal,
-                return_code=observed.return_code,
-                provider_state=observed.provider_state,
-                basis="accounting",
-                accounting="available",
-            )
-
-        accounting_state = (
-            "unavailable" if _slurm_accounting_unavailable(accounting) else None
-        )
-        if queue_reports_absent or _slurm_queue_reports_missing(queue):
-            return SchedulerExecutionStatus(
-                state="missing",
-                terminal=False,
-                return_code=None,
-                provider_state=None,
-                diagnostic=(
-                    "SLURM no longer reports the accepted job; accounting did not "
-                    "provide a historical allocation record"
-                ),
-                basis="absent",
-                accounting=accounting_state,
-            )
-
-        diagnostics = [
-            value
-            for value in (queue_diagnostic, accounting_diagnostic)
-            if value is not None
-        ]
-        return SchedulerExecutionStatus(
-            state="unknown",
-            terminal=False,
-            return_code=None,
-            provider_state=None,
-            diagnostic="; ".join(diagnostics) or "SLURM state query was unavailable",
-        )
-
-    _JOB_HOLD_REASONS = (
-        "dependency",
-        "begintime",
-        "jobheld",
-        "held",
-        "jobarraytasklimit",
-    )
-    _LIMIT_REASONS = ("assoc", "qos", "partitiontimelimit", "partitionnodelimit")
-
-    @classmethod
-    def query_queue(cls, native_id: str) -> Optional[Dict[str, Any]]:
-        """Queue facts for one pending job, or ``None`` when it is not pending.
-
-        Returns a ``jarvis.scheduler.queue.v1`` document: the job's partition,
-        pending reason, the scheduler's estimated start, and every other
-        available partition with its idle nodes and whether the job ``fits``
-        there (enough idle nodes now and a long enough time limit).
-        """
-        if _SLURM_NATIVE_ID.fullmatch(native_id) is None:
-            raise ValueError("SLURM queue query requires a numeric job ID")
-        job, _diagnostic = _run_scheduler_query(
-            [
-                "squeue",
-                "--noheader",
-                "--states=PENDING",
-                "--jobs",
-                native_id,
-                "--format=%i|%P|%r|%S|%D|%l",
-            ]
-        )
-        if job is None or job.returncode != 0:
-            return None
-        row = _matching_slurm_status_line(job.stdout, native_id, 6)
-        if row is None:
-            return None
-        _job_id, partition, reason, start_text, nodes_text, limit_text = row
-        nodes = int(nodes_text) if nodes_text.isdigit() else None
-        limit_s = _parse_slurm_duration(limit_text)
-        estimated_start: Optional[str] = None
-        starts_in_s: Optional[int] = None
-        try:
-            start: Optional[datetime] = datetime.fromisoformat(start_text)
-        except ValueError:
-            start = None
-        if start is not None:
-            estimated_start = start.isoformat()
-            starts_in_s = max(0, int((start - datetime.now()).total_seconds()))
-        lowered = reason.lower()
-        if any(lowered.startswith(prefix) for prefix in cls._JOB_HOLD_REASONS):
-            reason_kind = "job_hold"
-        elif any(lowered.startswith(prefix) for prefix in cls._LIMIT_REASONS):
-            reason_kind = "limit"
-        elif lowered.startswith(
-            ("resources", "priority", "reqnodenotavail", "reservation")
-        ):
-            reason_kind = "resources"
-        else:
-            reason_kind = "other"
-        current = {item for item in partition.split(",") if item}
-        partitions = [
-            entry
-            for entry in cls.partition_facts()
-            if entry["partition"] not in current and entry["available"] == "up"
-        ]
-        for entry in partitions:
-            time_ok = entry["max_time_s"] is None or (
-                limit_s is not None and entry["max_time_s"] >= limit_s
-            )
-            entry["fits"] = bool(
-                nodes is not None and entry["idle_nodes"] >= nodes and time_ok
-            )
-        partitions.sort(key=lambda entry: (not entry["fits"], -entry["idle_nodes"]))
-        return {
-            "schema_version": "jarvis.scheduler.queue.v1",
-            "provider": cls.NAME,
-            "native_id": native_id,
-            "observed_at": datetime.now(timezone.utc)
-            .isoformat()
-            .replace("+00:00", "Z"),
-            "state": "pending",
-            "partition": partition,
-            "reason": reason,
-            "reason_kind": reason_kind,
-            "estimated_start": estimated_start,
-            "starts_in_s": starts_in_s,
-            "nodes": nodes,
-            "time_limit": limit_text,
-            "time_limit_s": limit_s,
-            "partitions": partitions,
-            "move_supported": True,
-        }
-
-    @classmethod
-    def partition_facts(cls) -> List[Dict[str, Any]]:
-        """Every partition with availability, node counts and time limit."""
-        listing, _diagnostic = _run_scheduler_query(
-            ["sinfo", "--noheader", "--format=%P|%a|%F|%l|%c|%m|%G|%X|%Y|%Z"]
-        )
-
-        def count(text: str) -> Optional[int]:
-            text = text.rstrip("+")
-            return int(text) if text.isdigit() else None
-
-        def smallest(current: Optional[int], new: Optional[int]) -> Optional[int]:
-            if current is None or new is None:
-                return new if current is None else current
-            return min(current, new)
-
-        if listing is None or listing.returncode != 0:
-            return []
-        merged: Dict[str, Dict[str, Any]] = {}
-        for raw_line in listing.stdout.splitlines():
-            fields = [field.strip() for field in raw_line.split("|")]
-            if len(fields) < 4 or not fields[0]:
-                continue
-            name = fields[0]
-            default = name.endswith("*")
-            name = name.rstrip("*")
-            counts = fields[2].split("/")
-            if len(counts) != 4 or not all(item.isdigit() for item in counts):
-                continue
-            entry = merged.setdefault(
-                name,
-                {
-                    "partition": name,
-                    "default": default,
-                    "available": fields[1],
-                    "allocated_nodes": 0,
-                    "idle_nodes": 0,
-                    "other_nodes": 0,
-                    "total_nodes": 0,
-                    "max_time": fields[3],
-                    "max_time_s": _parse_slurm_duration(fields[3]),
-                    "cpus_per_node": None,
-                    "sockets_per_node": None,
-                    "cores_per_socket": None,
-                    "threads_per_core": None,
-                    "physical_cores_per_node": None,
-                    "memory_mb_per_node": None,
-                    "gres": None,
-                    "heterogeneous": False,
-                },
-            )
-            seen = "_seen" in entry
-            entry["_seen"] = True
-            for key, value in zip(
-                ("allocated_nodes", "idle_nodes", "other_nodes", "total_nodes"),
-                counts,
-            ):
-                entry[key] += int(value)
-            # One sinfo line per node configuration. A partition with several
-            # reports the smallest node, so sizing from it fits every node.
-            if len(fields) >= 7:
-                line = {
-                    "cpus_per_node": count(fields[4]),
-                    "memory_mb_per_node": count(fields[5]),
-                }
-                if len(fields) >= 10:
-                    line["sockets_per_node"] = count(fields[7])
-                    line["cores_per_socket"] = count(fields[8])
-                    line["threads_per_core"] = count(fields[9])
-                    if line["sockets_per_node"] and line["cores_per_socket"]:
-                        line["physical_cores_per_node"] = (
-                            line["sockets_per_node"] * line["cores_per_socket"]
-                        )
-                for key, value in line.items():
-                    if seen and entry[key] is not None and value != entry[key]:
-                        entry["heterogeneous"] = True
-                    entry[key] = smallest(entry[key], value) if seen else value
-                if entry["gres"] is None:
-                    entry["gres"] = None if fields[6] in {"", "(null)"} else fields[6]
-        for entry in merged.values():
-            entry.pop("_seen", None)
-        return list(merged.values())
-
-    @classmethod
-    def move_argv(
-        cls, native_id: str, queue: str, *, cluster: Optional[str] = None
-    ) -> List[str]:
-        """``scontrol update`` argv that moves a pending job to ``queue``."""
-        if _SLURM_NATIVE_ID.fullmatch(native_id) is None:
-            raise ValueError("SLURM move requires a numeric job ID")
-        if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", queue) is None:
-            raise ValueError("SLURM partition name is invalid")
-        argv = ["scontrol"]
-        if cluster is not None:
-            if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", cluster) is None:
-                raise ValueError("SLURM cluster name is invalid")
-            argv.append(f"--clusters={cluster}")
-        argv.extend(["update", f"JobId={native_id}", f"Partition={queue}"])
-        return argv
-
-    _MOVE_REFUSALS = (
-        ("no longer pending", "not_pending"),
-        ("already completing or completed", "not_pending"),
-        ("invalid job id", "not_pending"),
-        ("invalid partition", "invalid_queue"),
-        ("node configuration is not available", "does_not_fit"),
-        ("partition configuration not available", "does_not_fit"),
-        ("time limit", "does_not_fit"),
-        ("access denied", "not_permitted"),
-        ("not authorized", "not_permitted"),
-        ("permission denied", "not_permitted"),
-    )
-
-    @classmethod
-    def interpret_move(
-        cls,
-        completed: Optional[subprocess.CompletedProcess[str]],
-        diagnostic: Optional[str],
-    ) -> tuple[bool, Optional[str], Optional[str]]:
-        """(accepted, refusal reason, bounded diagnostic) for one move."""
-        if completed is None:
-            return False, "scheduler_unavailable", diagnostic
-        text = " ".join(
-            part.strip() for part in (completed.stderr, completed.stdout) if part
-        )
-        if completed.returncode == 0:
-            return True, None, text[:2048] or None
-        lowered = text.lower()
-        for marker, reason in cls._MOVE_REFUSALS:
-            if marker in lowered:
-                return False, reason, text[:2048]
-        return False, "scheduler_rejected", text[:2048] or diagnostic
-
-    @classmethod
-    def control_argv(
-        cls,
-        action: SchedulerControlAction,
-        native_id: str,
-        *,
-        cluster: Optional[str] = None,
-    ) -> List[str]:
-        """``scancel`` argv for cancel, or a TERM to the batch shell for stop."""
-        if _SLURM_NATIVE_ID.fullmatch(native_id) is None:
-            raise ValueError("SLURM control requires a numeric job ID")
-        argv = ["scancel"]
-        if action == "stop":
-            # --batch signals only the batch shell, whose TERM trap runs
-            # `jarvis ppl stop` and then signals the pipeline's process tree.
-            argv.extend(["--signal=TERM", "--batch"])
-        elif action != "cancel":
-            raise ValueError(f"unknown scheduler control action {action!r}")
-        if cluster is not None:
-            if re.fullmatch(r"[A-Za-z0-9_.-]{1,64}", cluster) is None:
-                raise ValueError("SLURM cluster name is invalid")
-            argv.append(f"--clusters={cluster}")
-        argv.append(native_id)
-        return argv
-
-    _ENDED_JOB_DIAGNOSTICS = (
-        "invalid job id",
-        "already completing or completed",
-        "job/step already completing",
-        "job has already finished",
-    )
-    _PENDING_JOB_DIAGNOSTICS = ("pending",)
-
-    @classmethod
-    def interpret_control(
-        cls,
-        action: SchedulerControlAction,
-        argv: List[str],
-        completed: Optional[subprocess.CompletedProcess[str]],
-        diagnostic: Optional[str],
-    ) -> SchedulerControlResult:
-        """Treat 'job already gone' as an ended job rather than a failure."""
-        if completed is None:
-            return SchedulerControlResult(
-                action=action,
-                argv=tuple(argv),
-                return_code=None,
-                diagnostic=diagnostic,
-                accepted=False,
-            )
-        text = " ".join(
-            part.strip() for part in (completed.stderr, completed.stdout) if part
-        )
-        bounded = text[:2048] or diagnostic
-        lowered = text.lower()
-        ended = any(marker in lowered for marker in cls._ENDED_JOB_DIAGNOSTICS)
-        pending = action == "stop" and any(
-            marker in lowered for marker in cls._PENDING_JOB_DIAGNOSTICS
-        )
-        return SchedulerControlResult(
-            action=action,
-            argv=tuple(argv),
-            return_code=completed.returncode,
-            diagnostic=bounded,
-            accepted=completed.returncode == 0 and not ended and not pending,
-            job_ended=ended,
-            job_pending=pending,
-        )
+    @property
+    def stop_request_path(self) -> Path:
+        return self.shared_dir / STOP_REQUEST_NAME
 
     @property
     def array_requested(self) -> bool:
-        """Return whether spec or raw arguments request a SLURM job array."""
-        configured = self.spec.get("array")
-        if configured is not None and configured is not False and configured != "":
-            return True
-        return any(
-            str(argument).split("=", 1)[0] == "--array"
-            for argument in self.spec.get("sbatch_args", []) or []
-        )
+        """Arrays are refused, so a submission is always one job."""
+        return False
 
-    @classmethod
-    def resolve_artifact_path(
-        cls,
-        path_pattern: str,
-        *,
-        native_id: str,
-        array_requested: bool = False,
-    ) -> SchedulerArtifactPathResolution:
-        """Resolve only SLURM path tokens proven by scalar submission output.
+    def entry_arguments(self) -> List[str]:
+        """Arguments of ``python`` for the job's one program."""
+        arguments = [
+            "-m", "jarvis_cd.submit.entry",
+            "--provider", self.NAME,
+            "--work-dir", str(self.shared_dir),
+            "--hostfile", self.hostfile,
+            "--nodes", str(self._mapping["node_count"]),
+            "--stop-timeout", str(self.stop_timeout),
+            "--stop-grace", str(self.stop_grace),
+            "--action", self.pipeline_action,
+        ]
+        if self.local_hosts:
+            arguments += ["--nodefile", str(self.shared_dir / self.LOCAL_NODEFILE_NAME)]
+        suffix = self.spec.get("suffix")
+        if suffix:
+            arguments += ["--suffix", str(suffix)]
+        arguments += [f"--action-arg={argument}" for argument in self.pipeline_action_args]
+        if self.pipeline_snapshot_dir is not None:
+            arguments += ["--snapshot-dir", str(self.pipeline_snapshot_dir)]
+        elif self.pipeline_yaml:
+            arguments += ["--pipeline-yaml", self.pipeline_yaml]
+        elif self.pipeline_name:
+            arguments += ["--pipeline-name", self.pipeline_name]
+        if self.jarvis_root is not None:
+            arguments += ["--jarvis-root", str(self.jarvis_root)]
+        if self.install_on_load is not None:
+            arguments += ["--install-on-load", self.install_on_load]
+        return arguments
 
-        ``%j`` and width-qualified forms are bound to the parsed native job ID.
-        ``%%`` is a literal percent and is never reinterpreted. Other percent
-        replacement symbols depend on allocation or task state, so JARVIS
-        leaves their artifact location unset rather than guessing.
+    def _hook_text(self, key: str) -> Optional[str]:
+        """A launcher hook file: the commands, with output in their own log.
+
+        The launcher truncates the job's stdout when the program starts, and a
+        local job's own stdout is a pipe nobody reads after submit returns.
+        The launcher sources the pre-launch hook, so it always starts with
+        :data:`TERM_TRAP`: a scheduler TERM then waits for the entry instead
+        of ending the launcher shell.
         """
-        pattern = _validated_single_line(path_pattern, field="artifact_path")
-        if _SLURM_NATIVE_ID.fullmatch(native_id) is None:
-            raise ValueError("SLURM artifact resolution requires a numeric job ID")
-        if "\\" in pattern:
-            return SchedulerArtifactPathResolution(
-                path=None,
-                diagnostic_code="slurm_artifact_path_unresolved",
-                diagnostic=_UNRESOLVED_SLURM_ARTIFACT_PATH,
-            )
-        rendered: list[str] = []
-        index = 0
-        while index < len(pattern):
-            if pattern[index] != "%":
-                rendered.append(pattern[index])
-                index += 1
+        trap = TERM_TRAP if key == "pre_cmds" else ""
+        commands = [str(command) for command in self.spec.get(key) or []]
+        if not commands:
+            return trap or None
+        log = shlex.quote(str(self.shared_dir / f"{key.removesuffix('_cmds')}-launch.log"))
+        return (
+            trap
+            + f"exec 8>&1 9>&2 >>{log} 2>&1\n"
+            + "\n".join(commands)
+            + "\nexec 1>&8 2>&9 8>&- 9>&-\n"
+        )
+
+    def describe(self) -> Dict[str, Any]:
+        """The job description, as written to :attr:`script_path`."""
+        mapping = self._mapping
+        description = {
+            "schema_version": JOBSPEC_SCHEMA,
+            "executor": self.NAME,
+            "launcher": self.LAUNCHER,
+            "name": mapping["name"],
+            "directory": str(self.shared_dir),
+            "executable": sys.executable,
+            "arguments": self.entry_arguments(),
+            "stdout_path": mapping["stdout_path"],
+            "stderr_path": mapping["stderr_path"],
+            "resources": mapping["resources"],
+            "attributes": mapping["attributes"],
+            "custom_attributes": mapping["custom_attributes"],
+            "pre_launch": self._hook_text("pre_cmds"),
+            "post_launch": self._hook_text("post_cmds"),
+        }
+        if self.local_hosts:
+            description["local_hosts"] = list(self.local_hosts)
+        return description
+
+    def render(self) -> str:
+        """The canonical job description text (what ``+plan`` hashes)."""
+        return json.dumps(self.describe(), indent=2, sort_keys=True) + "\n"
+
+    def write_script(self) -> Path:
+        """Durably write the job description and its launcher hook files."""
+        for key, name in (("pre_cmds", self.PRE_LAUNCH_NAME),
+                          ("post_cmds", self.POST_LAUNCH_NAME)):
+            text = self._hook_text(key)
+            if text is not None:
+                _write_atomic(self.shared_dir / name, text, 0o700)
+        if self.local_hosts:
+            _write_atomic(self.shared_dir / self.LOCAL_NODEFILE_NAME,
+                          "".join(f"{host}\n" for host in self.local_hosts), 0o644)
+        return _write_atomic(self.script_path, self.render())
+
+    def build_job(self) -> Any:
+        """The PSI/J ``Job`` for this submission."""
+        from jarvis_cd.submit._psij import load_psij
+
+        load_psij()
+        from psij import Job, JobAttributes, JobSpec, ResourceSpecV1
+
+        mapping = self._mapping
+        resources = dict(mapping["resources"])
+        attributes = mapping["attributes"]
+        job_attributes = JobAttributes(
+            queue_name=attributes["queue_name"],
+            account=attributes["account"],
+            reservation_id=attributes["reservation_id"],
+            custom_attributes=dict(mapping["custom_attributes"]) or None,
+        )
+        seconds = attributes["duration_seconds"]
+        # no time asks for the queue's default, not PSI/J's 10 minutes
+        setattr(job_attributes, "duration",
+                timedelta(seconds=seconds) if seconds is not None else None)
+        hooks = {}
+        for key, name, field in (("pre_cmds", self.PRE_LAUNCH_NAME, "pre_launch"),
+                                 ("post_cmds", self.POST_LAUNCH_NAME, "post_launch")):
+            if self._hook_text(key) is not None:
+                hooks[field] = self.shared_dir / name
+        spec = JobSpec(
+            executable=sys.executable,
+            arguments=self.entry_arguments(),
+            directory=self.shared_dir,
+            name=mapping["name"],
+            inherit_environment=True,
+            stdout_path=Path(mapping["stdout_path"]),
+            stderr_path=Path(mapping["stderr_path"]),
+            resources=ResourceSpecV1(**resources),
+            attributes=job_attributes,
+            launcher=self.LAUNCHER,
+            **hooks,
+        )
+        return Job(spec)
+
+    def submit(self) -> SchedulerSubmission:
+        """Submit through PSI/J; raises :class:`SchedulerSubmitRefused` on refusal."""
+        if not self.script_path.is_file():
+            self.write_script()
+        for stale in (EXIT_CODE_NAME, STOP_REQUEST_NAME):
+            (self.shared_dir / stale).unlink(missing_ok=True)
+        job = self.build_job()
+        from psij import InvalidJobException, SubmitException
+
+        executor = _executor(self.NAME, self.shared_dir)
+        try:
+            executor.submit(job)
+        except (SubmitException, InvalidJobException) as exc:
+            raise SchedulerSubmitRefused(str(exc)[-4096:] or type(exc).__name__) from exc
+        native_id = str(job.native_id or "").strip()
+        if not native_id:
+            raise RuntimeError("PSI/J accepted the job but returned no native id")
+        return SchedulerSubmission(
+            job=job, executor=executor, native_id=native_id,
+            command=_submit_command(executor, job))
+
+    def wait(self, submission: SchedulerSubmission) -> int:
+        """Block until the job ends; its return code."""
+        status = submission.job.wait()
+        code = read_exit_code(self.shared_dir)
+        if code is not None:
+            return code
+        exit_code = getattr(status, "exit_code", None)
+        if isinstance(exit_code, int) and not isinstance(exit_code, bool):
+            return exit_code
+        state = getattr(getattr(status, "state", None), "name", None)
+        return 0 if state == "COMPLETED" else 1
+
+
+def node_shape(
+    packages: List[Dict[str, Any]], declared_nodes: Any,
+) -> Tuple[int, Optional[int], List[Dict[str, Any]]]:
+    """``(nodes, tasks per node, problems)`` one allocation needs for these packages.
+
+    ``nodes`` is the largest of the declared node count, the smallest node
+    count that makes every ``host_slice`` select at least one node, and 1.
+    Tasks per node is the largest per-node demand of a package: its
+    ``ppn``, else its ranks spread over its slice. ``problems`` lists each
+    slice that is still invalid for ``nodes`` (a negative start, say).
+    Packages with their own ``hostfile`` are skipped.
+    """
+    from jarvis_cd.core.pipeline_check import _ranks, _slice_range
+
+    try:
+        declared = int(declared_nodes or 0)
+    except (TypeError, ValueError):
+        declared = 0
+    slices: List[Tuple[str, str, Dict[str, Any]]] = []
+    for package in packages:
+        config = dict(package.get("config") or {})
+        if config.get("hostfile"):
+            continue
+        text = str(config.get("host_slice") or "").strip()
+        slices.append((str(package.get("pkg_id")), text, config))
+    nodes = max(declared, 1)
+    for _pkg_id, text, _config in slices:
+        if not text:
+            continue
+        for size in range(1, 4097):
+            if _slice_range(text, size)[1] is None:
+                nodes = max(nodes, size)
+                break
+    problems: List[Dict[str, Any]] = []
+    per_node: Optional[int] = None
+    for pkg_id, text, config in slices:
+        span = nodes
+        if text:
+            selected, problem = _slice_range(text, nodes)
+            if problem or selected is None:
+                problems.append({"pkg_id": pkg_id, "host_slice": text,
+                                 "nodes": nodes, "problem": problem})
                 continue
-            if index + 1 < len(pattern) and pattern[index + 1] == "%":
-                rendered.append("%")
-                index += 2
-                continue
-            token_end = index + 1
-            while token_end < len(pattern) and "0" <= pattern[token_end] <= "9":
-                token_end += 1
-            if token_end >= len(pattern) or not pattern[token_end].isalpha():
-                return SchedulerArtifactPathResolution(
-                    path=None,
-                    diagnostic_code="slurm_artifact_path_unresolved",
-                    diagnostic=_UNRESOLVED_SLURM_ARTIFACT_PATH,
-                )
-            token = pattern[token_end]
-            if token != "j" or array_requested:
-                return SchedulerArtifactPathResolution(
-                    path=None,
-                    diagnostic_code="slurm_artifact_path_unresolved",
-                    diagnostic=_UNRESOLVED_SLURM_ARTIFACT_PATH,
-                )
-            width_text = pattern[index + 1 : token_end]
-            width = 0
-            if width_text:
-                width = min(int(width_text), 10)
-            rendered.append(native_id.zfill(width))
-            index = token_end + 1
-        return SchedulerArtifactPathResolution(path="".join(rendered))
+            span = selected[1] - selected[0]
+        ppn = str(config.get("ppn") or "").strip()
+        demand = int(ppn) if ppn.isdigit() and int(ppn) > 0 else None
+        ranks = _ranks(config)
+        if demand is None and ranks:
+            demand = -(-ranks // span)
+        if demand:
+            per_node = max(per_node or 0, demand)
+    return nodes, per_node, problems
 
 
-_SCHEDULERS: Dict[str, type[Scheduler]] = {
-    SlurmScheduler.NAME: SlurmScheduler,
-}
+def read_exit_code(execution_root: Path) -> Optional[int]:
+    """The return code the job's entry wrote, if it finished."""
+    return _read_int(Path(execution_root) / EXIT_CODE_NAME)
 
 
-def scheduler_control_argv(
-    provider: str,
-    action: SchedulerControlAction,
-    native_id: str,
-    *,
-    cluster: Optional[str] = None,
-) -> List[str]:
-    """Validated provider argv for cancel or stop, without running it.
-
-    Raises ``SchedulerControlUnsupported`` when JARVIS has no command for the
-    provider, so callers can refuse before recording any request.
-    """
-    scheduler_type = _SCHEDULERS.get(provider.strip().lower())
-    if scheduler_type is None:
-        raise SchedulerControlUnsupported(
-            f"JARVIS has no {action} command for scheduler provider {provider!r}"
-        )
-    return scheduler_type.control_argv(action, native_id, cluster=cluster)
-
-
-def control_scheduler_execution(
-    provider: str,
-    action: SchedulerControlAction,
-    native_id: str,
-    *,
-    cluster: Optional[str] = None,
-) -> SchedulerControlResult:
-    """Run one provider cancel or stop command without a shell.
-
-    No time limit; one that stalls (:mod:`jarvis_cd.util.stall`) is stopped
-    and reported, never retried.
-    """
-    argv = scheduler_control_argv(provider, action, native_id, cluster=cluster)
-    scheduler_type = _SCHEDULERS[provider.strip().lower()]
+def _read_int(path: Path) -> Optional[int]:
     try:
-        completed = _stall.run(argv, what=argv[0], attempts=1)
-    except OSError as exc:
-        return scheduler_type.interpret_control(
-            action, argv, None, f"{argv[0]} failed: {str(exc)[:1024]}"
-        )
-    stalled = _stall.stall_error(completed)
-    if stalled is not None:
-        return scheduler_type.interpret_control(
-            action, argv, None, f"{argv[0]} {stalled}"
-        )
-    return scheduler_type.interpret_control(action, argv, completed, None)
-
-
-def _run_scheduler_query(
-    argv: list[str],
-) -> tuple[Optional[subprocess.CompletedProcess[str]], Optional[str]]:
-    """Run one scheduler query without invoking a shell.
-
-    No time limit (a busy controller can take a while to answer); a query
-    that stalls (:mod:`jarvis_cd.util.stall`) is stopped, not retried: the
-    caller's next poll is the retry.
-    """
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
     try:
-        completed = _stall.run(argv, what=argv[0], attempts=1)
-    except OSError as exc:
-        return None, f"{argv[0]} query failed: {str(exc)[:1024]}"
-    stalled = _stall.stall_error(completed)
-    if stalled is not None:
-        return None, f"{argv[0]} query {stalled}"
-    if completed.returncode == 0:
-        return completed, None
-    diagnostic = (completed.stderr or completed.stdout or "").strip()
-    if len(diagnostic) > 1024:
-        diagnostic = "[truncated] " + diagnostic[-1024:]
-    return completed, (
-        f"{argv[0]} query exited {completed.returncode}"
-        + (f": {diagnostic}" if diagnostic else "")
-    )
-
-
-def _matching_slurm_status_line(
-    stdout: str,
-    native_id: str,
-    field_count: int,
-) -> Optional[list[str]]:
-    """Return the exact allocation row while ignoring step records."""
-    for raw_line in stdout.splitlines():
-        fields = [field.strip() for field in raw_line.strip().strip("|").split("|")]
-        if len(fields) == field_count and fields[0] == native_id:
-            return fields
-    return None
-
-
-def _slurm_queue_reports_missing(
-    completed: Optional[subprocess.CompletedProcess[str]],
-) -> bool:
-    """Recognize SLURM's exact absent-job response without broad error guessing."""
-    if completed is None or completed.returncode == 0:
-        return False
-    diagnostic = (completed.stderr or completed.stdout or "").strip().lower()
-    return diagnostic == "slurm_load_jobs error: invalid job id specified"
-
-
-def _parse_slurm_exit_code(value: str) -> Optional[int]:
-    """Parse SLURM's ``exit:signal`` field without guessing malformed data."""
-    match = re.fullmatch(r"([0-9]{1,10}):([0-9]{1,10})", value.strip())
-    if match is None:
-        return None
-    exit_code = int(match.group(1))
-    signal = int(match.group(2))
-    if exit_code != 0:
-        return exit_code
-    if signal != 0:
-        return 128 + signal
-    return 0
-
-
-def _slurm_accounting_unavailable(
-    completed: Optional[subprocess.CompletedProcess[str]],
-) -> bool:
-    """Whether sacct failed because the site runs no accounting storage."""
-    if completed is None or completed.returncode == 0:
-        return False
-    text = ((completed.stderr or "") + (completed.stdout or "")).lower()
-    return "accounting storage is disabled" in text or "slurmdbd" in text
-
-
-def _slurm_control_exit_code(native_id: str) -> Optional[int]:
-    """ExitCode from ``scontrol show job`` while the ended job is still known."""
-    shown, _diagnostic = _run_scheduler_query(
-        ["scontrol", "show", "job", "--oneliner", native_id]
-    )
-    if shown is None or shown.returncode != 0:
-        return None
-    match = re.search(r"(?:^|\s)ExitCode=([0-9]+:[0-9]+)", shown.stdout or "")
-    return _parse_slurm_exit_code(match.group(1)) if match else None
-
-
-def _iso_utc(moment: datetime) -> str:
-    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _epoch_iso(text: str) -> Optional[str]:
-    text = (text or "").strip()
-    if not text.isdigit() or int(text) <= 0:
-        return None
-    return _iso_utc(datetime.fromtimestamp(int(text), tz=timezone.utc))
-
-
-def _local_iso(text: str, fmt: str) -> Optional[str]:
-    """A scheduler's local wall-clock time (no zone) as ISO-8601 UTC."""
-    try:
-        return _iso_utc(datetime.strptime(text.strip(), fmt).astimezone())
+        return int(text)
     except ValueError:
         return None
 
 
-def _slurm_query_start(job_id: str) -> tuple[Optional[str], Optional[str]]:
-    shown, _ = _run_scheduler_query(["scontrol", "show", "job", "--oneliner", job_id])
-    if shown is not None and shown.returncode == 0:
-        match = re.search(r"(?:^|\s)StartTime=(\S+)", shown.stdout or "")
-        started = _local_iso(match.group(1), "%Y-%m-%dT%H:%M:%S") if match else None
-        if started:
-            return started, "scontrol"
-    listed, _ = _run_scheduler_query(
-        ["sacct", "-j", job_id, "-X", "-n", "-P", "-o", "Start"]
-    )
-    if listed is not None and listed.returncode == 0:
-        for line in (listed.stdout or "").splitlines():
-            started = _local_iso(line, "%Y-%m-%dT%H:%M:%S")
-            if started:
-                return started, "sacct"
-    return None, None
+def write_stop_request(execution_root: Path) -> Path:
+    """Ask the job to stop its pipeline; the entry polls this file."""
+    from datetime import datetime, timezone
+
+    stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return _write_atomic(Path(execution_root) / STOP_REQUEST_NAME,
+                         json.dumps({"requested_at": stamp}) + "\n")
 
 
-def _pbs_query_start(job_id: str) -> tuple[Optional[str], Optional[str]]:
-    shown, _ = _run_scheduler_query(["qstat", "-f", job_id])
-    if shown is None or shown.returncode != 0:
-        return None, None
-    text = shown.stdout or ""
-    match = re.search(r"^\s*stime\s*=\s*(.+?)\s*$", text, re.MULTILINE)
-    if match:
-        started = _local_iso(match.group(1), "%a %b %d %H:%M:%S %Y")
-        if started:
-            return started, "qstat"
-    match = re.search(r"^\s*start_time\s*=\s*(\d+)\s*$", text, re.MULTILINE)
-    if match:
-        started = _epoch_iso(match.group(1))
-        if started:
-            return started, "qstat"
-    return None, None
+_EXECUTORS: Dict[str, Any] = {}
+
+# A scheduler TERM (cancel, time limit, preemption) reaches every process in
+# the job. PSI/J's batch script and launcher run the entry in the foreground
+# without a trap, so both shells would die at once, and the scheduler then
+# kills the entry before its handler can tear down and finalize. A trap makes
+# each shell wait for its child instead.
+TERM_TRAP = "trap ':' TERM\n"
+_BATCH_TRAP_MARKER = "exec &>>"
 
 
-def scheduler_job_start(
-    environ: Optional[Dict[str, str]] = None,
-) -> Optional[Dict[str, Any]]:
-    """When the allocation this process runs in really started.
+class _TermTrapGenerator:
+    """Wraps a PSI/J batch script generator to trap TERM in the batch shell.
 
-    ``None`` outside an allocation. Otherwise ``{provider, job_id, started_at,
-    source}``: ``started_at`` is ISO-8601 UTC, from the scheduler's own start
-    (``SLURM_JOB_START_TIME``, then ``scontrol``/``sacct``; ``qstat`` for PBS)
-    and, when none of those answers, this moment with ``source: run_start``.
-    Each query is one bounded call.
+    The trap goes before the output redirect, which follows the scheduler
+    directives in every PSI/J batch template; a template without it is
+    refused rather than submitted untrapped.
     """
-    env = os.environ if environ is None else environ
-    started: Optional[str] = None
-    source: Optional[str] = None
-    if env.get("SLURM_JOB_ID"):
-        provider, job_id = "slurm", str(env["SLURM_JOB_ID"])
-        started = _epoch_iso(env.get("SLURM_JOB_START_TIME", ""))
-        if started:
-            source = "SLURM_JOB_START_TIME"
-        else:
-            started, source = _slurm_query_start(job_id)
-    elif env.get("PBS_JOBID"):
-        provider, job_id = "pbs", str(env["PBS_JOBID"])
-        started, source = _pbs_query_start(job_id)
-    elif env.get("LSB_JOBID"):
-        provider, job_id = "lsf", str(env["LSB_JOBID"])
-    elif env.get("FLUX_JOB_ID"):
-        provider, job_id = "flux", str(env["FLUX_JOB_ID"])
-    else:
-        return None
-    if not started:
-        started, source = _iso_utc(datetime.now(timezone.utc)), "run_start"
-    return {
-        "provider": provider,
-        "job_id": job_id,
-        "started_at": started,
-        "source": source,
-    }
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.config = getattr(inner, "config", None)
+
+    def generate_submit_script(self, job: Any, context: Dict[str, object], out: Any) -> None:
+        import io
+
+        buffer = io.StringIO()
+        self.inner.generate_submit_script(job, context, buffer)
+        lines = buffer.getvalue().splitlines(keepends=True)
+        for index, line in enumerate(lines):
+            if line.lstrip().startswith(_BATCH_TRAP_MARKER):
+                lines.insert(index, TERM_TRAP)
+                out.write("".join(lines))
+                return
+        raise RuntimeError(
+            "the PSI/J batch template has no output redirect line; JARVIS "
+            "cannot trap TERM in its batch shell")
 
 
-def _parse_slurm_duration(value: str) -> Optional[int]:
-    """Seconds for a Slurm time limit; ``None`` for unlimited or unknown."""
-    text = value.strip()
-    if not text or text.upper() in {"UNLIMITED", "INFINITE", "NOT_SET", "N/A"}:
-        return None
-    days = 0
-    if "-" in text:
-        day_text, text = text.split("-", 1)
-        if not day_text.isdigit():
-            return None
-        days = int(day_text)
-        parts = text.split(":")
-        if not all(part.isdigit() for part in parts) or len(parts) > 3:
-            return None
-        hours, minutes, seconds = ([int(part) for part in parts] + [0, 0])[:3]
-    else:
-        parts = text.split(":")
-        if not all(part.isdigit() for part in parts) or len(parts) > 3:
-            return None
-        numbers = [int(part) for part in parts]
-        if len(numbers) == 1:
-            hours, minutes, seconds = 0, numbers[0], 0
-        elif len(numbers) == 2:
-            hours, minutes, seconds = 0, numbers[0], numbers[1]
-        else:
-            hours, minutes, seconds = numbers
-    return ((days * 24 + hours) * 60 + minutes) * 60 + seconds
+def _executor(name: str, execution_root: Optional[Path] = None) -> Any:
+    """A PSI/J executor; one per scheduler unless a submission needs its own."""
+    from jarvis_cd.submit._psij import load_psij
+
+    load_psij()
+    from psij import JobExecutor
+    from psij.executors.batch.batch_scheduler_executor import (
+        BatchSchedulerExecutorConfig,
+    )
+
+    if execution_root is None and name in _EXECUTORS:
+        return _EXECUTORS[name]
+    config = BatchSchedulerExecutorConfig(
+        work_directory=(Path(execution_root) / "psij") if execution_root else None,
+        keep_files=True,
+    )
+    executor: Any = JobExecutor.get_instance(name, config=config)
+    if _is_batch(executor) and not isinstance(executor.generator, _TermTrapGenerator):
+        executor.generator = _TermTrapGenerator(executor.generator)
+    if execution_root is None:
+        _EXECUTORS[name] = executor
+    return executor
 
 
-def _slurm_execution_status(
-    provider_state: str,
+def _is_batch(executor: Any) -> bool:
+    from psij.executors.batch.batch_scheduler_executor import BatchSchedulerExecutor
+
+    return isinstance(executor, BatchSchedulerExecutor)
+
+
+def _submit_command(executor: Any, job: Any) -> List[str]:
+    if _is_batch(executor):
+        return [str(part) for part in executor.get_submit_command(
+            job, executor.work_directory / f"{job.id}.job")]
+    return ["psij", executor.name, "submit", job.id]
+
+
+def _supported(provider: str, action: str) -> str:
+    name = _SCHEDULER_ALIASES.get(provider.strip().lower(), provider.strip().lower())
+    if name not in SUPPORTED_SCHEDULERS:
+        raise SchedulerControlUnsupported(
+            f"JARVIS has no {action} command for scheduler provider {provider!r}")
+    return name
+
+
+def _observation(
+    state: SchedulerExecutionState,
     *,
-    return_code: Optional[int],
+    return_code: Optional[int] = None,
+    provider_state: Optional[str] = None,
+    diagnostic: Optional[str] = None,
+    basis: Optional[str] = None,
 ) -> SchedulerExecutionStatus:
-    """Map a SLURM lifecycle value into JARVIS execution semantics."""
-    normalized = provider_state.strip().upper().split(maxsplit=1)[0].rstrip("+")
-    submitted_states = {
-        "PENDING",
-        "CONFIGURING",
-        "REQUEUED",
-        "REQUEUE_FED",
-        "REQUEUE_HOLD",
-        "RESIZING",
-    }
-    running_states = {"RUNNING", "COMPLETING", "SIGNALING", "STAGE_OUT", "SUSPENDED"}
-    failed_states = {
-        "BOOT_FAIL",
-        "DEADLINE",
-        "FAILED",
-        "NODE_FAIL",
-        "OUT_OF_MEMORY",
-        "PREEMPTED",
-        "REVOKED",
-        "SPECIAL_EXIT",
-        "TIMEOUT",
-    }
-    if normalized in submitted_states:
-        state: SchedulerExecutionState = "submitted"
-        terminal = False
-        canonical_return_code = None
-    elif normalized in running_states:
-        state = "running"
-        terminal = False
-        canonical_return_code = None
-    elif normalized == "COMPLETED" and return_code in {None, 0}:
-        state = "completed"
-        terminal = True
-        canonical_return_code = 0
-    elif normalized.startswith("CANCELLED"):
-        state = "canceled"
-        terminal = True
-        canonical_return_code = return_code
-    elif normalized in failed_states or normalized == "COMPLETED":
-        state = "failed"
-        terminal = True
-        canonical_return_code = return_code if return_code not in {None, 0} else 1
-    else:
-        state = "unknown"
-        terminal = False
-        canonical_return_code = None
     return SchedulerExecutionStatus(
         state=state,
-        terminal=terminal,
-        return_code=canonical_return_code,
-        provider_state=normalized or None,
-        diagnostic=None,
+        terminal=state in {"completed", "failed", "canceled"},
+        return_code=return_code,
+        provider_state=provider_state,
+        diagnostic=diagnostic[:2048] if diagnostic else None,
+        basis=basis,
     )
+
+
+def _from_psij_state(
+    state: str, message: Optional[str], psij_code: Optional[int],
+) -> SchedulerExecutionStatus:
+    if state in {"NEW", "QUEUED"}:
+        return _observation("submitted", provider_state=state, basis="queue")
+    if state == "ACTIVE":
+        return _observation("running", provider_state=state, basis="queue")
+    if state == "CANCELED":
+        return _observation("canceled", provider_state=state, diagnostic=message,
+                            basis="queue")
+    if state == "FAILED":
+        return _observation("failed", return_code=psij_code or 1, provider_state=state,
+                            diagnostic=message, basis="queue")
+    return _observation(
+        "missing", provider_state=state, basis="absent",
+        diagnostic="the job ended without writing its JARVIS exit code")
 
 
 def query_scheduler_execution(
     provider: str,
     native_id: str,
+    *,
+    execution_root: Optional[Path] = None,
 ) -> SchedulerExecutionStatus:
-    """Query execution state through the named scheduler provider."""
-    scheduler_type = _SCHEDULERS.get(provider.strip().lower())
-    if scheduler_type is None:
-        return SchedulerExecutionStatus(
-            state="unknown",
-            terminal=False,
-            return_code=None,
-            provider_state=None,
-            diagnostic=f"JARVIS cannot query scheduler provider {provider!r}",
-        )
-    return scheduler_type.query_execution(native_id)
+    """Execution state from the entry's exit code, else from PSI/J.
+
+    Batch schedulers get one status query (PSI/J's own command, no polling
+    thread); a job the queue no longer lists is ``missing`` unless PSI/J's
+    exit code file says it failed. Local and Flux jobs are attached. Never
+    queries scheduler accounting.
+    """
+    try:
+        name = _supported(provider, "query")
+    except SchedulerControlUnsupported as exc:
+        return _observation("unknown", diagnostic=str(exc))
+    if execution_root is not None:
+        code = read_exit_code(Path(execution_root))
+        if code is not None:
+            return _observation("completed" if code == 0 else "failed",
+                                return_code=code, provider_state="EXITED",
+                                basis="exit_code_file")
+    psij_code = None
+    if execution_root is not None:
+        psij_code = _read_int(Path(execution_root) / "psij" / name / f"{native_id}.ec")
+    try:
+        executor = _executor(name)
+        if _is_batch(executor):
+            completed, diagnostic = queues.run_query(
+                list(executor.get_status_command([native_id])))
+            if completed is None:
+                return _observation("unknown", diagnostic=diagnostic)
+            statuses = executor.parse_status_output(
+                completed.returncode, completed.stdout or "")
+            status = statuses.get(native_id)
+            if status is None:
+                if psij_code:
+                    return _observation("failed", return_code=psij_code,
+                                        provider_state="ABSENT",
+                                        basis="psij_exit_code_file")
+                return _observation("missing", provider_state=None, basis="absent")
+        else:
+            from psij import Job, JobState
+
+            job = Job()
+            try:
+                executor.attach(job, native_id)
+            except Exception as exc:
+                if type(exc).__name__ == "NoSuchProcess":
+                    return _observation("missing", basis="absent")
+                raise
+            status = job.wait(timeout=timedelta(seconds=10),
+                              target_states=[JobState.QUEUED]) or job.status
+    except Exception as exc:
+        return _observation(
+            "unknown", diagnostic=f"PSI/J {name} status failed: "
+            f"{str(exc)[:1024] or type(exc).__name__}")
+    return _from_psij_state(status.state.name, status.message, psij_code)
 
 
 def query_scheduler_queue(provider: str, native_id: str) -> Optional[Dict[str, Any]]:
     """Queue facts (``jarvis.scheduler.queue.v1``) for one pending job."""
-    scheduler_type = _SCHEDULERS.get(provider.strip().lower())
-    if scheduler_type is None:
-        return None
-    return scheduler_type.query_queue(native_id)
+    return queues.queue_facts(provider.strip().lower(), native_id)
 
 
 def scheduler_partition_facts(provider: str) -> List[Dict[str, Any]]:
     """Partitions with node counts and limits for one provider."""
-    scheduler_type = _SCHEDULERS.get(provider.strip().lower())
-    if scheduler_type is None:
-        return []
-    return scheduler_type.partition_facts()
+    return queues.partition_facts(provider.strip().lower())
 
 
 def move_scheduler_execution(
@@ -1854,34 +1046,97 @@ def move_scheduler_execution(
     *,
     cluster: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Run one move of a pending job; returns the typed outcome.
+    """Move one pending job to another queue (:func:`jarvis_cd.site.queues.move_job`)."""
+    return queues.move_job(provider.strip().lower(), native_id, queue, cluster=cluster)
 
-    No time limit; a move that stalls (:mod:`jarvis_cd.util.stall`) is
-    stopped and reported, never retried.
+
+def scheduler_control_argv(
+    provider: str,
+    action: SchedulerControlAction,
+    native_id: str,
+    *,
+    cluster: Optional[str] = None,
+    execution_root: Optional[Path] = None,
+) -> List[str]:
+    """The command a cancel or stop records, without running it.
+
+    Cancel is the PSI/J executor's own cancel command (``scancel -Q ID``
+    for Slurm); stop writes the execution's stop-request file. Raises
+    ``SchedulerControlUnsupported`` for an unknown provider, so callers can
+    refuse before recording any request. ``cluster`` is unused: multi-cluster
+    submission is refused.
     """
-    scheduler_type = _SCHEDULERS.get(provider.strip().lower())
-    if scheduler_type is None:
-        raise SchedulerControlUnsupported(
-            f"JARVIS has no move command for scheduler provider {provider!r}"
-        )
-    argv = scheduler_type.move_argv(native_id, queue, cluster=cluster)
+    del cluster
+    name = _supported(provider, action)
+    _validated_single_line(native_id, field="native_id", limit=256)
+    if action == "stop":
+        target = Path(execution_root) / STOP_REQUEST_NAME if execution_root else None
+        return ["jarvis-stop-request", str(target or STOP_REQUEST_NAME)]
+    if action != "cancel":
+        raise ValueError(f"unknown scheduler control action {action!r}")
+    executor = _executor(name)
+    if _is_batch(executor):
+        return [str(part) for part in executor.get_cancel_command(native_id)]
+    return ["psij", name, "cancel", native_id]
+
+
+def control_scheduler_execution(
+    provider: str,
+    action: SchedulerControlAction,
+    native_id: str,
+    *,
+    cluster: Optional[str] = None,
+    execution_root: Optional[Path] = None,
+) -> SchedulerControlResult:
+    """Cancel through PSI/J, or ask the job to stop through its stop-request file."""
+    argv = scheduler_control_argv(provider, action, native_id, cluster=cluster,
+                                  execution_root=execution_root)
+    name = _supported(provider, action)
+    if action == "stop":
+        observed = query_scheduler_execution(name, native_id,
+                                             execution_root=execution_root)
+        if observed.terminal or observed.state == "missing":
+            return SchedulerControlResult(
+                action=action, argv=tuple(argv), return_code=None,
+                diagnostic=observed.diagnostic or f"job is {observed.state}",
+                accepted=False, job_ended=True)
+        if execution_root is None:
+            return SchedulerControlResult(
+                action=action, argv=tuple(argv), return_code=None,
+                diagnostic="no execution directory to write the stop request to",
+                accepted=False)
+        try:
+            write_stop_request(Path(execution_root))
+        except OSError as exc:
+            return SchedulerControlResult(
+                action=action, argv=tuple(argv), return_code=None,
+                diagnostic=f"could not write the stop request: {str(exc)[:1024]}",
+                accepted=False)
+        return SchedulerControlResult(action=action, argv=tuple(argv), return_code=0,
+                                      diagnostic=None, accepted=True)
+    from psij import Job
+
+    executor = _executor(name)
     try:
-        completed: Optional[subprocess.CompletedProcess[str]] = _stall.run(
-            argv, what=argv[0], attempts=1)
-        diagnostic = None
-        stalled = _stall.stall_error(completed)
-        if stalled is not None:
-            completed, diagnostic = None, f"{argv[0]} {stalled}"
-    except OSError as exc:
-        completed, diagnostic = None, f"{argv[0]} failed: {str(exc)[:1024]}"
-    accepted, reason, detail = scheduler_type.interpret_move(completed, diagnostic)
-    return {
-        "command": argv,
-        "return_code": None if completed is None else completed.returncode,
-        "accepted": accepted,
-        "refusal": reason,
-        "diagnostic": detail,
-    }
+        job = Job()
+        executor.attach(job, native_id)
+        executor.cancel(job)
+    except Exception as exc:
+        observed = query_scheduler_execution(name, native_id,
+                                             execution_root=execution_root)
+        ended = observed.terminal or observed.state == "missing"
+        return SchedulerControlResult(
+            action=action, argv=tuple(argv), return_code=None,
+            diagnostic=(str(exc) or type(exc).__name__)[:2048],
+            accepted=False, job_ended=ended)
+    if not _is_batch(executor):
+        # the local executor kills the process tree from its reaper thread
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and query_scheduler_execution(
+                name, native_id).state == "running":
+            time.sleep(0.5)
+    return SchedulerControlResult(action=action, argv=tuple(argv), return_code=0,
+                                  diagnostic=None, accepted=True)
 
 
 def resolve_scheduler_artifact_path(
@@ -1891,16 +1146,24 @@ def resolve_scheduler_artifact_path(
     native_id: str,
     array_requested: bool = False,
 ) -> SchedulerArtifactPathResolution:
-    """Resolve a filename pattern through its explicit scheduler provider."""
-    scheduler_type = _SCHEDULERS.get(provider.strip().lower())
-    if scheduler_type is None:
+    """The job's log path: PSI/J writes to the exact configured path.
+
+    ``%`` patterns are refused when the job is described, so there is
+    nothing to substitute.
+    """
+    del native_id, array_requested
+    if _SCHEDULER_ALIASES.get(provider.strip().lower(),
+                              provider.strip().lower()) not in SUPPORTED_SCHEDULERS:
         return SchedulerArtifactPathResolution(
             path=None,
             diagnostic_code="scheduler_artifact_provider_unsupported",
             diagnostic="JARVIS has no artifact path resolver for this scheduler",
         )
-    return scheduler_type.resolve_artifact_path(
-        path_pattern,
-        native_id=native_id,
-        array_requested=array_requested,
-    )
+    pattern = _validated_single_line(path_pattern, field="artifact_path")
+    if "%" in pattern:
+        return SchedulerArtifactPathResolution(
+            path=None,
+            diagnostic_code="scheduler_artifact_path_unresolved",
+            diagnostic="JARVIS does not substitute %-patterns in log paths",
+        )
+    return SchedulerArtifactPathResolution(path=pattern)

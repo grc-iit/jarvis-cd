@@ -33,13 +33,15 @@ not overwrite earlier execution records.
 Direct `run()` remains blocking by default. Its record transitions through
 `preparing`, `running`, and `completed` or `failed`. A scheduler record moves
 through submission and then the isolated runtime snapshot advances that same
-record to `running`. The generated scheduler script finalizes it as `completed`,
-`failed` or `canceled`, including failures in pre-run hooks, hostfile
-construction, and post-run hooks.
+record to `running`. The job's entry (`jarvis_cd.submit.entry`, the one
+program of the PSI/J job) finalizes it as `completed`, `failed` or
+`canceled`, including failures in hostfile construction. A failing
+`pre_cmds` hook ends the job before the entry starts; status then reports it
+from PSI/J's exit-code file or as missing.
 
 `Pipeline.get_execution()` reconciles a submitted scheduler record with its
 configured provider. This closes the case where the scheduler accepts an ID
-but rejects the job before the generated script can activate and finalize the
+but rejects the job before the job entry can activate and finalize the
 record, for example when a scheduler log directory is unavailable. The query
 stores a typed provider observation on a state transition. Missing jobs become
 failed only after the startup grace period; an unavailable provider query
@@ -126,19 +128,19 @@ terminal record is returned unchanged. In Python they are
 
 | Command | Scheduler action | Final state |
 |---------|------------------|-------------|
-| `execution cancel` | `scancel <job>` | `canceled`, unless the job had already reached another terminal state |
-| `execution stop` | `scancel --signal=TERM --batch <job>`; the batch shell runs `jarvis ppl stop`, then reaps the pipeline | `completed` after a clean stop, `failed` if `ppl stop` failed; a pending job is canceled instead |
+| `execution cancel` | PSI/J `executor.cancel(job)` (Slurm: `scancel -Q <job>`) | `canceled`, unless the job had already reached another terminal state |
+| `execution stop` | writes the execution's `stop-request` file; the job entry runs `jarvis ppl stop`, then reaps the pipeline | `completed` after a clean stop, `failed` if `ppl stop` failed; a pending job stops as soon as it starts |
 
 These commands record their work in the execution's `metadata`:
 
 - `cancel_request` / `stop_request` (`jarvis.execution.control.v1`): `action`,
-  `status` (`requested`, `accepted`, `job_ended`, `fallback_cancel`,
-  `failed`), `provider`, `native_id`, `cluster` (the `--clusters` value
-  passed, which is set only when `sbatch --parsable` reported one),
-  `recorded_cluster` (the record's cluster, which may come from
-  `SLURM_CLUSTER_NAME`), the exact `command` and the
+  `status` (`requested`, `accepted`, `job_ended`, `failed`; records written
+  before PSI/J may also hold `fallback_cancel`), `provider`, `native_id`,
+  `cluster` (always `null` for PSI/J submissions), `recorded_cluster` (the
+  record's cluster, which may come from `SLURM_CLUSTER_NAME`), the exact
+  `command` (for stop, `["jarvis-stop-request", <path>]`) and the
   scheduler's `result`. A `failed` request does not affect finalization.
-- `termination`: written by the batch shell's TERM trap. It holds `reason`
+- `termination`: written by the job entry on a stop request or a TERM. It holds `reason`
   (`stop_request`, `cancel_request` or `scheduler` for a time limit or an
   external `scancel`), `signal`, `received_at`, `stopped_at`,
   `stop_return_code` and `child_reaped`.
@@ -146,8 +148,8 @@ These commands record their work in the execution's `metadata`:
   run (or install job) inside it, at the point every component is written
   `waiting` with hosts: `{provider, job_id, started_at, source}`.
   `started_at` is ISO-8601 UTC, and `source` says where it came from. For
-  Slurm that is `SLURM_JOB_START_TIME`, then `scontrol` (`StartTime`), then
-  `sacct` (`Start`); for PBS, `qstat` (`stime` or `start_time`). When none of
+  Slurm that is `SLURM_JOB_START_TIME`, then `scontrol` (`StartTime`); for
+  PBS, `qstat` (`stime`). No query uses `sacct`. When none of
   them answers, including on LSF and Flux, it is the moment the run started
   (`run_start`). Each query is one bounded call. A caller showing a job's
   start uses this field rather than its own first `RUNNING` observation,

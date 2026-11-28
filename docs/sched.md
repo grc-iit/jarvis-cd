@@ -37,7 +37,7 @@ becomes an entry in `issues`, never a failure, and the command exits `0`.
 |-------|---------|
 | `schema_version` | `jarvis.sched-info.v1` |
 | `provider` | the provider used, or `null` when none was found |
-| `providers_supported` | the providers JARVIS can submit to (`slurm`, …) |
+| `providers_supported` | the PSI/J executors JARVIS can submit to (`cobalt`, `flux`, `local`, `lsf`, `pbs`, `slurm`) |
 | `providers_queues_readable` | the providers whose queues and limits `sched info` reads (`flux`, `lsf`, `pbs`, `slurm`) |
 | `host`, `observed_at` | where and when it was read |
 | `in_allocation` | the allocation this process runs in (the same check the [login-node build guard](scheduler.md#install-jobs) uses), or `null` on a login node |
@@ -67,7 +67,7 @@ of one partition merged:
 
 #### PBS, LSF and Flux queues
 
-JARVIS cannot submit to PBS, LSF or Flux yet, but `sched info` reads their
+JARVIS submits to PBS, LSF and Flux through PSI/J, and `sched info` reads their
 queues. Each queue is one `partitions[]` entry with the same fields. Only
 `partition`, `default`, `available`, `total_nodes`, `max_time` and the three
 `limits` fields are filled; the per-node fields are `null`.
@@ -134,7 +134,7 @@ The `mpi` block:
 | `kind` | Schema | When |
 |--------|--------|------|
 | `scheduler_missing` | `jarvis.issue.v1` | no scheduler client on `PATH` and no `--provider` |
-| `scheduler_unsupported` | `jarvis.issue.v1` | JARVIS cannot submit to this provider (`details.supported` lists the ones it can). For PBS, LSF and Flux the queues are still read, and `details.queues_read` is `true` |
+| `scheduler_unsupported` | `jarvis.issue.v1` | JARVIS cannot submit to this provider (`details.supported` lists the ones it can) |
 | `scheduler_query_failed` | `jarvis.issue.v1` | the provider reported no partitions, or a queue or limits read failed (`details` holds the raw `command`, `exit_code` and `output`) |
 | `resource_graph_net_missing` (and the other network issues) | `jarvis.issue.v1` | the resource graph has no usable `net` section, as `jarvis rg net +json` reports it. A legacy list-form `net` is read and gives the advisory `resource_graph_net_legacy` instead; a `net` or graph file that can't be read gives `resource_graph_net_unreadable` with the error (see [Resource graph network](resource-graph-network.md)). `net.form` says which |
 | `spack_missing` | `jarvis.install-issue.v1` | JARVIS has no Spack. It is the same issue, with the same `issue_id` and `site_spacks[]`, that `ppl install +check` raises (see [Missing Spack](pipeline_tests.md#missing-spack-spack_missing)) |

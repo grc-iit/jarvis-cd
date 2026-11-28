@@ -62,7 +62,7 @@ def test_slurm_captured_lines_fill_every_key_and_mark_the_absent_ones():
 def test_slurm_failed_scontrol_marks_every_limit_unknown_with_the_raw_error():
     entries: List[Dict[str, Any]] = [{"partition": "gpu"}]
     failed = SimpleNamespace(returncode=1, stdout="", stderr="slurm_load_partitions: Unable to contact slurm controller")
-    with patch("jarvis_cd.core.scheduler._run_scheduler_query",
+    with patch("jarvis_cd.site.queues.run_query",
                return_value=(failed, "scontrol query exited 1: slurm_load_partitions: Unable to contact slurm controller")):
         error = queue_limits.attach_slurm_limits(entries)
     assert error is not None and error["exit_code"] == 1
@@ -421,7 +421,7 @@ def test_flux_reader_falls_back_to_the_default_table():
         return (SimpleNamespace(returncode=1, stdout="", stderr="flux-queue: unknown format"),
                 "flux query exited 1: flux-queue: unknown format")
 
-    with patch("jarvis_cd.core.scheduler._run_scheduler_query", side_effect=query):
+    with patch("jarvis_cd.site.queues.run_query", side_effect=query):
         entries, error = queue_limits.flux_partitions()
     assert error is None and len(calls) == 3
     assert entries[1]["limits_source"]["fields"]["max_nodes"] == "limits.range.effective.nnodes"
@@ -445,16 +445,17 @@ def _sched_info(provider, outputs):
         return SimpleNamespace(returncode=0, stdout=result, stderr=""), None
 
     jarvis = SimpleNamespace(resource_graph_file=None, resource_graph_is_site=False)
-    with patch("jarvis_cd.core.scheduler._run_scheduler_query", side_effect=query):
+    with patch("jarvis_cd.site.queues.run_query", side_effect=query):
         return sched_info(jarvis, provider, include_mpi=False)
 
 
-def test_sched_info_reports_pbs_queues_and_says_it_cannot_submit():
+def test_sched_info_reports_pbs_queues_and_submits_through_psij():
     document = _sched_info("pbs", {"qstat -Qf": PBS_POLARIS_RECONSTRUCTED, "qstat -Bf": PBS_SERVER})
     assert [entry["partition"] for entry in document["partitions"]] == ["debug", "prod"]
     assert "pbs" in document["providers_queues_readable"]
+    assert "pbs" in document["providers_supported"]
     kinds = [issue["kind"] for issue in document["issues"]]
-    assert "scheduler_unsupported" in kinds and "scheduler_query_failed" not in kinds
+    assert "scheduler_unsupported" not in kinds and "scheduler_query_failed" not in kinds
 
 
 @pytest.mark.parametrize("provider", ["pbs", "lsf", "flux"])

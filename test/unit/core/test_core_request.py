@@ -2,8 +2,9 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from jarvis_cd.core.scheduler import SlurmScheduler
+from jarvis_cd.core.scheduler import Scheduler
 from jarvis_cd.core.submit_plan import cores_plan
+from jarvis_cd.site.queues import core_request
 from jarvis_cd.util.placement import cpu_topology, node_threads_per_core
 from jarvis_cd.util.resource_graph import ResourceGraph, merge_cpu_facts
 
@@ -14,37 +15,37 @@ ARES_COMPUTE = {
 }
 
 
-def _directives(tmp_path: Path, **spec):
-    return SlurmScheduler({"name": "slurm", **spec}, tmp_path)._directives()
+def _custom(tmp_path: Path, **spec):
+    mapping = Scheduler({"name": "slurm", **spec}, tmp_path)._mapping
+    return mapping["custom_attributes"]
 
 
 def test_rank_request_claims_one_core_per_task(tmp_path):
-    lines = _directives(tmp_path, nodes=2, ntasks_per_node=16)
-    assert "#SBATCH --ntasks-per-core=1" in lines
-    assert "#SBATCH --ntasks-per-node=16" in lines
-    assert "#SBATCH --ntasks-per-core=1" in _directives(tmp_path, ntasks=1)
+    custom = _custom(tmp_path, nodes=2, ntasks_per_node=16)
+    assert custom["slurm.ntasks-per-core"] == "1"
+    assert _custom(tmp_path, ntasks=1)["slurm.ntasks-per-core"] == "1"
 
 
 def test_no_rank_request_adds_nothing(tmp_path):
-    assert not any("ntasks-per-core" in line for line in _directives(tmp_path, nodes=2))
+    assert "slurm.ntasks-per-core" not in _custom(tmp_path, nodes=2)
 
 
 def test_person_mapping_wins(tmp_path):
-    off = _directives(tmp_path, ntasks_per_node=24, ntasks_per_core=False)
-    assert not any("ntasks-per-core" in line for line in off)
-    two = _directives(tmp_path, ntasks_per_node=24, ntasks_per_core=2)
-    assert [line for line in two if "per-core" in line] == ["#SBATCH --ntasks-per-core=2"]
-    hint = _directives(tmp_path, ntasks_per_node=4, sbatch_args=["--hint=multithread"])
-    assert not any("ntasks-per-core" in line for line in hint)
-    threads = _directives(tmp_path, ntasks_per_node=4, threads_per_core=1)
-    assert not any("ntasks-per-core" in line for line in threads)
-    assert SlurmScheduler.core_request({"ntasks_per_node": 4, "hint": "nomultithread"})[
+    off = _custom(tmp_path, ntasks_per_node=24, ntasks_per_core=False)
+    assert "slurm.ntasks-per-core" not in off
+    two = _custom(tmp_path, ntasks_per_node=24, ntasks_per_core=2)
+    assert two["slurm.ntasks-per-core"] == "2"
+    hint = _custom(tmp_path, ntasks_per_node=4, sbatch_args=["--hint=multithread"])
+    assert "slurm.ntasks-per-core" not in hint and hint["slurm.hint"] == "multithread"
+    threads = _custom(tmp_path, ntasks_per_node=4, threads_per_core=1)
+    assert "slurm.ntasks-per-core" not in threads
+    assert core_request("slurm", {"ntasks_per_node": 4, "hint": "nomultithread"})[
         "source"] == "pipeline.scheduler"
 
 
 def _plan(spec, nodes=2, facts=(ARES_COMPUTE,)):
-    with patch.object(SlurmScheduler, "partition_facts", return_value=list(facts)):
-        return cores_plan(SlurmScheduler, spec, nodes)
+    with patch("jarvis_cd.site.queues.partition_facts", return_value=list(facts)):
+        return cores_plan("slurm", spec, nodes)
 
 
 def test_plan_says_what_ranks_claim():

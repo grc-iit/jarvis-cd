@@ -16,6 +16,11 @@ NO_BUILTIN_ENVIRONMENT = "JARVIS_NO_BUILTIN"
 #: ``jarvis_config.yaml`` key recording that a root leaves builtin out
 NO_BUILTIN_CONFIG_KEY = "no_builtin"
 BUILTIN_REPOSITORY_NAME = "builtin"
+#: ``repos.yaml`` key mapping a registered repository path to the git origin
+#: (url, ref, cloned_at) it was cloned from by ``jarvis repo add <git url>``
+REPO_SOURCES_KEY = "sources"
+#: Directory beneath the config dir that holds JARVIS-owned repository clones
+GIT_REPOS_DIRNAME = "repos"
 _STATE_ROOT_FIELDS = ("config_dir", "private_dir", "shared_dir")
 MAX_BUILTIN_RESOURCE_GRAPH_PROFILES = 128
 _TRUE_FLAG_VALUES = frozenset({"1", "true", "yes", "on"})
@@ -375,18 +380,128 @@ class Jarvis:
             return [str(builtin_repo_path.absolute())]
         return [str((self.jarvis_root / BUILTIN_REPOSITORY_NAME).absolute())]
 
-    def _drop_persisted_builtin_repositories(self) -> None:
-        """Remove every ``builtin`` entry from repos.yaml itself."""
+    def _drop_persisted_builtin_repositories(self) -> list[str]:
+        """Remove every ``builtin`` entry from repos.yaml itself.
+
+        :return: The entries removed.
+        """
         if not self.repos_file.exists():
-            return
+            return []
         with open(self.repos_file, "r") as f:
             persisted = yaml.safe_load(f) or {"repos": []}
         entries = persisted.get("repos") if isinstance(persisted, dict) else None
         if not isinstance(entries, list):
-            return
+            return []
         kept = [entry for entry in entries if not self._is_builtin_entry(entry)]
-        if len(kept) != len(entries):
+        removed = [entry for entry in entries if self._is_builtin_entry(entry)]
+        if removed:
             self.save_repos({**persisted, "repos": kept})
+        return removed
+
+    @property
+    def builtin_environment_override(self) -> Optional[bool]:
+        """``JARVIS_NO_BUILTIN`` parsed when set, else ``None``."""
+        return _no_builtin_from_environment()
+
+    def disable_builtin(self) -> list[str]:
+        """Record ``no_builtin: true`` for this root and drop builtin entries.
+
+        Backs ``jarvis repo rm builtin``. ``JARVIS_NO_BUILTIN`` still wins
+        for any process that sets it. An uninitialized root is initialized
+        first with the ``jarvis init`` default directories beneath it, so
+        the choice persists; a later ``jarvis init`` keeps it.
+
+        :return: The builtin entries removed from repos.yaml.
+        """
+        entries = self._persisted_repositories()["repos"]
+        removed = [
+            entry
+            for entry in (entries if isinstance(entries, list) else [])
+            if self._is_builtin_entry(entry)
+        ]
+        if not self.is_initialized():
+            print(f"Jarvis not initialized; initializing {self.jarvis_root} with defaults")
+            self.initialize(
+                str(self.jarvis_root / "config"),
+                str(self.jarvis_root / "private"),
+                str(self.jarvis_root / "shared"),
+                no_builtin=True,
+            )
+        config = dict(self.config)
+        config[NO_BUILTIN_CONFIG_KEY] = True
+        self.save_config(config)
+        self._drop_persisted_builtin_repositories()
+        self._repos = None
+        return removed
+
+    def enable_builtin(self) -> bool:
+        """Clear this root's ``no_builtin`` key.
+
+        :return: Whether the key was set before.
+        """
+        if not self.is_initialized():
+            return False
+        config = dict(self.config)
+        was_set = _parse_flag(
+            config.pop(NO_BUILTIN_CONFIG_KEY, False) or False,
+            f"{NO_BUILTIN_CONFIG_KEY} in {self.config_file}",
+        )
+        if was_set:
+            self.save_config(config)
+        self._repos = None
+        return was_set
+
+    def get_git_repos_dir(self) -> Path:
+        """Directory holding repositories cloned by ``jarvis repo add <url>``.
+
+        It sits in ``JARVIS_ROOT`` beside repos.yaml, which lists the clones,
+        so it does not move when ``jarvis init`` names a different config dir.
+        """
+        return self.jarvis_root / GIT_REPOS_DIRNAME
+
+    def is_owned_git_clone(self, repo_path: str) -> bool:
+        """Whether ``repo_path`` is a clone directly beneath the git repos dir."""
+        path = self._absolute_lexical_path(repo_path)
+        return path.parent == self._absolute_lexical_path(self.get_git_repos_dir())
+
+    def _persisted_repositories(self) -> Dict[str, Any]:
+        """repos.yaml exactly as stored, without the in-memory builtin view."""
+        if not self.repos_file.exists():
+            return {"repos": []}
+        with open(self.repos_file, "r") as f:
+            persisted = yaml.safe_load(f) or {"repos": []}
+        if not isinstance(persisted, dict):
+            return {"repos": []}
+        persisted.setdefault("repos", [])
+        return persisted
+
+    def get_repo_source(self, repo_path: str) -> Optional[Dict[str, Any]]:
+        """The git origin recorded for one registered repository, if any."""
+        sources = self.repos.get(REPO_SOURCES_KEY) if isinstance(self.repos, dict) else None
+        if not isinstance(sources, dict):
+            return None
+        source = sources.get(str(Path(repo_path).absolute()))
+        return dict(source) if isinstance(source, dict) else None
+
+    def set_repo_source(self, repo_path: str, source: Dict[str, Any]) -> None:
+        """Record the git origin (url, ref, ...) of one repository clone."""
+        persisted = self._persisted_repositories()
+        sources = dict(persisted.get(REPO_SOURCES_KEY) or {})
+        sources[str(Path(repo_path).absolute())] = dict(source)
+        self.save_repos({**persisted, REPO_SOURCES_KEY: sources})
+
+    def pop_repo_source(self, repo_path: str) -> Optional[Dict[str, Any]]:
+        """Forget and return the git origin recorded for one repository."""
+        persisted = self._persisted_repositories()
+        sources = dict(persisted.get(REPO_SOURCES_KEY) or {})
+        source = sources.pop(str(Path(repo_path).absolute()), None)
+        if source is None:
+            return None
+        updated = {**persisted, REPO_SOURCES_KEY: sources}
+        if not sources:
+            updated.pop(REPO_SOURCES_KEY)
+        self.save_repos(updated)
+        return dict(source) if isinstance(source, dict) else None
 
     @staticmethod
     def _is_builtin_entry(entry: Any) -> bool:
@@ -531,12 +646,27 @@ class Jarvis:
         finally:
             temporary_path.unlink(missing_ok=True)
 
-    def add_repo(self, repo_path: str, force: bool = False):
-        """Add a repository to the repos configuration"""
+    def add_repo(self, repo_path: str, force: bool = False) -> bool:
+        """Add a repository to the repos configuration.
+
+        Adding a ``builtin`` repository explicitly brings builtin back for a
+        root whose ``no_builtin`` key left it out; ``JARVIS_NO_BUILTIN`` still
+        wins for the process that sets it.
+
+        :return: Whether ``repo_path`` is registered afterwards.
+        """
         repo_path = str(Path(repo_path).absolute())
         if self.builtin_disabled and self._is_builtin_entry(repo_path):
-            raise ValueError(
-                f"cannot add {repo_path}: {builtin_repository_disabled_message()}"
+            if _no_builtin_from_environment():
+                raise ValueError(
+                    f"cannot add {repo_path}: {NO_BUILTIN_ENVIRONMENT} leaves the "
+                    f"{BUILTIN_REPOSITORY_NAME} package repository out of this "
+                    f"process; unset it (or set it to 0) to add builtin back"
+                )
+            self.enable_builtin()
+            print(
+                f"Builtin package repository re-enabled "
+                f"(cleared {NO_BUILTIN_CONFIG_KEY} in {self.config_file})"
             )
         repos = self.repos.copy()
 
@@ -558,6 +688,7 @@ class Jarvis:
             else:
                 print(f"Repository already exists: {repo_path}")
                 print("Use --force to override existing repository")
+            return True
         elif existing_repos_with_same_name:
             if force:
                 # Remove existing repositories with same name
@@ -568,15 +699,16 @@ class Jarvis:
                 repos["repos"].insert(0, repo_path)
                 self.save_repos(repos)
                 print(f"Added repository (replacing existing): {repo_path}")
-            else:
-                print(f"Repository with name '{repo_name}' already exists:")
-                for existing_path in existing_repos_with_same_name:
-                    print(f"  {existing_path}")
-                print("Use --force to replace existing repository")
-        else:
-            repos["repos"].insert(0, repo_path)  # Add to front for priority
-            self.save_repos(repos)
-            print(f"Added repository: {repo_path}")
+                return True
+            print(f"Repository with name '{repo_name}' already exists:")
+            for existing_path in existing_repos_with_same_name:
+                print(f"  {existing_path}")
+            print("Use --force to replace existing repository")
+            return False
+        repos["repos"].insert(0, repo_path)  # Add to front for priority
+        self.save_repos(repos)
+        print(f"Added repository: {repo_path}")
+        return True
 
     def remove_repo(self, repo_path: str):
         """Remove a repository from the repos configuration"""

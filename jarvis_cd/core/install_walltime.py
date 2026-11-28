@@ -102,9 +102,10 @@ def _human(seconds: Optional[float]) -> str:
 
 def slurm_partitions() -> Optional[List[Dict[str, Any]]]:
     """Every partition's MaxTime, DefaultTime, state and default flag."""
-    from jarvis_cd.core.scheduler import _parse_slurm_duration, _run_scheduler_query
+    from jarvis_cd.site.queues import parse_slurm_duration as _parse_slurm_duration
+    from jarvis_cd.site.queues import run_query
 
-    completed, _diagnostic = _run_scheduler_query(["scontrol", "show", "partition", "-o"])
+    completed, _diagnostic = run_query(["scontrol", "show", "partition", "-o"])
     if completed is None or completed.returncode != 0:
         return None
     partitions = []
@@ -207,8 +208,10 @@ def previous_attempts(ppl, *, exclude: Optional[str] = None) -> Dict[str, Any]:
             try:
                 from jarvis_cd.core.scheduler import query_scheduler_execution
 
-                observed = query_scheduler_execution(record.scheduler_provider,
-                                                     record.scheduler_native_id)
+                observed = query_scheduler_execution(
+                    record.scheduler_provider, record.scheduler_native_id,
+                    execution_root=Path(ppl._execution_store().executions_dir)
+                    / record.execution_id)
                 if observed.state not in ("unknown", "missing"):
                     state, provider_state = observed.state, observed.provider_state
             except Exception:

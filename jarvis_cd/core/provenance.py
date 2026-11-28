@@ -211,6 +211,7 @@ def capture_launch(launch: Any, cwd: Optional[str] = None) -> None:
             "schema_version": "jarvis.provenance-launch.v1",
             "launched_at": _utc_now(),
             "exec_type": type(launch).__name__,
+            "package_id": env.get("JARVIS_PACKAGE_ID"),
             "launcher": launcher,
             "launcher_path": launcher_path,
             "launcher_realpath": _realpath(launcher_path),
@@ -253,6 +254,59 @@ def capture_launch(launch: Any, cwd: Optional[str] = None) -> None:
             launch.original_cmd = prefix + launch.original_cmd
     except Exception as error:  # pragma: no cover - defensive
         print(f"jarvis provenance: launch not recorded: {error}", file=sys.stderr)
+
+
+def capture_host_launch(
+    exec_type: str,
+    command: str,
+    hosts: List[str],
+    env: Mapping[str, Any],
+    transport: Mapping[str, str],
+) -> Optional[Path]:
+    """Record one ssh/pssh launch and return its launch folder, or None.
+
+    ``transport`` maps each host to how it was reached (``srun-step`` or
+    ``ssh``). Only package launches (whose env names ``JARVIS_PROVENANCE_DIR``)
+    are recorded. Never raises: provenance must not break a run.
+    """
+    root = env.get(PROVENANCE_DIR_ENV)
+    text_env = {k: str(v) for k, v in env.items()}
+    if not root or not provenance_enabled(text_env):
+        return None
+    try:
+        launch_dir = _next_launch_dir(Path(str(root)))
+        document = {
+            "schema_version": "jarvis.provenance-launch.v1",
+            "launched_at": _utc_now(),
+            "exec_type": exec_type,
+            "package_id": env.get("JARVIS_PACKAGE_ID"),
+            "launcher": "ssh",
+            "hosts": list(hosts),
+            "transport": dict(transport),
+            "binaries": [{"command": command, "program": command_program(command)}],
+            "rank_env": redact_environment(text_env),
+        }
+        (launch_dir / "launch.json").write_text(
+            json.dumps(document, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        return launch_dir
+    except Exception as error:  # pragma: no cover - defensive
+        print(f"jarvis provenance: launch not recorded: {error}", file=sys.stderr)
+        return None
+
+
+def host_marker(launch_dir: Path, index: int) -> str:
+    """Shell text that writes ``ranks/<host>-<index>-<pid>.txt`` where it runs.
+
+    It records the host that actually ran the command and never fails it, so
+    a host without the shared provenance folder still runs.
+    """
+    ranks = shlex.quote(str(Path(launch_dir) / "ranks"))
+    return (
+        f'{{ h="$(hostname 2>/dev/null || uname -n)"; mkdir -p {ranks} && '
+        f'printf \'%s %s %s\\n\' "$h" {int(index)} "$$" > '
+        f'{ranks}/"$h-{int(index)}-$$.txt"; }} >/dev/null 2>&1; '
+    )
 
 
 def _read_text(path: Path, limit: Optional[int] = None) -> Optional[str]:

@@ -72,12 +72,45 @@ Package class names must follow the UpperCamelCase (PascalCase) naming conventio
 ### Adding Repositories
 
 ```bash
-# Add a repository to Jarvis
+# Add a repository directory to Jarvis
 jarvis repo add /path/to/my_repo
 
-# List registered repositories
+# Clone a git repository into <JARVIS_ROOT>/repos/<name> and add it
+jarvis repo add https://github.com/org/my_repo.git
+jarvis repo add git@github.com:org/my_repo.git --ref v1.0   # branch, tag or commit
+jarvis repo add git@github.com:org/my_repo.git +force       # delete and re-clone
+
+# Fetch a cloned repository and check out its recorded ref (a branch is
+# reset to origin/<branch>), or move it to a new ref that is then recorded
+jarvis repo update my_repo
+jarvis repo update my_repo --ref main
+
+# List registered repositories (cloned ones show their git URL, ref and commit)
 jarvis repo list
+
+# Remove a repository by name; a clone under <JARVIS_ROOT>/repos is deleted
+jarvis repo rm my_repo
+
+# Leave the builtin repository out of this root (records no_builtin: true);
+# `jarvis repo add <path to builtin>` brings it back
+jarvis repo rm builtin
 ```
+
+| Command | Arguments | Effect |
+|---|---|---|
+| `jarvis repo add <path-or-git-url>` | `--ref REF`, `+force` | A directory is registered in place. A git URL (`https://`, `ssh://`, `git://`, `file://`, `git@host:org/repo.git`, or a local bare `*.git` repository) is cloned into `<JARVIS_ROOT>/repos/<name>`, where `<name>` is the URL basename without `.git`, with `-` and `.` replaced by `_` (see below); `--ref` is checked out, the layout is checked (a failed check deletes the clone), and the URL and ref are recorded under `sources:` in `<JARVIS_ROOT>/repos.yaml`. An existing clone is refused unless `+force` is given. |
+| `jarvis repo update <name>` | `--ref REF` | Only for repositories added from a git URL: `git fetch --tags origin`, then a branch is reset with `git checkout -B <branch> origin/<branch>` and a tag or commit is checked out detached. Prints the resulting commit. A failed layout check restores the previous commit. |
+| `jarvis repo rm <name>` (`repo remove`) | | Unregisters every repository named `<name>` and deletes its clone if it lives in `<JARVIS_ROOT>/repos`. `builtin` also records `no_builtin: true` (see [Getting Started](getting_started.md#leaving-the-builtin-package-repository-out)). |
+| `jarvis repo list` (`repo ls`) | | Lists repositories, with the git URL, ref and commit of clones. |
+
+A cloned repository must use the same layout as a local one. Its name is the
+URL basename without `.git`, with `-` and `.` replaced by `_` so that it is a
+Python module name: `https://github.com/iowarp/clio-jarvis` clones into
+`<JARVIS_ROOT>/repos/clio_jarvis` and must contain the package directory
+`clio_jarvis/`. `jarvis repo add` refuses a URL whose normalized name is not
+a valid identifier, or whose clone lacks that directory (the clone is then
+deleted). `repo update`, `repo rm` and `repo list` use the normalized name;
+`update` and `rm` also accept the original (`clio-jarvis`).
 
 ## Pipeline Indexes
 

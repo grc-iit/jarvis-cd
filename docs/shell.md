@@ -119,7 +119,37 @@ print(f"Errors: {executor.stderr['localhost']}")
 
 ### SshExec
 
-Execute commands on a single remote host via SSH.
+Execute a command on one host. How it gets there depends on where JARVIS runs:
+
+- **Inside a Slurm allocation, on one of its nodes:** as a job step,
+  `srun --jobid=$SLURM_JOB_ID --overlap -w <node> -N1 -n1 --input=none`. The
+  command stays in the job (its cgroup and accounting), uses the CPUs the job
+  requested on that node, and ends when the job is cancelled. This needs no
+  ssh keys or host keys between nodes. Stopping it sends every process in the
+  step SIGTERM (`scancel --signal=TERM <job>.<step>`), waits the grace
+  period, then ends the step.
+- **Anywhere else** (a dev host, a plain ssh cluster, cloud VMs, a host
+  outside the allocation, or another `port`/`user`, such as a container's
+  sshd): over ssh with a stdin lifeline. The remote command runs in its own
+  session. When the ssh connection's stdin closes (JARVIS stopped the launch
+  or died), the remote side sends that session SIGTERM, waits the grace
+  period, then sends SIGKILL.
+- PBS and LSF allocations use the ssh path; this is not verified there yet.
+
+The grace period is `JARVIS_KILL_GRACE` seconds (default 10), read from
+JARVIS's own environment, not the package's `env`.
+
+The command runs under `bash -c` on the target. Its `cwd`, `env` and `stdin`
+are passed as data (quoted, never spliced into shell text), so a value such
+as `A=x$y` arrives literally. Launched programs never read JARVIS's own
+stdin: a `stdin` payload is piped in as data. The ssh or srun process itself
+runs in JARVIS's environment, so a package `LD_PRELOAD` or conda
+`LD_LIBRARY_PATH` never loads into it.
+
+When the env names `JARVIS_PROVENANCE_DIR` (every package launch), the launch
+is recorded under `provenance/launch-NNN/`: `launch.json` holds the package,
+hosts and transport per host, and `ranks/<host>-<index>-<pid>.txt` is written
+by the host that actually ran the command.
 
 ```python
 from jarvis_cd.shell import SshExec, SshExecInfo
@@ -143,7 +173,9 @@ print(f"Output from {hostname}: {executor.stdout[hostname]}")
 
 ### PsshExec
 
-Execute commands on multiple hosts in parallel.
+Execute commands on multiple hosts in parallel: one `SshExec` per host, each
+taking the step or ssh path above, recorded as one launch. `kill_all()` stops
+every host at once, so the grace periods overlap.
 
 ```python
 from jarvis_cd.shell import PsshExec, PsshExecInfo
@@ -240,9 +272,12 @@ for hostname in hostfile.hosts:
 
 ### Kill
 
-Terminate processes whose process name (comm) exactly matches the
-given executable. Backed by ``pkill -9 -x``, so pass the executable
-basename — not a command line or regex.
+Stop the current user's processes whose process name (comm) exactly matches
+the given executable: SIGTERM, then up to `grace` seconds (default
+`JARVIS_KILL_GRACE`, 10) for them to exit, then SIGKILL. Other users'
+processes are never touched. Backed by `pkill -u <uid> -x`, so pass the
+executable basename, not a command line or regex. With a `PsshExecInfo` it
+runs on every host (as a job step inside an allocation).
 
 ```python
 from jarvis_cd.shell.process import Kill

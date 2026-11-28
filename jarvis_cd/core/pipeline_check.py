@@ -36,6 +36,18 @@ def _allocation_size(ppl: Any) -> Tuple[Optional[int], str]:
             return int(nodes), "scheduler.nodes"
     except (TypeError, ValueError):
         pass
+    if scheduler and str(scheduler.get("name") or "auto").lower() not in ("local", "none"):
+        # the batch job is sized for the packages' slices (see node_shape)
+        from jarvis_cd.core.scheduler import node_shape
+
+        derived, _per_node, _problems = node_shape(
+            [dict(package) for package in getattr(ppl, "packages", None) or []], None)
+        return derived, "scheduler.derived"
+    if scheduler and hasattr(ppl, "_local_job_hosts"):
+        # no scheduler: the job runs on the hosts sealed at submit
+        hosts = ppl._local_job_hosts(scheduler)
+        if hosts:
+            return len(hosts), "hostfile"
     try:
         hostfile = ppl.get_hostfile()
         count = len(list(hostfile.hosts))

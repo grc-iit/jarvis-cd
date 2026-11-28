@@ -2427,8 +2427,8 @@ def record_scheduler_termination(
     The reason is ``cancel_request`` or ``stop_request`` when ``jarvis
     execution cancel`` or ``jarvis execution stop`` wrote its request before
     signalling, and ``scheduler`` otherwise (time limit, preemption, a manual
-    ``scancel``). The generated script only runs ``jarvis ppl stop`` for a stop
-    request.
+    ``scancel``). The job entry (``jarvis_cd.submit.entry``) only runs
+    ``jarvis ppl stop`` for a stop request.
     """
     if phase not in {"received", "stopped"}:
         raise ValueError("termination phase must be 'received' or 'stopped'")

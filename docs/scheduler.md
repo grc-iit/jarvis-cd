@@ -1,26 +1,49 @@
 # Jarvis-CD Scheduler Integration
 
-Jarvis pipelines and pipeline tests can be submitted directly to a batch
-resource manager (SLURM today; PBS / others can be added by subclassing
-`Scheduler`). The integration lives in `jarvis_cd/core/scheduler.py` and
-is driven by a top-level `scheduler:` key in the YAML.
+Jarvis pipelines and pipeline tests can be submitted to a batch resource
+manager through [PSI/J](https://exaworks.org/psij) (`psij-python` 0.9.11). A
+top-level `scheduler:` key in the YAML selects the PSI/J executor by name:
+`slurm`, `pbs`, `lsf`, `flux`, `cobalt`, or `local` (alias `none`) to run the
+same job on the submitting host without a scheduler. Every scheduler goes
+through one code path in `jarvis_cd/core/scheduler.py`:
+
+```
+pipeline packages (mpi | ssh | pssh launches)  ->  one PSI/J JobSpec  ->  JobExecutor.get_instance(<name>)  ->  any scheduler
+```
+
+JARVIS writes no `sbatch` script of its own. The only Slurm-specific code
+left is `jarvis_cd/site/queues.py`: read-only queue and partition queries
+(`sinfo`, `squeue`, `scontrol show`) and `jarvis execution move`.
 
 When `scheduler:` is set, `jarvis ppl submit` creates a unique execution
 directory under `<pipeline_shared_dir>/executions/`, seals the pipeline and
-environment that were current at submission time, writes an execution-scoped
-job script, and (by default) hands it off to the scheduler's submit command
-(`sbatch` for SLURM). Inside the allocation the script:
+environment that were current at submission time, writes the execution's
+PSI/J job description (`psij-job.json`), and (by default) submits it with
+`executor.submit(job)`. The job asks for the whole node set the pipeline
+needs (see [Node count of the job](#node-count-of-the-job)), and its one
+program, `<python> -m jarvis_cd.submit.entry`, runs as a single process on
+the first node (PSI/J launcher `single`). The entry:
 
-1. Builds a hostfile from the scheduler's nodelist
-   (`scontrol show hostnames "$SLURM_JOB_NODELIST"` for SLURM)
-2. Writes it to that execution's private `hostfile.txt`
+1. Builds the hostfile of every allocated node from `PSIJ_NODEFILE`
+   (deduplicated, in allocation order, so `host_slice` indexes are stable;
+   for `local`, the hosts sealed at submit, see
+   [No scheduler](#no-scheduler-local)),
+   appends `scheduler.suffix`, and writes it to that execution's private
+   `hostfile.txt`
+2. Activates the execution record with the allocation identity
+   (`SLURM_JOB_ID`, `PBS_JOBID`, `LSB_JOBID`, `FLUX_JOB_ID`, or the launcher's
+   pid for `local`)
 3. Runs the execution's isolated `runtime/pipeline.yaml` working copy as a
-   background child that the batch shell `wait`s on, with a `TERM` trap, so
-   `jarvis execution stop` can run `jarvis ppl stop` before the job exits
-   (see [Cancelling and stopping executions](#cancelling-and-stopping-executions))
+   child process, with a `SIGTERM` handler and a poll of the execution's
+   stop-request file, so `jarvis execution stop` can run `jarvis ppl stop`
+   before the job exits (see
+   [Cancelling and stopping executions](#cancelling-and-stopping-executions))
+4. Finalizes the record and writes the pipeline's return code to
+   `<execution>/exit_code`, which `jarvis execution status` reads
 
-The generated script invokes JARVIS through the same Python interpreter that
-created the submission and binds the submitting `JARVIS_ROOT`. This preserves
+The job runs JARVIS through the same Python interpreter that created the
+submission and binds the submitting `JARVIS_ROOT` (PSI/J's
+`inherit_environment` exports the submitting environment). This preserves
 the submitting configuration boundary on compute nodes; an unrelated `jarvis`
 executable or a different user's default built-in checkout on the allocation's
 `PATH` cannot replace it.
@@ -36,24 +59,33 @@ already queued execution. Each execution directory contains:
 - `shared/`: package-visible shared runtime files for this execution only
 - `private/`: package-visible machine-private runtime files for this execution
   only
-- `submit.slurm`: the exact script handed to SLURM
+- `psij-job.json`: the exact job description handed to PSI/J
+  (`jarvis.submit.jobspec.v1`), plus `pre-launch.sh` (always written, since
+  it carries the launcher's TERM trap, followed by any `pre_cmds`) and
+  `post-launch.sh` when `post_cmds` are set
+- `psij/<scheduler>/`: PSI/J's own files (the rendered batch script
+  `<job id>.job`, and `<native id>.ec` with the launcher's exit code)
 - `hostfile.txt`: the allocation hostfile created when the job starts
+- `exit_code`, `stop-request`: the pipeline's return code, and a pending
+  stop request
 - `.jarvis-execution.json`: the typed durable execution record used by status
   queries and explicit cleanup
 
 `Pipeline.submit()` returns a typed execution handle containing the JARVIS
-execution ID plus the provider-native scheduler ID when submission succeeds.
+execution ID plus the PSI/J native ID (the Slurm job id, the PBS job id, and
+so on; for `local`, the launcher's pid) when submission succeeds.
 The pipeline's compatibility `last_submission` record includes the execution ID,
-the execution root, the sealed input and runtime paths, the script and hostfile
-paths, and a SHA-256 digest of the two sealed input documents.
+the execution root, the sealed input and runtime paths, the job description and
+hostfile paths, and a SHA-256 digest of the two sealed input documents.
 
-Before invoking the scheduler, JARVIS creates the concrete parent directories
-for `scheduler.output` and `scheduler.error`. Scheduler replacement tokens such
-as SLURM `%j` are supported in the filename, where the provider can resolve
-them after submission, but not in a parent directory whose name is unknown
-before the scheduler accepts the job. A directory preparation failure is a
-terminal pre-submission error, so JARVIS never returns an accepted-looking
-handle for a job that could not open its configured logs.
+Before submitting, JARVIS creates the concrete parent directories for
+`scheduler.output` and `scheduler.error`. PSI/J writes the job's stdout and
+stderr to exactly those paths, so scheduler replacement tokens such as Slurm
+`%j` are refused (the record's artifact paths are the configured paths). A
+directory preparation failure is a terminal pre-submission error, so JARVIS
+never returns an accepted-looking handle for a job that could not open its
+configured logs. Paths with whitespace are refused because PSI/J's launcher
+does not quote them.
 
 The pipeline binds `self.hostfile` to that same path at load time, so
 every package in the pipeline that consults `self.hostfile` reads the
@@ -65,7 +97,7 @@ allocation-derived host list with no extra wiring.
 name: my_pipeline
 
 scheduler:
-  name: slurm                 # required; currently: slurm
+  name: slurm                 # slurm, pbs, lsf, flux, cobalt, local
   # hostfile: ${SHARED_DIR}/hostfile.txt   # default
   job_name: my_pipeline
   nodes: 2
@@ -73,8 +105,8 @@ scheduler:
   partition: cpu
   account: my_account
   time: "00:30:00"
-  output: slurm-%j.out
-  error: slurm-%j.err
+  output: /scratch/me/my_pipeline.out
+  error: /scratch/me/my_pipeline.err
 
 pkgs:
   - pkg_type: builtin.ior
@@ -82,47 +114,63 @@ pkgs:
     ppn: 4
 ```
 
-### Recognised scheduler keys (SLURM)
+### How `scheduler:` keys map onto PSI/J
 
-| Key                | SBATCH flag             | Notes                               |
-|--------------------|-------------------------|-------------------------------------|
-| `name`             | (selects backend)       | `slurm`, or `auto` (also `detect`, and the default when `name` is omitted) to use the scheduler whose client is on `PATH` (`sbatch`, `qsub`, `bsub`, `flux`). The record keeps the resolved provider. No client gives `scheduler_missing`; a provider JARVIS lacks gives `scheduler_unsupported` (exit 5, `field: scheduler.name`) |
-| `hostfile`         | (used by Jarvis)        | Direct scheduler use defaults to `${SHARED_DIR}/hostfile.txt`; `Pipeline.submit` isolates it per execution |
-| `suffix`           | (used by Jarvis)        | Appended to every hostname pulled from the allocation, e.g. `-40g` to target a 40GbE NIC |
-| `job_name`         | `--job-name`            |                                     |
-| `nodes`            | `--nodes`               |                                     |
-| `ntasks`           | `--ntasks`              |                                     |
-| `ntasks_per_node`  | `--ntasks-per-node`     |                                     |
-| `cpus_per_task`    | `--cpus-per-task`       |                                     |
-| `mem`              | `--mem`                 |                                     |
-| `time`             | `--time`                |                                     |
-| `partition`        | `--partition`           |                                     |
-| `account`          | `--account`             |                                     |
-| `qos`              | `--qos`                 |                                     |
-| `output`           | `--output`              |                                     |
-| `error`            | `--error`               |                                     |
-| `gres`             | `--gres`                |                                     |
-| `gpus`             | `--gpus`                |                                     |
-| `gpus_per_node`    | `--gpus-per-node`       |                                     |
-| `constraint`       | `--constraint`          |                                     |
-| `reservation`      | `--reservation`         |                                     |
-| `exclusive`        | `--exclusive`           | Pass `true` to emit the flag        |
-| `mail_user`        | `--mail-user`           |                                     |
-| `mail_type`        | `--mail-type`           |                                     |
-| `sbatch_args`      | (raw)                   | List of literal SBATCH lines        |
-| `pre_cmds`         | (shell)                 | Lines run before hostfile build     |
-| `post_cmds`        | (shell)                 | Lines run after the pipeline        |
-| `stop_timeout`     | (used by Jarvis)        | Seconds `jarvis ppl stop` may take after `jarvis execution stop` (default 60; needs `timeout(1)`) |
-| `stop_grace`       | (used by Jarvis)        | Seconds the pipeline child gets after TERM before KILL (default 20, below Slurm's usual 30 s KillWait) |
+| Key | PSI/J | Notes |
+|-----|-------|-------|
+| `name` | `JobExecutor.get_instance(name)` | `slurm`, `pbs`, `lsf`, `flux`, `cobalt`, `local` (`none`), or `auto` (also `detect`, and the default when `name` is omitted) to use the scheduler whose client is on `PATH` (`sbatch`, `qsub`, `bsub`, `flux`). The record keeps the resolved provider. No client gives `scheduler_missing`; another name gives `scheduler_unsupported` (exit 5, `field: scheduler.name`) |
+| `job_name` | `JobSpec.name` | defaults to the pipeline name |
+| `nodes` | `ResourceSpecV1.node_count` | raised to cover every package's `host_slice` |
+| `ntasks` | `ResourceSpecV1.process_count` | |
+| `ntasks_per_node` | `ResourceSpecV1.processes_per_node` | set from the packages' per-node demand when neither it nor `ntasks` is given |
+| `cpus_per_task` | `ResourceSpecV1.cpu_cores_per_process` | |
+| `gpus_per_task` | `ResourceSpecV1.gpu_cores_per_process` | |
+| `exclusive` | `ResourceSpecV1.exclusive_node_use` | `true` |
+| `mem` | `ResourceSpecV1.memory` | bytes; a bare number is MB, `K`/`M`/`G`/`T` suffixes as Slurm |
+| `time` | `JobAttributes.duration` | Slurm syntax (`MM`, `HH:MM:SS`, `D-HH:MM:SS`); unset or `UNLIMITED` asks for the queue's default (LSF requires a time) |
+| `partition` | `JobAttributes.queue_name` | |
+| `account` | `JobAttributes.account` | |
+| `reservation` | `JobAttributes.reservation_id` | |
+| `qos`, `gres`, `gpus`, `gpus_per_node`, `constraint`, `mail_user`, `mail_type`, `hint`, `ntasks_per_core`, any other key | `JobAttributes.custom_attributes["<name>.<key-with-dashes>"]` | PSI/J renders `slurm.qos: normal` as `#SBATCH --qos="normal"`; `pbs.*` and `lsf.*` pass through the same way. A key set to `true` is refused (give it a value) |
+| `sbatch_args` | `custom_attributes["slurm.<flag>"]` | list of `--flag=value` tokens; a flag without a value is refused |
+| `pre_cmds` | `JobSpec.pre_launch` (`pre-launch.sh`) | sourced by the launcher before the entry starts; output in `<execution>/pre-launch.log`; a failing command ends the job |
+| `post_cmds` | `JobSpec.post_launch` (`post-launch.sh`) | sourced after the entry finalizes the record; output in `post-launch.log` |
+| `output`, `error` | `JobSpec.stdout_path`, `stderr_path` | exact paths, no `%` patterns |
+| `hostfile` | (used by Jarvis) | Direct scheduler use defaults to `${SHARED_DIR}/hostfile.txt`; `Pipeline.submit` isolates it per execution |
+| `suffix` | (used by Jarvis) | Appended to every allocated hostname, e.g. `-40g` to target a 40GbE NIC |
+| `stop_timeout` | (used by Jarvis) | Seconds `jarvis ppl stop` may take after `jarvis execution stop` (default 60) |
+| `stop_grace` | (used by Jarvis) | Seconds the pipeline child gets after TERM before KILL (default 20, below Slurm's usual 30 s KillWait) |
 
-Unknown keys are passed straight through as `--<key with underscores
-replaced by dashes>=<value>`, so most SBATCH flags can be expressed
-without an explicit mapping.
+A Slurm job that requests ranks also gets `slurm.ntasks-per-core: 1` (see
+[Whole cores per rank](#whole-cores-per-rank)). PSI/J always renders the
+node count, the total tasks and the tasks per node it computes from the
+resource spec (1 when unset), plus the job's memory and duration.
+
+Refused before anything is submitted: `array`, `cluster`/`clusters`,
+`hetjob`/`packjob` (as keys or as `sbatch_args` flags). One execution is one
+job on one homogeneous node set; submit one execution per array element.
+
+### Node count of the job
+
+The one job requests the node set the whole pipeline graph needs:
+
+- `nodes` is the largest of `scheduler.nodes`, 1, and, for each package that
+  has no `hostfile` of its own, the smallest node count at which its
+  `host_slice` selects at least one node (a slice `"12:16"` needs 16 nodes, a
+  negative slice such as `"-4:"` needs 4);
+- every package's slice is then checked against that count; a slice that
+  still selects no node, or reaches past it, is refused before submitting
+  with issue kind `host_slice_outside_allocation` (`field: host_slice`);
+- when neither `ntasks` nor `ntasks_per_node` is declared, `ntasks_per_node`
+  is the largest per-node demand of a package: its `ppn`, else its ranks
+  (`nprocs`) divided by its slice width, rounded up (only when above 1).
+
+An install job always asks for one node.
 
 ### Hostname suffix
 
-`suffix:` is appended to every hostname `scontrol show hostnames`
-emits before the hostfile is written. Use this when SLURM resolves
+`suffix:` is appended to every hostname in `PSIJ_NODEFILE` before the
+hostfile is written. Use this when the scheduler resolves
 nodes by their management hostname but you want the pipeline to
 reach them over a different NIC.
 
@@ -132,6 +180,30 @@ scheduler:
   nodes: 4
   partition: compute
   suffix: "-40g"        # ares-comp-3 -> ares-comp-3-40g
+```
+
+### No scheduler (`local`)
+
+With `name: local` there is no allocation to read: PSI/J's local executor
+runs the entry on the submitting host, and its `PSIJ_NODEFILE` only lists
+`localhost`. The hosts are sealed at submit instead, from the pipeline's
+`hostfile:` if it declares one, else the JARVIS hostfile
+(`jarvis hostfile set`), into `<execution>/local-nodefile.txt`, which the
+entry reads in place of `PSIJ_NODEFILE`. This is the cloud shape: plain VMs
+reached over ssh. `host_slice` indexes that list, and each package's
+`Exec` runs on its slice with plain ssh (a stdin lifeline, see
+[shell.md](shell.md)) and `mpirun --host`. The entry runs on the
+submitting host, so list it first when it is one of the VMs.
+
+```yaml
+hostfile: ~/vms.txt     # vm-0 vm-1 vm-2
+scheduler:
+  name: local
+pkgs:
+  - pkg_type: myrepo.server
+    host_slice: "0:1"
+  - pkg_type: myrepo.clients
+    host_slice: "1:3"
 ```
 
 ## Pipeline Test YAML
@@ -179,8 +251,8 @@ template; each iteration's effective scheduler is
 top-level scheduler  ⊕  config.scheduler (if any)  ⊕  scheduler.* vars
 ```
 
-Each iteration is submitted on its own via `sbatch --wait`, so the
-test runner blocks on each job before moving on. This is the natural
+Each iteration is submitted on its own and the runner waits on the PSI/J
+job (`job.wait()`), so the test runner blocks on each job before moving on. This is the natural
 way to sweep node counts (or partitions, time limits, ...) for
 scaling experiments.
 
@@ -212,12 +284,12 @@ a single job would freeze the swept values.
 ## CLI
 
 ```bash
-# Submit (writes script + runs sbatch)
+# Submit (writes the PSI/J job description and submits it)
 jarvis ppl submit                                 # current pipeline
 jarvis ppl submit path/to/pipeline.yaml           # specific YAML
 jarvis ppl submit path/to/pipeline_test.yaml      # YAML test
 
-# Generate script only, no sbatch
+# Write the job description only, do not submit
 jarvis ppl submit +no_submit
 jarvis ppl submit path/to/pipeline.yaml +no_submit
 
@@ -228,8 +300,8 @@ jarvis ppl submit +json
 jarvis ppl submit +wait +json
 ```
 
-The generated script is written to
-`<pipeline_shared_dir>/executions/<execution-id>/submit.slurm`. A fresh
+The job description is written to
+`<pipeline_shared_dir>/executions/<execution-id>/psij-job.json`. A fresh
 execution ID is generated for every CLI submission; API callers may provide a
 bounded path-safe ID for end-to-end correlation.
 
@@ -243,7 +315,7 @@ jarvis ppl install [+check] +submit --execution-id E --plan_sha256 <plan_sha256>
 ```
 
 `+plan` resolves everything a real `+submit` would and prints it, without
-submitting. It writes no execution record or script, makes no scheduler call,
+submitting. It writes no execution record or job description, makes no scheduler call,
 and runs no Spack, even where a consented `login_limited` check would run at
 submit (the plan's `install.at_submit` says so instead). That keeps it light
 enough for a login node, so a caller can show the job and ask before
@@ -254,11 +326,11 @@ submitting. A resource-graph collection job is a pipeline with
 |-------|---------|
 | `schema_version` | `jarvis.submit-plan.v1` |
 | `pipeline_id`, `execution_id`, `action` | `action` is `run`, `install` or `install_check` |
-| `scheduler`, `partition`, `account`, `qos`, `time`, `time_limit_s`, `job_name`, `nodes` | the directives the script carries, and the total nodes |
+| `scheduler`, `partition`, `account`, `qos`, `time`, `time_limit_s`, `job_name`, `nodes` | the directives the job carries, and the total nodes |
 | `sources` | where each directive came from: `pipeline.scheduler`, `pipeline.scheduler.install` (an install job's override), `jarvis` (set by JARVIS, such as an install job's `nodes: 1`), `jarvis_estimate` (an install job's `time` derived from the build estimate, see [Install job wall time](#install-job-wall-time)), or `unset`. JARVIS has no site-level directive defaults, so these come only from the pipeline's `scheduler:` block |
 | `components[]` | one per package: `id`, `package`, `label`, `nodes`, `ranks`, `host_slice`, `node_range` `{first, end}`, `role` (`service`/`batch`), `starts` (`background`/`foreground`), `after_steps`, `ports`, `readiness`. An install job has one component `install` (package `jarvis.install`, 1 node, `packages[]`) |
 | `couplings[]` | `{from, to, kind, label, source}`: the pipeline's [`couplings:`](pipelines.md#couplings-between-packages) (`source: pipeline`) plus interceptor edges (`source: derived`) |
-| `script` | `{path, text, sha256}`: the exact batch script the submit will send |
+| `script` | `{path, text, sha256}`: the exact PSI/J job description (`psij-job.json`) the submit will send |
 | `input_sha256` | the digest of the sealed execution input (the pipeline snapshot, environment and install answers) |
 | `plan_sha256` | sha256 of `{schema, script_sha256, input_sha256}`; the value to submit with |
 | `issues`, `exit_code`, `would_submit` | what the submit would refuse with: `ppl check` errors (5), blocking site-fact questions (3), install decisions such as a placement question (3), or a build outside an allocation (4) |
@@ -275,8 +347,8 @@ way it handles a submit's.
 **Binding.** A submit with `--plan_sha256` re-renders the submission and
 refuses with exit **5** (`jarvis.refusal.v1`, issue kind
 `submission_plan_changed`, with the expected and actual shas in `details`)
-unless the script and the sealed input match. It checks before it creates
-the execution record, and again once the script is written. Then it records
+unless the job description and the sealed input match. It checks before it
+creates the execution record, and again once the description is written. Then it records
 `metadata.submission_plan` (`jarvis.submit-plan.binding.v1`: `script_sha256`,
 `input_sha256`, `plan_sha256`, `expected_plan_sha256`, `bound`). Plan and
 submit with the same `--execution-id` and from the same working directory,
@@ -287,29 +359,37 @@ or environment between the plan and the submit refuses, so a person's yes
 covers only the job they were shown.
 
 For a submitted nonterminal record, `Pipeline.get_execution()` (and so
-`jarvis execution get|status +json`) also asks the selected scheduler
-provider for current state. The SLURM provider runs `squeue --states=all`,
-which keeps ended jobs visible for `MinJobAge` (it reads the exit code of an
-ended job from `scontrol show job`), and then `sacct` when accounting is
-available. A
-provider-reported terminal state is committed into the same durable
-execution record, with `metadata.scheduler_observation`
-(`jarvis.scheduler.observation.v1`: `state`, `provider_state`, `basis`,
-`accounting`, `diagnostic`, and `reconciliation` when JARVIS had to infer
-the outcome). Generic query errors never terminalize the execution.
+`jarvis execution get|status +json`) also asks the selected scheduler for the
+job's current state, without `sacct` (many sites, Ares among them, run
+without accounting):
+
+1. A `<execution>/exit_code` file, written by the entry when the pipeline
+   ends, decides first: `0` is `completed`, anything else `failed`.
+2. A batch scheduler is asked once with PSI/J's own status command (for
+   Slurm `squeue -O JobArrayID,StateCompact,Reason -t all --me`, which needs
+   Slurm 20.11 or newer) and the output is parsed by PSI/J. A job the
+   scheduler no longer lists, with PSI/J's `<native id>.ec` file, is
+   `failed` (the launcher ended without the entry recording a code);
+   without it the job is `missing`.
+3. A `local` job is attached by pid.
+
+A terminal state is committed into the same durable execution record, with
+`metadata.scheduler_observation` (`jarvis.scheduler.observation.v1`:
+`state`, `provider_state`, `basis`, `accounting`, `diagnostic`, and
+`reconciliation` when JARVIS had to infer the outcome). Generic query errors
+never terminalize the execution.
 
 ### Reconciliation without accounting
 
-Sites without slurmdbd (no `sacct`) forget a job as soon as it leaves the
-queue. A job that ended normally finalized its own record from the batch
-script, so a record that is still open when the scheduler no longer knows
-the job tells JARVIS what happened. After the startup grace period, JARVIS
-commits one of these outcomes:
+The scheduler forgets a job soon after it leaves the queue. A job that ended
+normally finalized its own record from the entry, so a record that is still
+open when the scheduler no longer knows the job tells JARVIS what happened.
+After the startup grace period, JARVIS commits one of these outcomes:
 
 | Situation | Committed state | `reconciliation.basis` |
 |-----------|-----------------|------------------------|
 | a `cancel_request` or `stop_request` was recorded | `canceled` (rc 143) | `cancel_request` / `stop_request` |
-| the record never left `submitted` and the job wrote no batch output | `canceled` (rc 143): removed while pending, for example by an external `scancel` | `vanished_pending` |
+| the record never left `submitted` and the job wrote no output | `canceled` (rc 143): removed while pending, for example by an external `scancel` | `vanished_pending` |
 | the runtime started but never finalized | `failed` (rc 1): "never finalized the record (lost); scheduler accounting is unavailable" | `vanished_running` |
 
 Within the grace period the record stays `submitted`.
@@ -336,8 +416,9 @@ When the job leaves the queue, the block stays with `state: left_queue`.
 jarvis execution move <execution-id> --queue <partition> [--pipeline-id P] +json
 ```
 
-This runs `scontrol update JobId=<job> Partition=<partition>` (adding
-`--clusters` only when sbatch reported a cluster) and prints the record.
+This runs `scontrol update JobId=<job> Partition=<partition>` from
+`jarvis_cd/site/queues.py` (Slurm only; PSI/J has no move verb) and prints
+the record.
 `metadata.move_request` (`jarvis.execution.control.v1`, `action: move`)
 records `from_queue`, `to_queue`, the exact `command`, `status` and the
 scheduler's `result`. A move is refused with exit **5** and a
@@ -365,8 +446,8 @@ so it is safe on a login node. See [sched.md](sched.md).
 ## Validation before submit (`ppl check`)
 
 `ppl submit` and `ppl run` first run the same static check as
-`jarvis ppl check`. On errors they refuse with exit 5 before writing a script
-or calling `sbatch`. A blocking site-fact question (for example MPICH with
+`jarvis ppl check`. On errors they refuse with exit 5 before writing a job
+description or submitting. A blocking site-fact question (for example MPICH with
 interface names that differ between nodes) refuses with exit 3, also before
 any scheduler call. Advisory questions are submitted with the job and kept
 in the record's `metadata.site_facts` (see [Site facts](site-facts.md)).
@@ -380,7 +461,7 @@ blind if a host returns none. See
 
 ## Cancelling and stopping executions
 
-Callers never run `scancel` themselves; they ask JARVIS, which signals the job
+Callers never run `scancel` themselves; they ask JARVIS, which acts on the job
 recorded in `.jarvis-execution.json` and commits the outcome to the same
 record:
 
@@ -393,74 +474,90 @@ Both print the resulting `jarvis.execution.record.v1` document (the shape of
 `jarvis execution get +json`). Both refuse direct (non-scheduler) executions,
 and both return a terminal record unchanged, so they are idempotent.
 
-**cancel** runs `scancel [--clusters=C] <job>`. `--clusters` is passed only
-when `sbatch --parsable` itself reported a cluster (`jobid;cluster`, as on a
-federated or multi-cluster site). The cluster that the job records from
-`SLURM_CLUSTER_NAME` is never passed, because every Slurm job has one, and
-`scancel --clusters` needs slurmdbd. Without slurmdbd it fails with "Problem
-talking to database". The same rule applies to stop. Before signalling, cancel writes
-`metadata.cancel_request` (`jarvis.execution.control.v1`: action, status,
-provider, native id, the exact command, then the scheduler's `result`). An
-accepted cancel commits state `canceled`. If Slurm reports that the job is
-already gone (`Invalid job id`, `already completing or completed`), JARVIS
-first reconciles with `squeue`/`sacct`. A real terminal state, such as
-`completed`, is kept. Otherwise the record is committed `canceled` with a note
-that the scheduler no longer had the job. A failed `scancel` marks the request
-`failed`, leaves the record unchanged, and exits non-zero. If the job was
-running, the batch shell still finalizes: its TERM trap reaps the pipeline
-child and records the cancel (without running `ppl stop`).
+**cancel** attaches a PSI/J job to the native id and calls
+`executor.cancel(job)` (Slurm: `scancel -Q <job>`; `local`: the launcher's
+process is killed). Before cancelling, it writes `metadata.cancel_request`
+(`jarvis.execution.control.v1`: action, status, provider, native id, the
+exact command, then the result). An accepted cancel commits state
+`canceled`. If the scheduler refuses because the job is already gone, JARVIS
+first asks for the job's status: a real terminal state, such as `completed`,
+is kept; otherwise the record is committed `canceled` with a note that the
+scheduler no longer had the job. A failed cancel marks the request `failed`,
+leaves the record unchanged, and exits non-zero. Where the scheduler TERMs the
+job's batch shell, the entry reaps the pipeline child and records
+the cancel (without running `ppl stop`). PSI/J's batch shell and launcher
+shell run the entry in the foreground, so JARVIS traps TERM in both
+(`trap ':' TERM` before the batch script's output redirect, and as the first
+line of `pre-launch.sh`); otherwise they would exit at once and the scheduler
+would kill the entry before its handler ran. The handler has to finish within
+the scheduler's kill wait, so keep `stop_grace` below it.
+
+Which processes get that TERM depends on the scheduler. On Slurm (checked on
+Slurm 21.08 with `proctrack/cgroup`), neither `scancel` nor the time limit
+signals the batch step: Slurm TERMs each `srun` step, waits `KillWait`, and
+SIGKILLs the batch step, so the entry's handler does not run. The steps
+still get a graceful TERM (an `SshExec`/`PsshExec` step program sees it and
+exits), the pipeline's `start()` returns, and the entry finalizes with the
+pipeline's own return code. A cancel is committed `canceled` by `jarvis
+execution cancel` either way; a time limit is recorded as whatever the
+pipeline returned, so a package should check its `Exec` return codes.
+`stop` does not depend on any of this; it uses the stop-request file.
 
 **stop** is the graceful path for services such as pvserver. It writes
-`metadata.stop_request` and sends `scancel --signal=TERM --batch <job>`, which
-signals only the batch shell. A job that is still pending has no shell to stop,
-so stop falls back to cancel (`stop_request.status: fallback_cancel`). With
-`+wait`, the command polls the record until it is terminal or `--timeout`
-expires.
+`metadata.stop_request`, then the execution's `stop-request` file (the
+recorded command is `["jarvis-stop-request", <path>]`). The entry polls that
+file every second. A job that already ended is reported as ended. A job that
+is still pending picks the request up as soon as it starts and stops at once.
+With `+wait`, the command polls the record until it is terminal or
+`--timeout` expires.
 
-The generated script runs the pipeline as a background child and blocks in
-`wait`, because bash runs a trap only between commands, and a foreground child
-would delay it until the child exits. On TERM, the trap does this, in order:
+On a stop request, or a TERM that reaches the batch shell (see above for
+which schedulers send one), the entry does this, in order:
 
-1. Ignores further TERM/INT and records `metadata.termination.reason`
-   (`stop_request`, `cancel_request` or `scheduler`) with `received_at`.
-2. Only for `stop_request`: runs `jarvis ppl stop yaml <runtime>/pipeline.yaml`
+1. Records `metadata.termination.reason` (`stop_request`, `cancel_request` or
+   `scheduler`) with `received_at`.
+2. For `stop_request`: runs `jarvis ppl stop yaml <runtime>/pipeline.yaml`
    (bounded by `stop_timeout`). This stops services in reverse order and
    finalizes their service runtimes. Each package it stops is listed in
    `<runtime>/stopped-packages.json`, and the pipeline child's own stop (a
    `ppl run` stops its packages once `start` returns) skips those, logging
    `already stopped by this execution's stop request`, so no package's
-   `stop()` runs twice. The stops can also overlap: once the trap stops a
+   `stop()` runs twice. The stops can also overlap: once the entry stops a
    service, the service's `start()` returns and the child begins its own
-   teardown while the trap's `stop()` is still running. So before calling a
-   package's `stop()`, every stop in the execution (the trap's `ppl stop`,
+   teardown while the entry's `stop()` is still running. So before calling a
+   package's `stop()`, every stop in the execution (the entry's `ppl stop`,
    the child's stop and the after_steps stop) claims the package
    with an exclusive create of `<runtime>/stop-claims/<pkg_id>`. A stop that
    finds the claim taken skips the package, logging `already being stopped by
    another stop in this execution`. A failed `stop()` keeps its claim and is
    reported through `ppl stop`'s return code; it is not retried.
 3. TERMs the pipeline child and its descendants, waits up to `stop_grace`,
-   KILLs whatever is left, then `wait`s on the child to reap it.
-4. Records `stopped_at`, `stop_return_code` and `child_reaped`, then exits:
-   `0` after a clean stop, `1` if `ppl stop` failed, `143` otherwise.
-5. The `EXIT` trap finalizes the record. A live `cancel_request` commits
-   `canceled`, a clean stop commits `completed`, and a failed stop commits
-   `failed` with a "could not stop the pipeline cleanly" error.
+   KILLs whatever is left, and reaps the child.
+4. Records `stopped_at`, `stop_return_code` and `child_reaped`. The return
+   code is `0` after a clean stop, `1` if `ppl stop` failed, `143` otherwise.
+5. Finalizes the record and writes `exit_code`. A live `cancel_request`
+   commits `canceled`, a clean stop commits `completed`, and a failed stop
+   commits `failed` with a "could not stop the pipeline cleanly" error.
 
-The job log shows the order explicitly:
+The same commands work for every PSI/J scheduler. `jarvis sched info` reads
+Slurm, PBS, LSF and Flux queues and per-job limits, read-only; see
+[sched.md](sched.md#jarvis-sched-info).
 
-```
-JARVIS: TERM received by the batch shell
-JARVIS: termination reason=stop_request
-JARVIS: ppl stop BEGIN
-JARVIS: ppl stop END rc=0
-JARVIS: pipeline child reaped
-JARVIS: finalizing execution record (exit 0)
-```
+### What changed from the sbatch backend
 
-PBS and LSF have no backend in this release. `cancel`/`stop` against them
-fail with a typed "not supported" error instead of guessing a command.
-`jarvis sched info` still reads their queues and per-job limits (and Flux's),
-read-only; see [sched.md](sched.md#jarvis-sched-info).
+| Before (`SlurmScheduler`) | Now (PSI/J) |
+|---------------------------|-------------|
+| `submit.slurm` batch script, `sbatch --parsable` | `psij-job.json`, `executor.submit(job)`; artifact format `psij-jobspec-json`, `script_sha256` hashes the JSON |
+| `scontrol show hostnames $SLURM_JOB_NODELIST` | `PSIJ_NODEFILE`, deduplicated in order |
+| batch-shell `TERM` trap | `jarvis_cd.submit.entry` `SIGTERM` handler, with `trap ':' TERM` in PSI/J's batch shell and launcher shell so they wait for it |
+| `stop`: `scancel --signal=TERM --batch`, pending falls back to cancel | `stop`: the `stop-request` file; `job_pending` is always `false` |
+| `cancel`: `scancel [--clusters=C]` | `cancel`: `executor.cancel(job)` (`scancel -Q`) |
+| status: `squeue`, `scontrol show job`, `sacct` | status: `exit_code` file, then PSI/J's status command; no `sacct` |
+| `sbatch --wait` | `job.wait()`; a nonzero return is `workload_failed` (no `accepted_with_error`) |
+| `%j` in `output`/`error` | refused; PSI/J writes the exact paths |
+| arrays, `--clusters`, hetjobs, valueless flags | refused |
+| `pre_cmds` before the hostfile, `post_cmds` after the pipeline, in the job log | PSI/J `pre_launch` before the entry, `post_launch` after finalizing; logs `pre-launch.log`, `post-launch.log` |
+| partition facts, queue facts, `move` in the scheduler class | `jarvis_cd/site/queues.py` |
 
 ## Install jobs
 
@@ -688,12 +785,12 @@ here under limits instead, and continue from its outcome as in the
 | Recorded state | `ppl install +check` | `ppl install` (no `+submit`) | install-on-load at `ppl load` / `ppl submit` |
 |---|---|---|---|
 | record (or fresh capture) satisfied | exit 0, `satisfied` | exit 0 | proceeds; `activation.method: deferred` |
-| record with open questions | the same issues again, exit **3** | exit **3** | exit **3** before `sbatch` (ask before submit) |
+| record with open questions | the same issues again, exit **3** | exit **3** | exit **3** before submitting (ask before submit) |
 | record with only `not_installed` | the `not_installed` issues (plus a build placement question while none is chosen), exit **3** | build placement `login_limited`: builds here under limits; `compute_job`: refused, exit **4**; unchosen: exit **3** | `check`: exit **3**; `install`: proceeds, the job builds |
 | no matching record | `install_unchecked`, exit **3** | refused, exit **4** | proceeds; the job checks at load |
 | `--answers` for recorded questions | `install_unchecked` with `reason: answers_pending`, exit **3** | the same | the same |
 
-When the install phase stops `ppl submit <file> +json` before `sbatch` (exit 3
+When the install phase stops `ppl submit <file> +json` before submitting (exit 3
 or 4), stdout carries the same `jarvis.install` report that `ppl install
 +check +json` prints, with `submitted: false`; load logs go to stderr.
 
@@ -1021,8 +1118,8 @@ Builds are also refused at the point where heavy work would start:
 | `ppl install +check` | reads `install-check.json`; no Spack call. With no matching record and placement `login_limited`: the full check here, niced and bounded ([Install placement](#install-placement-where-checks-and-builds-run)). Without a scheduler block (a workstation): `spack spec -I` / `spack find` |
 | `sched info` | `sinfo`, `scontrol show partition`, `spack find`: allowed |
 | `spack prepare` | config writes, `spack compiler find` / `external find`, a shallow clone when the root is missing; never a build: allowed (run it in a job where even that is too much) |
-| `ppl install +submit` (with or without `+check`) | writes the snapshot and calls `sbatch`: allowed; the check and build run in the job |
-| `ppl submit <file>` with `JARVIS_INSTALL_ON_LOAD=check` | reads the record, then `sbatch`; exits 3 without submitting when the record has open questions or missing packages; with no matching record: placement `login_limited` checks here first (limited), `compute_job` submits and the job checks, unchosen asks an `install_placement` question (exit 3) |
+| `ppl install +submit` (with or without `+check`) | writes the snapshot and submits through PSI/J: allowed; the check and build run in the job |
+| `ppl submit <file>` with `JARVIS_INSTALL_ON_LOAD=check` | reads the record, then submits; exits 3 without submitting when the record has open questions or missing packages; with no matching record: placement `login_limited` checks here first (limited), `compute_job` submits and the job checks, unchosen asks an `install_placement` question (exit 3) |
 | `ppl install` (no `+submit`) | exit 0 when the record is satisfied; builds here only under build placement `login_limited`; otherwise refused with exit **4** (or exit 3 for recorded or placement questions), before any Spack call |
 | `ppl load` / `ppl run yaml` / `ppl submit <file>` with the default `install` policy | reads the record; exit 3 for recorded questions, otherwise proceeds and the job checks and builds. Without a scheduler block on a host with `sbatch`/`qsub`/`bsub`/`flux` on `PATH`, it resolves locally and is refused with exit **4** if anything must be built |
 
@@ -1133,7 +1230,7 @@ on it, or list it after the solver.
 For the viz-plus-solver demo above, the service comes first. pvserver starts and its supervisor reports `ready`. xcompact3d then runs on
 its 12 nodes while pvserver serves on the other 4. When xcompact3d returns,
 `after_steps: auto` stops pvserver and the execution completes. Before then,
-`jarvis execution stop` TERMs the batch shell. The trap runs `ppl stop`, then TERMs the pipeline child
+`jarvis execution stop` asks the job entry to stop. It runs `ppl stop`, then TERMs the pipeline child
 and its whole process tree. That stops both the paraview supervisor (which
 finalizes its service runtime as `stopped`) and the solver's `mpirun`, before
 the record is finalized.
@@ -1148,7 +1245,8 @@ cores. On Ares (2 × 10 cores, 2 threads per core), two 16-rank jobs once
 shared a node: 32 ranks ran on 20 cores.
 
 So a Slurm job that requests ranks (`ntasks_per_node` or `ntasks`) also
-gets `#SBATCH --ntasks-per-core=1`. Each rank claims a whole core: 16 ranks
+gets the custom attribute `slurm.ntasks-per-core: 1` (rendered
+`#SBATCH --ntasks-per-core="1"`). Each rank claims a whole core: 16 ranks
 per node claim 16 cores (32 CPUs), and 24 ranks on a 20-core node are
 refused at submit (`Requested node configuration is not available`) instead
 of sharing cores. `cpus_per_task` keeps Slurm's meaning (hardware threads),
@@ -1347,7 +1445,7 @@ full mechanism. In a pipeline test, put these keys inside `config:`.
 ## How the hostfile flows
 
 ```
-scheduler.hostfile  ──►  job script writes file inside allocation
+scheduler.hostfile  ──►  jarvis_cd.submit.entry writes it in the job
        │                          │
        └────────────────►  self.hostfile (Pipeline + every package)
 ```
@@ -1355,5 +1453,6 @@ scheduler.hostfile  ──►  job script writes file inside allocation
 `Pipeline._apply_scheduler_hostfile()` binds the pipeline's `hostfile`
 attribute to the scheduler-owned path with `load_path=False`, so the
 file does not have to exist at submit-time. Inside the allocation, the
-job script writes the file before `jarvis ppl run` executes, and every
+job entry writes the file from `PSIJ_NODEFILE` before `jarvis ppl run`
+executes, and every
 subsequent package read sees the real node list.

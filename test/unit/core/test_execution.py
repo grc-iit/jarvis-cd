@@ -42,7 +42,7 @@ from jarvis_cd.core.execution import (
     validate_pipeline_id,
 )
 from jarvis_cd.core.pipeline import Pipeline, _validate_execution_cleanup_receipt
-from jarvis_cd.core.scheduler import SlurmScheduler
+from jarvis_cd.core.scheduler import Scheduler
 
 
 @pytest.mark.parametrize("pipeline_id", ["visualization", "case.2026", "a-b_c"])
@@ -1862,20 +1862,21 @@ def test_submit_projection_preserves_runtime_terminal_outcome(tmp_path: Path) ->
     assert record.error == "runtime failed"
 
 
-def test_slurm_script_installs_durable_exit_finalizer(tmp_path: Path) -> None:
-    """Hostfile and hook failures are recorded even before JARVIS starts."""
+def test_slurm_job_runs_the_finalizing_entry(tmp_path: Path) -> None:
+    """The job's one program is the entry, which finalizes the execution."""
     execution_root = tmp_path / "executions" / "scheduled"
-    scheduler = SlurmScheduler(
+    scheduler = Scheduler(
         {"name": "slurm"},
         execution_root,
         pipeline_snapshot_dir=execution_root / "runtime",
     )
 
-    rendered = scheduler.render()
+    described = scheduler.describe()
 
-    assert "trap jarvis_finalize_execution EXIT" in rendered
-    assert "-m jarvis_cd.core.execution finalize" in rendered
-    assert "--execution-id scheduled" in rendered
+    assert described["launcher"] == "single"
+    assert described["arguments"][:2] == ["-m", "jarvis_cd.submit.entry"]
+    assert "--snapshot-dir" in described["arguments"]
+    assert str(execution_root) in described["arguments"]
 
 
 def test_execution_artifacts_aggregate_package_manifests(

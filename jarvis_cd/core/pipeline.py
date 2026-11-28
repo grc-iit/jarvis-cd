@@ -106,21 +106,6 @@ def _reject_duplicate_json_keys(pairs: list[tuple[str, Any]]) -> Dict[str, Any]:
     return document
 
 
-def _bounded_scheduler_stderr(result: Any, limit: int = 4096) -> Optional[str]:
-    """Return a bounded scheduler diagnostic captured by the executor."""
-    stderr = getattr(result, "stderr", {})
-    if isinstance(stderr, dict):
-        value = stderr.get("localhost", "")
-    else:
-        value = stderr
-    diagnostic = str(value or "").strip()
-    if not diagnostic:
-        return None
-    if len(diagnostic) <= limit:
-        return diagnostic
-    return "[truncated]\n" + diagnostic[-limit:]
-
-
 def _executor_status_error(
     result: Any,
     *,
@@ -1238,6 +1223,9 @@ class Pipeline:
 
         # Hostfile parameter (None means use global jarvis hostfile)
         self.hostfile = None
+        # The hostfile before a scheduler block rebinds it: the hosts a
+        # ``local`` (no scheduler) job runs on.
+        self._declared_hostfile: Optional[Hostfile] = None
 
         # Scheduler spec from pipeline YAML (None means no batch submission).
         # When set, ``submit()`` writes a job script under shared_dir that
@@ -1288,6 +1276,8 @@ class Pipeline:
         path = self._scheduler_hostfile_path()
         if not self.scheduler:
             return
+        if self.hostfile is not None and self.hostfile.path != path:
+            self._declared_hostfile = self.hostfile
         self.scheduler["hostfile"] = path
         try:
             self.hostfile = Hostfile(
@@ -1295,6 +1285,19 @@ class Pipeline:
             )
         except FileNotFoundError:
             self.hostfile = Hostfile(path=path, load_path=False, find_ips=False)
+
+    def _local_job_hosts(self, scheduler_spec: Dict[str, Any]) -> Optional[List[str]]:
+        """Hosts a ``local`` job runs on: the pipeline's hostfile, else JARVIS's.
+
+        A scheduler's allocation names the hosts; with none (a dev host, cloud
+        VMs reached over ssh) they are sealed at submit instead.
+        """
+        from jarvis_cd.core.scheduler import resolve_scheduler_name
+
+        if resolve_scheduler_name(scheduler_spec) != "local":
+            return None
+        hostfile = self._declared_hostfile or self.jarvis.hostfile
+        return [str(host) for host in (hostfile.hosts or [])] if hostfile is not None else None
 
     def _submission_scheduler_spec(
         self, execution_root: Path, action: str, install_check: bool,
@@ -1345,6 +1348,7 @@ class Pipeline:
             install_job_shape["time_estimate"] = install_walltime.summary(walltime)
         else:
             scheduler_spec.pop("install", None)
+            self._apply_node_shape(scheduler_spec)
         scheduler_spec["hostfile"] = str(execution_root / "hostfile.txt")
         scheduler_spec.setdefault("output", str(execution_root / "stdout.log"))
         scheduler_spec.setdefault("error", str(execution_root / "stderr.log"))
@@ -1355,6 +1359,43 @@ class Pipeline:
         # Directive order must not depend on how the pipeline was loaded (a
         # YAML keeps its order, the saved config is sorted): +plan binds to it.
         return dict(sorted(scheduler_spec.items())), install_job_shape
+
+    def _apply_node_shape(self, scheduler_spec: Dict[Any, Any]) -> None:
+        """Size the one batch job for every package's ``host_slice``.
+
+        The job asks for the largest of ``scheduler.nodes`` and the node count
+        each slice needs, and, with no task shape declared, for the largest
+        per-node task demand of a package. A slice that still selects no node
+        of that allocation is refused before anything is submitted.
+        """
+        from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
+        from jarvis_cd.core.scheduler import node_shape
+
+        nodes, per_node, problems = node_shape(
+            [dict(package) for package in self.packages or []],
+            scheduler_spec.get("nodes"))
+        if problems:
+            raise JarvisIssueError([
+                make_jarvis_issue(
+                    kind="host_slice_outside_allocation",
+                    subject=str(problem["pkg_id"]),
+                    message=str(problem["problem"]),
+                    field="host_slice",
+                    details={"host_slice": problem["host_slice"],
+                             "nodes": problem["nodes"]},
+                    remedy="fix the package's host_slice or raise scheduler.nodes",
+                )
+                for problem in problems
+            ])
+        try:
+            declared = int(scheduler_spec.get("nodes") or 0)
+        except (TypeError, ValueError):
+            declared = 0
+        if nodes > declared:
+            scheduler_spec["nodes"] = nodes
+        if (per_node or 0) > 1 and not scheduler_spec.get("ntasks") \
+                and not scheduler_spec.get("ntasks_per_node"):
+            scheduler_spec["ntasks_per_node"] = per_node
 
     def _install_walltime(self, install_check: bool,
                           exclude: Optional[str] = None) -> Dict[str, Any]:
@@ -1414,7 +1455,7 @@ class Pipeline:
 
         Returns the scheduler spec, the Scheduler, the script text and the
         digests that bind a plan to the later submission: ``script_sha256``
-        (the batch script bytes) and ``input_sha256`` (the sealed snapshot
+        (the job description bytes) and ``input_sha256`` (the sealed snapshot
         input, the same digest the record keeps as
         ``pipeline_snapshot_sha256``).
         """
@@ -1435,6 +1476,7 @@ class Pipeline:
             pipeline_action_args=self._submission_action_args(
                 action, install_check, answers_bytes is not None, input_dir),
             install_on_load=self._sealed_install_policy(action),
+            local_hosts=self._local_job_hosts(scheduler_spec),
         )
         text = sched.render()
         script_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -1467,7 +1509,7 @@ class Pipeline:
 
         Returns a ``jarvis.submit-plan.v1`` document: the scheduler, its
         directives, the total nodes, the components and couplings, the exact
-        batch script with its sha256, and any issues that refuse the submit.
+        PSI/J job description with its sha256, and any issues that refuse the submit.
         Nothing is written to the execution store, no Spack and no scheduler
         command runs. ``jarvis ppl submit ... --execution-id ID --plan_sha256
         SHA`` then submits only if it renders the same script and input.
@@ -1512,12 +1554,11 @@ class Pipeline:
     ) -> ExecutionHandle:
         """Write the scheduler job script and (optionally) submit it.
 
-        :param submit: when True, exec the scheduler's submit command
-            (e.g. ``sbatch``); when False, only write the script without
-            submitting it. The returned handle exposes it as ``script_path``.
-        :param wait: when True (and submit is True), ask the scheduler
-            to block until the job finishes. SLURM maps this to
-            ``sbatch --wait``; backends without an equivalent ignore it.
+        :param submit: when True, submit the job through PSI/J; when False,
+            only write the job description without submitting it. The
+            returned handle exposes it as ``script_path``.
+        :param wait: when True (and submit is True), block until the job
+            finishes and return with its workload status.
         :param execution_id: bounded caller-owned identity used to isolate the
             submitted pipeline, environment, script, and hostfile.
         :param action: ``run`` (default) runs the pipeline; ``install`` runs
@@ -1525,7 +1566,7 @@ class Pipeline:
         :param install_check: with ``action='install'``, only check.
         :param install_answers: with ``action='install'``, an answers.json
             sealed into the execution input and applied by the job.
-        :return: Queryable JARVIS execution handle. The generated script remains
+        :return: Queryable JARVIS execution handle. The job description remains
             available as ``handle.script_path`` and in ``last_submission``.
         """
         if action not in ("run", "install"):
@@ -1737,6 +1778,7 @@ class Pipeline:
                 pipeline_action=action,
                 pipeline_action_args=action_args,
                 install_on_load=sealed_install_policy,
+                local_hosts=self._local_job_hosts(scheduler_spec),
             )
             script_path = sched.write_script()
             from jarvis_cd.core.submit_plan import submission_plan_sha256
@@ -1776,8 +1818,8 @@ class Pipeline:
                     relative_path=script_relative_path,
                     kind="script",
                     role=ArtifactRole.PROVENANCE,
-                    media_type="text/x-shellscript",
-                    format_name="slurm-shell",
+                    media_type="application/json",
+                    format_name="psij-jobspec-json",
                 )
         except BaseException as exc:
             try:
@@ -1816,8 +1858,8 @@ class Pipeline:
             "wait": bool(wait),
             "terminal": not submit,
             "scheduler_stderr": None,
-            # ``sbatch --wait`` reports the completed workload status through
-            # the sbatch process.  Keep that raw value while separately
+            # With wait, the job's own exit code is the submission's result.
+            # Keep that raw value while separately
             # recording whether it is an observed terminal return code.
             "submission_returncode": None,
             "terminal_returncode": None,
@@ -1873,13 +1915,32 @@ class Pipeline:
             )
             raise
 
-        from jarvis_cd.shell import Exec, LocalExecInfo
+        from jarvis_cd.core.scheduler import SchedulerSubmitRefused
 
-        argv = sched.submit_command(wait=wait)
-        cmd = " ".join(shlex.quote(part) for part in argv)
-        logger.pipeline(f"Submitting: {cmd}")
+        logger.pipeline(f"Submitting through PSI/J ({sched.NAME}): {script_path}")
         try:
-            result = Exec(cmd, LocalExecInfo(hide_output=True)).run()
+            submission = sched.submit()
+        except SchedulerSubmitRefused as refused:
+            self.last_submission["submission_returncode"] = 1
+            self.last_submission["scheduler_stderr"] = str(refused)[-4096:]
+            self.last_submission["state"] = "submission_failed"
+            self.last_submission["submitted"] = False
+            self.last_submission["terminal"] = True
+            outcome_error = RuntimeError(f"Scheduler submission failed: {refused}")
+            try:
+                self._update_execution_marker(execution_root)
+                self.save()
+            except BaseException as persist_error:
+                outcome_error.add_note(
+                    f"could not persist scheduler submit outcome: {persist_error}"
+                )
+                persist_stage_exception(
+                    outcome_error,
+                    "scheduler_submission_refused",
+                    ambiguous=False,
+                    return_code=1,
+                )
+            raise outcome_error from refused
         except BaseException as exc:
             self.last_submission["state"] = "submit_ambiguous"
             self.last_submission["terminal"] = False
@@ -1889,54 +1950,19 @@ class Pipeline:
                 ambiguous=True,
             )
             raise
-        exit_code = result.exit_code.get("localhost", 1)
-        self.last_submission["submission_returncode"] = exit_code
-        scheduler_stderr = _bounded_scheduler_stderr(result)
-        self.last_submission["scheduler_stderr"] = scheduler_stderr
-        diagnostic = (
-            f"; scheduler stderr: {scheduler_stderr}" if scheduler_stderr else ""
-        )
-        stdout = result.stdout.get("localhost", "")
-        try:
-            provider_metadata = sched.parse_submission_output(stdout)
-        except ValueError as parse_error:
-            self.last_submission["state"] = (
-                "submission_failed" if exit_code != 0 else "identity_failed"
-            )
-            self.last_submission["submitted"] = exit_code == 0
-            self.last_submission["terminal"] = exit_code != 0
-            if exit_code != 0:
-                outcome_error = RuntimeError(
-                    f"Scheduler submission failed (exit {exit_code}): {cmd}{diagnostic}"
-                )
-            else:
-                outcome_error = RuntimeError(
-                    "Scheduler accepted the submission but did not return a "
-                    f"structured job identity{diagnostic}"
-                )
-            try:
-                self._update_execution_marker(execution_root)
-                self.save()
-            except BaseException as persist_error:
-                outcome_error.add_note(
-                    f"could not persist scheduler parse outcome: {persist_error}"
-                )
-                persist_stage_exception(
-                    outcome_error,
-                    "scheduler_submission_identity_parse",
-                    ambiguous=exit_code == 0,
-                    accepted=exit_code == 0,
-                    return_code=exit_code,
-                )
-            raise outcome_error from parse_error
-
+        cmd = " ".join(shlex.quote(part) for part in submission.command)
+        diagnostic = ""
+        exit_code = 0
+        provider_metadata = {
+            "provider": sched.NAME,
+            "scheduler_job_id": submission.native_id,
+            "scheduler_cluster": None,
+            "identity_source": "scheduler_submit_api",
+        }
+        self.last_submission["submission_returncode"] = 0
         self.last_submission.update(provider_metadata)
         self.last_submission.update(
-            {
-                "submitted": True,
-                "terminal": bool(wait),
-                "terminal_returncode": exit_code if wait else None,
-            }
+            {"submitted": True, "terminal": False, "terminal_returncode": None}
         )
         try:
             provider_value = provider_metadata.get("provider")
@@ -1989,24 +2015,22 @@ class Pipeline:
         logger.pipeline(
             f"Scheduler job identity: {self.last_submission['scheduler_job_id']}"
         )
+        if wait:
+            self.last_submission["state"] = "submitted"
+            self._update_execution_marker(execution_root)
+            self.save()
+            exit_code = sched.wait(submission)
+            self.last_submission["submission_returncode"] = exit_code
+            self.last_submission["terminal"] = True
+            self.last_submission["terminal_returncode"] = exit_code
         if exit_code != 0:
-            self.last_submission["state"] = (
-                "workload_failed" if wait else "accepted_with_error"
+            self.last_submission["state"] = "workload_failed"
+            outcome_error = RuntimeError(
+                "Scheduler job "
+                f"{self.last_submission['scheduler_job_id']} was accepted, "
+                f"but the workload failed (exit {exit_code}): "
+                f"{cmd}{diagnostic}"
             )
-            if wait:
-                outcome_error = RuntimeError(
-                    "Scheduler job "
-                    f"{self.last_submission['scheduler_job_id']} was accepted, "
-                    f"but the workload failed (exit {exit_code}): "
-                    f"{cmd}{diagnostic}"
-                )
-            else:
-                outcome_error = RuntimeError(
-                    "Scheduler job "
-                    f"{self.last_submission['scheduler_job_id']} was accepted, "
-                    f"but the submission command returned exit {exit_code}: "
-                    f"{cmd}{diagnostic}"
-                )
             try:
                 self._update_execution_marker(execution_root)
                 self.save()
@@ -2075,6 +2099,7 @@ class Pipeline:
         observation = query_scheduler_execution(
             record.scheduler_provider,
             record.scheduler_native_id,
+            execution_root=store.executions_dir / record.execution_id,
         )
         if observation.state == "unknown":
             return record
@@ -2162,7 +2187,7 @@ class Pipeline:
 
         Works without scheduler accounting (sites with no slurmdbd): a job
         that ended normally would have finalized its own record from the
-        batch script, so a still-open record tells what happened.
+        job's entry, so a still-open record tells what happened.
 
         - a ``cancel_request`` or ``stop_request`` was recorded: ``canceled``;
         - the record never left ``submitted`` and the job wrote no batch
@@ -2313,12 +2338,11 @@ class Pipeline:
 
     @staticmethod
     def _scheduler_control_cluster(record: ExecutionRecord) -> Optional[str]:
-        """Return the cluster ``sbatch --parsable`` reported, else ``None``.
+        """Return the cluster the submission reported, else ``None``.
 
         ``record.cluster`` may come from ``SLURM_CLUSTER_NAME`` inside the
-        job, which every Slurm job has. Passing that to ``scancel --clusters``
-        needs slurmdbd and fails on sites without it, so control commands
-        only name a cluster that the submit itself reported (``jobid;cluster``).
+        job. PSI/J submissions never report a cluster, so this only returns
+        one for records written by the old ``sbatch --parsable`` path.
         """
         from collections.abc import Mapping
 
@@ -2350,8 +2374,10 @@ class Pipeline:
             return record
         provider, native_id = self._scheduler_control_target(record, "cancel")
         control_cluster = self._scheduler_control_cluster(record)
+        execution_root = store.executions_dir / execution_id
         argv = scheduler_control_argv(
-            provider, "cancel", native_id, cluster=control_cluster
+            provider, "cancel", native_id, cluster=control_cluster,
+            execution_root=execution_root,
         )
         request: Dict[str, Any] = {
             "schema_version": "jarvis.execution.control.v1",
@@ -2370,7 +2396,8 @@ class Pipeline:
         # TERM/EXIT handling finalizes it as canceled even if it wins the race.
         store.update(execution_id, metadata={"cancel_request": request})
         result = control_scheduler_execution(
-            provider, "cancel", native_id, cluster=control_cluster
+            provider, "cancel", native_id, cluster=control_cluster,
+            execution_root=execution_root,
         )
         request["result"] = result.to_dict()
         if not (result.accepted or result.job_ended):
@@ -2410,9 +2437,10 @@ class Pipeline:
     ) -> ExecutionRecord:
         """Ask a running scheduler job to stop its pipeline gracefully.
 
-        Sends TERM to the batch shell only. The generated script traps it,
-        runs ``jarvis ppl stop``, reaps the pipeline's process tree, and
-        finalizes the record. A job that has not started is canceled instead.
+        Writes the execution's stop-request file. The job's entry
+        (:mod:`jarvis_cd.submit.entry`) polls it, runs ``jarvis ppl stop``,
+        reaps the pipeline's process tree, and finalizes the record. A job
+        that has not started is canceled instead.
         With ``wait_seconds`` the call polls until the record is terminal or
         the time runs out; otherwise it returns at once with ``stop_request``
         metadata and the caller polls ``jarvis execution get``.
@@ -2430,8 +2458,10 @@ class Pipeline:
             return record
         provider, native_id = self._scheduler_control_target(record, "stop")
         control_cluster = self._scheduler_control_cluster(record)
+        execution_root = store.executions_dir / execution_id
         argv = scheduler_control_argv(
-            provider, "stop", native_id, cluster=control_cluster
+            provider, "stop", native_id, cluster=control_cluster,
+            execution_root=execution_root,
         )
         request: Dict[str, Any] = {
             "schema_version": "jarvis.execution.control.v1",
@@ -2454,14 +2484,10 @@ class Pipeline:
             return self.cancel_execution(execution_id)
         store.update(execution_id, metadata={"stop_request": request})
         result = control_scheduler_execution(
-            provider, "stop", native_id, cluster=control_cluster
+            provider, "stop", native_id, cluster=control_cluster,
+            execution_root=execution_root,
         )
         request["result"] = result.to_dict()
-        if result.job_pending:
-            request["status"] = "fallback_cancel"
-            request["fallback"] = "cancel"
-            store.update(execution_id, metadata={"stop_request": request})
-            return self.cancel_execution(execution_id)
         if result.job_ended:
             request["status"] = "job_ended"
             store.update(execution_id, metadata={"stop_request": request})
@@ -2470,7 +2496,7 @@ class Pipeline:
             request["status"] = "failed"
             store.update(execution_id, metadata={"stop_request": request})
             raise RuntimeError(
-                f"{argv[0]} could not signal {provider} job {native_id}: "
+                f"could not ask {provider} job {native_id} to stop: "
                 f"{result.diagnostic or 'exit ' + str(result.return_code)}"
             )
         request["status"] = "accepted"
@@ -2728,7 +2754,7 @@ class Pipeline:
         # A fast scheduler job may advance the record before the submitting
         # process has parsed the provider-native identity. Never regress that
         # independently persisted runtime state back to submitted. A terminal
-        # runtime result is authoritative over sbatch's process status.
+        # runtime result is authoritative over the submitter's view.
         runtime_terminal = current.terminal and current.state in {
             "completed",
             "failed",
@@ -3472,9 +3498,11 @@ class Pipeline:
         # bind required.
         # When a scheduler block is configured, the job script writes the
         # hostfile from the allocation at run time; we must not preempt it
-        # with a stub here. The scheduler block carries the path itself.
+        # with a stub here. The scheduler block carries the path itself; a
+        # declared hostfile is kept, since a ``local`` job runs on its hosts.
         if self.scheduler:
-            pipeline_config["hostfile"] = None
+            declared = self._declared_hostfile
+            pipeline_config["hostfile"] = declared.path if declared is not None else None
         else:
             effective_hostfile = self.hostfile or self.jarvis.hostfile
             if effective_hostfile and effective_hostfile.path:
@@ -3939,7 +3967,7 @@ class Pipeline:
     def _record_scheduler_job(self, store: Any, execution_id: str) -> None:
         """Record the allocation's real start once (``metadata.scheduler_job``)."""
         try:
-            from jarvis_cd.core.scheduler import scheduler_job_start
+            from jarvis_cd.site.queues import scheduler_job_start
 
             current = store.get(execution_id).metadata.get("scheduler_job")
             job = scheduler_job_start()
