@@ -1,11 +1,28 @@
 """
 MPI execution classes for Jarvis shell execution.
 """
+import re
 from abc import abstractmethod
 from typing import Union, List, Dict, Any
 from .core_exec import LocalExec
 from .exec_info import ExecInfo, MpiExecInfo, ExecType
 from ..util.hostfile import Hostfile
+
+_ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
+_DOUBLE_QUOTE_SPECIAL = re.compile(r'["$`\\]')
+
+
+def _env_flags(flag: str, env: Dict[str, Any]) -> List[str]:
+    """``flag KEY="VALUE"`` per variable, escaping what double quotes would expand.
+
+    Names no shell can export, such as exported functions (BASH_FUNC_f%%), are skipped.
+    """
+    flags = []
+    for key, val in (env or {}).items():
+        if _ENV_NAME.match(str(key)):
+            quoted = _DOUBLE_QUOTE_SPECIAL.sub(lambda match: "\\" + match.group(0), str(val))
+            flags.append(f'{flag} {key}="{quoted}"')
+    return flags
 
 
 class LocalMpiExec(LocalExec):
@@ -455,13 +472,13 @@ class OpenMpiExec(LocalMpiExec):
                         del cmd_env['LD_PRELOAD']
 
                     # Add environment variables for this command
-                    env_args = ' '.join([f'-x {key}="{val}"' for key, val in cmd_env.items()])
+                    env_args = ' '.join(_env_flags('-x', cmd_env))
                     cmd_parts.append(f'{env_args} -n {nprocs} {cmd}')
             # Join with ' : ' for multiple commands
             params.append(' : '.join(cmd_parts))
         else:
             # Single command format - add global environment variables
-            params.extend([f'-x {key}="{val}"' for key, val in self.mpi_env.items()])
+            params.extend(_env_flags('-x', self.mpi_env))
             params.append(f'-n {self.nprocs}')
             params.append(self.original_cmd)
 
@@ -590,13 +607,13 @@ class MpichExec(LocalMpiExec):
                         del cmd_env['LD_PRELOAD']
 
                     # Add environment variables for this command
-                    env_args = ' '.join([f'-env {key}="{val}"' for key, val in cmd_env.items()])
+                    env_args = ' '.join(_env_flags('-env', cmd_env))
                     cmd_parts.append(f'{env_args} -n {nprocs} {cmd}')
             # Join with ' : ' for multiple commands
             params.append(' : '.join(cmd_parts))
         else:
             # Single command format - add global environment variables
-            params.extend([f'-genv {key}="{val}"' for key, val in self.mpi_env.items()])
+            params.extend(_env_flags('-genv', self.mpi_env))
             params.append(f'-n {self.nprocs}')
             params.append(self.original_cmd)
 
@@ -649,13 +666,13 @@ class CrayMpichExec(LocalMpiExec):
                         del cmd_env['LD_PRELOAD']
 
                     # Add environment variables for this command
-                    env_args = ' '.join([f'--env {key}="{val}"' for key, val in cmd_env.items()])
+                    env_args = ' '.join(_env_flags('--env', cmd_env))
                     cmd_parts.append(f'{env_args} -n {nprocs} {cmd}')
             # Join with ' : ' for multiple commands
             params.append(' : '.join(cmd_parts))
         else:
             # Single command format - add global environment variables
-            params.extend([f'--env {key}="{val}"' for key, val in self.mpi_env.items()])
+            params.extend(_env_flags('--env', self.mpi_env))
             params.append(f'-n {self.nprocs}')
             params.append(self.original_cmd)
 
