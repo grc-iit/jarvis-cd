@@ -106,6 +106,8 @@ class TestSpackFailure(_Case):
                                  command='spack install ior', exit_code=1)
         self.assertEqual((issue['kind'], issue['stage']), ('failure', 'install'))
         self.assertEqual(issue['failed_node'], 'ior-3.3.0-abc')
+        self.assertTrue(issue['question'].startswith(
+            'spack install of ior at ior-3.3.0-abc failed on '))
         self.assertEqual(issue['paths']['build_log'], '/stage/spack-build-out.txt')
         self.assertNotIn('remedy', issue)
 

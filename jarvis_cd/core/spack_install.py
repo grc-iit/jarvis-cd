@@ -1205,8 +1205,9 @@ def spack_failure(
         return issue
     doing = {"spec": "spack spec (concretize)", "concretize": "spack concretize",
              "install": "spack install", "verify": "verifying the install"}.get(stage, stage)
+    doing = f"{doing} of {', '.join(packages) or 'the packages'}"
     return failure_record(
-        context, stage=stage, doing=f"{doing} of {', '.join(packages) or 'the packages'}",
+        context, stage=stage, doing=doing + (f" at {node}" if node else ""),
         command=command_text, exit_code=exit_code, output=output, host=host,
         packages=packages,
         paths={"build_log": build_log.group("path") if build_log else None},
