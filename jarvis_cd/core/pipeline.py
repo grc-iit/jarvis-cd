@@ -32,6 +32,7 @@ from jarvis_cd.artifacts import (
     ArtifactStructure,
 )
 from jarvis_cd.core.config import (
+    _atomic_yaml_dump,
     load_class,
     Jarvis,
     builtin_repository_disabled_message,
@@ -150,39 +151,6 @@ def _bounded_execution_error(error: BaseException, limit: int = 16_384) -> str:
     prefix = b"[truncated]\n"
     suffix = encoded[-(limit - len(prefix)) :].decode("utf-8", errors="ignore")
     return f"[truncated]\n{suffix}"
-
-
-def _atomic_yaml_dump(path: Path, value: Any) -> None:
-    """Durably replace one YAML document without exposing a truncated target."""
-    temporary_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temporary:
-            temporary_path = Path(temporary.name)
-            yaml.dump(value, temporary, default_flow_style=False)
-            temporary.flush()
-            os.fsync(temporary.fileno())
-        os.replace(temporary_path, path)
-        temporary_path = None
-        if os.name != "nt":
-            flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-            directory = os.open(path.parent, flags)
-            try:
-                os.fsync(directory)
-            finally:
-                os.close(directory)
-    finally:
-        if temporary_path is not None:
-            try:
-                temporary_path.unlink()
-            except FileNotFoundError:
-                pass
 
 
 def _atomic_json_dump(path: Path, value: Dict[str, Any]) -> None:
@@ -2714,7 +2682,7 @@ class Pipeline:
         scheduler_state = submission.get("state")
         if scheduler_state == "scripted":
             if submission.get("submitted") is True:
-                if submission.get("wait") is True:
+                if submission.get("wait") is True and submission.get("terminal") is True:
                     canonical_state = (
                         "completed"
                         if submission.get("terminal_returncode") == 0

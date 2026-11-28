@@ -154,6 +154,39 @@ def load_class(import_str: str, path: str, class_name: str):
         sys.path.pop(0)
 
 
+def _atomic_yaml_dump(path: Path, value: Any) -> None:
+    """Durably replace one YAML document without exposing a truncated target."""
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            yaml.dump(value, temporary, default_flow_style=False)
+            temporary.flush()
+            os.fsync(temporary.fileno())
+        os.replace(temporary_path, path)
+        temporary_path = None
+        if os.name != "nt":
+            flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+            directory = os.open(path.parent, flags)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+    finally:
+        if temporary_path is not None:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
 class Jarvis:
     """
     Singleton class that manages Jarvis configuration and provides global access.
@@ -513,15 +546,13 @@ class Jarvis:
         """Save jarvis configuration with canonical state-root paths."""
         normalized = _canonicalize_state_roots(config)
         self.jarvis_root.mkdir(parents=True, exist_ok=True)
-        with open(self.config_file, "w") as f:
-            yaml.dump(normalized, f, default_flow_style=False)
+        _atomic_yaml_dump(self.config_file, normalized)
         self._config = normalized
 
     def save_repos(self, repos: Dict[str, Any]):
         """Save repository config and bind its managed builtin view."""
         self.jarvis_root.mkdir(parents=True, exist_ok=True)
-        with open(self.repos_file, "w") as f:
-            yaml.dump(repos, f, default_flow_style=False)
+        _atomic_yaml_dump(self.repos_file, repos)
         self._repos = self._effective_repositories(repos)
 
     def _effective_repositories(self, repositories: Dict[str, Any]) -> Dict[str, Any]:

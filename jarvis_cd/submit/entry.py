@@ -56,11 +56,7 @@ def _pipeline_commands(arguments: argparse.Namespace, action: str) -> List[List[
     if arguments.snapshot_dir:
         yaml = str(Path(arguments.snapshot_dir) / "pipeline.yaml")
         return [cli + ["ppl", action, "yaml", yaml] + extra]
-    if arguments.pipeline_yaml:
-        return [cli + ["ppl", action, "yaml", arguments.pipeline_yaml] + extra]
-    if arguments.pipeline_name:
-        return [cli + ["cd", arguments.pipeline_name], cli + ["ppl", action] + extra]
-    return [cli + ["ppl", action] + extra]
+    return [cli + ["ppl", action, "yaml", arguments.pipeline_yaml] + extra]
 
 
 def _environment(arguments: argparse.Namespace, action: str) -> dict:
@@ -250,10 +246,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--stop-grace", type=int, default=20)
     parser.add_argument("--action", choices=("run", "install"), default="run")
     parser.add_argument("--action-arg", action="append")
-    source = parser.add_mutually_exclusive_group()
+    # The job never resolves the mutable current pipeline: concurrent jobs on
+    # one JARVIS root would race on it.
+    source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--snapshot-dir")
     source.add_argument("--pipeline-yaml")
-    source.add_argument("--pipeline-name")
     parser.add_argument("--jarvis-root")
     parser.add_argument("--install-on-load", choices=("install", "check", "skip"))
     return parser

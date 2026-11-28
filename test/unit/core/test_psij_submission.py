@@ -75,13 +75,13 @@ def test_allocation_hosts_dedupes_in_allocation_order(tmp_path):
 
 
 def test_local_job_runs_on_the_hosts_sealed_at_submit(tmp_path):
-    local = Scheduler({"name": "local"}, tmp_path, pipeline_name="demo",
+    local = Scheduler({"name": "local"}, tmp_path, pipeline_name="demo", pipeline_yaml="p.yaml",
                       local_hosts=["vm-0", "vm-1", "vm-2"])
     local.write_script()
     nodefile = tmp_path / Scheduler.LOCAL_NODEFILE_NAME
     arguments = local.entry_arguments()
     assert arguments[arguments.index("--nodefile") + 1] == str(nodefile)
     assert allocation_hosts(str(nodefile)) == ["vm-0", "vm-1", "vm-2"]
-    batch = Scheduler({"name": "slurm"}, tmp_path / "b", pipeline_name="demo",
+    batch = Scheduler({"name": "slurm"}, tmp_path / "b", pipeline_name="demo", pipeline_yaml="p.yaml",
                       local_hosts=["vm-0"])
     assert "--nodefile" not in batch.entry_arguments()

@@ -622,8 +622,8 @@ class Scheduler:
             arguments += ["--snapshot-dir", str(self.pipeline_snapshot_dir)]
         elif self.pipeline_yaml:
             arguments += ["--pipeline-yaml", self.pipeline_yaml]
-        elif self.pipeline_name:
-            arguments += ["--pipeline-name", self.pipeline_name]
+        else:
+            raise ValueError("a submitted job needs a pipeline snapshot or YAML")
         if self.jarvis_root is not None:
             arguments += ["--jarvis-root", str(self.jarvis_root)]
         if self.install_on_load is not None:
