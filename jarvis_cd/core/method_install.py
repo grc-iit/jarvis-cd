@@ -53,7 +53,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from jarvis_cd.util import stall as _stall
 from jarvis_cd.core.spack_install import (
-    MPI_PROVIDERS,
+    MPI_NAMES,
     Decisions,
     InstallFailed,
     _utc_now,
@@ -69,7 +69,7 @@ MINIFORGE_URL = (
 
 _ENV_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 _NAME_AT_START = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
-_MPI_NAMES = {name.replace("_", "-") for name in MPI_PROVIDERS} | {
+_MPI_NAMES = {name.replace("_", "-") for name in MPI_NAMES} | {
     "impi-rt",
     "mpich-abi",
     "msmpi",

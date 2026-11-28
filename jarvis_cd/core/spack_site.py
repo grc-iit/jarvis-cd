@@ -43,7 +43,7 @@ from jarvis_cd.core.issues import JarvisIssueError, make_jarvis_issue
 from jarvis_cd.core.spack_install import (
     BINDING_COMPILER_SOURCES,
     DECISION_NEEDED_EXIT_CODE,
-    MPI_PROVIDERS,
+    MPI_NAMES,
     _atomic_write_text,
     _utc_now,
     compiler_requirement,
@@ -340,7 +340,7 @@ def module_mpis(module_paths: Sequence[str], skip: Sequence[Path],
             continue
         if any(directory.startswith(prefix) for prefix in skipped):
             continue
-        for name in MPI_PROVIDERS:
+        for name in MPI_NAMES:
             mpi_dir = Path(directory) / name
             if not mpi_dir.is_dir():
                 continue
@@ -395,13 +395,12 @@ def toolchains(spack: _Spack, packages: Mapping[str, Any]) -> List[Dict[str, Any
 def installed_mpis(spack: _Spack) -> List[Dict[str, Any]]:
     """Installed MPIs (local and upstream) with the compiler they used.
 
-    One unconstrained ``spack find``, filtered to the MPI providers: naming
-    each provider asks Spack about MPIs the site does not have, and a name
-    the Spack release does not know fails the whole query.
+    ``spack find mpi``: Spack answers with every installed provider of the
+    virtual.
     """
     mpis: List[Dict[str, Any]] = []
     completed = spack.run(
-        ["find", "--format", "{name}@{version} {hash:7} {compiler} {prefix}"],
+        ["find", "--format", "{name}@{version} {hash:7} {compiler} {prefix}", "mpi"],
     )
     if completed.returncode != 0:
         return mpis
@@ -410,8 +409,6 @@ def installed_mpis(spack: _Spack) -> List[Dict[str, Any]]:
         if len(parts) != 4 or "@" not in parts[0] or not parts[3].startswith("/"):
             continue
         name, _, version = parts[0].partition("@")
-        if name not in MPI_PROVIDERS:
-            continue
         mpis.append({"name": name, "version": version, "hash": parts[1],
                      "compiler": parts[2].replace("@=", "@"), "prefix": parts[3]})
     return mpis
@@ -611,7 +608,7 @@ def prepare_site(
         if not _PACKAGE_NAME.fullmatch(tool):
             raise _refuse("build_tool_invalid", f"build tool {tool!r} is not a Spack "
                           "package name", field="--build_tools", tool=tool)
-        if tool in MPI_PROVIDERS or tool == "mpi":
+        if tool in MPI_NAMES or tool == "mpi":
             raise _refuse("build_tool_invalid", f"{tool} is an MPI; MPI is never "
                           "externalized from PATH", field="--build_tools", tool=tool)
     request = (compiler or "").strip()

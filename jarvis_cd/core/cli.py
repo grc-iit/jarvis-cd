@@ -2413,6 +2413,8 @@ class JarvisCLI(ArgParse):
             estimate = (document.get("install_job") or {}).get("time_estimate") or {}
             if estimate.get("formula") or estimate.get("why"):
                 print(f"  install time: {estimate.get('formula') or estimate.get('why')}")
+            if estimate.get("note"):
+                print(f"  {estimate['note']}")
             if estimate.get("already_built"):
                 print(f"  already built by earlier attempts: "
                       f"{len(estimate['already_built'])} Spack node(s)")

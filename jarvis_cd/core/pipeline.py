@@ -250,8 +250,7 @@ def _component_states_metadata() -> Dict[str, Any]:
 
 def _report_install_walltime(walltime: Mapping[str, Any]) -> None:
     """Say on stderr where an install job's time came from and what is built."""
-    source = walltime.get("source")
-    if source == "jarvis_estimate":
+    if walltime.get("source") != "explicit":
         limit = walltime.get("partition_limit") or {}
         print(f"install job time {walltime.get('time')} = {walltime.get('formula')}"
               + (f" (partition {limit.get('partition')} MaxTime "
@@ -259,6 +258,8 @@ def _report_install_walltime(walltime: Mapping[str, Any]) -> None:
               file=sys.stderr)
         if walltime.get("why"):
             print(f"install job time: {walltime.get('why')}", file=sys.stderr)
+        if walltime.get("note"):
+            print(f"install job time: {walltime.get('note')}", file=sys.stderr)
         stale = ((walltime.get("estimate") or {}).get("check_record") or {}).get("stale")
         if stale:
             print(f"install job time: last check's missing nodes used ({stale} since)",
@@ -1299,12 +1300,12 @@ class Pipeline:
             scheduler_spec.update(overrides)
             from jarvis_cd.core import install_walltime
 
-            # With no explicit time the job gets JARVIS's own estimate, at
-            # most the partition's MaxTime.
+            # With no explicit time the job gets JARVIS's measured estimate,
+            # at most the partition's MaxTime; MaxTime when nothing is measured.
             walltime = self._install_walltime(install_check,
                                               exclude=execution_root.name)
             self._install_walltime_last = walltime
-            if walltime.get("source") == "jarvis_estimate":
+            if walltime.get("source") != "explicit" and walltime.get("time"):
                 scheduler_spec["time"] = walltime["time"]
             install_job_shape = {
                 key: scheduler_spec.get(key)
@@ -1606,14 +1607,6 @@ class Pipeline:
             walltime = self._install_walltime(install_check,
                                               exclude=resolved_execution_id)
             _report_install_walltime(walltime)
-            if walltime.get("issues"):
-                from jarvis_cd.core.install_walltime import summary
-                from jarvis_cd.core.issues import JarvisIssueError
-
-                # Longer than the partition allows: the person chooses (a
-                # partition, or an explicit time); never a silent cut.
-                raise JarvisIssueError(walltime["issues"], exit_code=3,
-                                       document={"install_time": summary(walltime)})
         bound_plan = None
         if expect_plan_sha256 is not None:
             # The person's yes binds to one plan: refuse before anything is

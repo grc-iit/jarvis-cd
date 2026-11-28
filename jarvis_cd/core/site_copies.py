@@ -54,7 +54,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from jarvis_cd.util import stall as _stall
 from jarvis_cd.core.spack_install import (
-    MPI_PROVIDERS,
+    MPI_NAMES,
     Decisions,
     _utc_now,
     make_issue,
@@ -71,7 +71,7 @@ SWITCH_ENV = "JARVIS_SITE_COPIES"
 #: the resource graph section listing confirmed site copies
 GRAPH_SECTION = "software"
 _MAX_MODULES = 12
-_MPI_NAMES = set(MPI_PROVIDERS) | {"impi", "intelmpi", "intel-mpi", "mvapich", "mpt"}
+_MPI_NAMES = set(MPI_NAMES) | {"impi", "intelmpi", "intel-mpi", "mvapich", "mpt"}
 #: a Spack module name's trailing ``-<7 char hash>``
 _SPACK_HASH_SUFFIX = re.compile(r"^(?P<version>.+?)-(?P<hash>[a-z0-9]{7})$")
 _PREFIX_HASH = re.compile(r"-(?P<hash>[a-z2-7]{32})(?:/|$)")

@@ -1,9 +1,10 @@
 """Find-first Spack installation for Jarvis-CD pipelines.
 
-The planner resolves each package's ``install_query`` with ``spack spec -I``
-before building anything. Nodes that Spack already has (local ``[+]``,
-upstream ``[^]`` or external ``[e]``) are reused; only missing nodes are
-built. Choices JARVIS must not make silently (several installed MPIs, a
+The planner resolves each package's ``install_query`` with ``spack spec
+--json`` before building anything. Nodes that Spack already has (in its
+database, local or upstream, or external) are reused; only missing nodes are
+built. Every virtual edge of the concretized DAG (``mpi``, ``fftw-api``,
+``blas``, ...) is reported with the provider Spack picked. Choices JARVIS must not make silently (several installed MPIs, a
 variant conflict) become machine-readable issues in ``issues.jsonl`` and the
 run ends with :data:`DECISION_NEEDED_EXIT_CODE`, so a caller can ask a person
 and re-run with an ``answers.json``.
@@ -40,7 +41,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import IO, Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import IO, Any, Callable, Container, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import yaml
 
@@ -60,7 +61,9 @@ PROGRESS_SCHEMA = "jarvis.install.progress.v1"
 #: mode) an install before it can continue. Read ``issues.jsonl``.
 DECISION_NEEDED_EXIT_CODE = 3
 
-MPI_PROVIDERS = (
+#: MPI names for software Spack does not describe (module directories, conda
+#: and pip packages, PATH tools). Spack questions use its ``mpi`` virtual.
+MPI_NAMES = (
     "openmpi",
     "mpich",
     "mvapich2",
@@ -73,12 +76,7 @@ MPI_PROVIDERS = (
     "spectrum-mpi",
 )
 
-_STATUS = {"[+]": "installed", "[^]": "upstream", "[e]": "external", " - ": "missing"}
-_SPEC_LINE = re.compile(
-    r"^(?P<status>\[[+^e]\]| - )\s+(?P<hash>[a-z0-9]{7,32})\s+"
-    r"(?P<indent>\s*)(?P<caret>\^?)(?P<spec>[A-Za-z0-9].*?)\s*$"
-)
-_NAME = re.compile(r"[a-z0-9][a-z0-9_-]*")
+_HASH = re.compile(r"[a-z0-9]{32}")
 _FIND_LINE = re.compile(
     r"^(?P<name>[a-z0-9][a-z0-9_-]*)@(?P<version>\S+)\s+"
     r"(?P<hash>[a-z0-9]{32})\s+(?P<prefix>/\S.*?)"
@@ -850,13 +848,15 @@ class SpackRunner:
 
 @dataclass(frozen=True)
 class SpecNode:
-    """One node of a ``spack spec -I -l`` tree."""
+    """One node of a concretized DAG (``spack spec --json`` or ``spack.lock``)."""
 
     status: str
     hash: str
     name: str
     spec: str
-    depth: int
+    #: the virtuals (``mpi``, ``fftw-api``, ...) this node provides to a dependent
+    provides: Tuple[str, ...] = ()
+    version: str = ""
 
     @property
     def present(self) -> bool:
@@ -871,37 +871,90 @@ class SpecNode:
         }
 
 
-def parse_spec_tree(text: str) -> List[SpecNode]:
-    """Parse the concretized tree printed by ``spack spec -I -l``."""
-    lines = text.splitlines()
-    start = 0
-    for index, line in enumerate(lines):
-        if line.strip().lower() == "concretized":
-            start = index + 1
-    nodes: List[SpecNode] = []
-    seen: set[str] = set()
-    for line in lines[start:]:
-        match = _SPEC_LINE.match(line)
-        if match is None:
-            continue
-        spec = match.group("spec")
-        name_match = _NAME.match(spec)
-        if name_match is None:
-            continue
-        node_hash = match.group("hash")
-        if node_hash in seen:
-            continue
-        seen.add(node_hash)
-        nodes.append(
-            SpecNode(
-                status=_STATUS[match.group("status")],
-                hash=node_hash,
-                name=name_match.group(0),
-                spec=spec,
-                depth=0 if not match.group("caret") else 1 + len(match.group("indent")) // 4,
-            )
-        )
+def spec_documents(text: str) -> List[Dict[str, Any]]:
+    """The node dicts of every ``spack spec --json`` document in ``text``."""
+    decoder = json.JSONDecoder()
+    nodes: List[Dict[str, Any]] = []
+    index = text.find("{")
+    while 0 <= index < len(text):
+        try:
+            document, index = decoder.raw_decode(text, index)
+        except ValueError:
+            break
+        spec = document.get("spec") if isinstance(document, dict) else None
+        found = spec.get("nodes") if isinstance(spec, dict) else None
+        nodes.extend(node for node in found or [] if isinstance(node, dict))
+        index = text.find("{", index)
     return nodes
+
+
+def _node_spec(node: Mapping[str, Any], by_hash: Mapping[str, Mapping[str, Any]]) -> str:
+    """``name@version%compiler@version +variant key=value`` for one JSON node."""
+    text = f"{node.get('name')}@{node.get('version')}"
+    compiler = node.get("compiler")
+    if isinstance(compiler, Mapping) and compiler.get("name"):
+        text += f"%{compiler['name']}@{compiler.get('version')}"
+    else:
+        # Spack 1.0 records the compiler as the dependency providing ``c``.
+        for edge in node.get("dependencies") or []:
+            if "c" in ((edge.get("parameters") or {}).get("virtuals") or []):
+                dep = by_hash.get(str(edge.get("hash")), {})
+                text += f"%{dep.get('name', edge.get('name'))}@{dep.get('version')}"
+                break
+    for key, value in sorted((node.get("parameters") or {}).items()):
+        if isinstance(value, bool):
+            text += f" {'+' if value else '~'}{key}"
+        elif isinstance(value, str):
+            text += f" {key}={value}"
+        elif isinstance(value, list) and value:
+            text += f" {key}={','.join(str(item) for item in value)}"
+    return text
+
+
+def parse_spec_nodes(
+    nodes: Sequence[Mapping[str, Any]],
+    installed: Container[str] = (),
+    upstream: Container[str] = (),
+) -> List[SpecNode]:
+    """A concretized DAG, root first, with each node's status.
+
+    ``installed`` and ``upstream`` are the full hashes ``spack find`` lists
+    (all trees, and upstream trees); a node carrying ``external`` is an
+    external whatever the database says.
+    """
+    by_hash = {str(node.get("hash")): node for node in nodes}
+    provides: Dict[str, List[str]] = {}
+    for node in nodes:
+        for edge in node.get("dependencies") or []:
+            for virtual in (edge.get("parameters") or {}).get("virtuals") or []:
+                bucket = provides.setdefault(str(edge.get("hash")), [])
+                if virtual not in bucket:
+                    bucket.append(str(virtual))
+    result: List[SpecNode] = []
+    for node_hash, node in by_hash.items():
+        if not node_hash or not node.get("name"):
+            continue
+        status = (
+            "external" if node.get("external")
+            else "upstream" if node_hash in upstream
+            else "installed" if node_hash in installed
+            else "missing"
+        )
+        result.append(SpecNode(status, node_hash, str(node["name"]), _node_spec(node, by_hash),
+                               tuple(provides.get(node_hash, ())), str(node.get("version") or "")))
+    return result
+
+
+def spec_providers(nodes: Sequence[SpecNode]) -> List[Dict[str, Any]]:
+    """The provider Spack picked on every virtual edge, as typed evidence."""
+    return sorted(
+        (
+            {"virtual": virtual, "name": node.name, "version": node.version,
+             "hash": node.hash, "status": node.status}
+            for node in nodes for virtual in node.provides
+        ),
+        key=lambda item: (item["virtual"], item["name"], item["hash"]),
+    )
 
 
 def _bounded(text: str, limit: int = _MAX_ISSUE_TEXT) -> str:
@@ -3028,12 +3081,9 @@ def _node_is_version(node: "SpecNode", name: str, version: str) -> bool:
     return match is not None and match.group(1) == version
 
 
-def _query_pins_mpi(tokens: Sequence[str]) -> bool:
-    text = " ".join(tokens)
-    return any(
-        re.search(rf"\^\s*{re.escape(provider)}(?![a-z0-9_-])", text)
-        for provider in MPI_PROVIDERS
-    )
+def _query_pins(tokens: Sequence[str], name: str) -> bool:
+    """Whether the query names ``^name`` itself."""
+    return re.search(rf"\^\s*{re.escape(name)}(?![a-z0-9_-])", " ".join(tokens)) is not None
 
 
 class SpackPlanner:
@@ -3044,6 +3094,7 @@ class SpackPlanner:
         self.runner = runner or SpackRunner(context.log_stream)
         self.decisions = Decisions(context.decisions_path)  # type: ignore[arg-type]
         self._mpi_candidates: Optional[List[Dict[str, Any]]] = None
+        self._mpi_names: Optional[set[str]] = None
         #: the build host's usable compilers (``apply_build_compilers``)
         self.usable_compilers: List[Dict[str, Any]] = []
         #: ``[{spec, missing}]`` the build host cannot run, and that host
@@ -3119,17 +3170,14 @@ class SpackPlanner:
         if self._mpi_candidates is not None:
             return self._mpi_candidates
         by_prefix: Dict[str, Dict[str, Any]] = {}
-        # One unconstrained ``spack find``, filtered here: naming each
-        # provider asks Spack about MPIs the site does not have (each one an
-        # error, e.g. cray-mpich on a non-Cray site) and an unknown name
-        # fails the whole query.
-        completed = self.runner.run(["find", "--format", _MPI_FIND_FORMAT])
+        # ``spack find mpi`` answers with every installed provider of the virtual.
+        completed = self.runner.run(["find", "--format", _MPI_FIND_FORMAT, "mpi"])
         if completed.returncode != 0:
-            completed = self.runner.run(["find", "--format", _MPI_FIND_FORMAT_LEGACY])
+            completed = self.runner.run(["find", "--format", _MPI_FIND_FORMAT_LEGACY, "mpi"])
         if completed.returncode == 0:
             for line in (completed.stdout or "").splitlines():
                 match = _FIND_LINE.match(line.strip())
-                if match is None or match.group("name") not in MPI_PROVIDERS:
+                if match is None:
                     continue
                 prefix = match.group("prefix").strip()
                 short = match.group("hash")[:7]
@@ -3224,7 +3272,7 @@ class SpackPlanner:
         if not isinstance(packages, dict):
             return []
         extra: List[Dict[str, Any]] = []
-        for provider in MPI_PROVIDERS:
+        for provider in sorted(self.mpi_names()):
             settings = packages.get(provider)
             if not isinstance(settings, dict):
                 continue
@@ -3299,8 +3347,38 @@ class SpackPlanner:
                 )
         return extra
 
+    def mpi_names(self) -> set[str]:
+        """The packages that provide ``mpi`` (``spack providers mpi``)."""
+        if self._mpi_names is None:
+            completed = self.runner.run(["providers", "mpi"])
+            names = set()
+            if completed.returncode == 0:
+                for token in (completed.stdout or "").split():
+                    match = re.match(r"[a-z0-9][a-z0-9_-]*", token)
+                    if match is not None and not token.endswith(":"):
+                        names.add(match.group(0))
+            self._mpi_names = names
+        return self._mpi_names
+
     def _spec(self, tokens: Sequence[str]) -> subprocess.CompletedProcess[str]:
-        return self.runner.run(["spec", "-I", "-l", *tokens])
+        return self.runner.run(["spec", "--json", *tokens])
+
+    def _database(self) -> tuple[set[str], set[str]]:
+        """Full hashes ``spack find`` lists: every tree, and upstream trees."""
+        found = []
+        for extra in ([], ["--install-tree", "upstream"]):
+            completed = self.runner.run(["find", *extra, "--format", "{hash}"])
+            text = completed.stdout if completed.returncode == 0 else ""
+            found.append({word for word in (text or "").split() if _HASH.fullmatch(word)})
+        return found[0], found[1]
+
+    def spec_nodes(self, text: str) -> List[SpecNode]:
+        """The nodes of ``spack spec --json`` output, with database status."""
+        documents = spec_documents(text)
+        if not documents:
+            return []
+        installed, upstream = self._database()
+        return parse_spec_nodes(documents, installed, upstream)
 
     # -- per package -------------------------------------------------------
 
@@ -3330,10 +3408,8 @@ class SpackPlanner:
         nodes = self._spec_nodes(package, tokens, entry)
         if nodes is None:
             return entry
-        mpi_nodes = [node for node in nodes if node.name in MPI_PROVIDERS]
-        # A spec whose root is itself an MPI names its provider; there is no choice to ask.
-        root_is_mpi = nodes[0].name in MPI_PROVIDERS
-        if mpi_nodes and not root_is_mpi and not _query_pins_mpi(tokens):
+        mpi_nodes = [node for node in nodes if "mpi" in node.provides]
+        if mpi_nodes and not _query_pins(tokens, mpi_nodes[0].name):
             pin, source = self._choose_mpi(package, mpi_nodes[0])
             if pin is None and source.startswith("needs_decision:"):
                 entry["status"] = "needs_decision"
@@ -3346,13 +3422,16 @@ class SpackPlanner:
                 nodes = self._spec_nodes(package, tokens, entry)
                 if nodes is None:
                     return entry
-            mpi_node = next(node for node in nodes if node.name in MPI_PROVIDERS)
+            mpi_node = next(node for node in nodes if "mpi" in node.provides)
             entry["mpi"] = self._mpi_entry(mpi_node, source)
         elif mpi_nodes:
             entry["mpi"] = self._mpi_entry(mpi_nodes[0], "query")
+        elif nodes[0].name in self.mpi_names():
+            # A spec whose root is itself an MPI names its provider; there is no choice to ask.
+            entry["mpi"] = self._mpi_entry(nodes[0], "query")
         self._fill_nodes(entry, nodes, tokens)
         issue = self.compiler_guard(
-            nodes, origin="spack spec", evidence=[f"spack spec -I -l {shlex.join(tokens)}"]
+            nodes, origin="spack spec", evidence=[f"spack spec --json {shlex.join(tokens)}"]
         )
         if issue is not None:
             self.context.raise_issue(issue)
@@ -3393,6 +3472,7 @@ class SpackPlanner:
                 "nodes_total": len(nodes),
                 "nodes_by_status": counts,
                 "missing": [node.to_dict() for node in missing],
+                "providers": spec_providers(nodes),
                 "status": "satisfied" if not missing else "missing",
             }
         )
@@ -3441,7 +3521,7 @@ class SpackPlanner:
                 "(MPI providers found: "
                 + ", ".join(sorted({str(c["name"]) for c in candidates})) + ")",
                 "spack config get packages (MPI externals)",
-                f"spack spec -I -l (concretizer picked {concretized.name}/{concretized.hash})",
+                f"spack spec --json (concretizer picked {concretized.name}/{concretized.hash[:7]})",
             ],
             answerable=True,
             identity_keys=keys,
@@ -3578,10 +3658,10 @@ class SpackPlanner:
         completed = self._spec(tokens)
         output = (completed.stdout or "") + (completed.stderr or "")
         if completed.returncode == 0:
-            nodes = parse_spec_tree(completed.stdout)
+            nodes = self.spec_nodes(completed.stdout or "")
             if nodes:
                 return nodes
-            output = "spack spec printed no concretized tree\n" + output
+            output = "spack spec --json printed no concretized nodes\n" + output
         issue = spack_failure(
             self.context, output, stage="spec", packages=[package],
             command=self.runner.commands[-1] if self.runner.commands else None,
@@ -3599,6 +3679,10 @@ class SpackPlanner:
         missing_before = [item["name"] for item in entry["missing"]]
         missing_items = list(entry["missing"])
         completed = self.runner.run(["install", "--fail-fast", *tokens], stream=True)
+        # Spack keeps what it built before a failure, and its times count too.
+        measured = _node_install_seconds(self.runner, missing_items)
+        if measured:
+            entry["node_build_seconds"] = measured
         if completed.returncode != 0:
             entry["status"] = "failed"
             entry["error"] = _error_excerpt(completed.stdout or "")
@@ -3613,16 +3697,13 @@ class SpackPlanner:
             entry["issue_id"] = issue["issue_id"]
             return entry
         verify = self._spec(tokens)
-        nodes = parse_spec_tree(verify.stdout) if verify.returncode == 0 else []
+        nodes = self.spec_nodes(verify.stdout or "") if verify.returncode == 0 else []
         if not nodes:
             entry["status"] = "failed"
             entry["error"] = "could not re-verify the installed spec"
             return entry
         self._fill_nodes(entry, nodes, tokens)
         entry["built"] = missing_before
-        measured = _node_install_seconds(self.runner, missing_items)
-        if measured:
-            entry["node_build_seconds"] = measured
         if entry["status"] == "satisfied":
             entry["status"] = "installed"
         else:
@@ -3641,7 +3722,7 @@ class SpackPlanner:
         for entry in entries:
             mpi = entry.get("mpi")
             if isinstance(mpi, dict) and not mpi.get("prefix"):
-                node = SpecNode("installed", mpi["hash"], mpi["name"], mpi["name"], 1)
+                node = SpecNode("installed", mpi["hash"], mpi["name"], mpi["name"])
                 entry["mpi"] = self._mpi_entry(node, mpi.get("source", "query"))
 
 
@@ -3830,6 +3911,19 @@ class SpackEnvironment:
             return None
         return [{"hash": root["hash"], "spec": str(root.get("spec", ""))} for root in roots]
 
+    def lock_nodes(self) -> List[Dict[str, Any]]:
+        """The lock's concrete specs as ``spack spec --json`` nodes, roots first."""
+        try:
+            document = json.loads(self.lock_path.read_text(encoding="utf-8"))
+            specs = document["concrete_specs"]
+            roots = [str(root["hash"]) for root in document["roots"]]
+        except (OSError, ValueError, KeyError, TypeError):
+            return []
+        if not isinstance(specs, dict):
+            return []
+        order = roots + [key for key in specs if key not in roots]
+        return [{**specs[key], "hash": key} for key in order if isinstance(specs.get(key), dict)]
+
     def current_roots(self, specs: Sequence[str]) -> Optional[List[Dict[str, str]]]:
         """Lock roots when the lock was concretized from exactly ``specs``
         (and this environment's recipe repos and compiler sections; its
@@ -4007,7 +4101,7 @@ def _sync_spack_environment_locked(
         still_missing = []
         for package, entry in missing:
             verify = planner._spec(shlex.split(entry["spec"]))
-            nodes = parse_spec_tree(verify.stdout) if verify.returncode == 0 else []
+            nodes = planner.spec_nodes(verify.stdout or "") if verify.returncode == 0 else []
             if nodes:
                 planner._fill_nodes(entry, nodes, shlex.split(entry["spec"]))
             if entry["status"] == "missing":
@@ -4029,10 +4123,10 @@ def _sync_spack_environment_locked(
         stage = "concretize"
         concretized: List[SpecNode] = []
         if completed.returncode == 0:
-            concretized = parse_spec_tree(completed.stdout or "")
+            concretized = parse_spec_nodes(environment.lock_nodes(), *planner._database())
             guard = planner.compiler_guard(
                 concretized, origin="spack concretize",
-                evidence=[f"spack -e {env_dir} concretize -f"],
+                evidence=[f"spack -e {env_dir} concretize -f", str(environment.lock_path)],
             )
             if guard is not None:
                 # Nothing is built with a compiler the build host cannot run.
@@ -4054,10 +4148,18 @@ def _sync_spack_environment_locked(
                 exit_code=completed.returncode, usable_compilers=planner.usable_compilers,
             )
             context.raise_issue(issue)
+            node_seconds = _node_install_seconds(
+                planner.runner, [item for _p, e in failing for item in e.get("missing") or []]
+            ) if stage == "install" else {}
             for _package, entry in failing:
                 entry["status"] = "needs_decision" if issue["answerable"] else "failed"
                 entry["error"] = f"spack -e {env_dir}: {error}"
                 entry["issue_id"] = issue["issue_id"]
+                measured = {item["name"]: node_seconds[item["name"]]
+                            for item in entry.get("missing") or []
+                            if item.get("name") in node_seconds}
+                if measured:
+                    entry["node_build_seconds"] = measured
             record["spack_env"] = environment.describe(None)
             return
         roots = environment.current_roots(specs)
@@ -4069,7 +4171,7 @@ def _sync_spack_environment_locked(
         for package, entry in missing:
             missing_before = [item["name"] for item in entry["missing"]]
             verify = planner._spec(shlex.split(entry["spec"]))
-            nodes = parse_spec_tree(verify.stdout) if verify.returncode == 0 else []
+            nodes = planner.spec_nodes(verify.stdout or "") if verify.returncode == 0 else []
             if not nodes:
                 entry["status"] = "failed"
                 entry["error"] = "could not re-verify the installed spec"

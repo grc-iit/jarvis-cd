@@ -7,10 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from jarvis_cd.core import install_placement as placement
 from jarvis_cd.core import install_walltime as walltime
-from jarvis_cd.core.issues import JarvisIssueError
-
 from jarvis_cd.core.pipeline import Pipeline
 
 PARAVIEW = {"pkg_id": "pv", "pkg_type": "builtin.paraview",
@@ -36,8 +33,7 @@ def site(tmp_path, monkeypatch):
     decisions = tmp_path / "install" / "decisions.yaml"
     decisions.parent.mkdir(parents=True)
     monkeypatch.setenv("JARVIS_SPACK_DECISIONS", str(decisions))
-    for name in ("JARVIS_INSTALL_STARTUP_SECONDS", "JARVIS_INSTALL_TIME_FACTOR",
-                 "JARVIS_INSTALL_UNKNOWN_BUILD_SECONDS"):
+    for name in ("JARVIS_INSTALL_STARTUP_SECONDS", "JARVIS_INSTALL_TIME_FACTOR"):
         monkeypatch.delenv(name, raising=False)
 
     def costs(packages):
@@ -64,6 +60,12 @@ def _resolve(ppl, record, *, partitions=PARTITIONS, **kwargs):
             "partition", None), **kwargs)
 
 
+def _measured(nodes, seconds, **packages):
+    """Costs: each node built here in ``seconds``, plus per-package fields."""
+    return {**{node["name"]: {"node_build_seconds": seconds} for node in nodes},
+            **packages}
+
+
 def _record(missing):
     return {"checked_at": "t", "where": {"host": "comp-1"},
             "packages": {pkg_id: {"status": "missing", "missing": nodes}
@@ -71,84 +73,78 @@ def _record(missing):
 
 
 def test_time_is_startup_plus_estimate_times_factor(site):
-    # ParaView: a prior 5 h build recorded at this site, 62 nodes missing
-    site.costs({"paraview": {"build_seconds": 18000, "build_host": "comp-2"}})
-    document = _resolve(_ppl([PARAVIEW]), _record({"pv": _missing(62)}),
+    # ParaView: 3 missing nodes, each built here before, and a timed check
+    site.costs(_measured(_missing(3), 6000, paraview={"check_seconds": 600}))
+    document = _resolve(_ppl([PARAVIEW]), _record({"pv": _missing(3)}),
                         partition="long")
     assert document["source"] == "jarvis_estimate"
-    # (600 startup + 600 known-heavy check + 18000 build) x 1.5 = 8 h
+    # (600 startup + 600 check + 3 x 6000 build) x 1.5 = 8 h
     assert document["needed_seconds"] == 19200
     assert document["time"] == "08:00:00"
     assert document["capped_at_max_time"] is False
-    assert document["issues"] == []
+    assert document["may_take_more_than_one_job"] is False
+    assert "note" not in document and "issues" not in document
     assert document["partition_limit"]["max_time"] == "2-00:00:00"
 
 
-def test_estimate_past_max_time_is_a_typed_issue_not_a_cut(site):
-    site.costs({"paraview": {"build_seconds": 18000}})
-    document = _resolve(_ppl([PARAVIEW]), _record({"pv": _missing(62)}))
+def test_measured_estimate_past_max_time_is_capped_and_may_take_more_jobs(site):
+    site.costs(_measured(_missing(3), 6000, paraview={"check_seconds": 600}))
+    document = _resolve(_ppl([PARAVIEW]), _record({"pv": _missing(3)}))
     assert document["partition_limit"]["partition"] == "compute"  # slurm default
     assert document["time"] == "04:00:00" and document["capped_at_max_time"]
-    [issue] = document["issues"]
-    assert issue["kind"] == "install_time_exceeds_partition"
-    assert issue["field"] == "scheduler.install"
-    sets = [candidate.get("set") for candidate in issue["candidates"]]
-    assert {"scheduler.install.partition": "long"} in sets
-    assert {"scheduler.install.time": "04:00:00"} in sets
+    assert document["may_take_more_than_one_job"] is True
+    assert "more than one job" in document["note"]
+    assert walltime.summary(document)["note"] == document["note"]
 
 
-def test_safety_factor_alone_is_capped_without_an_issue(site):
-    site.costs({"paraview": {"build_seconds": 10800}})
+def test_safety_factor_alone_is_capped_but_fits_one_job(site):
+    site.costs(_measured(_missing(5), 2160, paraview={"check_seconds": 600}))
     document = _resolve(_ppl([PARAVIEW]), _record({"pv": _missing(5)}))
-    # needed 12000 s fits 4 h; 12000 x 1.5 does not: capped, no question
+    # needed 12000 s fits 4 h; 12000 x 1.5 does not: capped, one job
     assert document["needed_seconds"] == 12000
     assert document["time"] == "04:00:00" and document["capped_at_max_time"]
-    assert document["issues"] == []
+    assert document["may_take_more_than_one_job"] is False
 
 
-def test_node_count_estimate_and_installed_packages(site):
-    record = _record({"tool": _missing(10)})
+def test_any_unmeasured_node_gives_the_partition_max_time(site):
+    nodes = _missing(10)
+    site.costs({**_measured(nodes[:9], 60), "mytool": {"check_seconds": 60},
+                "paraview": {"check_seconds": 60}})
+    record = _record({"tool": nodes})
     record["packages"]["pv"] = {"status": "installed"}
     document = _resolve(_ppl([PARAVIEW, OTHER]), record, partition="long")
     builds = {item["pkg_id"]: item for item in document["estimate"]["packages"]
               if item["phase"] == "build"}
     assert builds["pv"]["seconds"] == 0
-    assert builds["tool"]["seconds"] == 10 * placement.NODE_BUILD_SECONDS
-    # checks: paraview 600 (known heavy) + mytool 60
-    assert document["needed_seconds"] == 600 + 600 + 60 + 10 * placement.NODE_BUILD_SECONDS
+    assert builds["tool"]["seconds"] is None
+    assert builds["tool"]["unmeasured"] == ["n9"]
+    assert builds["tool"]["basis"].startswith("unmeasured: 1 of 10")
+    assert document["estimate"]["unknown"] == ["tool"]
+    assert document["source"] == "partition_max_time"
+    assert document["time"] == "2-00:00:00" and document["time_seconds"] == 2 * 86400
+    assert document["may_take_more_than_one_job"] is True
+    assert "tool" in document["why"] and "more than one job" in document["note"]
 
 
 def test_explicit_time_wins(site):
     document = _resolve(_ppl([PARAVIEW]), None, explicit_time="01:00:00")
     assert document == {"schema_version": walltime.WALLTIME_SCHEMA,
-                        "source": "explicit", "time": "01:00:00", "issues": []}
+                        "source": "explicit", "time": "01:00:00"}
 
 
-def test_unknown_estimate_gets_a_default_allowance_never_the_partition_max(site):
-    # never built here, not known-heavy, no check record: the time still
-    # comes from an estimate, so Slurm never applies DefaultTime / MaxTime
-    document = _resolve(_ppl([OTHER]), None, partition="long")
-    assert document["source"] == "jarvis_estimate"
-    assert document["estimate"]["allowance"] == ["tool"]
-    # (600 startup + 60 check + 3600 allowance) x 1.5 = 6390 s, up to 5 min
-    assert document["needed_seconds"] == 600 + 60 + walltime.UNKNOWN_BUILD_SECONDS
-    assert document["time"] == "01:50:00" and not document["capped_at_max_time"]
-    assert "tool" in document["why"] and "+check +submit" in document["why"]
+def test_unmeasured_with_no_max_time_leaves_the_scheduler_limit(site):
+    unlimited = [{**PARTITIONS[0], "max_time": "UNLIMITED", "max_time_s": None}]
+    document = _resolve(_ppl([OTHER]), None, partitions=unlimited)
+    assert document["source"] == "scheduler_limit"
+    assert document["time"] is None
+    assert document["may_take_more_than_one_job"] is True
     [build] = [item for item in document["estimate"]["packages"]
                if item["phase"] == "build"]
-    assert build["allowance"] and "no_record" in build["basis"]
-    assert walltime.summary(document)["estimate"]["allowance"] == ["tool"]
-    assert document["issues"] == []
-
-
-def test_unknown_build_allowance_is_configurable(site, monkeypatch):
-    monkeypatch.setenv("JARVIS_INSTALL_UNKNOWN_BUILD_SECONDS", "600")
-    document = _resolve(_ppl([OTHER]), None, partition="long")
-    assert document["needed_seconds"] == 600 + 60 + 600
-    assert document["time"] == "00:35:00"
+    assert build["seconds"] is None and build["basis"].startswith("unmeasured:")
 
 
 def test_record_stale_only_by_decisions_still_sizes_the_build(site):
+    site.costs(_measured(_missing(9), 60, mytool={"check_seconds": 60}))
     # answers recorded after the check (often to its own questions)
     with patch("jarvis_cd.core.installer.Installer.get_installers",
                return_value={"spack": [OTHER]}), \
@@ -161,7 +157,6 @@ def test_record_stale_only_by_decisions_still_sizes_the_build(site):
     assert read.call_args.kwargs == {"for_estimate": True}
     record = document["estimate"]["check_record"]
     assert record["used"] and record["stale"] == "inputs_changed: decisions"
-    assert document["estimate"]["allowance"] == []
     # (600 + 60 + 9 x 60) x 1.5 = 1800 s
     assert document["time"] == "00:30:00"
 
@@ -249,6 +244,7 @@ def test_packages_digest_keeps_the_chosen_method_not_its_why(site):
     assert _packages_digest(other) != _packages_digest(login)
 
 def test_check_job_uses_check_estimates_only(site):
+    site.costs({"mytool": {"check_seconds": 60}})
     document = _resolve(_ppl([OTHER]), None, install_check=True)
     assert document["needed_seconds"] == 600 + 60
     assert document["time"] == "00:20:00"  # 990 s, rounded up to 5 min
@@ -285,33 +281,18 @@ def test_resubmit_after_timeout_reports_built_nodes_and_counts_the_rest(site):
     assert len(previous["already_built"]) == 20
     [build] = [item for item in document["estimate"]["packages"]
                if item["phase"] == "build"]
-    assert build["already_built"] == 20 and \
-        build["seconds"] == 42 * placement.NODE_BUILD_SECONDS
+    assert build["already_built"] == 20 and build["seconds"] is None
+    assert len(build["unmeasured"]) == 42
     summary = walltime.summary(document)
     assert len(summary["already_built"]) == 20
-    assert summary["source"] == "jarvis_estimate"
-
-
-def test_prior_build_time_is_scaled_by_what_is_left(site):
-    site.costs({"mytool": {"build_seconds": 6000}})
-    missing = _missing(10)
-    with patch("jarvis_cd.core.installer.Installer.get_installers",
-               return_value={"spack": [OTHER]}), \
-            patch("jarvis_cd.core.installer.read_install_check",
-                  return_value=(_record({"tool": missing}), "")):
-        estimate = walltime.install_estimate(
-            _ppl([OTHER]), install_check=False,
-            built_hashes=[node["hash"] for node in missing[:4]])
-    [build] = [item for item in estimate["packages"] if item["phase"] == "build"]
-    assert build["seconds"] == 3600
+    assert summary["source"] == "partition_max_time"
 
 
 def test_measured_nodes_estimate_what_is_left(site):
-    # a whole prior build plus Spack's per-node times: the nodes still
-    # missing are summed, not the whole build scaled
+    # Spack's per-node times: only the nodes still missing are summed, and a
+    # whole prior build of the package does not count
     missing = _missing(10)
-    site.costs({"mytool": {"build_seconds": 6000},
-                "n0": {"node_build_seconds": 3000}, "n5": {"node_build_seconds": 50}})
+    site.costs({"mytool": {"build_seconds": 6000}, **_measured(missing[4:], 50)})
     with patch("jarvis_cd.core.installer.Installer.get_installers",
                return_value={"spack": [OTHER]}), \
             patch("jarvis_cd.core.installer.read_install_check",
@@ -320,8 +301,9 @@ def test_measured_nodes_estimate_what_is_left(site):
             _ppl([OTHER]), install_check=False,
             built_hashes=[node["hash"] for node in missing[:4]])
     [build] = [item for item in estimate["packages"] if item["phase"] == "build"]
-    assert build["seconds"] == 50 + 5 * placement.NODE_BUILD_SECONDS
-    assert "1 of 6 missing Spack node(s) built before" in build["basis"]
+    assert build["seconds"] == 6 * 50
+    assert "6 missing Spack node(s), each built before" in build["basis"]
+    assert "4 of 10 missing node(s) already built" in build["basis"]
 
 
 def test_format_and_log_parsing(tmp_path):
@@ -407,15 +389,13 @@ def test_install_job_gets_the_estimate_and_explicit_time_wins(tmp_path, monkeypa
         assert run_spec["time"] == "2-00:00:00"
 
 
-def test_submit_refuses_an_install_longer_than_max_time(tmp_path, monkeypatch):
+def test_an_install_longer_than_max_time_is_submitted_at_max_time(tmp_path, monkeypatch):
     monkeypatch.setenv("JARVIS_INSTALL_STARTUP_SECONDS", str(5 * 3600))
     pipeline = _real_pipeline(tmp_path)
-    with patch.object(walltime, "slurm_partitions", return_value=PARTITIONS), \
-            pytest.raises(JarvisIssueError) as refused:
-        pipeline.submit(submit=False, execution_id="inst-1", action="install")
-    assert refused.value.exit_code == 3
-    assert refused.value.issues[0]["kind"] == "install_time_exceeds_partition"
-    assert refused.value.document["install_time"]["partition_limit"][
-        "partition"] == "compute"
-    executions = tmp_path / "shared" / "example" / "executions"
-    assert not (executions / "inst-1").exists()
+    root = tmp_path / "shared" / "example" / "executions" / "e1"
+    with patch.object(walltime, "slurm_partitions", return_value=PARTITIONS):
+        spec, shape = pipeline._submission_scheduler_spec(root, "install", False)
+    assert spec["time"] == "04:00:00"
+    estimate = shape["time_estimate"]
+    assert estimate["capped_at_max_time"] and estimate["may_take_more_than_one_job"]
+    assert "more than one job" in estimate["note"]

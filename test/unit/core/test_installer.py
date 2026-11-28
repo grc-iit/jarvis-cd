@@ -159,18 +159,31 @@ class TestAggregateQueries(unittest.TestCase):
         self.assertEqual(Installer._aggregate_queries([empty]), [])
 
 
-_SPEC_ALL_PRESENT = (
-    "[+]  aaaaaaa  lammps@2023%gcc@11 arch=linux\n"
-    "[^]  bbbbbbb      ^fftw@3.3%gcc@11 arch=linux\n"
-)
-_SPEC_ONE_MISSING = (
-    "[+]  bbbbbbb  fftw@3.3%gcc@11 arch=linux\n"
-    " -   ccccccc  ior@3.3%gcc@11 arch=linux\n"
-)
-_SPEC_WITH_MPI = (
-    " -   ddddddd  xcompact3d@4%gcc@11 arch=linux\n"
-    "[^]  eeeeeee      ^openmpi@5.0.5%gcc@11 arch=linux\n"
-)
+def _spec(*nodes):
+    """``spack spec --json`` for ``(name@version, hash letter, status,
+    virtuals)`` rows, root first; the root depends on every other row."""
+    import json
+    rows = [{'name': spec.split('@')[0], 'version': spec.split('@')[1],
+             'hash': letter * 32, 'status': status, 'virtuals': list(virtuals)}
+            for spec, letter, status, *virtuals in nodes]
+    documents = [
+        {'name': row['name'], 'version': row['version'], 'hash': row['hash'],
+         'compiler': {'name': 'gcc', 'version': '11'}, 'parameters': {},
+         'dependencies': [
+             {'name': dep['name'], 'hash': dep['hash'],
+              'parameters': {'deptypes': ['link'], 'virtuals': dep['virtuals']}}
+             for dep in (rows[1:] if index == 0 else [])]}
+        for index, row in enumerate(rows)]
+    return {'json': json.dumps({'spec': {'_meta': {}, 'nodes': documents}}),
+            'installed': {r['hash'] for r in rows if r['status'] != 'missing'},
+            'upstream': {r['hash'] for r in rows if r['status'] == 'upstream'}}
+
+
+_SPEC_ALL_PRESENT = _spec(('lammps@2023', 'a', 'installed'),
+                          ('fftw@3.3', 'b', 'upstream', 'fftw-api'))
+_SPEC_ONE_MISSING = _spec(('ior@3.3', 'c', 'missing'), ('fftw@3.3', 'b', 'installed'))
+_SPEC_WITH_MPI = _spec(('xcompact3d@4', 'd', 'missing'),
+                       ('openmpi@5.0.5', 'e', 'upstream', 'mpi'))
 
 
 class _FakeSpack:
@@ -189,21 +202,29 @@ class _FakeSpack:
         self.calls.append(arguments)
         out = ''
         rc = 0
-        if arguments[:1] == ['spec']:
-            key = ' '.join(arguments[3:])
-            out = self.specs.get(key, '')
-            if self.installed:
-                out = out.replace(' -  ', '[+] ')
+        if arguments[:2] == ['spec', '--json']:
+            out = self.specs.get(' '.join(arguments[2:]), {}).get('json', '')
+        elif arguments[:1] == ['find'] and '{hash}' in arguments:
+            tree = 'upstream' if '--install-tree' in arguments else 'installed'
+            hashes = set().union(*(spec[tree] for spec in self.specs.values()))
+            if self.installed and tree == 'installed':
+                hashes |= {spec_hash for spec in self.specs.values()
+                           for spec_hash in json_hashes(spec['json'])}
+            out = '\n'.join(sorted(hashes))
         elif arguments[:1] == ['find']:
-            if '{' in arguments[-1]:
-                out = ''.join(self.find.values())
-            else:
-                out = self.find.get(arguments[-1], '')
+            out = ''.join(self.find.values())
             rc = 0 if out else 1
+        elif arguments[:1] == ['providers']:
+            out = 'mpich\nopenmpi\n'
         elif arguments[:1] == ['install']:
             rc = self.install_rc
             self.installed = rc == 0
         return subprocess.CompletedProcess(arguments, rc, out, '')
+
+
+def json_hashes(text):
+    import json
+    return [node['hash'] for node in json.loads(text)['spec']['nodes']]
 
 
 class TestSpackInstaller(unittest.TestCase):
@@ -251,7 +272,7 @@ class TestSpackInstaller(unittest.TestCase):
         self.assertTrue(report['satisfied'])
         self.assertFalse(any(c[0] == 'install' for c in fake.calls))
         em.return_value.capture_spack_environment.assert_called_once_with(
-            ['/aaaaaaa'], config_scopes=())
+            ['/' + 'a' * 32], config_scopes=())
         self.assertEqual(ppl.env['V'], '1')
 
     def test_installs_only_missing_spec(self):
@@ -279,8 +300,8 @@ class TestSpackInstaller(unittest.TestCase):
         }
         specs = {
             'xcompact3d': _SPEC_WITH_MPI,
-            'xcompact3d ^mpich/fffffff': _SPEC_WITH_MPI.replace(
-                'openmpi@5.0.5', 'mpich@4.1.1'),
+            'xcompact3d ^mpich/fffffff': _spec(('xcompact3d@4', 'd', 'missing'),
+                                               ('mpich@4.1.1', 'f', 'upstream', 'mpi')),
         }
         needed, _, _ = self._run(_FakeSpack(specs, find),
                                  [pkg('spack', 'xcompact3d')])
@@ -301,11 +322,10 @@ class TestSpackInstaller(unittest.TestCase):
         with open(self.context.decisions_path) as stream:
             self.assertIn('^mpich/fffffff', stream.read())
 
-    def test_mpi_discovery_asks_spack_only_once_and_names_no_provider(self):
-        from jarvis_cd.core.spack_install import MPI_PROVIDERS, SpackPlanner, SpackRunner
+    def test_mpi_discovery_asks_spack_for_the_mpi_virtual_once(self):
+        from jarvis_cd.core.spack_install import SpackPlanner, SpackRunner
         fake = _FakeSpack({}, {
             'openmpi': 'openmpi@5.0.5 ' + 'e' * 32 + ' /site/openmpi external=\n',
-            'zlib': 'zlib@1.3 ' + 'a' * 32 + ' /site/zlib external=\n',
         })
         with mock.patch('jarvis_cd.core.spack_install.SpackRunner.run',
                         autospec=True, side_effect=fake):
@@ -314,7 +334,22 @@ class TestSpackInstaller(unittest.TestCase):
         self.assertEqual([c['name'] for c in candidates], ['openmpi'])
         finds = [c for c in fake.calls if c[0] == 'find']
         self.assertEqual(len(finds), 1)
-        self.assertFalse(set(finds[0]) & set(MPI_PROVIDERS))
+        self.assertEqual(finds[0][-1], 'mpi')
+
+    def test_check_reports_the_provider_of_every_virtual_edge(self):
+        from jarvis_cd.core.spack_install import InstallDecisionNeeded
+        fake = _FakeSpack({'ior': _spec(('ior@3.3', 'c', 'missing'),
+                                        ('fftw@2.1.5', 'b', 'installed', 'fftw-api'),
+                                        ('openmpi@5.0.5', 'e', 'upstream', 'mpi'))})
+        needed, _, _ = self._run(fake, [pkg('spack', 'ior')], mode='check')
+        self.assertIsInstance(needed, InstallDecisionNeeded)
+        entry = needed.report['installers']['spack']['packages']['p']
+        self.assertEqual(entry['providers'], [
+            {'virtual': 'fftw-api', 'name': 'fftw', 'version': '2.1.5',
+             'hash': 'b' * 32, 'status': 'installed'},
+            {'virtual': 'mpi', 'name': 'openmpi', 'version': '5.0.5',
+             'hash': 'e' * 32, 'status': 'upstream'}])
+        self.assertEqual(entry['mpi']['name'], 'openmpi')
 
 
 class TestInstallAll(unittest.TestCase):
@@ -339,7 +374,11 @@ class TestInstallAll(unittest.TestCase):
 
         def fake_spack(runner, arguments, stream=False):
             spack_calls.append(list(arguments))
-            out = _SPEC_ALL_PRESENT if arguments[0] == 'spec' else ''
+            out = ''
+            if arguments[0] == 'spec':
+                out = _SPEC_ALL_PRESENT['json']
+            elif arguments[0] == 'find' and '--install-tree' not in arguments:
+                out = '\n'.join(_SPEC_ALL_PRESENT['installed'])
             return subprocess.CompletedProcess(arguments, 0, out, '')
 
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(
@@ -372,8 +411,8 @@ class TestInstallAll(unittest.TestCase):
         # spack only reads its config and resolves (everything is present)
         self.assertTrue(all(c[:2] == ['config', 'get']
                             for c in spack_calls if c[0] == 'config'))
-        self.assertEqual([c for c in spack_calls if c[0] != 'config'],
-                         [['spec', '-I', '-l', 'ior']])
+        self.assertEqual([c for c in spack_calls if c[0] == 'spec'],
+                         [['spec', '--json', 'ior']])
         self.assertEqual(report['installers']['spack']['status'], 'satisfied')
 
 

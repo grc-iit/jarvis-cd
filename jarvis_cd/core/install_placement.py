@@ -2,7 +2,7 @@
 
 On the submitting host of a scheduled pipeline (usually a login node) JARVIS
 answers a check from the recorded ``install-check.json``. When no record
-matches, the full check (``spack spec -I -l``) or a build has to run
+matches, the full check (``spack spec --json``) or a build has to run
 somewhere. That is a per-site, and possibly per-package, choice the person
 makes, never a hard-coded cluster rule:
 
@@ -60,29 +60,6 @@ SAMPLE_ENV = "JARVIS_LOGIN_HOST_SAMPLE"
 #: caller default for a phase when neither a package nor a site answer exists
 DEFAULT_ENV = {"check": "JARVIS_INSTALL_PLACEMENT_CHECK",
                "build": "JARVIS_INSTALL_PLACEMENT_BUILD"}
-
-#: packages known to have large dependency graphs or long builds anywhere
-KNOWN_HEAVY = frozenset({
-    "paraview", "vtk", "vtk-m", "qt", "qt-base", "qt-declarative", "llvm", "gcc",
-    "trilinos", "dealii", "openfoam", "openfoam-org", "py-torch", "py-tensorflow",
-    "py-jax", "jaxlib", "root", "rust", "mesa", "boost", "petsc", "visit",
-    "ecp-data-vis-sdk", "kokkos-kernels", "hipblas", "rocblas", "cuda", "nvhpc",
-})
-
-#: heuristic seconds per missing node (ordinary, known-heavy), used only for
-#: nodes this site has not built before. Calibrated on a measured ParaView
-#: 5.13.1 build (62 nodes on one compute node, Spack ``install_times.json``):
-#: 59 ordinary nodes averaged 34 s (max 249 s); llvm 3276 s, paraview
-#: 2698 s, mesa 116 s.
-NODE_BUILD_SECONDS = 60
-HEAVY_NODE_BUILD_SECONDS = 1800
-#: known-heavy nodes whose build is far from the known-heavy default
-HEAVY_BUILD_SECONDS = {"llvm": 3600, "gcc": 3600, "paraview": 3000, "mesa": 600}
-#: a known-heavy package with neither a check nor a prior build here
-HEAVY_PACKAGE_BUILD_SECONDS = 4 * 3600
-DEFAULT_CHECK_SECONDS = 60
-HEAVY_CHECK_SECONDS = 600
-
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
@@ -453,13 +430,6 @@ def record_costs(path: Path, updates: Mapping[str, Mapping[str, Any]]) -> None:
         print(f"install placement: costs not recorded ({exc})")
 
 
-def node_build_seconds(node: str) -> int:
-    """Heuristic build seconds of one Spack node never built at this site."""
-    if node in HEAVY_BUILD_SECONDS:
-        return HEAVY_BUILD_SECONDS[node]
-    return HEAVY_NODE_BUILD_SECONDS if node in KNOWN_HEAVY else NODE_BUILD_SECONDS
-
-
 def measured_nodes(costs: Mapping[str, Mapping[str, Any]],
                    nodes: Sequence[str]) -> Dict[str, float]:
     """Spack nodes with a measured ``node_build_seconds`` at this site."""
@@ -471,59 +441,44 @@ def measured_nodes(costs: Mapping[str, Mapping[str, Any]],
     return measured
 
 
-def _heuristic_basis(nodes: Sequence[str]) -> str:
-    heavy = sorted({node for node in nodes if node in KNOWN_HEAVY})
-    light = sum(1 for node in nodes if node not in KNOWN_HEAVY)
-    return (f"{len(nodes)} missing Spack node(s): {light} x {NODE_BUILD_SECONDS} s"
-            + (", known-heavy " + ", ".join(f"{node} {node_build_seconds(node)} s"
-                                            for node in heavy) if heavy else ""))
-
-
 def estimate(phase: str, name: str, costs: Mapping[str, Mapping[str, Any]],
-             missing: Optional[Sequence[str]] = None,
-             use_prior: bool = True) -> Dict[str, Any]:
-    """Estimated seconds and cost class of one package's check or build.
+             missing: Optional[Sequence[str]] = None) -> Dict[str, Any]:
+    """Measured seconds and cost class of one package's check or build.
 
-    A build with known ``missing`` nodes sums each node's measured seconds
-    at this site where Spack recorded one, else the per-node heuristic. With
-    no node measured, a prior whole build of ``name`` is used (unless
-    ``use_prior`` is false), then the heuristic.
+    Only what this site measured counts. A check uses its last measured
+    ``check_seconds``. A build with known ``missing`` nodes sums each node's
+    ``node_build_seconds`` (Spack ``install_times.json``), and stays unknown
+    while any of them was never built here; with no node list, the last whole
+    build of ``name`` is used. Unknown seconds are class ``long``, and
+    ``unmeasured`` names the nodes nobody has timed.
     """
     prior = costs.get(name) or {}
-    seconds: Optional[float]
-    measured = measured_nodes(costs, missing) if missing is not None else {}
+    seconds: Optional[float] = None
+    unmeasured: List[str] = []
     if phase == "check":
         if prior.get("check_seconds") is not None:
             seconds = float(prior["check_seconds"])
             basis = (f"prior check of {name} at this site ({prior.get('check_host')}, "
                      f"{prior.get('checked_at')})")
-        elif name in KNOWN_HEAVY:
-            seconds, basis = HEAVY_CHECK_SECONDS, \
-                f"{name} is a known-heavy package (large dependency graph)"
         else:
-            seconds, basis = DEFAULT_CHECK_SECONDS, \
-                "default for a package never checked at this site"
+            basis = f"unmeasured: {name} was never checked at this site"
+    elif missing is not None:
+        measured = measured_nodes(costs, missing)
+        unmeasured = [node for node in missing if node not in measured]
+        if not unmeasured:
+            seconds = sum(measured.values())
+            basis = (f"{len(missing)} missing Spack node(s), each built before at this "
+                     "site (Spack install_times)")
+        else:
+            basis = (f"unmeasured: {len(unmeasured)} of {len(missing)} missing Spack "
+                     "node(s) never built at this site: " + ", ".join(unmeasured[:16])
+                     + (", ..." if len(unmeasured) > 16 else ""))
+    elif prior.get("build_seconds") is not None:
+        seconds = float(prior["build_seconds"])
+        basis = (f"prior build of {name} at this site ({prior.get('build_host')}, "
+                 f"{prior.get('built_at')}, {prior.get('built_nodes')} nodes)")
     else:
-        if measured and missing is not None:
-            rest = [node for node in missing if node not in measured]
-            measured_total = sum(measured[node] for node in missing if node in measured)
-            seconds = measured_total + sum(node_build_seconds(node) for node in rest)
-            basis = (f"{len(missing) - len(rest)} of {len(missing)} missing Spack "
-                     f"node(s) built before at this site ({_human(measured_total)}, "
-                     "Spack install_times)"
-                     + (f"; the other {_heuristic_basis(rest)}" if rest else ""))
-        elif use_prior and prior.get("build_seconds") is not None:
-            seconds = float(prior["build_seconds"])
-            basis = (f"prior build of {name} at this site ({prior.get('build_host')}, "
-                     f"{prior.get('built_at')}, {prior.get('built_nodes')} nodes)")
-        elif missing is not None:
-            seconds = float(sum(node_build_seconds(node) for node in missing))
-            basis = _heuristic_basis(missing)
-        elif name in KNOWN_HEAVY:
-            seconds, basis = HEAVY_PACKAGE_BUILD_SECONDS, \
-                f"{name} is a known-heavy package"
-        else:
-            seconds, basis = None, "unknown: no prior build and no check of it here"
+        basis = f"unmeasured: {name} was never built or fully checked at this site"
     threshold = short_threshold(phase)
     return {
         "seconds": None if seconds is None else round(seconds, 1),
@@ -531,6 +486,7 @@ def estimate(phase: str, name: str, costs: Mapping[str, Mapping[str, Any]],
         "class": SHORT if seconds is not None and seconds <= threshold else LONG,
         "short_up_to_seconds": threshold,
         "basis": basis,
+        **({"unmeasured": unmeasured} if unmeasured else {}),
     }
 
 

@@ -88,20 +88,20 @@ def test_a_build_records_package_and_node_seconds_for_the_next_estimate(tmp_path
     again = placement.estimate("build", "paraview", costs,
                                ["llvm", "paraview", "mesa", "zlib"])
     assert again["seconds"] == round(3276.4 + 2698.0 + 116.0 + 30.0, 1)
-    assert "4 of 4 missing Spack node(s) built before" in again["basis"]
-    # another package sharing llvm: llvm measured, the rest heuristic
+    assert "4 missing Spack node(s), each built before at this site" in again["basis"]
+    # another package sharing llvm: llvm measured, mytool never built here
     other = placement.estimate("build", "mytool", costs, ["llvm", "mytool"])
-    assert other["seconds"] == round(3276.4 + placement.NODE_BUILD_SECONDS, 1)
-    assert "1 of 2" in other["basis"] and "1 missing Spack node(s)" in other["basis"]
+    assert other["seconds"] is None and other["class"] == placement.LONG
+    assert other["unmeasured"] == ["mytool"]
+    assert other["basis"].startswith("unmeasured: 1 of 2")
 
 
-def test_heuristic_is_calibrated_per_heavy_node():
-    # ParaView 5.13.1 on Ares: 59 ordinary nodes + llvm, mesa, paraview
-    missing = [f"n{index}" for index in range(59)] + ["llvm", "mesa", "paraview"]
-    estimate = placement.estimate("build", "paraview", {}, missing)
-    assert estimate["seconds"] == 59 * 60 + 3600 + 600 + 3000
-    assert "62 missing Spack node(s): 59 x 60 s" in estimate["basis"]
-    assert "llvm 3600 s" in estimate["basis"] and "mesa 600 s" in estimate["basis"]
-    assert placement.node_build_seconds("vtk") == placement.HEAVY_NODE_BUILD_SECONDS
-    no_check = placement.estimate("build", "paraview", {}, None)
-    assert no_check["seconds"] == placement.HEAVY_PACKAGE_BUILD_SECONDS
+def test_a_failed_build_still_records_the_nodes_it_built(tmp_path):
+    decisions = tmp_path / "decisions.yaml"
+    context = SimpleNamespace(decisions_path=decisions, log=lambda text: None)
+    record = {"packages": {"pv": {"status": "failed",
+                                  "node_build_seconds": {"llvm": 3276.4}}}}
+    _record_install_costs([PARAVIEW], record, 40.0, context)
+    costs = placement.read_costs(placement.costs_path(decisions))
+    assert costs["llvm"]["node_build_seconds"] == 3276.4
+    assert "build_seconds" not in costs.get("paraview", {})

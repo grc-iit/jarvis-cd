@@ -438,15 +438,18 @@ For each Spack package, JARVIS first looks for a copy the site already has
 
 1. Collects every package's `install_repos` (see
    [Package Spack repos](#package-spack-repos-install_repos)).
-2. Resolves the spec with `spack spec -I -l <install_query> <recorded
-   constraints>`. Every node is marked installed (`[+]`), upstream/site
-   (`[^]`), external (`[e]`) or missing (` - `).
-3. Picks the MPI when the query doesn't pin one with `^<mpi>`. A recorded site
-   decision wins. The candidates are every installed or upstream MPI (one
-   unconstrained `spack find`, kept to the MPI providers openmpi, mpich,
-   mvapich2, intel-oneapi-mpi, cray-mpich, …, and merged by prefix; providers
-   the site doesn't have are never queried) plus every MPI external configured in
-   `packages.yaml` (`spack config get packages`). Spack only lists an
+2. Resolves the spec with `spack spec --json <install_query> <recorded
+   constraints>`. Every node is marked installed or upstream (its hash is in
+   `spack find`), external (Spack's `external` field) or missing. Every
+   virtual edge of the DAG is recorded in the entry's `providers` list, as
+   `{virtual, name, version, hash, status}`: which `fftw-api`, `blas`, `mpi`
+   and so on Spack picked, before anything is built. A caller that disagrees
+   pins the provider in the query (`^fftw@3`).
+3. Picks the MPI, the provider on the DAG's `mpi` edge, when the query doesn't
+   pin it with `^<name>`. A recorded site decision wins. The candidates are
+   every installed or upstream MPI (`spack find mpi`, merged by prefix) plus
+   every MPI external configured in `packages.yaml` (`spack config get
+   packages`, for the packages `spack providers mpi` names). Spack only lists an
    external in `spack find` once something has used it, so a site module MPI
    such as `mpich: externals: [{spec: mpich@4.1.1, modules: [mpich/4.1.1]}]`
    is found here. An external with the same prefix as an install (or, for a
@@ -471,7 +474,9 @@ For each Spack package, JARVIS first looks for a copy the site already has
    then re-resolves to verify the nodes are installed.
 5. Writes `install-record.json` (`jarvis.install-record.v1`): the resolved
    spec, root hash and `lock_hash`, node counts by status, what was built,
-   the MPI with its source, version and prefix, and the `spack_env` block.
+   the MPI with its source, version and prefix, the provider of every virtual
+   edge (`providers`, also in the install check's report), and the
+   `spack_env` block.
 6. Loads the result with `spack load /<lock hash>` (the root hash when no
    lock exists yet) and exports the chosen MPI to the run (see
    [MPI selection](#mpi-selection)).
@@ -1049,7 +1054,7 @@ Every environment operation holds a `flock` on `<dir>/.jarvis-env.lock`:
 A second install that finds the lock held logs `waiting for
 <dir>/.jarvis-env.lock` to `install.log` and reports `phase:
 waiting_env_lock`. It blocks until the holder finishes. It then re-runs `spack
-spec -I` for the packages it saw as missing. If the holder built them and the
+spec --json` for the packages it saw as missing. If the holder built them and the
 lock matches its specs, it reuses the lock (`lock_hash`) and makes no `spack
 -e` call. If the specs differ, it re-concretizes the shared environment in
 turn. Put the directory on a file system that honours `flock` across nodes;

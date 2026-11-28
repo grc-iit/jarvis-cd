@@ -609,43 +609,42 @@ with `scheduler.install.nodelist` (or `constraint`), and add
 
 An explicit `scheduler.install.time` is used as given. `scheduler.time` is
 the run job's limit: an install job does not inherit it. Otherwise JARVIS
-always sets the install job's `time` from its own build estimate, never
-leaving it to the partition's default, which can be too short, or `MaxTime`
-when `DefaultTime=NONE`:
+sets the install job's `time` from what it measured at this site, and from
+nothing else:
 
 ```
 time = ceil((startup + estimate) × factor / 5 min) × 5 min, capped at MaxTime
 ```
 
-- `estimate` is the time for what is still missing. For Spack packages it
-  is the install check's estimate plus the build: a package the recorded
-  install check (`install-check.json`) found installed counts as nothing;
-  a missing one uses Spack's measured per-node times for the nodes still
-  missing (`node_build_seconds` in `install-costs.json`), else the measured
-  `build_seconds` of a previous build, scaled to the nodes still missing,
-  or else the per-node estimate the placement question uses. Nodes a
-  previous attempt already built are subtracted. A check record whose only
-  changed inputs are the recorded decisions (answers given after the check,
-  often to its own questions) or `spack.lock` still counts, and
-  `estimate.check_record.stale` names them. pip, conda and container installs get a
-  fixed allowance (15, 30 and 20 min; 1 min for a `+check`). When a
-  package has neither a usable check record nor a measured build, and is
-  not a known-heavy package, it gets a default build allowance of 1 h
-  (`JARVIS_INSTALL_UNKNOWN_BUILD_SECONDS`); it is listed in
-  `estimate.allowance`, and the plan's `why` says to run
-  `ppl install +check +submit` first so JARVIS counts the missing nodes.
+- `estimate` is the time for what is still missing, counted only from what
+  this site measured. For Spack packages it is the install check's measured
+  `check_seconds` plus the build: a package the recorded install check
+  (`install-check.json`) found installed counts as nothing; a missing one
+  sums Spack's measured per-node times for the nodes still missing
+  (`node_build_seconds` in `install-costs.json`). Nodes a previous attempt
+  already built are subtracted. A check record whose only changed inputs
+  are the recorded decisions (answers given after the check, often to its
+  own questions) or `spack.lock` still counts, and
+  `estimate.check_record.stale` names them.
+- When anything is unmeasured (a node never built here, a check never
+  timed, a package with no check record, a pip, conda or container
+  install, which JARVIS does not time), the time is the install partition's
+  `MaxTime` (`source: partition_max_time`). `estimate.unknown` lists the
+  packages, each build entry's `unmeasured` lists its nodes, and `why` says
+  so. With no `MaxTime` known (not Slurm, `UNLIMITED`, or `scontrol`
+  failed), JARVIS sets no time and the scheduler's own limit applies
+  (`source: scheduler_limit`).
 - `startup` is 10 min (`JARVIS_INSTALL_STARTUP_SECONDS`) and `factor` is
   1.5 (`JARVIS_INSTALL_TIME_FACTOR`, at least 1).
 - `MaxTime` is the partition's limit, read with `scontrol show partition`
-  (the job's `partition`, or the default partition). When only the factor
-  pushes the time past it, the time is set to `MaxTime` and
-  `capped_at_max_time` is recorded.
-- When `startup + estimate` alone is past `MaxTime`, JARVIS does not cut the
-  build short. The plan and the submit stop with exit 3 and an
-  `install_time_exceeds_partition` issue (`field: scheduler.install`). Its
-  candidates are the partitions whose `MaxTime` fits, setting
-  `scheduler.install.time` to `MaxTime` to build in parts, and re-running
-  the install check.
+  (the job's `partition`, or the default partition). A measured time past
+  it is set to `MaxTime` and `capped_at_max_time` is recorded.
+- JARVIS never refuses a build for its length. When the time is `MaxTime`
+  because something is unmeasured, or `startup + estimate` alone is past
+  `MaxTime`, the document sets `may_take_more_than_one_job` and its `note`
+  says so, and the submit prints it: if the job reaches its limit, submit
+  the install again. Spack keeps every package already built, so the next
+  job builds only the rest.
 
 When an earlier install job of the pipeline ended without finishing (for
 example it timed out, which kills it before it can update its record), the
@@ -654,9 +653,10 @@ resubmit reports it on stderr and in `time_estimate.previous_attempts`
 keeps what was built, so those nodes are not rebuilt and are not counted in
 the estimate. The document (`jarvis.install.walltime.v1`) is in the submit
 plan's `install_job.time_estimate` and the record's
-`metadata.install_job.time_estimate`, with `source` (`explicit` or
-`jarvis_estimate`), `time`, `formula`, `why`, `estimate`,
-`partition_limit`, `previous_attempts`, `already_built` and `issue_kinds`.
+`metadata.install_job.time_estimate`, with `source` (`explicit`,
+`jarvis_estimate`, `partition_max_time` or `scheduler_limit`), `time`,
+`formula`, `why`, `may_take_more_than_one_job`, `note`, `estimate`,
+`partition_limit`, `previous_attempts` and `already_built`.
 
 The record's `metadata.install_job` shows the shape JARVIS submitted:
 `nodes`, `ntasks`, `cpus_per_task`, `mem`, `exclusive`, `time`,
@@ -729,7 +729,7 @@ therefore reports it the way an install job does.
 
 ### Light checks on the submitting host
 
-Concretizing (`spack spec -I`) can hold a login node's CPU for minutes. So
+Concretizing (`spack spec --json`) can hold a login node's CPU for minutes. So
 for a pipeline with a `scheduler:` block, outside an allocation, JARVIS runs
 **no Spack command** in the install phase unless the site's
 [install placement](#install-placement-where-checks-and-builds-run) says so:
@@ -820,7 +820,7 @@ own result then appears in `metadata.install`.
 
 ### Install placement: where checks and builds run
 
-Where a full check (`spack spec -I`) or a build may run is a per-cluster,
+Where a full check (`spack spec --json`) or a build may run is a per-cluster,
 and sometimes per-package, decision. Some sites' documentation recommends
 the login node, others compute nodes, and a 20-minute build differs from a
 4-hour one. JARVIS hard-codes no site. It offers the choice to the person as
@@ -880,24 +880,19 @@ earlier recorded one site answer per cost class
 - a prior measurement at this site, from `install-costs.json`
   (`jarvis.install-costs.v1`) next to the decisions store. Every full check
   records `check_seconds` (with `check_host`, `checked_at`), and every build
-  records `build_seconds` (with `build_host`, `built_at`, `built_nodes`) and,
-  for each Spack node it built, `node_build_seconds` (Spack's own
+  records `build_seconds` (with `build_host`, `built_at`, `built_nodes`) when
+  it succeeds and, for each Spack node it built, whether the build job
+  succeeded or failed later, `node_build_seconds` (Spack's own
   `<prefix>/.spack/install_times.json`; binary-cache installs are skipped).
   A build through the pipeline's Spack environment records `build_seconds`
   as the install's wall clock when it built one package, else each
   package's measured nodes;
-- for a build with known missing nodes, the nodes built here before count
-  at their measured `node_build_seconds` and the rest at the per-node
-  heuristic below; with none measured, a prior `build_seconds` of the
-  package is used whole;
-- otherwise, for a build: the check's missing Spack nodes × 60 s, with
-  known-heavy nodes (`paraview`, `vtk`, `qt`, `llvm`, `gcc`, `trilinos`, …)
-  at 1800 s, except `llvm` and `gcc` (3600 s), `paraview` (3000 s) and
-  `mesa` (600 s). These are calibrated on a measured ParaView 5.13.1 build
-  of 62 nodes: 59 ordinary nodes averaged 34 s, llvm took 3276 s, paraview
-  2698 s and mesa 116 s;
-- otherwise a known-heavy package (600 s check, 4 h build), or a default
-  (60 s check; an unknown build counts as long).
+- for a build with known missing nodes, the sum of their measured
+  `node_build_seconds`; the estimate is unknown while any of them was never
+  built here, and `unmeasured` lists those nodes;
+- for a build with no node list, a prior `build_seconds` of the package;
+- otherwise unknown. JARVIS keeps no per-package or per-node guesses: an
+  unknown cost counts as `long`.
 
 The class is `short` up to `JARVIS_PLACEMENT_SHORT_CHECK_SECONDS` (300) or
 `JARVIS_PLACEMENT_SHORT_BUILD_SECONDS` (1800), else `long`.
@@ -1119,7 +1114,7 @@ Builds are also refused at the point where heavy work would start:
 
 | Command on the submitting host | What runs there |
 |---|---|
-| `ppl install +check` | reads `install-check.json`; no Spack call. With no matching record and placement `login_limited`: the full check here, niced and bounded ([Install placement](#install-placement-where-checks-and-builds-run)). Without a scheduler block (a workstation): `spack spec -I` / `spack find` |
+| `ppl install +check` | reads `install-check.json`; no Spack call. With no matching record and placement `login_limited`: the full check here, niced and bounded ([Install placement](#install-placement-where-checks-and-builds-run)). Without a scheduler block (a workstation): `spack spec --json` / `spack find` |
 | `sched info` | `sinfo`, `scontrol show partition`, `spack find`: allowed |
 | `spack prepare` | config writes, `spack compiler find` / `external find`, a shallow clone when the root is missing; never a build: allowed (run it in a job where even that is too much) |
 | `ppl install +submit` (with or without `+check`) | writes the snapshot and submits through PSI/J: allowed; the check and build run in the job |

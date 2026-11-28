@@ -476,7 +476,7 @@ class SiteInstaller(Installer):
 class SpackInstaller(Installer):
     """Find-first Spack installer.
 
-    Each package's ``install_query`` is resolved with ``spack spec -I``;
+    Each package's ``install_query`` is resolved with ``spack spec --json``;
     nodes Spack already has (local, upstream or external) are reused and only
     missing ones are built. Choices JARVIS must not make (several installed
     MPIs, variant conflicts) become ``issues.jsonl`` questions. The resolved
@@ -801,7 +801,7 @@ class SpackInstaller(Installer):
                 name: {
                     key: entry.get(key)
                     for key in ("status", "spec", "root", "lock_hash", "missing",
-                                "built", "mpi")
+                                "built", "mpi", "providers")
                     if entry.get(key) is not None
                 }
                 for name, entry in record["packages"].items()
@@ -1040,12 +1040,11 @@ def _record_install_costs(pkg_list, record: Mapping[str, Any], resolve_seconds: 
                           built_nodes=len(entry.get("built") or entry.get("missing") or []))
         if update:
             updates.setdefault(name, {}).update(update)
-        if entry.get("status") == "installed":
-            # each node Spack built, so a later build of another package
-            # sharing these nodes estimates from what they took here
-            for node, seconds in (entry.get("node_build_seconds") or {}).items():
-                updates.setdefault(str(node), {}).update(
-                    node_build_seconds=seconds, node_build_host=host, node_built_at=now)
+        # each node Spack built, even in a build that failed later, so a later
+        # build sharing these nodes estimates from what they took here
+        for node, seconds in (entry.get("node_build_seconds") or {}).items():
+            updates.setdefault(str(node), {}).update(
+                node_build_seconds=seconds, node_build_host=host, node_built_at=now)
     if not updates:
         return
     try:

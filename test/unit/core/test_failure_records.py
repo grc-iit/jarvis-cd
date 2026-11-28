@@ -164,7 +164,7 @@ class TestCompilerGuard(_Case):
 
     def nodes(self):
         return [SpecNode(status='missing', hash='abc1234', name='ior',
-                         spec='ior@3.3.0%gcc@11.4.0 arch=linux', depth=0)]
+                         spec='ior@3.3.0%gcc@11.4.0 arch=linux')]
 
     def test_a_failed_c_probe_returns_the_probe_error_not_a_compiler_question(self):
         failed = {'spec': 'gcc@11.4.0', 'probe_failed': ['cc'], 'probe_results': {'cc': {
@@ -190,7 +190,7 @@ class TestCompilerGuard(_Case):
         self.assertIsNone(self.planner({'gcc@11.4.0': failed})
                           .compiler_guard(self.nodes(), 'spack spec'))
         present = [SpecNode(status='installed', hash='abc', name='ior',
-                            spec='ior@3.3.0%gcc@11.4.0', depth=0)]
+                            spec='ior@3.3.0%gcc@11.4.0')]
         failed = {'spec': 'gcc@11.4.0', 'probe_failed': ['cc'],
                   'probe_results': {'cc': {'ok': False}}}
         self.assertIsNone(self.planner({'gcc@11.4.0': failed})
