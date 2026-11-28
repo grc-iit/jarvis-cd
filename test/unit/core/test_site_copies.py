@@ -620,6 +620,21 @@ class TestSiteMethod(_Case):
         self.assertEqual(ppl.env['LOADEDMODULES'], 'openmpi/5.0.5-x2kvx5l:ior/3.3.0-fihmxeb')
         self.assertEqual(result['packages']['bench']['env_changed'], ['LOADEDMODULES', 'PATH'])
 
+    def test_a_path_list_the_login_shell_lacked_keeps_another_packages_entries(self):
+        before = {'PATH': '/usr/bin'}
+        after = {'PATH': f'{IOR_PREFIX}/bin:/usr/bin', 'PYTHONPATH': f'{IOR_PREFIX}/py',
+                 'SPACK_LOADED_HASHES': 'iorhash'}
+        out = env0(before) + '\0@@SPLIT@@\0' + env0(after)
+        ppl = FakePipeline(self.jarvis, [self.site_pkg()])
+        ppl.env.update({'PYTHONPATH': '/meep/py', 'SPACK_LOADED_HASHES': 'meephash'})
+        installer = SiteInstaller()
+        installer.context = cast(Any, self.context())
+        with mock.patch.object(sc._stall, 'run',
+                               return_value=subprocess.CompletedProcess([], 0, out, '')):
+            installer.check(ppl, ppl.packages)
+        self.assertEqual(ppl.env['PYTHONPATH'], f'{IOR_PREFIX}/py:/meep/py')
+        self.assertEqual(ppl.env['SPACK_LOADED_HASHES'], 'iorhash:meephash')
+
     def test_a_module_that_does_not_load_is_the_failure_record(self):
         ppl = FakePipeline(self.jarvis, [self.site_pkg()])
         installer = SiteInstaller()

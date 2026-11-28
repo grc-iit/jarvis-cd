@@ -1634,21 +1634,6 @@ def load_env_delta(site: Mapping[str, Any]) -> Tuple[Optional[Dict[str, Any]], D
     return _env_delta(before, after), ran
 
 
-def apply_delta(env: Dict[str, str], delta: Mapping[str, Any]) -> List[str]:
-    """Apply ``delta`` to the pipeline env (path lists are prepended)."""
-    changed = []
-    for name, change in delta.items():
-        if "set" in change:
-            env[name] = change["set"]
-        else:
-            added = list(change.get("prepend") or [])
-            current = [p for p in str(env.get(name) or os.environ.get(name, "")).split(os.pathsep)
-                       if p]
-            env[name] = os.pathsep.join(added + [p for p in current if p not in added])
-        changed.append(name)
-    return sorted(changed)
-
-
 def site_of(pkg_def: Mapping[str, Any]) -> Dict[str, Any]:
     """The site copy a ``site`` package loads (chosen, or set in its config)."""
     config = _config(pkg_def)
@@ -1748,6 +1733,7 @@ def site_run(ppl, pkg_list: Sequence[Mapping[str, Any]], context, mode: str) -> 
     The copy :func:`verify_site_choices` loaded is reused; one that does not
     load is the ``failure`` record of that load.
     """
+    from jarvis_cd.core.installer import apply_env_delta
     from jarvis_cd.core.method_install import package_id
 
     result: Dict[str, Any] = {"method": METHOD, "mode": mode, "status": "satisfied",
@@ -1768,7 +1754,7 @@ def site_run(ppl, pkg_list: Sequence[Mapping[str, Any]], context, mode: str) -> 
                 result["packages"][package] = {"status": "failed",
                                                "issue_id": failure["issue_id"]}
                 continue
-        changed = apply_delta(env, delta) if env is not None else sorted(delta)
+        changed = apply_env_delta(env, delta) if env is not None else sorted(delta)
         result["packages"][package] = {
             "status": "satisfied", "source": site.get("source"), "label": site.get("label"),
             "modules": list(site.get("modules") or []), "prefix": site.get("prefix"),

@@ -945,8 +945,10 @@ a login shell (`module use` of its `modulepath`, `module load` of its
 `modules` in order, or `spack load --sh /<hash>` with the site Spack for a
 Spack copy without modules). What that changes goes on the pipeline's env:
 path lists are prepended, other variables are set. So the package's run sees
-the modules. The `site` group runs after Spack's, so a Spack activation
-doesn't replace it. Before the install groups run, JARVIS loads each `site`
+the modules. Every install method puts its loads on the pipeline's env the
+same way, so one package's path lists (`PYTHONPATH`, `LD_LIBRARY_PATH`,
+`SPACK_LOADED_HASHES`, ...) never replace another's. Before the install
+groups run, JARVIS loads each `site`
 package's copy once. A Spack copy's Spack is checked first (see
 [A broken Spack](#a-broken-spack)).
 

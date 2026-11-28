@@ -1053,9 +1053,10 @@ Resolving and loading Spack specs inside every run job can take minutes. So
 an install that ends with every package satisfied (a `ppl install`, an
 install job, or an install-on-load) captures the environment `spack load`
 produced, once, in `<pipeline shared>/install/spack-load-env.json`
-(`jarvis.spack-load-env.v1`). It holds `captured_at`, `captured_in` (the
+(`jarvis.spack-load-env.v2`). It holds `captured_at`, `captured_in` (the
 install's execution id), the per-package `hashes`, the `inputs` digests, the
-`env_delta` (path variables as `prepend` lists, others as `set`), the MPI
+`env_delta` (path variables as `prepend` lists, even ones the base env
+lacked, others as `set`), the MPI
 environment, the `watched_paths` (the prefixes it prepended), and the install
 record and result. With `JARVIS_SPACK_ENV_DIR` set, the capture lives in that
 shared env dir instead (`$JARVIS_SPACK_ENV_DIR/spack-load-env.json`), so every

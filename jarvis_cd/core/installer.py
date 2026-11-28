@@ -206,9 +206,6 @@ class Installer(ABC):
                 grouped.pop(method, None)
                 if kept:
                     grouped[method] = kept
-        if "site" in grouped:
-            # last: Spack's activation replaces ppl.env, the site's copy prepends to it
-            grouped["site"] = grouped.pop("site")
         if context is None and grouped:
             context = install_context_for(ppl, mode)
             context.open()
@@ -772,7 +769,8 @@ class SpackInstaller(Installer):
             load_seconds = round(time.monotonic() - loaded, 3)
             print(f"SpackInstaller: merged {len(spack_env)} env vars from spack load")
             mpi_env = mpi_environment(record)
-            _apply_spack_env(ppl, spack_env, mpi_env)
+            filtered = _filtered_env(base_env)
+            _apply_spack_env(ppl, filtered, _env_delta(filtered, spack_env), mpi_env)
             if mpi_env:
                 print(f"SpackInstaller: MPI {mpi_env.get('JARVIS_MPI_SPEC')}"
                       f" ({mpi_env.get('JARVIS_MPI_TYPE', 'probe')})")
@@ -969,16 +967,16 @@ class SpackInstaller(Installer):
             return {"activation": activation, "result": None}
         from jarvis_cd.core.spack_install import spack_subprocess_environment
 
-        spack_env = _apply_env_delta(
-            _filtered_env(spack_subprocess_environment()), document["env_delta"])
-        _apply_spack_env(ppl, spack_env, document.get("mpi_env") or {})
+        delta = document["env_delta"]
+        _apply_spack_env(ppl, _filtered_env(spack_subprocess_environment()), delta,
+                         document.get("mpi_env") or {})
         result = dict(document.get("result") or {})
         result["status"] = "satisfied"
         activation.update(method="captured", captured_at=document.get("captured_at"),
                           seconds=round(time.monotonic() - started, 3))
         result["activation"] = activation
         print(f"SpackInstaller: activated the install's captured env "
-              f"({len(spack_env)} vars, captured {document.get('captured_at')}); "
+              f"({len(delta)} vars, captured {document.get('captured_at')}); "
               "no spack calls")
         return {"activation": activation, "result": result}
 
@@ -1111,11 +1109,12 @@ LAST_INSTALL_NAME = "last-install.json"
 LAST_INSTALL_SCHEMA = "jarvis.install-pointer.v1"
 
 SPACK_ENV_CAPTURE_NAME = "spack-load-env.json"
-SPACK_ENV_CAPTURE_SCHEMA = "jarvis.spack-load-env.v1"
+SPACK_ENV_CAPTURE_SCHEMA = "jarvis.spack-load-env.v2"
 _PATH_VARS = frozenset({
     "PATH", "LD_LIBRARY_PATH", "LIBRARY_PATH", "DYLD_LIBRARY_PATH", "CPATH",
     "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH", "MANPATH", "INFOPATH",
     "PKG_CONFIG_PATH", "CMAKE_PREFIX_PATH", "ACLOCAL_PATH", "PYTHONPATH",
+    "SPACK_LOADED_HASHES",
 })
 
 
@@ -1247,14 +1246,14 @@ def _filtered_env(environment: Dict[str, str]) -> Dict[str, str]:
 
 
 def _env_delta(base: Dict[str, str], loaded: Dict[str, str]) -> Dict[str, Any]:
-    """What ``spack load`` changed: entries prepended to path lists, else values."""
+    """What a load changed: entries prepended to path lists, else values."""
     delta: Dict[str, Any] = {}
     for name, value in loaded.items():
         before = base.get(name)
         if value == before:
             continue
-        if name in _PATH_VARS and before:
-            old = [p for p in before.split(os.pathsep) if p]
+        if name in _PATH_VARS:
+            old = [p for p in (before or "").split(os.pathsep) if p]
             new = [p for p in value.split(os.pathsep) if p]
             if all(p in new for p in old):
                 delta[name] = {"prepend": [p for p in new if p not in old]}
@@ -1263,22 +1262,33 @@ def _env_delta(base: Dict[str, str], loaded: Dict[str, str]) -> Dict[str, Any]:
     return delta
 
 
-def _apply_env_delta(base: Dict[str, str], delta: Dict[str, Any]) -> Dict[str, str]:
-    """Replay ``_env_delta`` on today's environment (what ``spack load`` gives)."""
-    result = dict(base)
+def apply_env_delta(env: Dict[str, str], delta: Mapping[str, Any]) -> List[str]:
+    """Apply ``delta`` to ``env``: path lists are prepended to, others set.
+
+    A path list ``env`` lacks starts from this process's value. Returns the
+    changed names.
+    """
     for name, change in delta.items():
         if "set" in change:
-            result[name] = change["set"]
+            env[name] = change["set"]
             continue
         added = list(change.get("prepend") or [])
-        current = [p for p in (base.get(name) or "").split(os.pathsep) if p]
-        result[name] = os.pathsep.join(added + [p for p in current if p not in added])
-    return result
+        current = [p for p in str(env.get(name) or os.environ.get(name, "")).split(os.pathsep)
+                   if p]
+        env[name] = os.pathsep.join(added + [p for p in current if p not in added])
+    return sorted(delta)
 
 
-def _apply_spack_env(ppl, spack_env: Dict[str, str], mpi_env: Dict[str, str]) -> None:
-    """Merge a loaded Spack env and the chosen MPI's variables into ``ppl.env``."""
-    ppl.env.update(spack_env)
+def _apply_spack_env(ppl, base: Dict[str, str], delta: Dict[str, Any],
+                     mpi_env: Dict[str, str]) -> None:
+    """Put a Spack load (``delta`` over ``base``) and the MPI's variables on ``ppl.env``.
+
+    ``base`` fills only what ``ppl.env`` lacks, and path lists are prepended
+    to, so what another package's install put there stays.
+    """
+    for name, value in base.items():
+        ppl.env.setdefault(name, value)
+    apply_env_delta(ppl.env, delta)
     for name in ("JARVIS_MPI_NAME", "JARVIS_MPI_SPEC", "JARVIS_MPI_TYPE",
                  "JARVIS_MPI_PREFIX"):
         ppl.env.pop(name, None)
